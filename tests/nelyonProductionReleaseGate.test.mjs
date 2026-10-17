@@ -15,7 +15,7 @@ const runbookUrl = new URL('../docs/runbooks/nelyon-production-release.md', impo
 const OWNER = 'andressan101989';
 const REPOSITORY = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
 const PROJECT_REF = 'aewwdlvbwpczqyvkwvvj';
-const MAIN_SHA = 'd02dda37e34493bc73b9f3b34fcd4874ef212911';
+const MAIN_SHA = '9d5afa4dd0eb48040a18b40e53e7dec22ecf2f33';
 const MANAGED_FUNCTIONS = [
   'agora-token',
   'create-media-upload',
@@ -37,17 +37,18 @@ const MANAGED_FUNCTIONS = [
   'ai-handoff-mcp',
 ];
 const A2_EXCEPTION_FINGERPRINTS = [
-  '00657ba374cdad7085ed6b574482e19d7fa16907edcc701c94fc18c87961edb2',
-  '1e59a5e4beb48d63e41b8f19d6cdff3470ec18e0ca57b3d35348bd2fc0921596',
-  '3bafc12c90e4b6b681d940783a2f7c18f4fff412914dfe089273361e4a985a3d',
-  '4840132edacadeb572fa8fd51214941fda033da797e4d60aa6cb1bb1fd7004af',
-  '67c61f041625ca6c348fdadffed8e2a997e40e1b6a7b6e4005d7e0ca8e7f8720',
-  '6c2cb58d906d98f9a58d63890eabe14a123dae7c93c177e131e284b720154c88',
-  '818953854378a3580fa558d66b184ae7ceacac35521ce7b31c24c077cf8c5aa4',
-  '91d927799c49e43c6e0f70e789a71a58ab4d39f10c0704f9aa7bfab2e9da7bcb',
-  '977f751ed2fa6c2202aac797ca71df433a804b90a7c6cc667bd2813dd5c33adc',
-  'bd0ce992865c9e2c34a64970b0c9c0a619a0d604d0a046429ec9c030ccd3d709',
-  'ed47c5c8fd92b0a9111c500797b896e5f4adda72528447877e07d3bf7fc976f4',
+  '053c9a441c11dc657382c6448b017d8fcf73c16fb5a3e4baf6275e24e2216129',
+  '16793ac45491560ceb15eed84a53c946830aca9f3c1dad338a98e42c539aad18',
+  '32e1071c786f8cd3afe8867b7dd583e26420bb55845639a6458f724779e389b0',
+  '38f8cee50f0713a548ea30ea5d3d7cb5d9151bd97b4885da47cc2726b83706ca',
+  '64e0ec779a8bd54824caf58605677e58ef589a62b2a53e4beb216907d3e002ee',
+  '81ffb44830028e3a76316686c2bd2d8f38b4f4b26b7d4f93a3c0c94a168e4852',
+  '95f426ce02f0b60b9ac06e78d26d4171ec2d74aef205a06a6bc111142d1a923d',
+  'b55221bf7e4ec14f761ca29bc13589854080dccb3049e7dbcd996c37eb7223cf',
+  'b5ca8be9cf9433a21ee7f19906d8a23340ef629d6cedd414c196b431ab5dfaf1',
+  'cf4b6520e9c96170ea5a5125f287b991d15c377e80cf3394f879dc1cbad0e6ae',
+  'ed55682047d682b69c66430b68fc819fb781b7289539fa398fadf09ec0c064fc',
+  'f9c25bdf8e5c7f7ff7385410370dac9fe2ded1a0468f76d8bd2d265186718f32',
 ];
 const A2_PREEXISTING_FINGERPRINTS = [
   '44c69807ea7e06dadbd8f841ec50a8911c25a76b28ed8096ec6fea66d129b55b',
@@ -472,9 +473,9 @@ test('Security Advisor exceptions are exact RPC-bound verified attestations', as
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(gate.validateSecurityAdvisorPolicy(policy.security_advisor), true);
   assert.equal(policy.security_advisor.baseline.count, 554);
-  assert.equal(policy.security_advisor.baseline.cron_security_sha256, '65ea13c1598717b143bbf7f1779f729bf2b3cad05938dc4d42ae0af67a6a694a');
+  assert.equal(policy.security_advisor.baseline.cron_security_sha256, '2dd76dccc8b348eb932fee5c8ada572f57243287f3ca96bf851a75a2e9244846');
   const exceptions = policy.security_advisor.exceptions;
-  assert.equal(exceptions.length, 11);
+  assert.equal(exceptions.length, 12);
   assert.deepEqual(exceptions.map(item => item.advisor_fingerprint).sort(), A2_EXCEPTION_FINGERPRINTS);
   assert.equal(exceptions.some(item => A2_PREEXISTING_FINGERPRINTS.includes(item.advisor_fingerprint)), false);
   for (const exception of exceptions) {
@@ -497,9 +498,15 @@ test('Security Advisor exceptions are exact RPC-bound verified attestations', as
     assert.ok(exception.authorization.functional_reason.length > 0);
     assert.deepEqual([...exception.authorization.controls].sort(), exception.authorization.controls);
     assert.match(exception.authorization.negative_test_evidence_sha256, /^[0-9a-f]{64}$/);
-    assert.equal(exception.origin.migration, '20261010053524_creator_premium_b7_full_functional_commercial_completion');
-    assert.equal(exception.origin.migration_blob, '43f014260e0ecfa6f0634e61e1646594bcf13e1d');
-    assert.equal(exception.origin.source_sha, '0560b9e1fdc0869dfcd4d04f081de03ba31b66cb');
+    if (exception.object.name === 'cancel_my_creator_premium_submission_v1') {
+      assert.equal(exception.origin.migration, '20261017193000_creator_premium_c1_submission_cancellation');
+      assert.equal(exception.origin.migration_blob, '4605ac94221a52d47190b1575ab1a71e23c82fac');
+      assert.equal(exception.origin.source_sha, 'aa722ea6f1bb9aef6fc49da64c4c6dc8303b4e95');
+    } else {
+      assert.equal(exception.origin.migration, '20261010053524_creator_premium_b7_full_functional_commercial_completion');
+      assert.equal(exception.origin.migration_blob, '43f014260e0ecfa6f0634e61e1646594bcf13e1d');
+      assert.equal(exception.origin.source_sha, '0560b9e1fdc0869dfcd4d04f081de03ba31b66cb');
+    }
     assert.equal(exception.technical_approval, 'verified');
   }
   for (const mutate of [
@@ -1029,7 +1036,7 @@ function collectFunctionSources(directory, root, files = {}) {
   return files;
 }
 
-test('real B7 release graph governs semantic-index and every consumer of pinned media auth', async () => {
+test('post-B7 baseline produces no stale Edge deployment delta for the C1-only tree', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const repositoryRoot = new URL('..', import.meta.url);
   const rootPath = repositoryRoot.pathname.startsWith('/') && /^[A-Za-z]:/.test(repositoryRoot.pathname.slice(1))
@@ -1052,20 +1059,7 @@ test('real B7 release graph governs semantic-index and every consumer of pinned 
     configBefore,
     configAfter,
   });
-  assert.deepEqual(affected, [
-    'ads-v2-delivery',
-    'cleanup-stale-media-uploads',
-    'content-safety-scan',
-    'create-media-upload',
-    'create-stream-upload',
-    'delete-media-asset',
-    'delete-stream-video',
-    'finalize-media-upload',
-    'get-media-url',
-    'get-stream-playback',
-    'stream-webhook',
-    'video-semantic-index',
-  ]);
+  assert.deepEqual(affected, []);
   assert.deepEqual(gate.analyzeFunctionReproducibility({ affectedFunctions: affected, graph }), {
     allowed: true,
     blockedFunctions: [],
@@ -1453,7 +1447,7 @@ test('postcheck recovery verifies B7 current state without productive resources'
   assert.equal(result.migrations.count, 337);
   assert.equal(result.functions.items.length, 12);
   assert.equal(result.security_advisor.baseline_count, 554);
-  assert.equal(result.security_advisor.exception_count, 11);
+  assert.equal(result.security_advisor.exception_count, 12);
   assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
   assert.equal(result.premium_state.legacy.content_count, 2);
   assert.doesNotMatch(JSON.stringify(result), /fixture-token|authorization/i);
@@ -1968,8 +1962,8 @@ function baselineSnapshot(policy, overrides = {}) {
     reviewed_policy_sha256: 'f'.repeat(64),
     migrations: {
       complete: true,
-      items: Array.from({ length: 336 }, (_, index) => `2026${String(index).padStart(10, '0')}`),
-      latest: '20261009021414_creator_premium_b5_creator_management_ux',
+      items: Array.from({ length: 337 }, (_, index) => `2026${String(index).padStart(10, '0')}`),
+      latest: '20261010053524_creator_premium_b7_full_functional_commercial_completion',
     },
     functions: {
       complete: true,
@@ -2006,8 +2000,8 @@ test('candidate to verified requires exact migrations functions config finance c
     expected: {
       projectRef: PROJECT_REF,
       sha: MAIN_SHA,
-      migrationCount: 336,
-      latestMigration: '20261009021414_creator_premium_b5_creator_management_ux',
+      migrationCount: policy.baseline.migration_count,
+      latestMigration: policy.baseline.latest_migration,
       managedFunctions: MANAGED_FUNCTIONS,
       remoteFunctionCount: 34,
       financePolicy: policy.supabase.finance_policy,
@@ -2038,7 +2032,7 @@ test('candidate baseline accepts canonical finance snapshot policy metadata', as
     expected: {
       projectRef: PROJECT_REF,
       sha: MAIN_SHA,
-      migrationCount: 336,
+      migrationCount: policy.baseline.migration_count,
       latestMigration: policy.baseline.latest_migration,
       managedFunctions: MANAGED_FUNCTIONS,
       remoteFunctionCount: 34,
@@ -2091,7 +2085,7 @@ test('verified baseline requires owner reviewer and a separate policy commit', a
     expected: {
       projectRef: PROJECT_REF,
       sha: MAIN_SHA,
-      migrationCount: 336,
+      migrationCount: policy.baseline.migration_count,
       latestMigration: policy.baseline.latest_migration,
       managedFunctions: MANAGED_FUNCTIONS,
       remoteFunctionCount: 34,
@@ -2124,7 +2118,7 @@ test('environment policy digest must match exact reviewed policy bytes', async (
     expected: {
       projectRef: PROJECT_REF,
       sha: MAIN_SHA,
-      migrationCount: 336,
+      migrationCount: policy.baseline.migration_count,
       latestMigration: policy.baseline.latest_migration,
       managedFunctions: MANAGED_FUNCTIONS,
       remoteFunctionCount: 34,
@@ -2140,7 +2134,7 @@ test('environment policy digest must match exact reviewed policy bytes', async (
     expected: {
       projectRef: PROJECT_REF,
       sha: MAIN_SHA,
-      migrationCount: 336,
+      migrationCount: policy.baseline.migration_count,
       latestMigration: policy.baseline.latest_migration,
       managedFunctions: MANAGED_FUNCTIONS,
       remoteFunctionCount: 34,
@@ -2169,7 +2163,7 @@ test('baseline advancement records prior release ID manifest and evidence digest
     expected: {
       projectRef: PROJECT_REF,
       sha: MAIN_SHA,
-      migrationCount: 336,
+      migrationCount: policy.baseline.migration_count,
       latestMigration: policy.baseline.latest_migration,
       managedFunctions: MANAGED_FUNCTIONS,
       remoteFunctionCount: 34,
@@ -2192,7 +2186,7 @@ test('baseline promotion denies every independently reviewed section mismatch', 
   const expected = {
     projectRef: PROJECT_REF,
     sha: MAIN_SHA,
-    migrationCount: 336,
+    migrationCount: policy.baseline.migration_count,
     latestMigration: policy.baseline.latest_migration,
     managedFunctions: MANAGED_FUNCTIONS,
     remoteFunctionCount: 34,

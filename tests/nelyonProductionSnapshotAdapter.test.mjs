@@ -131,7 +131,7 @@ function cronSnapshot() {
   };
 }
 
-const A2_TEST_RPC_IDENTITIES = [
+const PROTECTED_TEST_RPC_IDENTITIES = [
   ['admin_refund_creator_premium_purchase_v1', ['uuid', 'uuid', 'text']],
   ['admin_refund_creator_premium_subscription_period_v1', ['uuid', 'uuid', 'text']],
   ['admin_review_creator_premium_content_v1', ['uuid', 'text', 'text', 'uuid']],
@@ -143,10 +143,11 @@ const A2_TEST_RPC_IDENTITIES = [
   ['reopen_my_creator_premium_rejected_v1', ['uuid']],
   ['report_creator_premium_content_v1', ['uuid', 'text', 'text']],
   ['search_admin_creator_premium_content_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer']],
+  ['cancel_my_creator_premium_submission_v1', ['uuid']],
 ];
 
 function rpcSecurityRows(overrides = {}) {
-  return A2_TEST_RPC_IDENTITIES.map(([name, argumentTypes]) => ({
+  return PROTECTED_TEST_RPC_IDENTITIES.map(([name, argumentTypes]) => ({
     schema: 'public',
     name,
     identity_arguments: argumentTypes.join(', '),
@@ -397,8 +398,8 @@ test('RPC security normalization preserves overload identity hashes definitions 
   const raw = rpcSecurityRows();
   const snapshot = adapter.normalizeRpcSecurityAttestations(raw);
   assert.equal(snapshot.complete, true);
-  assert.equal(snapshot.count, 11);
-  assert.equal(snapshot.items.length, 11);
+  assert.equal(snapshot.count, 12);
+  assert.equal(snapshot.items.length, 12);
   assert.deepEqual(snapshot.items.map(item => item.name), [...snapshot.items.map(item => item.name)].sort());
   const firstRaw = raw.find(item => item.name === snapshot.items[0].name);
   assert.equal(
@@ -488,7 +489,7 @@ test('fixed documented recovery capture uses four read-only SQL requests and red
     observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
   });
   assert.equal(result.phase, 'recovery');
-  assert.equal(result.rpc_security.count, 11);
+  assert.equal(result.rpc_security.count, 12);
   assert.equal(result.premium_state.complete, true);
   assert.equal(calls.length, 9);
   const sqlCalls = calls.filter(call => (call.options.method ?? 'GET') === 'POST');
@@ -951,4 +952,62 @@ test('security advisor fingerprints exclude volatile observation timestamps', as
   const first = await capture('2026-10-12T11:59:00.000Z');
   const second = await capture('2026-10-12T12:00:00.000Z');
   assert.equal(first.cron_security.advisors.items[0].fingerprint, second.cron_security.advisors.items[0].fingerprint);
+});
+
+test('security advisor fingerprints bind semantic object identity, not mutable advisory prose', async () => {
+  const adapter = await loadAdapter();
+  const lint = {
+    cache_key: 'authenticated_security_definer_function_executable_public_cancel_my_creator_premium_submission_v1_p_content_id uuid',
+    categories: ['SECURITY'],
+    description: 'Original provider copy.',
+    detail: 'Original detail.',
+    facing: 'EXTERNAL',
+    level: 'WARN',
+    metadata: {
+      arguments: 'p_content_id uuid',
+      language: 'plpgsql',
+      name: 'cancel_my_creator_premium_submission_v1',
+      schema: 'public',
+      security_definer: true,
+    },
+    name: 'authenticated_security_definer_function_executable',
+    remediation: 'Original remediation.',
+    title: 'Original title.',
+  };
+  const first = adapter.normalizeSecurityAdvisors({ lints: [lint] });
+  const proseOnly = adapter.normalizeSecurityAdvisors({
+    lints: [{ ...lint, description: 'Changed provider copy.', detail: 'Changed detail.', remediation: 'Changed remediation.', title: 'Changed title.' }],
+  });
+  const changedIdentity = adapter.normalizeSecurityAdvisors({
+    lints: [{ ...lint, metadata: { ...lint.metadata, arguments: 'p_content_id uuid, p_force boolean' } }],
+  });
+  assert.equal(first.items[0].fingerprint, proseOnly.items[0].fingerprint);
+  assert.notEqual(first.items[0].fingerprint, changedIdentity.items[0].fingerprint);
+  assert.equal(first.items[0].resource_kind, lint.name);
+});
+
+test('phase-bound RPC attestations include a new protected RPC only after its manifest migration', async () => {
+  const adapter = await loadAdapter();
+  const controlledPolicy = structuredClone(policy);
+  const controlledManifest = manifest();
+  controlledManifest.resources.migrations = [{
+    path: 'supabase/migrations/20261017193000_creator_premium_c1_submission_cancellation.sql',
+    version: '20261017193000',
+  }];
+  assert.equal(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre').length, 11);
+  assert.equal(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post').length, 12);
+  assert.equal(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery').length, 12);
+});
+
+test('postcheck advisor delta accepts only exact phase-approved fingerprints', async () => {
+  const adapter = await loadAdapter();
+  const pre = [{ fingerprint: '1'.repeat(64), level: 'WARN', resource_kind: 'existing' }];
+  const allowed = { advisor_fingerprint: '2'.repeat(64) };
+  const post = [...pre, { fingerprint: allowed.advisor_fingerprint, level: 'WARN', resource_kind: 'new' }];
+  assert.equal(adapter.validateSecurityAdvisorDelta(pre, post, [allowed]), true);
+  assert.throws(
+    () => adapter.validateSecurityAdvisorDelta(pre, [...post, { fingerprint: '3'.repeat(64), level: 'WARN', resource_kind: 'unknown' }], [allowed]),
+    /REMOTE_POSTCHECK_FAILED/,
+  );
+  assert.throws(() => adapter.validateSecurityAdvisorDelta(pre, pre, [allowed]), /REMOTE_POSTCHECK_FAILED/);
 });

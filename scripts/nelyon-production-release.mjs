@@ -13,18 +13,23 @@ const A2_NEGATIVE_TEST_EVIDENCE_SHA256 = '47f15e3fa7f5b377738a171f56632d72ed2d1f
 const B7_MIGRATION = '20261010053524_creator_premium_b7_full_functional_commercial_completion';
 const B7_MIGRATION_BLOB = '43f014260e0ecfa6f0634e61e1646594bcf13e1d';
 const B7_SOURCE_SHA = '0560b9e1fdc0869dfcd4d04f081de03ba31b66cb';
-const A2_RPC_EXCEPTIONS = [
-  ['00657ba374cdad7085ed6b574482e19d7fa16907edcc701c94fc18c87961edb2', 'get_creator_premium_commerce_v1', ['uuid'], 'p_content_id uuid', '30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86'],
-  ['1e59a5e4beb48d63e41b8f19d6cdff3470ec18e0ca57b3d35348bd2fc0921596', 'get_admin_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', '2a91f72e122beeee0f3d3c9f59ef99f13d2aefab9bcbc987594a5ac43c40a47e'],
-  ['3bafc12c90e4b6b681d940783a2f7c18f4fff412914dfe089273361e4a985a3d', 'admin_refund_creator_premium_subscription_period_v1', ['uuid', 'uuid', 'text'], 'p_period_id uuid, p_idempotency_key uuid, p_reason_code text', '592df071aa52e846d7034e79c61f114f00eaf49d24dccd3682536e83377439ca'],
-  ['4840132edacadeb572fa8fd51214941fda033da797e4d60aa6cb1bb1fd7004af', 'get_my_creator_premium_commercial_summary_v1', ['timestamp with time zone', 'timestamp with time zone'], 'p_from timestamp with time zone, p_to timestamp with time zone', '1a34a92abe226cdb66b3d8ba95b848d7576fe81e324839c9424582dc44610d05'],
-  ['67c61f041625ca6c348fdadffed8e2a997e40e1b6a7b6e4005d7e0ca8e7f8720', 'search_admin_creator_premium_content_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer'], 'p_status text, p_query text, p_cursor_submitted_at timestamp with time zone, p_cursor_id uuid, p_limit integer', '0379d81bef4b106861b9b59962f52e480b7b48cc1205eae938f238d1fd04ece6'],
-  ['6c2cb58d906d98f9a58d63890eabe14a123dae7c93c177e131e284b720154c88', 'get_my_creator_premium_subscriptions_v1', ['timestamp with time zone', 'uuid', 'integer'], 'p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_limit integer', 'dddaf6f218f2abe7a24d97dfdd4fc0cb125fed5b7e2088c510bd4f8368124685'],
-  ['818953854378a3580fa558d66b184ae7ceacac35521ce7b31c24c077cf8c5aa4', 'admin_review_creator_premium_content_v1', ['uuid', 'text', 'text', 'uuid'], 'p_content_id uuid, p_action text, p_reason text, p_idempotency_key uuid', '9d2a0fdc8982eb44b9e6e2603938649305446aaf512f4bea9f930ee192d8377f'],
-  ['91d927799c49e43c6e0f70e789a71a58ab4d39f10c0704f9aa7bfab2e9da7bcb', 'report_creator_premium_content_v1', ['uuid', 'text', 'text'], 'p_content_id uuid, p_reason text, p_details text', '923bce96a9cc00e71174c1aa811b791ba11710c9b370295f7474729d928d992c'],
-  ['977f751ed2fa6c2202aac797ca71df433a804b90a7c6cc667bd2813dd5c33adc', 'reopen_my_creator_premium_rejected_v1', ['uuid'], 'p_content_id uuid', '091cb8b2f35c9e76f515295e45310bbee9af8e6a1567d26ddfa0be34b5ceba5d'],
-  ['bd0ce992865c9e2c34a64970b0c9c0a619a0d604d0a046429ec9c030ccd3d709', 'get_admin_creator_premium_refund_candidates_v1', ['uuid'], 'p_content_id uuid', '9f35908f01a3ff9100f0fc2d562d4c2471a33bb15a54d1dbbcf754bacde9ea00'],
-  ['ed47c5c8fd92b0a9111c500797b896e5f4adda72528447877e07d3bf7fc976f4', 'admin_refund_creator_premium_purchase_v1', ['uuid', 'uuid', 'text'], 'p_receipt_id uuid, p_idempotency_key uuid, p_reason_code text', '13a0a7da560d681b0b04a8505bc09eb1fe12e31cf04779be984872f926ee6d45'],
+const C1_NEGATIVE_TEST_EVIDENCE_SHA256 = 'ca8588f28303eb27e251207a72a85a35b7c75c794664ebe6132ddb3a6cdf984c';
+const C1_MIGRATION = '20261017193000_creator_premium_c1_submission_cancellation';
+const C1_MIGRATION_BLOB = '4605ac94221a52d47190b1575ab1a71e23c82fac';
+const C1_SOURCE_SHA = 'aa722ea6f1bb9aef6fc49da64c4c6dc8303b4e95';
+const SECURITY_ADVISOR_RPC_EXCEPTIONS = [
+  ['f9c25bdf8e5c7f7ff7385410370dac9fe2ded1a0468f76d8bd2d265186718f32', 'get_creator_premium_commerce_v1', ['uuid'], 'p_content_id uuid', '30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['b5ca8be9cf9433a21ee7f19906d8a23340ef629d6cedd414c196b431ab5dfaf1', 'get_admin_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', '2a91f72e122beeee0f3d3c9f59ef99f13d2aefab9bcbc987594a5ac43c40a47e', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['16793ac45491560ceb15eed84a53c946830aca9f3c1dad338a98e42c539aad18', 'admin_refund_creator_premium_subscription_period_v1', ['uuid', 'uuid', 'text'], 'p_period_id uuid, p_idempotency_key uuid, p_reason_code text', '592df071aa52e846d7034e79c61f114f00eaf49d24dccd3682536e83377439ca', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['ed55682047d682b69c66430b68fc819fb781b7289539fa398fadf09ec0c064fc', 'get_my_creator_premium_commercial_summary_v1', ['timestamp with time zone', 'timestamp with time zone'], 'p_from timestamp with time zone, p_to timestamp with time zone', '1a34a92abe226cdb66b3d8ba95b848d7576fe81e324839c9424582dc44610d05', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['95f426ce02f0b60b9ac06e78d26d4171ec2d74aef205a06a6bc111142d1a923d', 'search_admin_creator_premium_content_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer'], 'p_status text, p_query text, p_cursor_submitted_at timestamp with time zone, p_cursor_id uuid, p_limit integer', '0379d81bef4b106861b9b59962f52e480b7b48cc1205eae938f238d1fd04ece6', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['cf4b6520e9c96170ea5a5125f287b991d15c377e80cf3394f879dc1cbad0e6ae', 'get_my_creator_premium_subscriptions_v1', ['timestamp with time zone', 'uuid', 'integer'], 'p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_limit integer', 'dddaf6f218f2abe7a24d97dfdd4fc0cb125fed5b7e2088c510bd4f8368124685', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['32e1071c786f8cd3afe8867b7dd583e26420bb55845639a6458f724779e389b0', 'admin_review_creator_premium_content_v1', ['uuid', 'text', 'text', 'uuid'], 'p_content_id uuid, p_action text, p_reason text, p_idempotency_key uuid', '9d2a0fdc8982eb44b9e6e2603938649305446aaf512f4bea9f930ee192d8377f', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['81ffb44830028e3a76316686c2bd2d8f38b4f4b26b7d4f93a3c0c94a168e4852', 'report_creator_premium_content_v1', ['uuid', 'text', 'text'], 'p_content_id uuid, p_reason text, p_details text', '923bce96a9cc00e71174c1aa811b791ba11710c9b370295f7474729d928d992c', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['64e0ec779a8bd54824caf58605677e58ef589a62b2a53e4beb216907d3e002ee', 'reopen_my_creator_premium_rejected_v1', ['uuid'], 'p_content_id uuid', '091cb8b2f35c9e76f515295e45310bbee9af8e6a1567d26ddfa0be34b5ceba5d', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['b55221bf7e4ec14f761ca29bc13589854080dccb3049e7dbcd996c37eb7223cf', 'get_admin_creator_premium_refund_candidates_v1', ['uuid'], 'p_content_id uuid', '9f35908f01a3ff9100f0fc2d562d4c2471a33bb15a54d1dbbcf754bacde9ea00', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['38f8cee50f0713a548ea30ea5d3d7cb5d9151bd97b4885da47cc2726b83706ca', 'admin_refund_creator_premium_purchase_v1', ['uuid', 'uuid', 'text'], 'p_receipt_id uuid, p_idempotency_key uuid, p_reason_code text', '13a0a7da560d681b0b04a8505bc09eb1fe12e31cf04779be984872f926ee6d45', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['053c9a441c11dc657382c6448b017d8fcf73c16fb5a3e4baf6275e24e2216129', 'cancel_my_creator_premium_submission_v1', ['uuid'], 'p_content_id uuid', '5be58f4d190e19a04ed32c7de88d1ace55778ac68c5c39d21cac5ad979f27a57', C1_NEGATIVE_TEST_EVIDENCE_SHA256, C1_MIGRATION, C1_MIGRATION_BLOB, C1_SOURCE_SHA],
 ];
 const B7_EDGE_ATTESTATIONS = [
   ['ads-v2-delivery', 10, true, '4510ecc897a50a2f9e23d0b326f9bdfc630ce88e5f7bcea0c59e9476233d0536'],
@@ -99,14 +104,14 @@ export function validateSecurityAdvisorPolicy(securityAdvisor) {
   assertExactKeys(securityAdvisor, ['baseline', 'exceptions'], code, 'Security Advisor policy');
   assertExactKeys(securityAdvisor.baseline, ['count', 'cron_security_sha256'], code, 'Security Advisor baseline');
   if (securityAdvisor.baseline.count !== 554
-    || securityAdvisor.baseline.cron_security_sha256 !== '65ea13c1598717b143bbf7f1779f729bf2b3cad05938dc4d42ae0af67a6a694a') {
+    || securityAdvisor.baseline.cron_security_sha256 !== '2dd76dccc8b348eb932fee5c8ada572f57243287f3ca96bf851a75a2e9244846') {
     deny(code, 'historical Security Advisor baseline authority changed');
   }
   const exceptions = securityAdvisor.exceptions;
-  if (!Array.isArray(exceptions) || exceptions.length !== A2_RPC_EXCEPTIONS.length) {
-    deny(code, 'exactly eleven audited Security Advisor exceptions are required');
+  if (!Array.isArray(exceptions) || exceptions.length !== SECURITY_ADVISOR_RPC_EXCEPTIONS.length) {
+    deny(code, 'the exact audited Security Advisor exception set is required');
   }
-  const expectedByFingerprint = new Map(A2_RPC_EXCEPTIONS.map(item => [item[0], item]));
+  const expectedByFingerprint = new Map(SECURITY_ADVISOR_RPC_EXCEPTIONS.map(item => [item[0], item]));
   const fingerprints = new Set();
   const identities = new Set();
   for (const exception of exceptions) {
@@ -121,7 +126,10 @@ export function validateSecurityAdvisorPolicy(securityAdvisor) {
       deny(code, 'advisor type, severity, or technical approval is invalid');
     }
     assertExactKeys(exception.object, ['schema', 'name', 'argument_types', 'identity_arguments'], code, 'exception object');
-    const [, name, argumentTypes, identityArguments, definitionSha256] = expected;
+    const [,
+      name, argumentTypes, identityArguments, definitionSha256,
+      negativeTestEvidenceSha256, migration, migrationBlob, sourceSha,
+    ] = expected;
     if (exception.object.schema !== 'public'
       || exception.object.name !== name
       || canonicalJson(exception.object.argument_types) !== canonicalJson(argumentTypes)
@@ -153,14 +161,14 @@ export function validateSecurityAdvisorPolicy(securityAdvisor) {
       || new Set(exception.authorization.controls).size !== exception.authorization.controls.length
       || canonicalJson(exception.authorization.controls) !== canonicalJson([...exception.authorization.controls].sort())
       || exception.authorization.controls.some(control => typeof control !== 'string' || control.trim().length === 0)
-      || exception.authorization.negative_test_evidence_sha256 !== A2_NEGATIVE_TEST_EVIDENCE_SHA256) {
+      || exception.authorization.negative_test_evidence_sha256 !== negativeTestEvidenceSha256) {
       deny(code, 'exception authorization evidence is incomplete');
     }
     assertExactKeys(exception.origin, ['migration', 'migration_blob', 'source_sha'], code, 'exception origin');
-    if (exception.origin.migration !== B7_MIGRATION
-      || exception.origin.migration_blob !== B7_MIGRATION_BLOB
-      || exception.origin.source_sha !== B7_SOURCE_SHA) {
-      deny(code, 'exception origin is not the approved B7 source');
+    if (exception.origin.migration !== migration
+      || exception.origin.migration_blob !== migrationBlob
+      || exception.origin.source_sha !== sourceSha) {
+      deny(code, 'exception origin is not the exact approved source');
     }
   }
   if (fingerprints.size !== expectedByFingerprint.size) deny(code, 'audited advisor fingerprints are incomplete');
@@ -1691,7 +1699,7 @@ export function verifyPostcheckRecovery({
       || item.resource_kind !== 'authenticated_security_definer_function_executable')
     || baselineItems.length !== policy.security_advisor.baseline.count
     || sha256Hex(canonicalJson(reconstructedBaseline)) !== policy.security_advisor.baseline.cron_security_sha256) {
-    deny(code, 'current Security Advisor set is not the historical baseline plus the eleven approved exceptions');
+    deny(code, 'current Security Advisor set is not the historical baseline plus the exact approved exceptions');
   }
 
   const finance = currentEvidence.finance;

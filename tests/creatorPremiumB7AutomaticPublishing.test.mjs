@@ -7,6 +7,8 @@ const sql = read('supabase/migrations/20261010053524_creator_premium_b7_full_fun
 const worker = read('supabase/functions/content-safety-scan/index.ts');
 const visual = read('supabase/functions/content-safety-scan/visualPipeline.mjs');
 const service = read('services/creatorPremiumService.ts');
+const presentation = read('services/creatorPremiumPresentation.mjs');
+const integrationState = read('services/creatorPremiumIntegrationState.ts');
 const editor = read('app/creator-premium-editor.tsx');
 const hub = read('app/creator-monetization.tsx');
 const admin = read('apps/admin-web/src/pages/AdminCreatorPremiumPages.tsx');
@@ -239,11 +241,13 @@ test('worker scans signed private Stream media and reconciles without exposing t
 test('creator and admin UX describe automatic verification rather than routine human approval', () => {
   assert.match(service, /publishMyCreatorPremiumContent/i);
   assert.match(editor, /Publicar contenido Premium/i);
-  assert.match(editor, /Verificando contenido|Verificaci[oó]n pendiente/i);
-  assert.match(hub, /Verificando contenido|Verificaci[oó]n pendiente/i);
+  assert.match(presentation, /Verificando contenido|Verificaci[oó]n pendiente/i);
+  assert.match(editor, /creatorPremiumLifecyclePresentation/i);
+  assert.match(hub, /creatorPremiumLifecyclePresentation/i);
   assert.match(service, /'commercial_pending'/i);
-  assert.match(editor, /Seguridad aprobada[^\n]*activaci[oó]n[^\n]*plan/i);
-  assert.match(hub, /Seguridad aprobada[^\n]*activaci[oó]n[^\n]*plan/i);
+  assert.match(`${presentation}\n${integrationState}`, /Seguridad aprobada[^\n]*(?:activaci[oó]n[^\n]*plan|plan activo)/i);
+  assert.match(editor, /creatorPremiumSubmissionNotice/i);
+  assert.match(hub, /creatorPremiumLifecyclePresentation/i);
   assert.doesNotMatch(`${editor}\n${hub}`, /Enviar a revisi[oó]n administrativa|Solo (?:un )?moderador puede publicar|Esperando aprobaci[oó]n del equipo/i);
   assert.match(admin, /Seguridad Premium|Excepciones Premium/i);
   assert.doesNotMatch(admin, /action:\s*['"]approve['"]|action:\s*['"]reject['"]|\[['"]approve['"],['"]reject['"]\]/i);
