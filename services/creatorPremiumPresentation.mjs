@@ -107,7 +107,7 @@ export function creatorPremiumLifecyclePresentation(input = {}) {
   if (verification === 'pending') {
     return base(
       'processing',
-      'Verificación en curso',
+      'Verificación pendiente',
       'Los controles automáticos están procesando el contenido; el original sigue privado.',
       { polling: true, canCancel: true, tone: 'amber' },
     );

@@ -589,8 +589,9 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   validateCronSnapshot(evidence.cron_security.cron);
   validateNormalizedAdvisors(evidence.cron_security.advisors);
   validateFinanceSnapshot(evidence.finance);
+  const phaseExceptions = advisorExceptionsForPhase(policy, manifest, phase);
   validateRpcSecuritySnapshot(evidence.rpc_security);
-  validateA2RpcIdentitySet(evidence.rpc_security);
+  validateRpcIdentitySet(evidence.rpc_security, phaseExceptions);
   validatePremiumPostcheckState(evidence.premium_state);
   return evidence;
 }
@@ -623,10 +624,16 @@ export function buildProductionBaselineDigests({ evidence, policy }) {
     complete: true,
     managed_functions: managed.map(item => ({ name: item.name, verify_jwt: item.verify_jwt })),
   };
+  const attestedRpcIdentities = new Set((evidence.rpc_security?.items ?? []).map(rpcIdentity));
+  const deployedExceptionFingerprints = new Set((policy?.security_advisor?.exceptions ?? [])
+    .filter(exception => attestedRpcIdentities.has(rpcIdentity(exception.object)))
+    .map(exception => exception.advisor_fingerprint));
+  const historicalAdvisorItems = evidence.cron_security.advisors.items
+    .filter(item => !deployedExceptionFingerprints.has(item.fingerprint));
   const cronSecurity = {
     complete: true,
     cron: evidence.cron_security.cron.items,
-    security_findings: evidence.cron_security.advisors.items,
+    security_findings: historicalAdvisorItems,
   };
   const finance = {
     complete: true,
@@ -776,10 +783,16 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
   if (canonicalJson(pre.cron_security.cron) !== canonicalJson(post.cron_security.cron)) {
     fail('REMOTE_POSTCHECK_FAILED', 'cron configuration changed during release');
   }
-  const priorAdvisors = new Set(pre.cron_security.advisors.items.map(item => item.fingerprint));
-  if (post.cron_security.advisors.items.some(item => !priorAdvisors.has(item.fingerprint))) {
-    fail('REMOTE_POSTCHECK_FAILED', 'release introduced a new security advisor finding');
-  }
+  const preExceptionFingerprints = new Set(
+    advisorExceptionsForPhase(policy, manifest, 'pre').map(exception => exception.advisor_fingerprint),
+  );
+  const introducedExceptions = advisorExceptionsForPhase(policy, manifest, 'post')
+    .filter(exception => !preExceptionFingerprints.has(exception.advisor_fingerprint));
+  validateSecurityAdvisorDelta(
+    pre.cron_security.advisors.items,
+    post.cron_security.advisors.items,
+    introducedExceptions,
+  );
   if (post.finance.schema_sha256 !== pre.finance.schema_sha256
     || canonicalJson(post.finance.premium_bindings) !== canonicalJson(pre.finance.premium_bindings)
     || canonicalJson(post.finance.policy) !== canonicalJson(pre.finance.policy)
@@ -954,17 +967,25 @@ export function selectRecentCompletedBackup(body, observedAt, backupPolicy) {
   return validateNormalizedBackup(normalized, observedAt, backupPolicy);
 }
 
-function stableAdvisorValue(value) {
-  if (Array.isArray(value)) return value.map(stableAdvisorValue);
+function stableAdvisorMetadata(value) {
+  if (Array.isArray(value)) return value.map(stableAdvisorMetadata);
   if (!value || typeof value !== 'object') return value;
   const volatile = new Set(['created_at', 'detected_at', 'first_seen_at', 'last_seen_at', 'observed_at', 'updated_at']);
   return Object.fromEntries(Object.entries(value)
     .filter(([key]) => !volatile.has(key))
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, item]) => [key, stableAdvisorValue(item)]));
+    .map(([key, item]) => [key, stableAdvisorMetadata(item)]));
 }
 
-function normalizeAdvisors(body) {
+function stableAdvisorValue(lint) {
+  const stable = {};
+  for (const key of ['cache_key', 'categories', 'facing', 'level', 'metadata', 'name']) {
+    if (Object.hasOwn(lint ?? {}, key)) stable[key] = stableAdvisorMetadata(lint[key]);
+  }
+  return stable;
+}
+
+export function normalizeSecurityAdvisors(body) {
   const lints = body?.lints;
   if (!Array.isArray(lints)) fail('INVALID_REMOTE_INVENTORY', 'security advisor inventory is invalid');
   const items = lints.map(lint => {
@@ -976,6 +997,48 @@ function normalizeAdvisors(body) {
     };
   }).sort((a, b) => a.fingerprint.localeCompare(b.fingerprint));
   return { complete: true, count: items.length, items, sha256: sha256(canonicalJson(items)) };
+}
+
+function migrationIdentity(item) {
+  const path = typeof item?.path === 'string' ? item.path.replaceAll('\\', '/') : '';
+  const filename = path.split('/').at(-1) ?? '';
+  if (/^20[0-9]{12}_[a-z0-9_]+\.sql$/.test(filename)) return filename.slice(0, -4);
+  if (/^20[0-9]{12}$/.test(item?.version ?? '') && typeof item?.name === 'string') {
+    return `${item.version}_${item.name}`;
+  }
+  return null;
+}
+
+export function advisorExceptionsForPhase(policy, manifest, phase) {
+  if (!['pre', 'post', 'recovery'].includes(phase)) fail('INVALID_SNAPSHOT_IDENTITY', 'phase must be pre, post, or recovery');
+  const exceptions = policy?.security_advisor?.exceptions;
+  if (!Array.isArray(exceptions)) fail('RPC_SECURITY_ATTESTATION_FAILED', 'Security Advisor exceptions are unavailable');
+  if (phase !== 'pre') return [...exceptions];
+  const pendingMigrations = new Set((manifest?.resources?.migrations ?? []).map(migrationIdentity).filter(Boolean));
+  return exceptions.filter(exception => !pendingMigrations.has(exception?.origin?.migration));
+}
+
+function rpcIdentitiesFromExceptions(exceptions) {
+  return exceptions.map(exception => ({
+    schema: exception?.object?.schema,
+    name: exception?.object?.name,
+    argument_types: exception?.object?.argument_types,
+  }));
+}
+
+export function validateSecurityAdvisorDelta(preItems, postItems, allowedIntroducedExceptions) {
+  const before = new Set((preItems ?? []).map(item => item?.fingerprint));
+  const after = new Set((postItems ?? []).map(item => item?.fingerprint));
+  if (before.size !== (preItems ?? []).length || after.size !== (postItems ?? []).length) {
+    fail('REMOTE_POSTCHECK_FAILED', 'security advisor evidence contains duplicate fingerprints');
+  }
+  const introduced = [...after].filter(fingerprint => !before.has(fingerprint)).sort();
+  const allowed = [...(allowedIntroducedExceptions ?? [])]
+    .map(exception => exception?.advisor_fingerprint).sort();
+  if (canonicalJson(introduced) !== canonicalJson(allowed)) {
+    fail('REMOTE_POSTCHECK_FAILED', 'release Security Advisor delta differs from the exact approved exception set');
+  }
+  return true;
 }
 
 function normalizeAcl(value, code) {
@@ -1069,19 +1132,20 @@ export function normalizeRpcSecurityAttestations(rows) {
   });
 }
 
-function validateA2RpcIdentitySet(snapshot) {
-  const expected = A2_RPC_IDENTITIES
+function validateRpcIdentitySet(snapshot, exceptions) {
+  const expected = rpcIdentitiesFromExceptions(exceptions)
     .map(item => `${item.schema}.${item.name}(${item.argument_types.join(',')})`)
     .sort();
   const actual = snapshot.items.map(rpcIdentity);
   if (canonicalJson(actual) !== canonicalJson(expected)) {
-    fail('RPC_SECURITY_ATTESTATION_FAILED', 'RPC catalog does not match the exact A2 identity set');
+    fail('RPC_SECURITY_ATTESTATION_FAILED', 'RPC catalog does not match the exact phase-approved identity set');
   }
   return true;
 }
 
 export function validateRpcSecurityAttestations(snapshot, exceptions) {
   validateRpcSecuritySnapshot(snapshot);
+  validateRpcIdentitySet(snapshot, exceptions);
   if (!Array.isArray(exceptions) || exceptions.length !== snapshot.items.length) {
     fail('RPC_SECURITY_ATTESTATION_FAILED', 'exception set does not match the RPC attestation set');
   }
@@ -1260,14 +1324,15 @@ export async function captureProductionSnapshot({
     'finance snapshot',
   );
   const cronBody = await sql(CRON_SNAPSHOT_SQL, null, 'cron snapshot');
+  const phaseExceptions = advisorExceptionsForPhase(policy, manifest, phase);
   const rpcSecurityBody = await sql(
     RPC_SECURITY_ATTESTATION_SQL,
-    [JSON.stringify(A2_RPC_IDENTITIES)],
+    [JSON.stringify(rpcIdentitiesFromExceptions(phaseExceptions))],
     'RPC security attestation',
   );
   const premiumStateBody = await sql(PREMIUM_POSTCHECK_STATE_SQL, null, 'Premium postcheck state');
   const rpcSecurity = normalizeRpcSecurityAttestations(rpcSecurityBody);
-  validateA2RpcIdentitySet(rpcSecurity);
+  validateRpcIdentitySet(rpcSecurity, phaseExceptions);
   const evidence = {
     schema_version: 1,
     complete: true,
@@ -1291,7 +1356,7 @@ export async function captureProductionSnapshot({
     cron_security: {
       complete: true,
       cron: singleSnapshot(cronBody, validateCronSnapshot, 'cron snapshot'),
-      advisors: normalizeAdvisors(advisorsBody),
+      advisors: normalizeSecurityAdvisors(advisorsBody),
     },
     finance: singleSnapshot(financeBody, validateFinanceSnapshot, 'finance snapshot'),
     rpc_security: rpcSecurity,

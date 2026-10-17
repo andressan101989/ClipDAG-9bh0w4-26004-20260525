@@ -33,6 +33,22 @@ const c1Sql = c1Files.length === 1
   : '';
 
 const A2_B7_BLOB = '43f014260e0ecfa6f0634e61e1646594bcf13e1d';
+const C1_MIGRATION_BLOB = '4605ac94221a52d47190b1575ab1a71e23c82fac';
+const C1_RPC_SECURITY_CASE = {
+  signature: 'public.cancel_my_creator_premium_submission_v1(uuid)',
+  fingerprint: '053c9a441c11dc657382c6448b017d8fcf73c16fb5a3e4baf6275e24e2216129',
+  caseIds: [
+    'cancel_anon_acl',
+    'cancel_auth_required',
+    'cancel_concurrent_idempotent',
+    'cancel_cross_owner',
+    'cancel_finance_no_side_effect',
+    'cancel_invalid_state',
+    'cancel_media_offer_history_preserved',
+    'cancel_service_role_acl',
+    'cancel_stale_scan_generation_fenced',
+  ],
+};
 const A2_RPC_SECURITY_CASES = [
   {
     signature: 'public.admin_refund_creator_premium_purchase_v1(uuid,uuid,text)',
@@ -236,6 +252,7 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     c1CancelRequest: uid(), c1CancelOfferRequest: uid(), c1CancelTeaser: uid(), c1CancelOriginal: uid(),
   };
   const proved = new Set();
+  const c1Proved = new Set();
   const service = (name, args, options = {}) => asRole(
     db, 'service_role', null,
     `select public.${name}(${args.map(value => `'${value}'`).join(',')})`,
@@ -417,6 +434,8 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     assert.equal(psql(db, `select has_function_privilege('anon','public.cancel_my_creator_premium_submission_v1(uuid)','execute')`).stdout, 'f');
     assert.equal(psql(db, `select has_function_privilege('service_role','public.cancel_my_creator_premium_submission_v1(uuid)','execute')`).stdout, 'f');
     assert.equal(psql(db, `select has_function_privilege('authenticated','public.cancel_my_creator_premium_submission_v1(uuid)','execute')`).stdout, 't');
+    c1Proved.add('cancel_anon_acl');
+    c1Proved.add('cancel_service_role_acl');
     for (const item of A2_RPC_SECURITY_CASES) {
       assert.equal(
         psql(db, `select pg_catalog.has_function_privilege('anon','${item.signature}','execute')`).stdout,
@@ -660,6 +679,9 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     expectFailure(asRole(db, 'authenticated', id.other, `select public.cancel_my_creator_premium_submission_v1('${c1Cancel.id}')`, { allowFailure: true }), 'creator_premium_content_not_found');
     expectFailure(asRole(db, 'authenticated', null, `select public.cancel_my_creator_premium_submission_v1('${c1Cancel.id}')`, { allowFailure: true }), 'creator_premium_auth_required');
     expectFailure(asRole(db, 'authenticated', id.legacyCreator, `select public.cancel_my_creator_premium_submission_v1('${id.legacyDeleted}')`, { allowFailure: true }), 'creator_premium_submission_cancel_invalid_state');
+    c1Proved.add('cancel_cross_owner');
+    c1Proved.add('cancel_auth_required');
+    c1Proved.add('cancel_invalid_state');
     const c1Before = psql(db, `
       select verification_generation||'|'||
         (select count(*) from private.content_safety_scans where target_type='creator_premium' and target_id=content.id)||'|'||
@@ -675,6 +697,7 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     const cancelResults = concurrentCancel.map(result => JSON.parse(result.stdout));
     assert.equal(cancelResults.filter(result => result.cancelled === true).length, 1);
     assert.equal(cancelResults.filter(result => result.cancelled === false).length, 1);
+    c1Proved.add('cancel_concurrent_idempotent');
     assert.equal(psql(db, `
       select lifecycle_status||'|'||verification_status||'|'||
         (submitted_at is null)::text||'|'||(verification_scan_id is null)::text||'|'||
@@ -690,7 +713,9 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
       from private.creator_premium_contents content where content.id='${c1Cancel.id}'
     `).stdout.split('|');
     assert.equal(Number(c1After[0]), Number(c1Before[0]) + 1);
+    c1Proved.add('cancel_stale_scan_generation_fenced');
     assert.deepEqual(c1After.slice(1), c1Before.slice(1), 'scan history, media links, and offer versions must be preserved');
+    c1Proved.add('cancel_media_offer_history_preserved');
     expectFailure(asRole(db, 'authenticated', id.creator, `select public.admin_review_creator_premium_content_v1('${purchase.id}','approve','self approval','${uid()}')`, { allowFailure: true }), 'admin_capability_forbidden');
 
     const review = (contentId, action, reason, key = uid()) => json(adminCommand(
@@ -719,6 +744,7 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     proved.add('reopen_lock_concurrency_no_scan');
 
     assert.equal(psql(db, 'select count(*) from public.financial_transactions').stdout, '0');
+    c1Proved.add('cancel_finance_no_side_effect');
     assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.activate_my_creator_premium_plan_v1('${plan.id}') result`)).status, 'active');
     const activationReconcile = json(asRole(db, 'service_role', null, 'select public.reconcile_creator_premium_publications_v1(50)'));
     assert.ok(activationReconcile.processed >= 1);
@@ -925,6 +951,20 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     };
     const evidenceSha256 = createHash('sha256').update(`${canonicalJson(evidence)}\n`, 'utf8').digest('hex');
     t.diagnostic(`A2_RPC_SECURITY_EVIDENCE_SHA256 ${evidenceSha256}`);
+    assert.deepEqual([...c1Proved].sort(), [...C1_RPC_SECURITY_CASE.caseIds].sort());
+    const c1Evidence = {
+      schema_version: 1,
+      migration_blob: C1_MIGRATION_BLOB,
+      rpc: {
+        signature: C1_RPC_SECURITY_CASE.signature,
+        fingerprint: C1_RPC_SECURITY_CASE.fingerprint,
+        case_ids: [...C1_RPC_SECURITY_CASE.caseIds],
+        result: 'SAFE',
+      },
+      result: 'PASS',
+    };
+    const c1EvidenceSha256 = createHash('sha256').update(`${canonicalJson(c1Evidence)}\n`, 'utf8').digest('hex');
+    t.diagnostic(`C1_RPC_SECURITY_EVIDENCE_SHA256 ${c1EvidenceSha256}`);
   } finally {
     docker(`dropdb -U supabase_admin --force --if-exists ${db}`, { allowFailure: true });
   }

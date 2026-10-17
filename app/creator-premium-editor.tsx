@@ -47,7 +47,6 @@ import {
 import { uploadCreatorPremiumImagePair } from '@/services/creatorPremiumMediaService';
 import { uploadCreatorPremiumVideoMedia } from '@/services/creatorPremiumStreamService';
 import {
-  CREATOR_PREMIUM_BLOCKER_COPY as blockerCopy,
   creatorPremiumErrorMessage as messageFor,
   creatorPremiumSubmissionMediaBlocker,
   creatorPremiumSubmissionNotice,
