@@ -2024,6 +2024,7 @@ test('release path revalidates before secrets and before every mutation', () => 
   assert.match(deploy.slice(functions - 700, functions), /verify-function-contract/);
   assert.match(deploy.slice(functions, functions + 220), /--use-api/);
   assert.match(deploy, /supabase db push --dry-run --project-ref "\$NELYON_PROJECT_REF" --skip-vault --yes/);
+  assert.match(deploy, /supabase db push --dry-run --project-ref "\$NELYON_PROJECT_REF" --skip-vault --yes --output-format json/);
   assert.match(deploy, /supabase db push --project-ref "\$NELYON_PROJECT_REF" --skip-vault --yes/);
   assert.doesNotMatch(deploy, /SUPABASE_DB_PASSWORD|SUPABASE_READ_ONLY_ACCESS_TOKEN/);
   assert.match(deploy, /SUPABASE_ACCESS_TOKEN:\s*\$\{\{ secrets\.SUPABASE_ACCESS_TOKEN \}\}/);
