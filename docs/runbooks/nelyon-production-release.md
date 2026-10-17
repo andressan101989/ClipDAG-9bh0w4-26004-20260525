@@ -3,34 +3,37 @@
 This runbook operates the single production authority implemented by
 `.github/workflows/nelyon-production-release.yml`. It does not grant release
 authority by itself. The policy file, GitHub Environment, exact workflow run,
-fresh release evidence, owner approval, and postchecks must all agree.
+fresh release evidence, dispatch authorization, and postchecks must all agree.
 
 ## Single-owner security model
 
-The only authorized human account is `andressan101989`. The same owner may
-dispatch and approve a run because there is currently no second GitHub human
-administrator. This is not independent two-person review. Compensating
-controls bind approval to one run ID, run attempt, Environment ID, release ID,
-source SHA, and manifest digest. A production `release` also binds the current
-auto-deploy evidence digest; `gate_proof` does not require auto-deploy evidence.
+The only authorized human account is `andressan101989`. A scoped owner prompt
+authorizes one defined operation; Codex dispatches the canonical workflow with
+the exact SHA, unique release ID, mode, and policy confirmation class. The
+Environment uses automatic authorization, so there is no deployment approval comment
+and the owner's identity is never reused to simulate a review.
 
-Re-running a workflow creates a new attempt. A prior approval, even from the
-owner, is invalid for that attempt. Never bypass the Environment wait or use a
-historical approval comment.
+Compensating controls bind the run and attempt to the protected `main` branch,
+immutable manifest, policy digest, project, current empty deployment approval
+history, fresh auto-deploy evidence for `release`, snapshots, backup, and
+postchecks. `gate_proof` does not require auto-deploy evidence. Re-running a
+workflow creates a new attempt and repeats every technical gate.
 
 ## GitHub production configuration
 
 Configure repository **Settings → Environments → production** as follows:
 
-- Required reviewer: `andressan101989`
-- Prevent self-review: `OFF`
+- Environment ID: `23906772073`
+- Required reviewer: `None`
+- Authorization mode: `automatic`
 - Deployment branches and tags: `Selected branches and tags`
 - Selected branch: `main`
 - Allow administrators to bypass configured protection rules: `OFF`
 
-Confirm the API returns the exact Environment ID, one required-reviewers rule,
-`prevent_self_review=false`, one branch policy named `main`, and no bypass.
-The workflow rejects any other snapshot.
+Confirm the API returns the exact Environment ID, no human or timed protection
+rules, one branch policy named `main`, and no administrative bypass. The
+workflow also requires current empty deployment approval history and rejects
+any other snapshot.
 
 Create one Environment secret by name only:
 
@@ -57,8 +60,8 @@ canonical JSON, not credentials.
 
 Protect `main` with required pull requests, branch integrity controls, no
 force pushes, and no unnecessary administrative bypass. With one owner, use
-zero required code approvals so the repository remains operable; production
-still requires the Environment review.
+zero required code approvals so the repository remains operable. Production
+still requires the Environment boundary and every automated technical gate.
 
 ## Baseline candidate to verified
 
@@ -103,18 +106,18 @@ a digest. Never include a session token, cookie, credential, or unrelated UI.
 Build the evidence digest without a circular hash: first canonicalize the
 evidence object without its `sha256` field, then calculate the SHA-256 of `canonicalJson(evidenceWithoutSha256)`. Insert that lowercase digest as the
 `sha256` field, canonicalize the complete record again, and base64-encode the complete canonical JSON including `sha256` for
-`NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64`. The digest in the policy and approval
-token is the digest of the payload without `sha256`, not a hash of the final
-base64 text.
+`NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64`. The evidence digest is the digest of the
+payload without `sha256`, not a hash of the final base64 text.
 
 Treat that redacted canonical record as a release-time authority input.
 Evidence is valid for at most 15 minutes and permits at most 60 seconds
 of future clock skew. Renew it immediately before every production `release`.
-The owner must specifically confirm this fresh evidence in the approval
-comment; a general or historical confirmation fails. Renewal only updates
-`NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64` and does not require a policy commit.
-The protected policy retains the initial owner-bound cutover record and the
-static requirement that the GitHub integration remain OFF.
+The plan copies its exact canonical bytes into the immutable artifact, and the
+protected job compares those bytes with the current variable before validating
+the digest, project, branch, observer, state, and freshness. Renewal only
+updates `NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64` and does not require a policy commit.
+The protected policy retains the initial owner-bound cutover record and
+the static requirement that the GitHub integration remain OFF.
 
 After the controlled push to `main`, verify in Supabase that no automatic
 production deployment started. If any automatic deployment appears, stop,
@@ -136,18 +139,12 @@ or BDAG movement attributable to the run.
 
 Dispatch a new unique release ID, the exact current main SHA,
 `GATE_PROOF_NO_MUTATION`, and mode `gate_proof`.
-The plan summary prints the only valid Environment approval comment:
-
-```text
-NELYON-APPROVE run=<run_id> attempt=<run_attempt> env=<environment_id> release=<release_id> sha=<approved_sha> manifest=<sha256>
-```
-
-Verify every field, then open **Review deployments**, select `production`,
-paste that exact complete token as the review comment, and approve as
-`andressan101989`. The protected job must remain waiting until that action.
-After approval it re-fetches the approval endpoint for the current run and
-attempt, Environment configuration, branch policies, current main, manifest,
-and active runs.
+The protected job starts without a human review, then re-fetches the approval
+endpoint for the current run and attempt and requires a current empty
+deployment approval history. It also re-fetches Environment configuration,
+branch policies, current main, manifest, and active runs. Any approval,
+bypass, reviewer rule, wait timer, branch drift, or concurrent run fails
+closed.
 
 Successful proof ends with `GATE PROOF SUCCESS`. It must not set up the
 Supabase CLI, read deployment secrets, apply migrations, deploy functions, or
@@ -181,9 +178,9 @@ For a separately authorized future production release:
    transitive `_shared` consumer, risk, and blocker;
 4. use `RELEASE_STANDARD` or, only for explicitly reviewed sensitive scope,
    `RELEASE_HIGH_RISK`;
-5. paste the exact generated approval token into the current deployment
-   review;
-6. require post-approval revalidation before every mutation;
+5. require the automatic Environment snapshot, main-only branch policy, no
+   bypass, no human/timed protection rule, and empty current approval history;
+6. require authorization-time revalidation before every mutation;
 7. capture the bound pre-snapshot through the fixed read-only transport,
    require a fresh completed physical backup, and reduce the CLI dry-run to an
    exact timestamp list equal to the manifest;
@@ -194,12 +191,8 @@ For a separately authorized future production release:
    cron, and security comparisons before
    success.
 
-For `release`, the generated approval comment additionally binds the fresh
-auto-deploy evidence:
-
-```text
-NELYON-APPROVE run=<run_id> attempt=<run_attempt> env=<environment_id> release=<release_id> sha=<approved_sha> manifest=<sha256> auto_deploy_evidence=<evidence_id> auto_deploy_sha256=<evidence_sha256>
-```
+For `release`, the immutable artifact and byte-for-byte variable comparison
+bind the fresh auto-deploy evidence without a human deployment comment.
 
 `video-semantic-index` is a governed transitive consumer of the shared visual
 pipeline and must be included whenever that pipeline changes. The release
@@ -280,7 +273,7 @@ provider/private-media E2E as pending.
 ## Failure recovery and rollback
 
 A failed postcheck is a failed release and never advances baseline authority.
-Preserve the manifest, digest, exact approval, snapshots, and logs.
+Preserve the manifest, digest, authorization evidence, snapshots, and logs.
 
 The workflow captures a sanitized release-observation artifact even when a
 mutation or postcheck fails. It includes bounded receipts and state summaries,
@@ -293,7 +286,7 @@ unchanged findings compare deterministically.
 Database correction uses a new forward-only corrective migration reviewed in
 a later authorized release. Never perform an automatic destructive rollback.
 Edge recovery redeploys previously approved reproducible Edge source through a
-new manual release. Never infer a rollback artifact from a remote bundle hash
+new explicitly authorized release. Never infer a rollback artifact from a remote bundle hash
 or deploy an unlisted local function such as `bdag-economy`.
 
 ## Stop conditions
@@ -302,11 +295,12 @@ Stop before mutation if any of these occurs:
 
 - actor, triggering actor, repository, workflow ref, SHA, or main differs;
 - baseline or policy digest is candidate, unknown, or mismatched;
-- Environment reviewer, self-review, branch, ID, or bypass differs;
-- the approval is missing, duplicated, rejected, bypassed, historical, or for
+- Environment authorization mode, human/timed rules, branch, ID, or bypass
+  differs;
+- deployment approval history is non-empty, incomplete, historical, or from
   another attempt;
 - automatic-deploy evidence is stale, future-dated, mismatched, or not
-  specifically owner-confirmed;
+  bound to the owner-dashboard observation;
 - another production release is active;
 - the manifest, artifact, compiler, dependency graph, or source provenance is
   ambiguous;
@@ -329,7 +323,7 @@ For `plan_only` and `gate_proof`, record:
 - unchanged Premium Finance policy;
 - complete finance reconciliation with zero release-attributed BDAG movement;
 - no new production deployment attributable to the workflow;
-- exact GitHub run ID, run attempt, Environment ID, approval comment, SHA,
+- exact GitHub run ID, run attempt, Environment ID, authorization mode, SHA,
   manifest digest, and gate-proof digest; and
 - unchanged worktree count, stashes, B5 source, and ROADMAP.
 

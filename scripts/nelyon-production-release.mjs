@@ -82,6 +82,18 @@ export function validatePolicy(policy) {
   if (canonicalJson(confirmations) !== canonicalJson(expectedConfirmations)) {
     deny('INVALID_POLICY_CONFIRMATIONS', 'scope confirmations do not match');
   }
+  const expectedEnvironment = {
+    allow_admin_bypass: false,
+    authorization_mode: 'automatic',
+    id: 23906772073,
+    name: 'production',
+    prevent_self_review: false,
+    protected_branch: 'main',
+    required_reviewer: null,
+  };
+  if (canonicalJson(policy.environment) !== canonicalJson(expectedEnvironment)) {
+    deny('INVALID_ENVIRONMENT_POLICY', 'production Environment policy is invalid');
+  }
   if (!SHA_PATTERN.test(policy.baseline?.sha ?? '')) deny('INVALID_BASELINE_SHA', 'baseline SHA is invalid');
   if (!['candidate', 'verified'].includes(policy.baseline?.state)) {
     deny('INVALID_BASELINE_STATE', 'baseline state is invalid');
@@ -1327,15 +1339,26 @@ export function verifyEnvironmentSnapshot({ environment, branchPolicies, expecte
     || environment.deployment_branch_policy?.custom_branch_policies !== true) {
     fail('Environment must use a main-only custom deployment branch policy');
   }
-  const reviewerRules = (environment.protection_rules ?? []).filter(rule => rule?.type === 'required_reviewers');
-  if (reviewerRules.length !== 1) fail('Environment must have exactly one required-reviewers rule');
-  const rule = reviewerRules[0];
-  const reviewers = rule?.reviewers ?? [];
-  if (rule?.prevent_self_review !== false
-    || reviewers.length !== 1
-    || reviewers[0]?.type !== 'User'
-    || reviewers[0]?.reviewer?.login !== expected?.owner) {
-    fail('Environment reviewer must be the sole owner with self-review enabled');
+  const authorizationMode = expected?.authorizationMode ?? 'manual';
+  const protectionRules = environment.protection_rules ?? [];
+  const reviewerRules = protectionRules.filter(rule => rule?.type === 'required_reviewers');
+  if (authorizationMode === 'automatic') {
+    const interactiveRules = protectionRules.filter(rule => rule?.type !== 'branch_policy');
+    if (interactiveRules.length !== 0) {
+      fail('automatic Environment authorization must not contain human or timed protection rules');
+    }
+  } else if (authorizationMode === 'manual') {
+    if (reviewerRules.length !== 1) fail('Environment must have exactly one required-reviewers rule');
+    const rule = reviewerRules[0];
+    const reviewers = rule?.reviewers ?? [];
+    if (rule?.prevent_self_review !== false
+      || reviewers.length !== 1
+      || reviewers[0]?.type !== 'User'
+      || reviewers[0]?.reviewer?.login !== expected?.owner) {
+      fail('Environment reviewer must be the sole owner with self-review enabled');
+    }
+  } else {
+    fail('Environment authorization mode is unsupported');
   }
   const policies = flattenCompletePages(branchPolicies, 'UNSAFE_ENVIRONMENT', 'Environment branch-policy');
   if (policies.length !== 1 || policies[0]?.name !== expected?.branch) {
@@ -1373,6 +1396,20 @@ export function verifyApprovalHistory({
   return true;
 }
 
+export function verifyAutomaticAuthorizationHistory({
+  approvals,
+  expectedRunId,
+  expectedRunAttempt,
+}) {
+  const records = flattenCompletePages(approvals, 'INCOMPLETE_APPROVAL_HISTORY', 'deployment approval');
+  if (String(approvals.sourceRunId) !== String(expectedRunId)
+    || Number(approvals.sourceRunAttempt) !== Number(expectedRunAttempt)
+    || records.length !== 0) {
+    deny('INVALID_AUTOMATIC_AUTHORIZATION', 'automatic authorization requires current empty deployment approval history');
+  }
+  return true;
+}
+
 export function verifyAutoDeployEvidence({
   evidence,
   approval,
@@ -1390,7 +1427,7 @@ export function verifyAutoDeployEvidence({
     && evidence.project_ref === approval?.projectRef
     && evidence.production_branch === approval?.productionBranch
     && evidence.observed_by === approval?.owner;
-  if (!validEvidence) deny('INVALID_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence does not match the owner-approved project binding');
+  if (!validEvidence) deny('INVALID_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence does not match the policy-bound project identity');
   const observedAt = Date.parse(evidence.observed_at);
   const nowAt = Date.parse(now);
   if (!Number.isFinite(observedAt) || !Number.isFinite(nowAt)) {
@@ -2088,10 +2125,11 @@ async function runCli(argv) {
       environment,
       branchPolicies,
       expected: {
-        id: environment.id,
+        id: policy.environment.id,
         name: policy.environment.name,
         owner: policy.owner,
         branch: policy.environment.protected_branch,
+        authorizationMode: policy.environment.authorization_mode ?? 'manual',
       },
     });
     if (releaseRequest.mode === 'release' && !values['auto-deploy-evidence']) {
@@ -2100,30 +2138,40 @@ async function runCli(argv) {
     const autoDeployEvidence = releaseRequest.mode === 'release'
       ? JSON.parse(readFileSync(values['auto-deploy-evidence'], 'utf8'))
       : null;
-    const approvalToken = buildApprovalToken({
-      mode: releaseRequest.mode,
-      runId: releaseRequest.runId,
-      runAttempt: releaseRequest.runAttempt,
-      environmentId: environment.id,
-      environmentName: environment.name,
-      releaseId: releaseRequest.releaseId,
-      approvedSha: releaseRequest.approvedSha,
-      manifestDigest: verifiedBundle.digest,
-      ...(autoDeployEvidence ? {
-        evidenceId: autoDeployEvidence.id,
-        evidenceSha256: autoDeployEvidence.sha256,
-      } : {}),
-    });
     const approvals = JSON.parse(readFileSync(values.approvals, 'utf8'));
-    verifyApprovalHistory({
-      approvals,
-      expectedToken: approvalToken,
-      owner: policy.owner,
-      environmentId: environment.id,
-      environmentName: environment.name,
-      expectedRunId: releaseRequest.runId,
-      expectedRunAttempt: releaseRequest.runAttempt,
-    });
+    const authorizationMode = policy.environment.authorization_mode ?? 'manual';
+    let approvalToken = null;
+    if (authorizationMode === 'automatic') {
+      verifyAutomaticAuthorizationHistory({
+        approvals,
+        expectedRunId: releaseRequest.runId,
+        expectedRunAttempt: releaseRequest.runAttempt,
+      });
+    } else {
+      approvalToken = buildApprovalToken({
+        mode: releaseRequest.mode,
+        runId: releaseRequest.runId,
+        runAttempt: releaseRequest.runAttempt,
+        environmentId: environment.id,
+        environmentName: environment.name,
+        releaseId: releaseRequest.releaseId,
+        approvedSha: releaseRequest.approvedSha,
+        manifestDigest: verifiedBundle.digest,
+        ...(autoDeployEvidence ? {
+          evidenceId: autoDeployEvidence.id,
+          evidenceSha256: autoDeployEvidence.sha256,
+        } : {}),
+      });
+      verifyApprovalHistory({
+        approvals,
+        expectedToken: approvalToken,
+        owner: policy.owner,
+        environmentId: environment.id,
+        environmentName: environment.name,
+        expectedRunId: releaseRequest.runId,
+        expectedRunAttempt: releaseRequest.runAttempt,
+      });
+    }
     if (autoDeployEvidence) {
       verifyAutoDeployEvidence({
         evidence: autoDeployEvidence,
@@ -2154,10 +2202,11 @@ async function runCli(argv) {
       approved_sha: releaseRequest.approvedSha,
       policy_sha256: policySha256,
       manifest_sha256: verifiedBundle.digest,
+      authorization_mode: authorizationMode,
       auto_deploy_evidence: autoDeployEvidence
         ? { id: autoDeployEvidence.id, sha256: autoDeployEvidence.sha256 }
         : null,
-      approval_token_sha256: sha256Hex(approvalToken),
+      approval_token_sha256: approvalToken ? sha256Hex(approvalToken) : null,
     };
     writeFileSync(resolve(values.output), canonicalJson(proof), { encoding: 'utf8', flag: 'wx' });
     process.stdout.write(`GATE VERIFIED ${verifiedBundle.digest}\n`);
