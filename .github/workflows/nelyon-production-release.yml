@@ -341,7 +341,7 @@ jobs:
           set -euo pipefail
           supabase db push --help >/dev/null
           supabase functions deploy --help >/dev/null
-          supabase db push --dry-run --project-ref "$NELYON_PROJECT_REF" --skip-vault --yes > gate-evidence/migration-dry-run.txt
+          supabase db push --dry-run --project-ref "$NELYON_PROJECT_REF" --skip-vault --yes --output-format json > gate-evidence/migration-dry-run.txt
           test -f gate-evidence/gate-proof.json
           node "$NELYON_HELPER" verify-dry-run --input gate-evidence/migration-dry-run.txt --manifest release-artifact/bundle/manifest.json --output gate-evidence/migration-dry-run.json
           rm gate-evidence/migration-dry-run.txt
