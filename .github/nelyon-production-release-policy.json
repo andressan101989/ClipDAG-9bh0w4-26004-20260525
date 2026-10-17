@@ -1,1 +1,288 @@
-{"baseline":{"authority_source":"owner-control-plane","blocked_resources":[],"evidence":"e26a44d5af0a1ec6db14109b1084227b130d8a8a60aeecaaa74c90cb5132a395","evidence_digests":{"config_verify_jwt":"9f7f6b42cccd5086f862b1f40e659935d8a44f14943eeed80c8d7928e84f9fb9","cron_security":"65ea13c1598717b143bbf7f1779f729bf2b3cad05938dc4d42ae0af67a6a694a","finance":"94c297fb891f7c13beb92f2cfaec3145ba1ca3b23bbcd74ce39e084a8365b566","function_source_parity":"ac9cf01156cf060f8bf4e73c2fce8785e54a3af56510eef4ef41dd16a826d17a","managed_functions":"f5d650a0ea0c9eb46d003a19fb4c84e9bba8f7217e2f26c00bc04e72f9d288de","migrations":"79192e4a1ad09f5126af02af515e29c5b4afc9e156628acfe012fc96a4c9c8b1","unmanaged_functions":"e56ae5b19eb2158499e33128470663eab37cf2c6be03b3732a7d09a4d80213aa"},"latest_migration":"20261009021414_creator_premium_b5_creator_management_ux","migration_count":336,"prior_release":{"kind":"bootstrap","manifest_sha256":null,"postcheck_evidence_sha256":"c0c1c7374dfb4966859db195aaa9bc46054d8e248e661aff33eb5cf8a92334d6","release_id":null},"requires_separate_policy_commit":true,"reviewed_policy_sha256":"6341879642cf9dad81c59bd67f377328476a63f7df57a3b259e3463a70df352f","sha":"d02dda37e34493bc73b9f3b34fcd4874ef212911","state":"verified","verified_at":"2026-10-17T06:13:01.174Z","verified_by":"andressan101989"},"baseline_authority":{"environment_digest_variable":"NELYON_RELEASE_POLICY_SHA256","owner":"andressan101989","requires_separate_policy_commit":true,"source":"owner-control-plane","workflow_may_promote":false},"cutover":{"control":"supabase-github-integration-off","initial_evidence":{"id":"supabase-off-20261009T194027Z","sha256":"c36b2aaf743d77a52f1e5c79cad92c8cccd2b296e7907ef7c8485a00bd5f1b35"},"state":"verified","verified_at":"2026-10-09T19:40:27.478Z","verified_by":"andressan101989"},"default_branch":"main","environment":{"allow_admin_bypass":false,"authorization_mode":"automatic","id":23906772073,"name":"production","prevent_self_review":false,"protected_branch":"main","required_reviewer":null},"evidence":{"artifact_retention_days":90,"auto_deploy_max_age_seconds":900,"max_future_clock_skew_seconds":60},"modes":["plan_only","gate_proof","release"],"owner":"andressan101989","release_history":[],"repository":"andressan101989/ClipDAG-9bh0w4-26004-20260525","schema_version":1,"scope_confirmations":{"gate_proof":"GATE_PROOF_NO_MUTATION","plan_only":"PLAN_ONLY","release_high_risk":"RELEASE_HIGH_RISK","release_standard":"RELEASE_STANDARD"},"secrets":["SUPABASE_ACCESS_TOKEN"],"supabase":{"backup":{"max_age_seconds":86400,"require_physical":true,"required_status":"COMPLETED"},"expected_remote_function_count":34,"finance_policy":{"platform_fee_bps":0,"purchase_enabled":false,"refunds_enabled":false,"subscription_enabled":false},"forbidden_functions":["bdag-economy"],"managed_functions":["agora-token","create-media-upload","finalize-media-upload","get-media-url","delete-media-asset","cleanup-stale-media-uploads","create-stream-upload","get-stream-playback","delete-stream-video","stream-webhook","stripe-bdag-checkout","stripe-webhook","admin-user-moderation","content-safety-scan","video-semantic-index","ads-v2-delivery","ai-handoff","ai-handoff-mcp"],"project_ref":"aewwdlvbwpczqyvkwvvj"},"workflow_path":".github/workflows/nelyon-production-release.yml"}
+{
+  "baseline": {
+    "authority_source": "owner-control-plane",
+    "blocked_resources": [],
+    "evidence": "e26a44d5af0a1ec6db14109b1084227b130d8a8a60aeecaaa74c90cb5132a395",
+    "evidence_digests": {
+      "config_verify_jwt": "9f7f6b42cccd5086f862b1f40e659935d8a44f14943eeed80c8d7928e84f9fb9",
+      "cron_security": "65ea13c1598717b143bbf7f1779f729bf2b3cad05938dc4d42ae0af67a6a694a",
+      "finance": "94c297fb891f7c13beb92f2cfaec3145ba1ca3b23bbcd74ce39e084a8365b566",
+      "function_source_parity": "ac9cf01156cf060f8bf4e73c2fce8785e54a3af56510eef4ef41dd16a826d17a",
+      "managed_functions": "f5d650a0ea0c9eb46d003a19fb4c84e9bba8f7217e2f26c00bc04e72f9d288de",
+      "migrations": "79192e4a1ad09f5126af02af515e29c5b4afc9e156628acfe012fc96a4c9c8b1",
+      "unmanaged_functions": "e56ae5b19eb2158499e33128470663eab37cf2c6be03b3732a7d09a4d80213aa"
+    },
+    "latest_migration": "20261009021414_creator_premium_b5_creator_management_ux",
+    "migration_count": 336,
+    "prior_release": {
+      "kind": "bootstrap",
+      "manifest_sha256": null,
+      "postcheck_evidence_sha256": "c0c1c7374dfb4966859db195aaa9bc46054d8e248e661aff33eb5cf8a92334d6",
+      "release_id": null
+    },
+    "requires_separate_policy_commit": true,
+    "reviewed_policy_sha256": "6341879642cf9dad81c59bd67f377328476a63f7df57a3b259e3463a70df352f",
+    "sha": "d02dda37e34493bc73b9f3b34fcd4874ef212911",
+    "state": "verified",
+    "verified_at": "2026-10-17T06:13:01.174Z",
+    "verified_by": "andressan101989"
+  },
+  "baseline_authority": {
+    "environment_digest_variable": "NELYON_RELEASE_POLICY_SHA256",
+    "owner": "andressan101989",
+    "requires_separate_policy_commit": true,
+    "source": "owner-control-plane",
+    "workflow_may_promote": false
+  },
+  "cutover": {
+    "control": "supabase-github-integration-off",
+    "initial_evidence": {
+      "id": "supabase-off-20261009T194027Z",
+      "sha256": "c36b2aaf743d77a52f1e5c79cad92c8cccd2b296e7907ef7c8485a00bd5f1b35"
+    },
+    "state": "verified",
+    "verified_at": "2026-10-09T19:40:27.478Z",
+    "verified_by": "andressan101989"
+  },
+  "default_branch": "main",
+  "environment": {
+    "allow_admin_bypass": false,
+    "authorization_mode": "automatic",
+    "id": 23906772073,
+    "name": "production",
+    "prevent_self_review": false,
+    "protected_branch": "main",
+    "required_reviewer": null
+  },
+  "evidence": {
+    "artifact_retention_days": 90,
+    "auto_deploy_max_age_seconds": 900,
+    "max_future_clock_skew_seconds": 60
+  },
+  "modes": [
+    "plan_only",
+    "gate_proof",
+    "release",
+    "postcheck_recovery"
+  ],
+  "owner": "andressan101989",
+  "postcheck_recovery": {
+    "approved_sources": [
+      {
+        "run_id": "39066492485",
+        "run_attempt": 1,
+        "release_id": "nelyon-b7-autonomous-20261017T202315Z",
+        "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb",
+        "repository": "andressan101989/ClipDAG-9bh0w4-26004-20260525",
+        "mutation_status": "completed",
+        "post_snapshot_status": "success",
+        "postcheck_status": "failure",
+        "gate_artifact": { "id": "12113681896", "name": "nelyon-gate-evidence-39066492485-1", "digest": "sha256:6413dc245e07f96266501b784313c26d241868bcefe420ae13db9aad0b16960f" },
+        "release_artifact": { "id": "12113447451", "name": "nelyon-release-39066492485-1", "digest": "sha256:c468111c29831e708a6f9545e3276604bc84b879a0a2a01994f1178da3b87099" },
+        "manifest_sha256": "95700e7ad2221bf113b58da0719f41feed40f76389caeba59e3457d603998045",
+        "pre_snapshot_evidence_sha256": "5866d0a628eb390ed47b21b17c0910387274a213a0d70702fd8253cc143aee38",
+        "post_snapshot_evidence_sha256": "0625cc7c5509b1c48b442fca8cab715bbbcd759ea1dc154044cc574a76cf6ad6",
+        "expected_b7_migration": { "blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "name": "20261010053524_creator_premium_b7_full_functional_commercial_completion" },
+        "edge_functions": [
+          { "name": "ads-v2-delivery", "source_sha256": "4510ecc897a50a2f9e23d0b326f9bdfc630ce88e5f7bcea0c59e9476233d0536", "status": "ACTIVE", "verify_jwt": true, "version": 10 },
+          { "name": "cleanup-stale-media-uploads", "source_sha256": "f12df4ce69b11715faee6cb81a3afe7a8b6b275798c0a47e1442ea884dffce8d", "status": "ACTIVE", "verify_jwt": false, "version": 51 },
+          { "name": "content-safety-scan", "source_sha256": "5679bcb30867773fd1c31fde36b9f151405db58da76c92261d8a05b908213031", "status": "ACTIVE", "verify_jwt": true, "version": 37 },
+          { "name": "create-media-upload", "source_sha256": "d8f337b1cbb2c2689bfe8b58c7a1287a3ae060cfafef3845d113b523d4a1d6f8", "status": "ACTIVE", "verify_jwt": true, "version": 69 },
+          { "name": "create-stream-upload", "source_sha256": "0f9c5d5e8075c016441eb3c3f6fd2c388f72218c5af98a7cc899aa021d28a595", "status": "ACTIVE", "verify_jwt": true, "version": 35 },
+          { "name": "delete-media-asset", "source_sha256": "a3d441e5534c912df4dd7f6ea99ad513e77c834f50a400b3bab04d8862e02b04", "status": "ACTIVE", "verify_jwt": true, "version": 51 },
+          { "name": "delete-stream-video", "source_sha256": "afdc14dd7f6180cbc9f5be8652850b0a51ea996d076c157e494ff1d963aafd23", "status": "ACTIVE", "verify_jwt": true, "version": 31 },
+          { "name": "finalize-media-upload", "source_sha256": "ed7061239a3b23c0580a7ba7246b78f873de24f5492f823167709a427bdc74ce", "status": "ACTIVE", "verify_jwt": true, "version": 55 },
+          { "name": "get-media-url", "source_sha256": "033f50f797c7d696a538a12018b653ccdbe4499642be29000a0b33109db8f3da", "status": "ACTIVE", "verify_jwt": true, "version": 62 },
+          { "name": "get-stream-playback", "source_sha256": "122db3b68c4b86959d3a26721dfd2901b3d2a255b5b1b57363db7c90a577c333", "status": "ACTIVE", "verify_jwt": true, "version": 32 },
+          { "name": "stream-webhook", "source_sha256": "c123e8a35d729c9909bdd690dcf620d0259da5c4aac553aeeb1874fa60bf6475", "status": "ACTIVE", "verify_jwt": false, "version": 33 },
+          { "name": "video-semantic-index", "source_sha256": "81a0d1119016d1e4c56958f4d9a51afc5bf99552a9cd56cf8079c9adfafcaae5", "status": "ACTIVE", "verify_jwt": true, "version": 10 }
+        ],
+        "productive_resources": [
+          "migration:20261010053524_creator_premium_b7_full_functional_commercial_completion",
+          "function:ads-v2-delivery",
+          "function:cleanup-stale-media-uploads",
+          "function:content-safety-scan",
+          "function:create-media-upload",
+          "function:create-stream-upload",
+          "function:delete-media-asset",
+          "function:delete-stream-video",
+          "function:finalize-media-upload",
+          "function:get-media-url",
+          "function:get-stream-playback",
+          "function:stream-webhook",
+          "function:video-semantic-index"
+        ]
+      }
+    ]
+  },
+  "release_history": [],
+  "repository": "andressan101989/ClipDAG-9bh0w4-26004-20260525",
+  "schema_version": 2,
+  "scope_confirmations": {
+    "gate_proof": "GATE_PROOF_NO_MUTATION",
+    "plan_only": "PLAN_ONLY",
+    "postcheck_recovery": "POSTCHECK_RECOVERY_READ_ONLY",
+    "release_high_risk": "RELEASE_HIGH_RISK",
+    "release_standard": "RELEASE_STANDARD"
+  },
+  "secrets": [
+    "SUPABASE_ACCESS_TOKEN"
+  ],
+  "security_advisor": {
+    "baseline": {
+      "count": 554,
+      "cron_security_sha256": "65ea13c1598717b143bbf7f1779f729bf2b3cad05938dc4d42ae0af67a6a694a"
+    },
+    "exceptions": [
+      {
+        "advisor_fingerprint": "00657ba374cdad7085ed6b574482e19d7fa16907edcc701c94fc18c87961edb2",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "get_creator_premium_commerce_v1", "argument_types": ["uuid"], "identity_arguments": "p_content_id uuid" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86" },
+        "authorization": { "functional_reason": "Returns the caller-authorized commerce view while preserving private rows and the Finance OFF boundary.", "controls": ["authenticated_session", "entitlement_or_ownership_check", "finance_off_guard", "negative_authorization_tests", "published_safe_visibility"], "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e" },
+        "origin": { "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion", "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb" },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "1e59a5e4beb48d63e41b8f19d6cdff3470ec18e0ca57b3d35348bd2fc0921596",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "get_admin_creator_premium_content_v1", "argument_types": ["uuid"], "identity_arguments": "p_content_id uuid" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "2a91f72e122beeee0f3d3c9f59ef99f13d2aefab9bcbc987594a5ac43c40a47e" },
+        "authorization": { "functional_reason": "Exposes private moderation detail only to an authenticated administrator with the exact read capability.", "controls": ["authenticated_session", "exact_admin_capability", "negative_authorization_tests", "private_row_scope"], "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e" },
+        "origin": { "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion", "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb" },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "3bafc12c90e4b6b681d940783a2f7c18f4fff412914dfe089273361e4a985a3d",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "admin_refund_creator_premium_subscription_period_v1", "argument_types": ["uuid", "uuid", "text"], "identity_arguments": "p_period_id uuid, p_idempotency_key uuid, p_reason_code text" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "592df071aa52e846d7034e79c61f114f00eaf49d24dccd3682536e83377439ca" },
+        "authorization": { "functional_reason": "Performs an idempotent subscription-period refund only for the exact administrative capability and only when Finance permits it.", "controls": ["authenticated_session", "exact_admin_capability", "finance_off_guard", "idempotency_key", "input_validation", "negative_authorization_tests"], "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e" },
+        "origin": { "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion", "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb" },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "4840132edacadeb572fa8fd51214941fda033da797e4d60aa6cb1bb1fd7004af",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "get_my_creator_premium_commercial_summary_v1", "argument_types": ["timestamp with time zone", "timestamp with time zone"], "identity_arguments": "p_from timestamp with time zone, p_to timestamp with time zone" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "1a34a92abe226cdb66b3d8ba95b848d7576fe81e324839c9424582dc44610d05" },
+        "authorization": { "functional_reason": "Computes bounded commercial aggregates scoped exclusively to the authenticated caller.", "controls": ["authenticated_session", "bounded_date_validation", "caller_scoped_aggregation", "negative_authorization_tests"], "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e" },
+        "origin": { "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion", "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb" },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "67c61f041625ca6c348fdadffed8e2a997e40e1b6a7b6e4005d7e0ca8e7f8720",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "search_admin_creator_premium_content_v1", "argument_types": ["text", "text", "timestamp with time zone", "uuid", "integer"], "identity_arguments": "p_status text, p_query text, p_cursor_submitted_at timestamp with time zone, p_cursor_id uuid, p_limit integer" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "0379d81bef4b106861b9b59962f52e480b7b48cc1205eae938f238d1fd04ece6" },
+        "authorization": { "functional_reason": "Searches private Premium moderation records only for the exact administrative read capability with bounded filters.", "controls": ["authenticated_session", "bounded_filters", "exact_admin_capability", "negative_authorization_tests", "private_row_scope"], "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e" },
+        "origin": { "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion", "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb" },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "6c2cb58d906d98f9a58d63890eabe14a123dae7c93c177e131e284b720154c88",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "get_my_creator_premium_subscriptions_v1", "argument_types": ["timestamp with time zone", "uuid", "integer"], "identity_arguments": "p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_limit integer" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "dddaf6f218f2abe7a24d97dfdd4fc0cb125fed5b7e2088c510bd4f8368124685" },
+        "authorization": { "functional_reason": "Lists only the authenticated caller's subscriptions through a bounded cursor contract.", "controls": ["authenticated_session", "bounded_pagination", "caller_scoped_rows", "negative_authorization_tests"], "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e" },
+        "origin": { "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion", "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb" },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "818953854378a3580fa558d66b184ae7ceacac35521ce7b31c24c077cf8c5aa4",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "admin_review_creator_premium_content_v1", "argument_types": ["uuid", "text", "text", "uuid"], "identity_arguments": "p_content_id uuid, p_action text, p_reason text, p_idempotency_key uuid" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "9d2a0fdc8982eb44b9e6e2603938649305446aaf512f4bea9f930ee192d8377f" },
+        "authorization": { "functional_reason": "Transitions Premium moderation state only for the exact administrative capability and valid lifecycle action.", "controls": ["authenticated_session", "content_lifecycle_validation", "exact_admin_capability", "idempotency_key", "negative_authorization_tests"], "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e" },
+        "origin": { "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion", "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb" },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "91d927799c49e43c6e0f70e789a71a58ab4d39f10c0704f9aa7bfab2e9da7bcb",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "report_creator_premium_content_v1", "argument_types": ["uuid", "text", "text"], "identity_arguments": "p_content_id uuid, p_reason text, p_details text" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "923bce96a9cc00e71174c1aa811b791ba11710c9b370295f7474729d928d992c" },
+        "authorization": { "functional_reason": "Creates an audited report only for an authenticated reporter against visible eligible content with validated input.", "controls": ["authenticated_session", "input_validation", "negative_authorization_tests", "reporter_identity", "visibility_validation"], "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e" },
+        "origin": { "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion", "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb" },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "977f751ed2fa6c2202aac797ca71df433a804b90a7c6cc667bd2813dd5c33adc",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "reopen_my_creator_premium_rejected_v1", "argument_types": ["uuid"], "identity_arguments": "p_content_id uuid" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "091cb8b2f35c9e76f515295e45310bbee9af8e6a1567d26ddfa0be34b5ceba5d" },
+        "authorization": { "functional_reason": "Reopens only caller-owned rejected content while preserving private review and publication safety.", "controls": ["authenticated_session", "content_ownership", "negative_authorization_tests", "rejected_only_lifecycle", "safe_publication_guard"], "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e" },
+        "origin": { "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion", "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb" },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "bd0ce992865c9e2c34a64970b0c9c0a619a0d604d0a046429ec9c030ccd3d709",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "get_admin_creator_premium_refund_candidates_v1", "argument_types": ["uuid"], "identity_arguments": "p_content_id uuid" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "9f35908f01a3ff9100f0fc2d562d4c2471a33bb15a54d1dbbcf754bacde9ea00" },
+        "authorization": { "functional_reason": "Lists refund candidates only for an authenticated administrator with the exact refund and reconciliation capability.", "controls": ["authenticated_session", "exact_admin_capability", "negative_authorization_tests", "refund_scope_validation"], "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e" },
+        "origin": { "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion", "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb" },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "ed47c5c8fd92b0a9111c500797b896e5f4adda72528447877e07d3bf7fc976f4",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "admin_refund_creator_premium_purchase_v1", "argument_types": ["uuid", "uuid", "text"], "identity_arguments": "p_receipt_id uuid, p_idempotency_key uuid, p_reason_code text" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "13a0a7da560d681b0b04a8505bc09eb1fe12e31cf04779be984872f926ee6d45" },
+        "authorization": { "functional_reason": "Performs an idempotent purchase refund only for the exact administrative capability and only when Finance permits it.", "controls": ["authenticated_session", "exact_admin_capability", "finance_off_guard", "idempotency_key", "input_validation", "negative_authorization_tests"], "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e" },
+        "origin": { "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion", "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb" },
+        "technical_approval": "verified"
+      }
+    ]
+  },
+  "supabase": {
+    "backup": {
+      "max_age_seconds": 86400,
+      "require_physical": true,
+      "required_status": "COMPLETED"
+    },
+    "expected_remote_function_count": 34,
+    "finance_policy": {
+      "platform_fee_bps": 0,
+      "purchase_enabled": false,
+      "refunds_enabled": false,
+      "subscription_enabled": false
+    },
+    "forbidden_functions": [
+      "bdag-economy"
+    ],
+    "managed_functions": [
+      "agora-token",
+      "create-media-upload",
+      "finalize-media-upload",
+      "get-media-url",
+      "delete-media-asset",
+      "cleanup-stale-media-uploads",
+      "create-stream-upload",
+      "get-stream-playback",
+      "delete-stream-video",
+      "stream-webhook",
+      "stripe-bdag-checkout",
+      "stripe-webhook",
+      "admin-user-moderation",
+      "content-safety-scan",
+      "video-semantic-index",
+      "ads-v2-delivery",
+      "ai-handoff",
+      "ai-handoff-mcp"
+    ],
+    "project_ref": "aewwdlvbwpczqyvkwvvj"
+  },
+  "workflow_path": ".github/workflows/nelyon-production-release.yml"
+}

@@ -35,6 +35,23 @@ const MANAGED_FUNCTIONS = [
   'ai-handoff',
   'ai-handoff-mcp',
 ];
+const A2_EXCEPTION_FINGERPRINTS = [
+  '00657ba374cdad7085ed6b574482e19d7fa16907edcc701c94fc18c87961edb2',
+  '1e59a5e4beb48d63e41b8f19d6cdff3470ec18e0ca57b3d35348bd2fc0921596',
+  '3bafc12c90e4b6b681d940783a2f7c18f4fff412914dfe089273361e4a985a3d',
+  '4840132edacadeb572fa8fd51214941fda033da797e4d60aa6cb1bb1fd7004af',
+  '67c61f041625ca6c348fdadffed8e2a997e40e1b6a7b6e4005d7e0ca8e7f8720',
+  '6c2cb58d906d98f9a58d63890eabe14a123dae7c93c177e131e284b720154c88',
+  '818953854378a3580fa558d66b184ae7ceacac35521ce7b31c24c077cf8c5aa4',
+  '91d927799c49e43c6e0f70e789a71a58ab4d39f10c0704f9aa7bfab2e9da7bcb',
+  '977f751ed2fa6c2202aac797ca71df433a804b90a7c6cc667bd2813dd5c33adc',
+  'bd0ce992865c9e2c34a64970b0c9c0a619a0d604d0a046429ec9c030ccd3d709',
+  'ed47c5c8fd92b0a9111c500797b896e5f4adda72528447877e07d3bf7fc976f4',
+];
+const A2_PREEXISTING_FINGERPRINTS = [
+  '44c69807ea7e06dadbd8f841ec50a8911c25a76b28ed8096ec6fea66d129b55b',
+  '92d3ea284e4ee4c77be88f4a3cade83460caa098dbbc3028587388cf0158933b',
+];
 
 async function loadGateAndPolicy() {
   assert.ok(existsSync(policyUrl), 'release policy must exist');
@@ -131,12 +148,14 @@ test('policy accepts the exact repository owner project modes and managed functi
   assert.equal(policy.owner, OWNER);
   assert.equal(policy.repository, REPOSITORY);
   assert.equal(policy.supabase.project_ref, PROJECT_REF);
-  assert.deepEqual(policy.modes, ['plan_only', 'gate_proof', 'release']);
+  assert.equal(policy.schema_version, 2);
+  assert.deepEqual(policy.modes, ['plan_only', 'gate_proof', 'release', 'postcheck_recovery']);
   assert.deepEqual(policy.scope_confirmations, {
     gate_proof: 'GATE_PROOF_NO_MUTATION',
     plan_only: 'PLAN_ONLY',
     release_high_risk: 'RELEASE_HIGH_RISK',
     release_standard: 'RELEASE_STANDARD',
+    postcheck_recovery: 'POSTCHECK_RECOVERY_READ_ONLY',
   });
   assert.deepEqual(policy.supabase.managed_functions, MANAGED_FUNCTIONS);
   assert.deepEqual(policy.supabase.forbidden_functions, ['bdag-economy']);
@@ -149,6 +168,92 @@ test('policy accepts the exact repository owner project modes and managed functi
   assert.equal(policy.environment.authorization_mode, 'automatic');
   assert.equal(policy.environment.id, 23906772073);
   assert.equal(policy.environment.required_reviewer, null);
+});
+
+test('Security Advisor exceptions are exact RPC-bound verified attestations', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  assert.equal(gate.validateSecurityAdvisorPolicy(policy.security_advisor), true);
+  assert.equal(policy.security_advisor.baseline.count, 554);
+  assert.equal(policy.security_advisor.baseline.cron_security_sha256, '65ea13c1598717b143bbf7f1779f729bf2b3cad05938dc4d42ae0af67a6a694a');
+  const exceptions = policy.security_advisor.exceptions;
+  assert.equal(exceptions.length, 11);
+  assert.deepEqual(exceptions.map(item => item.advisor_fingerprint).sort(), A2_EXCEPTION_FINGERPRINTS);
+  assert.equal(exceptions.some(item => A2_PREEXISTING_FINGERPRINTS.includes(item.advisor_fingerprint)), false);
+  for (const exception of exceptions) {
+    assert.equal(exception.advisor_type, 'authenticated_security_definer_function_executable');
+    assert.equal(exception.advisor_severity, 'WARN');
+    assert.equal(exception.object.schema, 'public');
+    assert.ok(exception.object.name.length > 0);
+    assert.ok(exception.object.argument_types.length > 0);
+    assert.ok(exception.object.identity_arguments.length > 0);
+    assert.equal(exception.attestation.security_definer, true);
+    assert.equal(exception.attestation.owner, 'postgres');
+    assert.deepEqual(exception.attestation.search_path, ['search_path=""']);
+    assert.deepEqual(exception.attestation.execute, {
+      anon: false,
+      authenticated: true,
+      public: false,
+      service_role: false,
+    });
+    assert.match(exception.attestation.definition_sha256, /^[0-9a-f]{64}$/);
+    assert.ok(exception.authorization.functional_reason.length > 0);
+    assert.deepEqual([...exception.authorization.controls].sort(), exception.authorization.controls);
+    assert.match(exception.authorization.negative_test_evidence_sha256, /^[0-9a-f]{64}$/);
+    assert.equal(exception.origin.migration, '20261010053524_creator_premium_b7_full_functional_commercial_completion');
+    assert.equal(exception.origin.migration_blob, '43f014260e0ecfa6f0634e61e1646594bcf13e1d');
+    assert.equal(exception.origin.source_sha, '0560b9e1fdc0869dfcd4d04f081de03ba31b66cb');
+    assert.equal(exception.technical_approval, 'verified');
+  }
+  for (const mutate of [
+    candidate => { candidate.exceptions[0].advisor_fingerprint = `${candidate.exceptions[0].advisor_fingerprint.slice(0, 63)}*`; },
+    candidate => { candidate.exceptions.push(structuredClone(candidate.exceptions[0])); },
+    candidate => { candidate.exceptions[0].technical_approval = 'pending'; },
+    candidate => { candidate.exceptions[0].authorization.negative_test_evidence_sha256 = null; },
+    candidate => { candidate.exceptions[0].attestation.acl = []; },
+  ]) {
+    const candidate = structuredClone(policy.security_advisor);
+    mutate(candidate);
+    assertDenied(() => gate.validateSecurityAdvisorPolicy(candidate), 'INVALID_SECURITY_ADVISOR_POLICY');
+  }
+});
+
+test('recovery source is exact immutable failed-postcheck authority', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  assert.equal(policy.postcheck_recovery.approved_sources.length, 1);
+  const source = policy.postcheck_recovery.approved_sources[0];
+  assert.equal(gate.validateRecoverySource(source), true);
+  assert.equal(source.run_id, '39066492485');
+  assert.equal(source.run_attempt, 1);
+  assert.equal(source.release_id, 'nelyon-b7-autonomous-20261017T202315Z');
+  assert.equal(source.source_sha, '0560b9e1fdc0869dfcd4d04f081de03ba31b66cb');
+  assert.equal(source.mutation_status, 'completed');
+  assert.equal(source.post_snapshot_status, 'success');
+  assert.equal(source.postcheck_status, 'failure');
+  assert.equal(source.edge_functions.length, 12);
+  assert.equal(new Set(source.edge_functions.map(item => item.name)).size, 12);
+  for (const mutate of [
+    candidate => { candidate.run_id = '39066492486'; },
+    candidate => { candidate.postcheck_status = 'success'; },
+    candidate => { candidate.release_artifact.digest = candidate.release_artifact.digest.slice(0, 20); },
+    candidate => { candidate.edge_functions.push(structuredClone(candidate.edge_functions[0])); },
+    candidate => { candidate.productive_resources.push('another-migration'); },
+  ]) {
+    const candidate = structuredClone(source);
+    mutate(candidate);
+    assertDenied(() => gate.validateRecoverySource(candidate), 'INVALID_RECOVERY_SOURCE');
+  }
+});
+
+test('postcheck recovery request requires its exact read-only confirmation', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  assert.equal(gate.validateRequest(request({
+    mode: 'postcheck_recovery',
+    scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
+  }), policy).mode, 'postcheck_recovery');
+  assertDenied(() => gate.validateRequest(request({
+    mode: 'postcheck_recovery',
+    scopeConfirmation: 'RELEASE_STANDARD',
+  }), policy), 'SCOPE_CONFIRMATION_MISMATCH');
 });
 
 test('policy pins the automatic main-only Environment contract', async () => {

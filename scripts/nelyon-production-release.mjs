@@ -8,7 +8,38 @@ import { verifyProductionPreSnapshot, verifyProductionSnapshotPair } from './nel
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
-const EXACT_MODES = ['plan_only', 'gate_proof', 'release'];
+const EXACT_MODES = ['plan_only', 'gate_proof', 'release', 'postcheck_recovery'];
+const A2_NEGATIVE_TEST_EVIDENCE_SHA256 = '47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e';
+const B7_MIGRATION = '20261010053524_creator_premium_b7_full_functional_commercial_completion';
+const B7_MIGRATION_BLOB = '43f014260e0ecfa6f0634e61e1646594bcf13e1d';
+const B7_SOURCE_SHA = '0560b9e1fdc0869dfcd4d04f081de03ba31b66cb';
+const A2_RPC_EXCEPTIONS = [
+  ['00657ba374cdad7085ed6b574482e19d7fa16907edcc701c94fc18c87961edb2', 'get_creator_premium_commerce_v1', ['uuid'], 'p_content_id uuid', '30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86'],
+  ['1e59a5e4beb48d63e41b8f19d6cdff3470ec18e0ca57b3d35348bd2fc0921596', 'get_admin_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', '2a91f72e122beeee0f3d3c9f59ef99f13d2aefab9bcbc987594a5ac43c40a47e'],
+  ['3bafc12c90e4b6b681d940783a2f7c18f4fff412914dfe089273361e4a985a3d', 'admin_refund_creator_premium_subscription_period_v1', ['uuid', 'uuid', 'text'], 'p_period_id uuid, p_idempotency_key uuid, p_reason_code text', '592df071aa52e846d7034e79c61f114f00eaf49d24dccd3682536e83377439ca'],
+  ['4840132edacadeb572fa8fd51214941fda033da797e4d60aa6cb1bb1fd7004af', 'get_my_creator_premium_commercial_summary_v1', ['timestamp with time zone', 'timestamp with time zone'], 'p_from timestamp with time zone, p_to timestamp with time zone', '1a34a92abe226cdb66b3d8ba95b848d7576fe81e324839c9424582dc44610d05'],
+  ['67c61f041625ca6c348fdadffed8e2a997e40e1b6a7b6e4005d7e0ca8e7f8720', 'search_admin_creator_premium_content_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer'], 'p_status text, p_query text, p_cursor_submitted_at timestamp with time zone, p_cursor_id uuid, p_limit integer', '0379d81bef4b106861b9b59962f52e480b7b48cc1205eae938f238d1fd04ece6'],
+  ['6c2cb58d906d98f9a58d63890eabe14a123dae7c93c177e131e284b720154c88', 'get_my_creator_premium_subscriptions_v1', ['timestamp with time zone', 'uuid', 'integer'], 'p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_limit integer', 'dddaf6f218f2abe7a24d97dfdd4fc0cb125fed5b7e2088c510bd4f8368124685'],
+  ['818953854378a3580fa558d66b184ae7ceacac35521ce7b31c24c077cf8c5aa4', 'admin_review_creator_premium_content_v1', ['uuid', 'text', 'text', 'uuid'], 'p_content_id uuid, p_action text, p_reason text, p_idempotency_key uuid', '9d2a0fdc8982eb44b9e6e2603938649305446aaf512f4bea9f930ee192d8377f'],
+  ['91d927799c49e43c6e0f70e789a71a58ab4d39f10c0704f9aa7bfab2e9da7bcb', 'report_creator_premium_content_v1', ['uuid', 'text', 'text'], 'p_content_id uuid, p_reason text, p_details text', '923bce96a9cc00e71174c1aa811b791ba11710c9b370295f7474729d928d992c'],
+  ['977f751ed2fa6c2202aac797ca71df433a804b90a7c6cc667bd2813dd5c33adc', 'reopen_my_creator_premium_rejected_v1', ['uuid'], 'p_content_id uuid', '091cb8b2f35c9e76f515295e45310bbee9af8e6a1567d26ddfa0be34b5ceba5d'],
+  ['bd0ce992865c9e2c34a64970b0c9c0a619a0d604d0a046429ec9c030ccd3d709', 'get_admin_creator_premium_refund_candidates_v1', ['uuid'], 'p_content_id uuid', '9f35908f01a3ff9100f0fc2d562d4c2471a33bb15a54d1dbbcf754bacde9ea00'],
+  ['ed47c5c8fd92b0a9111c500797b896e5f4adda72528447877e07d3bf7fc976f4', 'admin_refund_creator_premium_purchase_v1', ['uuid', 'uuid', 'text'], 'p_receipt_id uuid, p_idempotency_key uuid, p_reason_code text', '13a0a7da560d681b0b04a8505bc09eb1fe12e31cf04779be984872f926ee6d45'],
+];
+const B7_EDGE_ATTESTATIONS = [
+  ['ads-v2-delivery', 10, true, '4510ecc897a50a2f9e23d0b326f9bdfc630ce88e5f7bcea0c59e9476233d0536'],
+  ['cleanup-stale-media-uploads', 51, false, 'f12df4ce69b11715faee6cb81a3afe7a8b6b275798c0a47e1442ea884dffce8d'],
+  ['content-safety-scan', 37, true, '5679bcb30867773fd1c31fde36b9f151405db58da76c92261d8a05b908213031'],
+  ['create-media-upload', 69, true, 'd8f337b1cbb2c2689bfe8b58c7a1287a3ae060cfafef3845d113b523d4a1d6f8'],
+  ['create-stream-upload', 35, true, '0f9c5d5e8075c016441eb3c3f6fd2c388f72218c5af98a7cc899aa021d28a595'],
+  ['delete-media-asset', 51, true, 'a3d441e5534c912df4dd7f6ea99ad513e77c834f50a400b3bab04d8862e02b04'],
+  ['delete-stream-video', 31, true, 'afdc14dd7f6180cbc9f5be8652850b0a51ea996d076c157e494ff1d963aafd23'],
+  ['finalize-media-upload', 55, true, 'ed7061239a3b23c0580a7ba7246b78f873de24f5492f823167709a427bdc74ce'],
+  ['get-media-url', 62, true, '033f50f797c7d696a538a12018b653ccdbe4499642be29000a0b33109db8f3da'],
+  ['get-stream-playback', 32, true, '122db3b68c4b86959d3a26721dfd2901b3d2a255b5b1b57363db7c90a577c333'],
+  ['stream-webhook', 33, false, 'c123e8a35d729c9909bdd690dcf620d0259da5c4aac553aeeb1874fa60bf6475'],
+  ['video-semantic-index', 10, true, '81a0d1119016d1e4c56958f4d9a51afc5bf99552a9cd56cf8079c9adfafcaae5'],
+];
 const REQUIRED_FINANCE_RECONCILIATIONS = [
   'account_balance_ledger_mismatch',
   'completed_credit_account_mismatch',
@@ -52,11 +83,148 @@ function assertExactArray(actual, expected, code, label) {
   }
 }
 
+function assertExactKeys(value, expected, code, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || canonicalJson(Object.keys(value).sort()) !== canonicalJson([...expected].sort())) {
+    deny(code, `${label} keys do not match the controlled policy`);
+  }
+}
+
+function assertSha256(value, code, label) {
+  if (!/^[0-9a-f]{64}$/.test(value ?? '')) deny(code, `${label} is not a full SHA-256`);
+}
+
+export function validateSecurityAdvisorPolicy(securityAdvisor) {
+  const code = 'INVALID_SECURITY_ADVISOR_POLICY';
+  assertExactKeys(securityAdvisor, ['baseline', 'exceptions'], code, 'Security Advisor policy');
+  assertExactKeys(securityAdvisor.baseline, ['count', 'cron_security_sha256'], code, 'Security Advisor baseline');
+  if (securityAdvisor.baseline.count !== 554
+    || securityAdvisor.baseline.cron_security_sha256 !== '65ea13c1598717b143bbf7f1779f729bf2b3cad05938dc4d42ae0af67a6a694a') {
+    deny(code, 'historical Security Advisor baseline authority changed');
+  }
+  const exceptions = securityAdvisor.exceptions;
+  if (!Array.isArray(exceptions) || exceptions.length !== A2_RPC_EXCEPTIONS.length) {
+    deny(code, 'exactly eleven audited Security Advisor exceptions are required');
+  }
+  const expectedByFingerprint = new Map(A2_RPC_EXCEPTIONS.map(item => [item[0], item]));
+  const fingerprints = new Set();
+  const identities = new Set();
+  for (const exception of exceptions) {
+    assertExactKeys(exception, ['advisor_fingerprint', 'advisor_type', 'advisor_severity', 'object', 'attestation', 'authorization', 'origin', 'technical_approval'], code, 'Security Advisor exception');
+    assertSha256(exception.advisor_fingerprint, code, 'advisor fingerprint');
+    const expected = expectedByFingerprint.get(exception.advisor_fingerprint);
+    if (!expected || fingerprints.has(exception.advisor_fingerprint)) deny(code, 'unknown or duplicate advisor fingerprint');
+    fingerprints.add(exception.advisor_fingerprint);
+    if (exception.advisor_type !== 'authenticated_security_definer_function_executable'
+      || exception.advisor_severity !== 'WARN'
+      || exception.technical_approval !== 'verified') {
+      deny(code, 'advisor type, severity, or technical approval is invalid');
+    }
+    assertExactKeys(exception.object, ['schema', 'name', 'argument_types', 'identity_arguments'], code, 'exception object');
+    const [, name, argumentTypes, identityArguments, definitionSha256] = expected;
+    if (exception.object.schema !== 'public'
+      || exception.object.name !== name
+      || canonicalJson(exception.object.argument_types) !== canonicalJson(argumentTypes)
+      || exception.object.identity_arguments !== identityArguments) {
+      deny(code, 'exception RPC identity does not match audited evidence');
+    }
+    const identity = `${exception.object.schema}.${name}(${argumentTypes.join(',')})`;
+    if (identities.has(identity)) deny(code, 'duplicate exception RPC identity');
+    identities.add(identity);
+    assertExactKeys(exception.attestation, ['security_definer', 'owner', 'search_path', 'acl', 'execute', 'definition_sha256'], code, 'exception attestation');
+    const expectedAcl = [
+      { grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false },
+      { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+    ];
+    const expectedExecute = { anon: false, authenticated: true, public: false, service_role: false };
+    if (exception.attestation.security_definer !== true
+      || exception.attestation.owner !== 'postgres'
+      || canonicalJson(exception.attestation.search_path) !== canonicalJson(['search_path=""'])
+      || canonicalJson(exception.attestation.acl) !== canonicalJson(expectedAcl)
+      || canonicalJson(exception.attestation.execute) !== canonicalJson(expectedExecute)
+      || exception.attestation.definition_sha256 !== definitionSha256) {
+      deny(code, 'exception catalog attestation does not match audited evidence');
+    }
+    assertExactKeys(exception.authorization, ['functional_reason', 'controls', 'negative_test_evidence_sha256'], code, 'exception authorization');
+    if (typeof exception.authorization.functional_reason !== 'string'
+      || exception.authorization.functional_reason.trim().length < 12
+      || !Array.isArray(exception.authorization.controls)
+      || exception.authorization.controls.length === 0
+      || new Set(exception.authorization.controls).size !== exception.authorization.controls.length
+      || canonicalJson(exception.authorization.controls) !== canonicalJson([...exception.authorization.controls].sort())
+      || exception.authorization.controls.some(control => typeof control !== 'string' || control.trim().length === 0)
+      || exception.authorization.negative_test_evidence_sha256 !== A2_NEGATIVE_TEST_EVIDENCE_SHA256) {
+      deny(code, 'exception authorization evidence is incomplete');
+    }
+    assertExactKeys(exception.origin, ['migration', 'migration_blob', 'source_sha'], code, 'exception origin');
+    if (exception.origin.migration !== B7_MIGRATION
+      || exception.origin.migration_blob !== B7_MIGRATION_BLOB
+      || exception.origin.source_sha !== B7_SOURCE_SHA) {
+      deny(code, 'exception origin is not the approved B7 source');
+    }
+  }
+  if (fingerprints.size !== expectedByFingerprint.size) deny(code, 'audited advisor fingerprints are incomplete');
+  return true;
+}
+
+export function validateRecoverySource(source) {
+  const code = 'INVALID_RECOVERY_SOURCE';
+  assertExactKeys(source, ['run_id', 'run_attempt', 'release_id', 'source_sha', 'repository', 'mutation_status', 'post_snapshot_status', 'postcheck_status', 'gate_artifact', 'release_artifact', 'manifest_sha256', 'pre_snapshot_evidence_sha256', 'post_snapshot_evidence_sha256', 'expected_b7_migration', 'edge_functions', 'productive_resources'], code, 'recovery source');
+  if (source.run_id !== '39066492485'
+    || source.run_attempt !== 1
+    || source.release_id !== 'nelyon-b7-autonomous-20261017T202315Z'
+    || source.source_sha !== B7_SOURCE_SHA
+    || source.repository !== 'andressan101989/ClipDAG-9bh0w4-26004-20260525'
+    || source.mutation_status !== 'completed'
+    || source.post_snapshot_status !== 'success'
+    || source.postcheck_status !== 'failure') {
+    deny(code, 'recovery source identity or failed-postcheck shape is invalid');
+  }
+  for (const [artifact, expected] of [
+    [source.gate_artifact, { id: '12113681896', name: 'nelyon-gate-evidence-39066492485-1', digest: 'sha256:6413dc245e07f96266501b784313c26d241868bcefe420ae13db9aad0b16960f' }],
+    [source.release_artifact, { id: '12113447451', name: 'nelyon-release-39066492485-1', digest: 'sha256:c468111c29831e708a6f9545e3276604bc84b879a0a2a01994f1178da3b87099' }],
+  ]) {
+    assertExactKeys(artifact, ['id', 'name', 'digest'], code, 'source artifact');
+    if (canonicalJson(artifact) !== canonicalJson(expected)) deny(code, 'source artifact identity is invalid');
+  }
+  for (const [field, expected] of [
+    ['manifest_sha256', '95700e7ad2221bf113b58da0719f41feed40f76389caeba59e3457d603998045'],
+    ['pre_snapshot_evidence_sha256', '5866d0a628eb390ed47b21b17c0910387274a213a0d70702fd8253cc143aee38'],
+    ['post_snapshot_evidence_sha256', '0625cc7c5509b1c48b442fca8cab715bbbcd759ea1dc154044cc574a76cf6ad6'],
+  ]) {
+    assertSha256(source[field], code, field);
+    if (source[field] !== expected) deny(code, `${field} does not match the approved source`);
+  }
+  const expectedMigration = { blob: B7_MIGRATION_BLOB, name: B7_MIGRATION };
+  if (canonicalJson(source.expected_b7_migration) !== canonicalJson(expectedMigration)) {
+    deny(code, 'approved B7 migration identity changed');
+  }
+  const expectedEdges = B7_EDGE_ATTESTATIONS.map(([name, version, verifyJwt, sourceSha256]) => ({
+    name,
+    source_sha256: sourceSha256,
+    status: 'ACTIVE',
+    verify_jwt: verifyJwt,
+    version,
+  }));
+  if (canonicalJson(source.edge_functions) !== canonicalJson(expectedEdges)
+    || new Set(source.edge_functions?.map(item => item.name)).size !== expectedEdges.length) {
+    deny(code, 'approved source Edge attestations changed or expanded');
+  }
+  const expectedResources = [
+    `migration:${B7_MIGRATION}`,
+    ...B7_EDGE_ATTESTATIONS.map(([name]) => `function:${name}`),
+  ];
+  if (canonicalJson(source.productive_resources) !== canonicalJson(expectedResources)) {
+    deny(code, 'approved source productive resources changed or expanded');
+  }
+  return true;
+}
+
 export function validatePolicy(policy) {
   if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
     deny('INVALID_POLICY', 'policy must be an object');
   }
-  if (policy.schema_version !== 1) deny('INVALID_POLICY_SCHEMA', 'unsupported policy schema');
+  if (policy.schema_version !== 2) deny('INVALID_POLICY_SCHEMA', 'unsupported policy schema');
   if (policy.owner !== 'andressan101989') deny('INVALID_POLICY_OWNER', 'unexpected policy owner');
   if (policy.repository !== 'andressan101989/ClipDAG-9bh0w4-26004-20260525') {
     deny('INVALID_POLICY_REPOSITORY', 'unexpected repository authority');
@@ -78,6 +246,7 @@ export function validatePolicy(policy) {
     gate_proof: 'GATE_PROOF_NO_MUTATION',
     release_standard: 'RELEASE_STANDARD',
     release_high_risk: 'RELEASE_HIGH_RISK',
+    postcheck_recovery: 'POSTCHECK_RECOVERY_READ_ONLY',
   };
   if (canonicalJson(confirmations) !== canonicalJson(expectedConfirmations)) {
     deny('INVALID_POLICY_CONFIRMATIONS', 'scope confirmations do not match');
@@ -158,6 +327,13 @@ export function validatePolicy(policy) {
     }
   }
   assertExactArray(policy.supabase?.forbidden_functions, ['bdag-economy'], 'INVALID_FORBIDDEN_FUNCTIONS', 'forbidden functions');
+  validateSecurityAdvisorPolicy(policy.security_advisor);
+  assertExactKeys(policy.postcheck_recovery, ['approved_sources'], 'INVALID_RECOVERY_POLICY', 'postcheck recovery policy');
+  if (!Array.isArray(policy.postcheck_recovery.approved_sources)
+    || policy.postcheck_recovery.approved_sources.length !== 1) {
+    deny('INVALID_RECOVERY_POLICY', 'exactly one approved recovery source is required');
+  }
+  validateRecoverySource(policy.postcheck_recovery.approved_sources[0]);
   return true;
 }
 
@@ -176,6 +352,7 @@ function expectedConfirmation(request, policy) {
     }
     return policy.scope_confirmations.release_standard;
   }
+  if (request.mode === 'postcheck_recovery') return policy.scope_confirmations.postcheck_recovery;
   return null;
 }
 
