@@ -10,6 +10,7 @@ const stream = read('services/creatorPremiumStreamService.ts');
 const hub = read('app/creator-monetization.tsx');
 const editorPath = path.join(root, 'app/creator-premium-editor.tsx');
 const editor = existsSync(editorPath) ? readFileSync(editorPath, 'utf8') : '';
+const presentation = read('services/creatorPremiumPresentation.mjs');
 const upload = read('app/(tabs)/upload.tsx');
 const profile = read('app/creator/[id].tsx');
 
@@ -116,8 +117,9 @@ test('editor supports truthful draft, media, commercial, and automatic verificat
   assert.match(editor, /uploadCreatorPremiumImagePair/);
   assert.match(editor, /uploadCreatorPremiumVideoMedia/);
   assert.match(editor, /creator_premium_teaser_image|teaser/i);
-  assert.match(editor, /pending_review/);
-  assert.match(editor, /verification_status/);
+  assert.match(editor, /creatorPremiumLifecyclePresentation/);
+  assert.match(presentation, /pending_review/);
+  assert.match(presentation, /verification_status/);
   assert.match(editor, /AbortController/);
   assert.match(editor, /processing/);
   assert.doesNotMatch(editor, /Publicar ahora/i);

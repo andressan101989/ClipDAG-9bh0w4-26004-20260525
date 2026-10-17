@@ -701,7 +701,7 @@ function CreatorPremiumHubContent() {
                       <Text style={[styles.meta, mappingUnavailable && { color: Colors.warning }]}>
                         {mappingUnavailable
                           ? 'No disponible; quítalo para guardar esta versión.'
-                          : contentStatus[item.lifecycle_status]}
+                          : creatorPremiumLifecyclePresentation(item).label}
                       </Text>
                     </View>
                   </Pressable>

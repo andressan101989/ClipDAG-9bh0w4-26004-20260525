@@ -13,6 +13,15 @@ export type CreatorPremiumLifecyclePresentation = Readonly<{
   canDelete: boolean;
 }>;
 
+export type CreatorPremiumLifecycleActions = Readonly<{
+  editable: boolean;
+  canSubmit: boolean;
+  canDelete: boolean;
+  canCancel: boolean;
+  canRetry: boolean;
+  canReopen: boolean;
+}>;
+
 export type CreatorPremiumVideoPickerAsset = Readonly<{
   uri: string;
   mimeType: string | null | undefined;
@@ -38,5 +47,12 @@ export function creatorPremiumLifecyclePresentation(input?: {
   review_reason?: string | null;
   removal_reason?: string | null;
 }): CreatorPremiumLifecyclePresentation;
+export function creatorPremiumLifecycleActions(input?: {
+  lifecycle_status?: string | null;
+  verification_status?: string | null;
+  verification_error_code?: string | null;
+  review_reason?: string | null;
+  removal_reason?: string | null;
+}): CreatorPremiumLifecycleActions;
 export function creatorPremiumPolicyBlocksRetry(errorCode?: string | null): boolean;
 

@@ -21,14 +21,20 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
-import { normalizeCreatorPremiumVideoPickerAsset } from '@/services/creatorPremiumPresentation.mjs';
 import {
+  creatorPremiumLifecycleActions,
+  creatorPremiumLifecyclePresentation,
+  normalizeCreatorPremiumVideoPickerAsset,
+} from '@/services/creatorPremiumPresentation.mjs';
+import {
+  cancelMyCreatorPremiumSubmission,
   createMyCreatorPremiumDraft,
   deleteMyCreatorPremiumDraft,
   fetchMyCreatorPremiumContent,
   fetchMyCreatorPremiumPlans,
   normalizeCreatorPremiumPriceBdag,
   publishMyCreatorPremiumContent,
+  reopenMyCreatorPremiumRejected,
   setMyCreatorPremiumOffer,
   setMyCreatorPremiumPlanContents,
   updateMyCreatorPremiumDraft,
@@ -45,7 +51,6 @@ import {
   creatorPremiumErrorMessage as messageFor,
   creatorPremiumSubmissionMediaBlocker,
   creatorPremiumSubmissionNotice,
-  creatorPremiumVerificationCanRetry,
 } from '@/services/creatorPremiumIntegrationState';
 
 type LocalFile = {
@@ -174,16 +179,16 @@ export default function CreatorPremiumEditor() {
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [reopening, setReopening] = useState(false);
   const [processing, setProcessing] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const verificationRetryable = creatorPremiumVerificationCanRetry(item);
-  const legacyReverificationRequired = item?.lifecycle_status === 'pending_review'
-    && item.verification_status === 'not_requested'
-    && item.verification_error_code === 'creator_premium_legacy_reverification_required';
-  const readOnly = item?.lifecycle_status === 'pending_review' || item?.lifecycle_status === 'published' ||
-    item?.lifecycle_status === 'quarantined' || item?.lifecycle_status === 'removed' || item?.lifecycle_status === 'deleted';
-  const busy = saving || uploading || submitting || deleting;
+  const lifecyclePresentation = creatorPremiumLifecyclePresentation(item ?? {});
+  const lifecycleActions = creatorPremiumLifecycleActions(item ?? {});
+  const verificationRetryable = lifecycleActions.canRetry;
+  const readOnly = Boolean(item && !lifecycleActions.editable);
+  const busy = saving || uploading || submitting || deleting || cancelling || reopening;
   const mediaLocked = Boolean(item?.teaser_attached || item?.original_attached || item?.video_attached);
   const draftPlans = useMemo(() => plans.filter(plan => plan.status === 'draft'), [plans]);
 
@@ -241,11 +246,10 @@ export default function CreatorPremiumEditor() {
   }, [load, routeContentId]);
 
   useEffect(() => {
-    if (!contentId || item?.lifecycle_status !== 'pending_review' ||
-        !['pending', 'commercial_pending'].includes(item.verification_status ?? '')) return;
+    if (!contentId || !lifecyclePresentation.polling) return;
     const timer = setInterval(() => { void load(contentId, true); }, 4000);
     return () => clearInterval(timer);
-  }, [contentId, item?.lifecycle_status, item?.verification_status, load]);
+  }, [contentId, lifecyclePresentation.polling, load]);
 
   const applyPlanMappings = useCallback(async (targetId: string) => {
     if (!subscriptionModes.has(accessMode)) return;
@@ -435,7 +439,7 @@ export default function CreatorPremiumEditor() {
   }, [busy, kind, load, privateFile, readOnly, saveDraft, teaser]);
 
   const submit = useCallback(async () => {
-    if (busy || (readOnly && !verificationRetryable)) return;
+    if (busy || (!lifecycleActions.canSubmit && !lifecycleActions.canRetry)) return;
     const mediaBlocker = creatorPremiumSubmissionMediaBlocker({
       contentKind: kind,
       mediaReady: Boolean(item && (kind === 'image' ? item.image_media_ready : item.video_media_ready)),
@@ -466,10 +470,10 @@ export default function CreatorPremiumEditor() {
     } finally {
       setSubmitting(false);
     }
-  }, [busy, contentId, item, kind, load, privateFile, readOnly, saveDraft, teaser, verificationRetryable]);
+  }, [busy, contentId, item, kind, lifecycleActions.canRetry, lifecycleActions.canSubmit, load, privateFile, saveDraft, teaser, verificationRetryable]);
 
   const confirmDelete = useCallback(() => {
-    if (!contentId || busy || readOnly) return;
+    if (!contentId || busy || !lifecycleActions.canDelete) return;
     Alert.alert(
       'Eliminar borrador',
       'Se desvincularán los medios y se programará su eliminación segura. Esta acción no se puede deshacer.',
@@ -486,7 +490,44 @@ export default function CreatorPremiumEditor() {
         },
       ],
     );
-  }, [busy, contentId, readOnly, router]);
+  }, [busy, contentId, lifecycleActions.canDelete, router]);
+
+  const confirmCancelSubmission = useCallback(() => {
+    if (!contentId || busy || !lifecycleActions.canCancel) return;
+    Alert.alert(
+      'Cancelar solicitud',
+      'El contenido volverá a borrador privado. Se conservarán los medios, el precio y los planes para que puedas corregirlo.',
+      [
+        { text: 'Mantener solicitud', style: 'cancel' },
+        {
+          text: 'Volver a borrador', style: 'destructive', onPress: () => {
+            setCancelling(true);
+            setError(null);
+            void cancelMyCreatorPremiumSubmission(contentId)
+              .then(() => load(contentId, false, true))
+              .then(() => Alert.alert('Solicitud cancelada', 'Ya puedes editar el borrador o eliminarlo.'))
+              .catch(reason => setError(messageFor(reason)))
+              .finally(() => setCancelling(false));
+          },
+        },
+      ],
+    );
+  }, [busy, contentId, lifecycleActions.canCancel, load]);
+
+  const reopenRejected = useCallback(async () => {
+    if (!contentId || busy || !lifecycleActions.canReopen) return;
+    setReopening(true);
+    setError(null);
+    try {
+      await reopenMyCreatorPremiumRejected(contentId);
+      await load(contentId, false, true);
+      Alert.alert('Borrador reabierto', 'Corrige el contenido antes de volver a solicitar la publicación.');
+    } catch (reason) {
+      setError(messageFor(reason));
+    } finally {
+      setReopening(false);
+    }
+  }, [busy, contentId, lifecycleActions.canReopen, load]);
 
   const togglePlan = useCallback((planId: string) => {
     if (busy || readOnly) return;
@@ -514,7 +555,7 @@ export default function CreatorPremiumEditor() {
         </Pressable>
         <View style={styles.headerCopy}>
           <Text style={styles.headerTitle}>{contentId ? 'Editar contenido Premium' : 'Nuevo contenido Premium'}</Text>
-          <Text style={styles.headerSub}>{readOnly ? 'Solo lectura' : 'Borrador privado'}</Text>
+          <Text style={styles.headerSub}>{item ? lifecyclePresentation.label : 'Borrador privado'}</Text>
         </View>
         {busy ? <ActivityIndicator size="small" color={PREMIUM} /> : null}
       </View>
@@ -524,24 +565,8 @@ export default function CreatorPremiumEditor() {
           <View style={styles.reviewNotice}>
             <MaterialCommunityIcons name="clock-check-outline" size={21} color={Colors.warning} />
             <View style={styles.headerCopy}>
-              <Text style={styles.reviewTitle}>{item?.lifecycle_status === 'pending_review'
-                ? legacyReverificationRequired
-                  ? 'Verificación requerida'
-                  : item.verification_status === 'failed'
-                  ? 'Error temporal de verificación'
-                  : item.verification_status === 'commercial_pending'
-                    ? 'Seguridad aprobada · activación del plan pendiente'
-                    : 'Verificando contenido'
-                : 'Contenido no editable'}</Text>
-              <Text style={styles.helper}>{item?.lifecycle_status === 'pending_review'
-                ? legacyReverificationRequired
-                  ? blockerCopy.creator_premium_legacy_reverification_required
-                  : item.verification_status === 'failed'
-                  ? blockerCopy[item.verification_error_code ?? ''] ?? 'La verificación no terminó. Puedes reintentar de forma segura.'
-                  : item.verification_status === 'commercial_pending'
-                    ? 'Seguridad aprobada. La activación del plan hará que el sistema revalide la publicación sin volver a escanear el original.'
-                    : 'El original sigue privado mientras el sistema completa las comprobaciones.'
-                : 'Los metadatos y medios quedan bloqueados en este estado.'}</Text>
+              <Text style={styles.reviewTitle}>{lifecyclePresentation.label}</Text>
+              <Text style={styles.helper}>{lifecyclePresentation.copy}</Text>
             </View>
           </View>
         ) : null}
@@ -592,7 +617,7 @@ export default function CreatorPremiumEditor() {
           </Pressable>
           {kind === 'video' && !readOnly ? (
             <Pressable style={styles.filesButton} onPress={() => void pickVideoFromFiles()} disabled={busy}>
-              <MaterialCommunityIcons name="folder-video-outline" size={18} color={PREMIUM} />
+              <MaterialCommunityIcons name="folder-outline" size={18} color={PREMIUM} />
               <Text style={styles.secondaryText}>Elegir desde Files</Text>
             </Pressable>
           ) : null}
@@ -638,30 +663,34 @@ export default function CreatorPremiumEditor() {
             <Text style={styles.statusText}>{item && (kind === 'image' ? item.image_media_ready : item.video_media_ready) ? 'Medios listos' : 'Medios pendientes'}</Text>
           </View>
           <View style={styles.statusRow}>
-            <MaterialCommunityIcons name={item?.submission_ready ? 'check-circle' : 'alert-circle-outline'} size={19} color={item?.submission_ready ? Colors.success : Colors.warning} />
-            <Text style={styles.statusText}>{item?.lifecycle_status === 'pending_review'
-              ? verificationRetryable
-                ? 'Verificación pendiente · reintento disponible'
-                : item.verification_status === 'commercial_pending'
-                  ? 'Seguridad aprobada · activación del plan pendiente'
-                  : 'Verificando contenido'
-              : item?.lifecycle_status === 'published' ? 'Publicado automáticamente tras la verificación'
-              : item?.submission_ready ? 'Listo para publicar' : blockerCopy[item?.submission_blocker ?? ''] ?? 'Completa los datos comerciales y los medios.'}</Text>
+            <MaterialCommunityIcons name={lifecyclePresentation.tone === 'green' ? 'check-circle' : 'alert-circle-outline'} size={19} color={lifecyclePresentation.tone === 'green' ? Colors.success : Colors.warning} />
+            <View style={styles.headerCopy}>
+              <Text style={styles.statusText}>{item ? lifecyclePresentation.label : 'Nuevo borrador'}</Text>
+              <Text style={styles.helper}>{item
+                ? lifecyclePresentation.copy
+                : 'Completa los datos comerciales y los medios.'}</Text>
+            </View>
           </View>
         </Section>
 
-        {!readOnly || verificationRetryable ? (
+        {lifecycleActions.editable || lifecycleActions.canRetry || lifecycleActions.canCancel || lifecycleActions.canReopen ? (
           <View style={styles.actions}>
-            {!readOnly ? <Pressable style={styles.secondaryButton} onPress={() => void handleSave()} disabled={busy}>
+            {lifecycleActions.editable ? <Pressable style={styles.secondaryButton} onPress={() => void handleSave()} disabled={busy}>
               {saving ? <ActivityIndicator color={PREMIUM} /> : <><MaterialCommunityIcons name="content-save-outline" size={20} color={PREMIUM} /><Text style={styles.secondaryText}>Guardar borrador</Text></>}
             </Pressable> : null}
-            {!readOnly ? <Pressable style={styles.secondaryButton} onPress={() => void uploadMedia()} disabled={busy}>
+            {lifecycleActions.editable ? <Pressable style={styles.secondaryButton} onPress={() => void uploadMedia()} disabled={busy}>
               {uploading ? <ActivityIndicator color={PREMIUM} /> : <><MaterialCommunityIcons name="cloud-upload-outline" size={20} color={PREMIUM} /><Text style={styles.secondaryText}>Subir/Reemplazar medios</Text></>}
             </Pressable> : null}
-            <Pressable style={styles.primaryButton} onPress={() => void submit()} disabled={busy}>
+            {lifecycleActions.canSubmit || lifecycleActions.canRetry ? <Pressable style={styles.primaryButton} onPress={() => void submit()} disabled={busy}>
               {submitting ? <ActivityIndicator color={Colors.textOnBrand} /> : <><MaterialCommunityIcons name="send-check-outline" size={20} color={Colors.textOnBrand} /><Text style={styles.primaryText}>{verificationRetryable ? 'Reintentar verificación' : 'Publicar contenido Premium'}</Text></>}
-            </Pressable>
-            {contentId && !readOnly ? (
+            </Pressable> : null}
+            {lifecycleActions.canCancel ? <Pressable style={styles.secondaryButton} onPress={confirmCancelSubmission} disabled={busy}>
+              {cancelling ? <ActivityIndicator color={PREMIUM} /> : <><MaterialCommunityIcons name="file-undo-outline" size={20} color={PREMIUM} /><Text style={styles.secondaryText}>Cancelar solicitud y editar</Text></>}
+            </Pressable> : null}
+            {lifecycleActions.canReopen ? <Pressable style={styles.secondaryButton} onPress={() => void reopenRejected()} disabled={busy}>
+              {reopening ? <ActivityIndicator color={PREMIUM} /> : <><MaterialCommunityIcons name="pencil-outline" size={20} color={PREMIUM} /><Text style={styles.secondaryText}>Corregir y reenviar</Text></>}
+            </Pressable> : null}
+            {contentId && lifecycleActions.canDelete ? (
               <Pressable style={styles.deleteButton} onPress={confirmDelete} disabled={busy}>
                 {deleting ? <ActivityIndicator color={Colors.error} /> : <><MaterialCommunityIcons name="trash-can-outline" size={20} color={Colors.error} /><Text style={styles.deleteText}>Eliminar borrador</Text></>}
               </Pressable>
