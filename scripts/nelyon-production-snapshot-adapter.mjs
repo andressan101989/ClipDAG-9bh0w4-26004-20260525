@@ -803,6 +803,25 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
   };
 }
 
+export function verifyProductionRecoverySnapshot({ recovery, policy, request, manifest, adapterSourceSha256 }) {
+  validateCapturedEvidence({
+    evidence: recovery,
+    phase: 'recovery',
+    policy,
+    request,
+    manifest,
+    adapterSourceSha256,
+  });
+  validateRpcSecurityAttestations(recovery.rpc_security, policy?.security_advisor?.exceptions);
+  validatePremiumPostcheckState(recovery.premium_state);
+  return {
+    result: 'RECOVERY_SNAPSHOT_VERIFIED',
+    evidence_sha256: recovery.evidence_sha256,
+    rpc_security_sha256: recovery.rpc_security.sha256,
+    premium_state_sha256: recovery.premium_state.sha256,
+  };
+}
+
 async function readJson(response, { expectedStatus, label }) {
   if (response.status !== expectedStatus) fail('REMOTE_READ_FAILED', `${label} HTTP ${response.status}`);
   const contentType = response.headers.get('content-type') ?? '';
