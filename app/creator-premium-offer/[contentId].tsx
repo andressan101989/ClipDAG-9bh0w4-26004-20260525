@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/useAuth';
+import { formatCreatorPremiumBdag } from '@/services/creatorPremiumPresentation.mjs';
 import {
   CREATOR_PREMIUM_FINANCE_AVAILABLE, CREATOR_PREMIUM_REPORT_REASONS,
   fetchCreatorPremiumCommerce, getCurrentCreatorPremiumUserId,
@@ -21,11 +22,6 @@ import {
 import { rememberCreatorPremiumContentKind } from '@/services/creatorPremiumViewerRuntime.mjs';
 import { purchaseContent, subscribeToPlan } from '@/services/financial/ledgerClient';
 
-const formatExactBdag = (value: string): string => {
-  const [whole, fraction] = value.split('.');
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  return `${grouped}${fraction ? `,${fraction}` : ''} BDAG`;
-};
 const message = (cause: unknown) => cause instanceof Error && cause.message
   ? cause.message : 'No pudimos completar la operación.';
 
@@ -278,7 +274,7 @@ function CreatorPremiumOfferScreenContent() {
                       <Text style={styles.cardTitle}>Compra individual</Text>
                       <Text style={styles.muted}>Acceso a este contenido</Text>
                     </View>
-                    <Text style={styles.price}>{formatExactBdag(commerce.offer.price_bdag)}</Text>
+                    <Text style={styles.price}>{formatCreatorPremiumBdag(commerce.offer.price_bdag)}</Text>
                   </View>
                   <Pressable
                     disabled={!purchaseAllowed || busy !== null}
@@ -308,7 +304,7 @@ function CreatorPremiumOfferScreenContent() {
                           </Text>
                         ) : null}
                       </View>
-                      <Text style={styles.price}>{formatExactBdag(plan.price_bdag)}</Text>
+                      <Text style={styles.price}>{formatCreatorPremiumBdag(plan.price_bdag)}</Text>
                     </View>
                     <Pressable
                       disabled={!allowed || busy !== null}

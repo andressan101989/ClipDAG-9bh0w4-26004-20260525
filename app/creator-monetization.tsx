@@ -23,6 +23,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/useAuth';
 import {
+  creatorPremiumLifecyclePresentation,
+  formatCreatorPremiumBdag,
+} from '@/services/creatorPremiumPresentation.mjs';
+import {
   creatorPremiumCommercialSummaryErrorMessage,
   creatorPremiumErrorMessage,
   settleCreatorPremiumHubLoad,
@@ -48,16 +52,6 @@ import {
 const PREMIUM = Colors.purple;
 const PREMIUM_SOFT = Colors.purpleDim;
 
-const contentStatus: Record<CreatorPremiumOwnerItem['lifecycle_status'], string> = {
-  draft: 'Borrador',
-  pending_review: 'Verificando contenido',
-  published: 'Publicado',
-  rejected: 'No aprobado por seguridad automática',
-  quarantined: 'Restringido',
-  removed: 'Retirado',
-  deleted: 'Eliminado',
-};
-
 const planStatus: Record<CreatorPremiumPlanItem['status'], string> = {
   draft: 'Borrador',
   active: 'Activo',
@@ -69,13 +63,6 @@ const accessLabel: Record<CreatorPremiumOwnerItem['access_mode'], string> = {
   subscription: 'Suscripción',
   purchase_or_subscription: 'Compra o suscripción',
 };
-
-function money(value: string | number | null | undefined): string {
-  if (value === null || value === undefined) return 'Sin precio';
-  const [whole, fraction] = String(value).split('.');
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  return `${grouped}${fraction ? `,${fraction}` : ''} BDAG`;
-}
 
 function appendUnique<T extends { id: string }>(current: T[], incoming: T[]): T[] {
   const seen = new Set(current.map(item => item.id));
@@ -472,8 +459,16 @@ function CreatorPremiumHubContent() {
                   title="Aún no tienes contenido Premium"
                   copy="Crea un borrador con una vista previa pública y un original privado."
                 />
-              ) : contents.map(item => (
-                <View key={item.id} style={styles.card}>
+              ) : contents.map(item => {
+                const presentation = creatorPremiumLifecyclePresentation(item);
+                return (
+                <Pressable
+                  key={item.id}
+                  style={styles.card}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Abrir ${item.title}. ${presentation.label}`}
+                  onPress={() => router.push({ pathname: '/creator-premium-editor', params: { contentId: item.id } })}
+                >
                   <View style={styles.contentRow}>
                     <View style={styles.teaser}>
                       {item.teaser_url ? (
@@ -485,38 +480,28 @@ function CreatorPremiumHubContent() {
                     <View style={styles.cardBody}>
                       <View style={styles.cardHeading}>
                         <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
-                        <StatusChip
-                          label={item.lifecycle_status === 'pending_review' && item.verification_status === 'failed'
-                            ? 'Verificación pendiente'
-                            : item.lifecycle_status === 'pending_review' && item.verification_status === 'commercial_pending'
-                              ? 'Activación comercial pendiente'
-                            : contentStatus[item.lifecycle_status]}
-                          tone={item.lifecycle_status === 'published' ? 'green' : item.lifecycle_status === 'pending_review' ? 'amber' : 'purple'}
-                        />
+                        <StatusChip label={presentation.label} tone={presentation.tone} />
                       </View>
                       <Text style={styles.meta}>
                         {item.content_kind === 'image' ? 'Imagen' : 'Video'} · {accessLabel[item.access_mode]}
                       </Text>
-                      {item.lifecycle_status === 'pending_review' ? <Text style={styles.meta}>
-                        {item.verification_status === 'failed'
-                          ? 'Error temporal · abre el contenido para reintentar'
-                          : item.verification_status === 'commercial_pending'
-                            ? 'Seguridad aprobada · activación del plan pendiente'
-                            : 'Comprobaciones automáticas en curso'}
-                      </Text> : null}
+                      <Text style={styles.meta}>{presentation.copy}</Text>
                       <Text style={styles.meta}>
                         {(item.content_kind === 'image' ? item.image_media_ready : item.video_media_ready)
                           ? 'Medios listos'
                           : 'Medios pendientes'}
                         {' · '}{item.mapped_plan_count} plan(es)
                       </Text>
-                      {item.access_mode !== 'subscription' ? <Text style={styles.price}>{money(item.price_bdag)}</Text> : null}
+                      {item.access_mode !== 'subscription' ? <Text style={styles.price}>{formatCreatorPremiumBdag(item.price_bdag)}</Text> : null}
                     </View>
                   </View>
                   {item.lifecycle_status === 'draft' ? (
                     <Pressable
                       style={styles.secondaryButton}
-                      onPress={() => router.push({ pathname: '/creator-premium-editor', params: { contentId: item.id } })}
+                      onPress={event => {
+                        event.stopPropagation();
+                        router.push({ pathname: '/creator-premium-editor', params: { contentId: item.id } });
+                      }}
                     >
                       <MaterialCommunityIcons name="pencil-outline" size={18} color={PREMIUM} />
                       <Text style={styles.secondaryButtonText}>Editar borrador</Text>
@@ -527,7 +512,10 @@ function CreatorPremiumHubContent() {
                       <Pressable
                         style={styles.secondaryButton}
                         disabled={busyId === item.id}
-                        onPress={() => void reopenRejected(item.id)}
+                        onPress={event => {
+                          event.stopPropagation();
+                          void reopenRejected(item.id);
+                        }}
                       >
                         {busyId === item.id
                           ? <ActivityIndicator color={PREMIUM} />
@@ -540,8 +528,8 @@ function CreatorPremiumHubContent() {
                       <Text style={styles.readOnlyText}>Solo lectura en esta etapa</Text>
                     </View>
                   )}
-                </View>
-              ))}
+                </Pressable>
+              );})}
               {contentNextCursor ? (
                 <Pressable style={styles.secondaryButton} onPress={() => void loadMoreContents()} disabled={loadingMore === 'content'}>
                   {loadingMore === 'content'
@@ -576,7 +564,7 @@ function CreatorPremiumHubContent() {
                       </View>
                       {plan.description ? <Text style={styles.planDescription}>{plan.description}</Text> : null}
                       <View style={styles.planFacts}>
-                        <Text style={styles.price}>{money(plan.price_bdag)}</Text>
+                        <Text style={styles.price}>{formatCreatorPremiumBdag(plan.price_bdag)}</Text>
                         <Text style={styles.meta}>{plan.mapped_content_count} contenido(s)</Text>
                       </View>
                       <View style={styles.actionRow}>
@@ -625,11 +613,11 @@ function CreatorPremiumHubContent() {
               ) : (
                 <>
                   <View style={styles.earningsGrid}>
-                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Bruto</Text><Text style={styles.earningValue}>{money(summary.gross)}</Text></View>
-                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Comisión plataforma</Text><Text style={styles.earningValue}>{money(summary.platform_fee)}</Text></View>
-                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Neto creador</Text><Text style={styles.earningValue}>{money(summary.creator_net)}</Text></View>
-                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Reembolsos</Text><Text style={styles.earningValue}>{money(summary.refund)}</Text></View>
-                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Neto retenido</Text><Text style={styles.earningValue}>{money(summary.net_retained)}</Text></View>
+                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Bruto</Text><Text style={styles.earningValue}>{formatCreatorPremiumBdag(summary.gross)}</Text></View>
+                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Comisión plataforma</Text><Text style={styles.earningValue}>{formatCreatorPremiumBdag(summary.platform_fee)}</Text></View>
+                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Neto creador</Text><Text style={styles.earningValue}>{formatCreatorPremiumBdag(summary.creator_net)}</Text></View>
+                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Reembolsos</Text><Text style={styles.earningValue}>{formatCreatorPremiumBdag(summary.refund)}</Text></View>
+                    <View style={styles.earningCard}><Text style={styles.earningLabel}>Neto retenido</Text><Text style={styles.earningValue}>{formatCreatorPremiumBdag(summary.net_retained)}</Text></View>
                   </View>
                   <View style={styles.card}>
                     <Text style={styles.sectionTitle}>Actividad verificada</Text>
@@ -648,7 +636,7 @@ function CreatorPremiumHubContent() {
                       <View key={transaction.financial_transaction_id} style={styles.card}>
                         <View style={styles.metricRow}>
                           <Text style={styles.cardTitle}>{transaction.event_type === 'refund' ? 'Reembolso' : 'Cobro'} · {transaction.source === 'purchase' ? 'Compra' : 'Suscripción'}</Text>
-                          <Text style={styles.metricValue}>{money(transaction.creator_net_bdag)}</Text>
+                          <Text style={styles.metricValue}>{formatCreatorPremiumBdag(transaction.creator_net_bdag)}</Text>
                         </View>
                         <Text style={styles.meta}>{new Intl.DateTimeFormat('es', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(transaction.created_at))}</Text>
                       </View>
@@ -662,7 +650,7 @@ function CreatorPremiumHubContent() {
                       <View key={item.content_id} style={styles.card}>
                         <Text style={styles.cardTitle}>{item.title}</Text>
                         <View style={styles.metricRow}><Text style={styles.meta}>Compras</Text><Text style={styles.metricValue}>{item.purchase_sales}</Text></View>
-                        <View style={styles.metricRow}><Text style={styles.meta}>Neto retenido por compra</Text><Text style={styles.metricValue}>{money(item.purchase_net_retained)}</Text></View>
+                        <View style={styles.metricRow}><Text style={styles.meta}>Neto retenido por compra</Text><Text style={styles.metricValue}>{formatCreatorPremiumBdag(item.purchase_net_retained)}</Text></View>
                         <Text style={styles.helper}>Ingresos de suscripción no asignados a contenido individual.</Text>
                       </View>
                     ))}
