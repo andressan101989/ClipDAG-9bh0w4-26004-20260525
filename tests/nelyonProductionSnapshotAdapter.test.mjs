@@ -10,6 +10,21 @@ async function loadAdapter() {
   return import(`${adapterUrl.href}?test=${Date.now()}-${Math.random()}`);
 }
 
+function canonicalJson(value) {
+  const normalize = item => {
+    if (Array.isArray(item)) return item.map(normalize);
+    if (item && typeof item === 'object') {
+      return Object.fromEntries(Object.keys(item).sort().map(key => [key, normalize(item[key])]));
+    }
+    return item;
+  };
+  return `${JSON.stringify(normalize(value))}\n`;
+}
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
 function request() {
   return {
     approvedSha: 'a'.repeat(40),
@@ -480,6 +495,50 @@ test('fixed documented recovery capture uses four read-only SQL requests and red
   assert.equal(sqlCalls.length, 4);
   assert.ok(sqlCalls.every(call => new URL(call.url).pathname.endsWith('/database/query/read-only')));
   assert.doesNotMatch(JSON.stringify(result), /never-serialize-recovery-token|authorization|CREATE FUNCTION/i);
+});
+
+test('recovery snapshot verifies exact exception attestations and remains read only', async () => {
+  const adapter = await loadAdapter();
+  const recovery = await adapter.captureProductionSnapshot({
+    phase: 'recovery', policy, request: request(), manifest: manifest(),
+    token: 'never-serialize-recovery-token', fetchImpl: successfulFetch([]),
+    observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
+  });
+  const items = policy.security_advisor.exceptions.map(exception => ({
+    schema: exception.object.schema,
+    name: exception.object.name,
+    identity_arguments: exception.object.identity_arguments,
+    argument_types: exception.object.argument_types,
+    security_definer: exception.attestation.security_definer,
+    owner: exception.attestation.owner,
+    search_path: exception.attestation.search_path,
+    acl: exception.attestation.acl,
+    execute: exception.attestation.execute,
+    definition_sha256: exception.attestation.definition_sha256,
+  })).sort((left, right) => `${left.schema}.${left.name}(${left.argument_types.join(',')})`.localeCompare(`${right.schema}.${right.name}(${right.argument_types.join(',')})`));
+  recovery.rpc_security = { complete: true, count: items.length, items, sha256: sha256(canonicalJson(items)) };
+  const { evidence_sha256: ignored, ...unsigned } = recovery;
+  recovery.evidence_sha256 = sha256(canonicalJson(unsigned));
+  assert.equal(adapter.verifyProductionRecoverySnapshot({
+    recovery,
+    policy,
+    request: request(),
+    manifest: manifest(),
+    adapterSourceSha256: '6'.repeat(64),
+  }).result, 'RECOVERY_SNAPSHOT_VERIFIED');
+
+  const drifted = structuredClone(recovery);
+  drifted.rpc_security.items[0].owner = 'other_owner';
+  drifted.rpc_security.sha256 = sha256(canonicalJson(drifted.rpc_security.items));
+  const { evidence_sha256: omitted, ...driftedUnsigned } = drifted;
+  drifted.evidence_sha256 = sha256(canonicalJson(driftedUnsigned));
+  assert.throws(() => adapter.verifyProductionRecoverySnapshot({
+    recovery: drifted,
+    policy,
+    request: request(),
+    manifest: manifest(),
+    adapterSourceSha256: '6'.repeat(64),
+  }), /RPC_SECURITY_ATTESTATION_FAILED/);
 });
 
 test('authorization and provider failures redact secrets and fail closed', async () => {

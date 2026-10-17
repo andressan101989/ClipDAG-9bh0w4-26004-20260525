@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import test from 'node:test';
 
 const policyUrl = new URL('../.github/nelyon-production-release-policy.json', import.meta.url);
 const gateUrl = new URL('../scripts/nelyon-production-release.mjs', import.meta.url);
+const adapterUrl = new URL('../scripts/nelyon-production-snapshot-adapter.mjs', import.meta.url);
 const workflowUrl = new URL('../.github/workflows/nelyon-production-release.yml', import.meta.url);
 const runbookUrl = new URL('../docs/runbooks/nelyon-production-release.md', import.meta.url);
 
@@ -140,6 +141,303 @@ function assertDenied(fn, expectedCode) {
     assert.equal(error?.code, expectedCode);
     return true;
   });
+}
+
+function recoveryArtifactFixture(t, gate, policy) {
+  const root = mkdtempSync(join(tmpdir(), 'nelyon-recovery-source-'));
+  t.after(() => rmSync(root, { force: true, recursive: true }));
+  const releaseDirectory = join(root, 'release');
+  const gateDirectory = join(root, 'gate');
+  const bundleDirectory = join(releaseDirectory, 'bundle');
+  mkdirSync(bundleDirectory, { recursive: true });
+  mkdirSync(gateDirectory, { recursive: true });
+  const source = structuredClone(policy.postcheck_recovery.approved_sources[0]);
+  const sourceManifest = {
+    schema_version: 1,
+    identity: {
+      approved_sha: source.source_sha,
+      mode: 'release',
+      release_id: source.release_id,
+      run_attempt: source.run_attempt,
+      run_id: source.run_id,
+    },
+    resources: {
+      functions: source.edge_functions.map(item => item.name),
+      migrations: [{
+        path: `supabase/migrations/${source.expected_b7_migration.name}.sql`,
+        version: '20261010053524',
+      }],
+    },
+  };
+  const manifestBytes = gate.canonicalJson(sourceManifest);
+  source.manifest_sha256 = gate.sha256Hex(manifestBytes);
+  writeFileSync(join(bundleDirectory, 'manifest.json'), manifestBytes);
+  writeFileSync(join(bundleDirectory, 'manifest.sha256'), `${source.manifest_sha256}\n`);
+  writeFileSync(join(bundleDirectory, 'summary.md'), '# controlled source\n');
+  const sourceRequest = {
+    actor: policy.owner,
+    triggeringActor: policy.owner,
+    repository: policy.repository,
+    ref: 'refs/heads/main',
+    workflowRef: `${policy.repository}/${policy.workflow_path}@refs/heads/main`,
+    approvedSha: source.source_sha,
+    mainSha: source.source_sha,
+    releaseId: source.release_id,
+    mode: 'release',
+    scopeConfirmation: 'RELEASE_HIGH_RISK',
+    runId: source.run_id,
+    runAttempt: source.run_attempt,
+  };
+  writeFileSync(join(releaseDirectory, 'request.json'), gate.canonicalJson(sourceRequest));
+  writeFileSync(join(releaseDirectory, 'remote-evidence.json'), '{}\n');
+  const observation = {
+    schema_version: 1,
+    result: 'INCOMPLETE_OR_FAILED',
+    steps: {
+      pre_snapshot: 'success',
+      pre_verification: 'success',
+      migration_dry_run: 'success',
+      migrations: 'success',
+      functions: 'success',
+      post_snapshot: 'success',
+      postcheck: 'failure',
+    },
+    pre_evidence_sha256: source.pre_snapshot_evidence_sha256,
+    post_evidence_sha256: source.post_snapshot_evidence_sha256,
+    postcheck_file_sha256: null,
+  };
+  writeFileSync(join(gateDirectory, 'release-observation.json'), gate.canonicalJson(observation));
+  const run = {
+    id: Number(source.run_id),
+    run_attempt: source.run_attempt,
+    status: 'completed',
+    conclusion: 'failure',
+    event: 'workflow_dispatch',
+    head_sha: source.source_sha,
+    path: policy.workflow_path,
+    repository: { full_name: policy.repository },
+  };
+  return {
+    source,
+    sourceManifest,
+    observation,
+    run,
+    artifacts: [source.gate_artifact, source.release_artifact],
+    releaseBundle: { directory: releaseDirectory },
+    gateEvidence: { directory: gateDirectory },
+  };
+}
+
+async function recoveryStateFixture(t, gate, policy) {
+  const adapter = await import(`${adapterUrl.href}?recovery=${Date.now()}-${Math.random()}`);
+  const controlledPolicy = structuredClone(policy);
+  const recoveryRequest = request({
+    mode: 'postcheck_recovery',
+    scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
+    recoverySourceRunId: '39066492485',
+    productiveResources: [],
+  });
+  const adapterSourceSha256 = '6'.repeat(64);
+  const recoveryManifest = {
+    identity: {
+      approved_sha: recoveryRequest.approvedSha,
+      release_id: recoveryRequest.releaseId,
+      run_id: recoveryRequest.runId,
+      run_attempt: recoveryRequest.runAttempt,
+      mode: 'postcheck_recovery',
+    },
+    compiler: {
+      snapshot_adapter_path: 'scripts/nelyon-production-snapshot-adapter.mjs',
+      snapshot_adapter_sha256: adapterSourceSha256,
+    },
+    resources: { functions: [], function_contracts: [], migrations: [], config_changed: false },
+  };
+  const source = controlledPolicy.postcheck_recovery.approved_sources[0];
+  const migrationRows = [
+    ...Array.from({ length: 336 }, (_, index) => ({
+      version: `2025${String(index).padStart(10, '0')}`,
+      name: `historical_${String(index).padStart(3, '0')}`,
+    })),
+    { version: '20261010053524', name: 'creator_premium_b7_full_functional_commercial_completion' },
+  ];
+  const functionRows = [
+    ...source.edge_functions.map(item => ({
+      slug: item.name,
+      status: item.status,
+      version: item.version,
+      verify_jwt: item.verify_jwt,
+      ezbr_sha256: item.source_sha256,
+    })),
+    ...Array.from({ length: 22 }, (_, index) => ({
+      slug: `unmanaged-${String(index + 1).padStart(2, '0')}`,
+      status: 'ACTIVE',
+      version: index + 1,
+      verify_jwt: true,
+      ezbr_sha256: String(index + 1).padStart(64, '0'),
+    })),
+  ];
+  const zeroReconciliations = {
+    account_balance_ledger_mismatch: 0,
+    completed_credit_account_mismatch: 0,
+    completed_credit_total_mismatch: 0,
+    completed_debit_account_mismatch: 0,
+    completed_debit_total_mismatch: 0,
+    completed_without_credit: 0,
+    completed_without_debit: 0,
+    noncanonical_entry_type: 0,
+    orphan_ledger_entries: 0,
+    premium_finance_policy_row_count_mismatch: 0,
+  };
+  const financeTransactions = Array.from({ length: 928 }, (_, index) => ({
+    id: `transaction-${String(index).padStart(4, '0')}`,
+    status: 'pending',
+    currency: 'BDAG',
+    created_at: '2026-10-17T20:00:00.000Z',
+    blockchain_txid_sha256: null,
+  }));
+  const finance = {
+    schema_version: 1,
+    complete: true,
+    query_id: 'nelyon-finance-snapshot-v1',
+    database_time: '2026-10-17T22:00:00.000000Z',
+    schema_sha256: '1'.repeat(64),
+    watermark: { created_at: financeTransactions.at(-1).created_at, id: financeTransactions.at(-1).id },
+    policy: { purchase_enabled: false, subscription_enabled: false, refunds_enabled: false, platform_fee_bps: 0, policy_version: 'creator-premium-b4-v1' },
+    transactions: { complete: true, count: 928, items: financeTransactions },
+    ledger_entries: { complete: true, count: 1918, items: Array.from({ length: 1918 }, (_, index) => ({ id: `entry-${index}` })) },
+    ledger_accounts: {
+      complete: true,
+      count: 131,
+      items: Array.from({ length: 131 }, (_, index) => ({
+        id: `11111111-1111-4111-8111-${String(index + 1).padStart(12, '0')}`,
+        owner_id_sha256: '2'.repeat(64),
+        account_type: 'user',
+        currency: 'BDAG',
+        created_at: '2026-10-01T12:00:00.000000Z',
+      })),
+    },
+    premium_transaction_count: 0,
+    premium_bindings: {
+      purchase_receipts: { count: 0, sha256: '3'.repeat(64) },
+      subscription_periods: { count: 0, sha256: '4'.repeat(64) },
+    },
+    reconciliation: zeroReconciliations,
+  };
+  const relationNames = [
+    'creator_premium_contents', 'creator_premium_finance_policy', 'creator_premium_offer_versions',
+    'creator_premium_plan_contents', 'creator_premium_plans', 'creator_premium_purchase_receipts',
+    'creator_premium_subscription_periods', 'creator_premium_subscriptions',
+  ];
+  const fetchImpl = async (url, options = {}) => {
+    const pathname = new URL(url).pathname;
+    const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    if (pathname.endsWith('/health')) {
+      return json(['auth', 'db', 'pooler', 'realtime', 'rest', 'storage'].map(name => ({ name, healthy: true, status: 'ACTIVE_HEALTHY' })));
+    }
+    if (pathname.endsWith('/database/migrations')) return json(migrationRows);
+    if (pathname.endsWith('/functions')) return json(functionRows);
+    if (pathname.endsWith('/advisors/security')) return json({ lints: [] });
+    if (pathname.endsWith('/database/backups')) {
+      return json({ backups: [{ id: '1988056631', inserted_at: '2026-10-17T05:15:56.590Z', is_physical_backup: true, status: 'COMPLETED' }] });
+    }
+    if (pathname.endsWith('/database/query/read-only')) {
+      const body = JSON.parse(options.body);
+      if (body.query.includes('nelyon-finance-snapshot-v1')) return json([{ snapshot: finance }], 201);
+      if (body.query.includes('nelyon-cron-snapshot-v1')) return json([{ snapshot: { schema_version: 1, complete: true, query_id: 'nelyon-cron-snapshot-v1', count: 0, items: [] } }], 201);
+      if (body.query.includes('pg_get_function_identity_arguments')) {
+        return json(controlledPolicy.security_advisor.exceptions.map(exception => ({
+          schema: exception.object.schema,
+          name: exception.object.name,
+          identity_arguments: exception.object.identity_arguments,
+          argument_types: exception.object.argument_types,
+          security_definer: exception.attestation.security_definer,
+          owner: exception.attestation.owner,
+          search_path: exception.attestation.search_path,
+          acl: exception.attestation.acl,
+          execute: exception.attestation.execute,
+          definition: `CREATE FUNCTION public.${exception.object.name}() RETURNS jsonb SECURITY DEFINER`,
+        })), 201);
+      }
+      if (body.query.includes('nelyon-premium-postcheck-state-v1')) {
+        return json([{ snapshot: {
+          schema_version: 1,
+          complete: true,
+          query_id: 'nelyon-premium-postcheck-state-v1',
+          approved_rule_count: 0,
+          active_rule_count: 0,
+          fabricated_pass_count: 0,
+          content_count: 2,
+          pending_review_count: 1,
+          deleted_count: 1,
+          relations: relationNames.map(name => ({
+            schema: 'private', name, owner: 'postgres', rls_enabled: true, force_rls: true,
+            acl: [{ grantee: 'postgres', privilege_type: 'SELECT', is_grantable: false }],
+          })),
+        } }], 201);
+      }
+    }
+    throw new Error(`unexpected recovery fixture request ${url}`);
+  };
+  const currentEvidence = await adapter.captureProductionSnapshot({
+    phase: 'recovery',
+    policy: controlledPolicy,
+    request: recoveryRequest,
+    manifest: recoveryManifest,
+    token: 'fixture-token',
+    fetchImpl,
+    observedAt: '2026-10-17T22:00:01.000Z',
+    adapterSourceSha256,
+  });
+  const rpcItems = controlledPolicy.security_advisor.exceptions.map(exception => ({
+    schema: exception.object.schema,
+    name: exception.object.name,
+    identity_arguments: exception.object.identity_arguments,
+    argument_types: exception.object.argument_types,
+    security_definer: exception.attestation.security_definer,
+    owner: exception.attestation.owner,
+    search_path: exception.attestation.search_path,
+    acl: exception.attestation.acl,
+    execute: exception.attestation.execute,
+    definition_sha256: exception.attestation.definition_sha256,
+  })).sort((left, right) => `${left.schema}.${left.name}(${left.argument_types.join(',')})`.localeCompare(`${right.schema}.${right.name}(${right.argument_types.join(',')})`));
+  currentEvidence.rpc_security = { complete: true, count: rpcItems.length, items: rpcItems, sha256: gate.sha256Hex(gate.canonicalJson(rpcItems)) };
+  const baselineAdvisorItems = Array.from({ length: 554 }, (_, index) => ({
+    fingerprint: String(index + 1).padStart(64, '0'),
+    level: 'WARN',
+    resource_kind: 'table',
+  }));
+  const advisorItems = [...baselineAdvisorItems, ...controlledPolicy.security_advisor.exceptions.map(exception => ({
+    fingerprint: exception.advisor_fingerprint,
+    level: exception.advisor_severity,
+    resource_kind: exception.advisor_type,
+  }))].sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+  currentEvidence.cron_security.advisors = {
+    complete: true,
+    count: advisorItems.length,
+    items: advisorItems,
+    sha256: gate.sha256Hex(gate.canonicalJson(advisorItems)),
+  };
+  controlledPolicy.security_advisor.baseline.cron_security_sha256 = gate.sha256Hex(gate.canonicalJson({
+    complete: true,
+    cron: currentEvidence.cron_security.cron.items,
+    security_findings: baselineAdvisorItems,
+  }));
+  const { evidence_sha256: ignored, ...unsignedEvidence } = currentEvidence;
+  currentEvidence.evidence_sha256 = gate.sha256Hex(gate.canonicalJson(unsignedEvidence));
+  const sourceManifest = {
+    identity: { approved_sha: source.source_sha, release_id: source.release_id, run_id: source.run_id, run_attempt: source.run_attempt, mode: 'release' },
+    resources: {
+      functions: source.edge_functions.map(item => item.name),
+      migrations: [{ path: `supabase/migrations/${source.expected_b7_migration.name}.sql`, version: '20261010053524' }],
+    },
+  };
+  const sourceObservation = {
+    result: 'INCOMPLETE_OR_FAILED',
+    steps: { pre_snapshot: 'success', pre_verification: 'success', migration_dry_run: 'success', migrations: 'success', functions: 'success', post_snapshot: 'success', postcheck: 'failure' },
+    pre_evidence_sha256: source.pre_snapshot_evidence_sha256,
+    post_evidence_sha256: source.post_snapshot_evidence_sha256,
+  };
+  return { adapterSourceSha256, controlledPolicy, recoveryRequest, recoveryManifest, sourceManifest, sourceObservation, currentEvidence };
 }
 
 test('policy accepts the exact repository owner project modes and managed functions', async () => {
@@ -1041,6 +1339,28 @@ test('governance-only delta reports NO PRODUCTIVE CHANGES', async () => {
   assert.deepEqual(manifest.resources, { functions: [], function_contracts: [], migrations: [], config_changed: false });
 });
 
+test('postcheck recovery manifest strips every productive resource from the read-only route', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const input = manifestInput(policy, {
+    request: request({ mode: 'postcheck_recovery', scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY' }),
+    classified: {
+      all: [{ status: 'A', path: 'supabase/migrations/20261010000000_forbidden.sql', fileType: 'file' }],
+      config: [{ status: 'M', path: 'supabase/config.toml', fileType: 'file' }],
+      functions: [{ status: 'M', path: 'supabase/functions/ads-v2-delivery/index.ts', fileType: 'file' }],
+      governance: [], migrations: [], other: [],
+      productive: [{ status: 'A', path: 'supabase/migrations/20261010000000_forbidden.sql', fileType: 'file' }],
+      shared: [],
+    },
+    migrations: [{ version: '20261010000000', path: 'supabase/migrations/20261010000000_forbidden.sql' }],
+    affectedFunctions: ['ads-v2-delivery'],
+    functionContracts: [],
+  });
+  const manifest = gate.buildManifest(input);
+  assert.equal(manifest.result, 'NO PRODUCTIVE CHANGES');
+  assert.equal(manifest.delta.productive_change_count, 0);
+  assert.deepEqual(manifest.resources, { functions: [], function_contracts: [], migrations: [], config_changed: false });
+});
+
 test('one-byte manifest or digest alteration denies', async t => {
   const { gate, policy } = await loadGateAndPolicy();
   const directory = mkdtempSync(join(tmpdir(), 'nelyon-release-bundle-'));
@@ -1070,6 +1390,186 @@ test('artifact provenance binds run attempt release SHA and compiler digest', as
   ]) {
     assertDenied(() => gate.verifyManifestBundle({ directory, expected: { ...bundle.provenance, ...patch } }), 'ARTIFACT_PROVENANCE_MISMATCH');
   }
+});
+
+test('source artifact recovery provenance binds the exact failed release and immutable files', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = recoveryArtifactFixture(t, gate, policy);
+  const verified = gate.verifyRecoveryArtifactProvenance(fixture);
+  assert.equal(verified.source_run_id, fixture.source.run_id);
+  assert.equal(verified.manifest_sha256, fixture.source.manifest_sha256);
+  assert.equal(verified.source_manifest.identity.release_id, fixture.source.release_id);
+  assert.equal(verified.source_observation.steps.postcheck, 'failure');
+
+  for (const mutate of [
+    candidate => { candidate.run.head_sha = '1'.repeat(40); },
+    candidate => { candidate.run.run_attempt = 2; },
+    candidate => { candidate.run.repository.full_name = 'other/repository'; },
+    candidate => { candidate.artifacts[0].digest = candidate.artifacts[0].digest.slice(0, 24); },
+    candidate => { candidate.source.release_id = 'different-release'; },
+  ]) {
+    const candidate = structuredClone(fixture);
+    candidate.releaseBundle = fixture.releaseBundle;
+    candidate.gateEvidence = fixture.gateEvidence;
+    mutate(candidate);
+    assertDenied(() => gate.verifyRecoveryArtifactProvenance(candidate), 'RECOVERY_SOURCE_PROVENANCE_MISMATCH');
+  }
+
+  writeFileSync(join(fixture.releaseBundle.directory, 'bundle', 'manifest.json'), `${readFileSync(join(fixture.releaseBundle.directory, 'bundle', 'manifest.json'), 'utf8')} `);
+  assertDenied(() => gate.verifyRecoveryArtifactProvenance(fixture), 'RECOVERY_SOURCE_PROVENANCE_MISMATCH');
+});
+
+test('source artifact recovery rejects unsafe entries missing files and non-postcheck failures', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const unsafe = recoveryArtifactFixture(t, gate, policy);
+  writeFileSync(join(unsafe.releaseBundle.directory, 'unexpected.txt'), 'x');
+  assertDenied(() => gate.verifyRecoveryArtifactProvenance(unsafe), 'UNSAFE_RECOVERY_ARTIFACT');
+
+  const missing = recoveryArtifactFixture(t, gate, policy);
+  rmSync(join(missing.gateEvidence.directory, 'release-observation.json'));
+  assertDenied(() => gate.verifyRecoveryArtifactProvenance(missing), 'UNSAFE_RECOVERY_ARTIFACT');
+
+  const wrongStep = recoveryArtifactFixture(t, gate, policy);
+  wrongStep.observation.steps.functions = 'failure';
+  writeFileSync(join(wrongStep.gateEvidence.directory, 'release-observation.json'), gate.canonicalJson(wrongStep.observation));
+  assertDenied(() => gate.verifyRecoveryArtifactProvenance(wrongStep), 'RECOVERY_SOURCE_PROVENANCE_MISMATCH');
+});
+
+test('postcheck recovery verifies B7 current state without productive resources', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = await recoveryStateFixture(t, gate, policy);
+  const result = gate.verifyPostcheckRecovery({
+    policy: fixture.controlledPolicy,
+    recoveryRequest: fixture.recoveryRequest,
+    recoveryManifest: fixture.recoveryManifest,
+    sourceManifest: fixture.sourceManifest,
+    sourceObservation: fixture.sourceObservation,
+    currentEvidence: fixture.currentEvidence,
+    adapterSourceSha256: fixture.adapterSourceSha256,
+  });
+  assert.equal(result.result, 'POSTCHECK_RECOVERY_SUCCESS');
+  assert.equal(result.source_run_id, '39066492485');
+  assert.equal(result.current_sha, MAIN_SHA);
+  assert.equal(result.migrations.count, 337);
+  assert.equal(result.functions.items.length, 12);
+  assert.equal(result.security_advisor.baseline_count, 554);
+  assert.equal(result.security_advisor.exception_count, 11);
+  assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
+  assert.equal(result.premium_state.legacy.content_count, 2);
+  assert.doesNotMatch(JSON.stringify(result), /fixture-token|authorization/i);
+});
+
+test('postcheck recovery fails closed on mutation requests and every protected-state drift', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const base = await recoveryStateFixture(t, gate, policy);
+  const verify = candidate => gate.verifyPostcheckRecovery({
+    policy: candidate.controlledPolicy,
+    recoveryRequest: candidate.recoveryRequest,
+    recoveryManifest: candidate.recoveryManifest,
+    sourceManifest: candidate.sourceManifest,
+    sourceObservation: candidate.sourceObservation,
+    currentEvidence: candidate.currentEvidence,
+    adapterSourceSha256: candidate.adapterSourceSha256,
+  });
+  const resign = candidate => {
+    const { evidence_sha256: ignored, ...unsigned } = candidate.currentEvidence;
+    candidate.currentEvidence.evidence_sha256 = gate.sha256Hex(gate.canonicalJson(unsigned));
+  };
+
+  const productive = structuredClone(base);
+  productive.recoveryRequest.productiveResources = ['migration:unexpected'];
+  assertDenied(() => verify(productive), 'RECOVERY_MUTATION_FORBIDDEN');
+
+  const duplicateMigration = structuredClone(base);
+  duplicateMigration.currentEvidence.migrations.items.push(structuredClone(duplicateMigration.currentEvidence.migrations.items.at(-1)));
+  duplicateMigration.currentEvidence.migrations.count += 1;
+  duplicateMigration.currentEvidence.migrations.sha256 = gate.sha256Hex(gate.canonicalJson(duplicateMigration.currentEvidence.migrations.items));
+  resign(duplicateMigration);
+  assert.throws(() => verify(duplicateMigration), /INVALID_REMOTE_INVENTORY|RECOVERY_POSTCHECK_FAILED/);
+
+  const edgeDrift = structuredClone(base);
+  const edge = edgeDrift.currentEvidence.functions.items.find(item => item.slug === 'stream-webhook');
+  edge.version += 1;
+  edgeDrift.currentEvidence.functions.sha256 = gate.sha256Hex(gate.canonicalJson(edgeDrift.currentEvidence.functions.items));
+  resign(edgeDrift);
+  assertDenied(() => verify(edgeDrift), 'RECOVERY_POSTCHECK_FAILED');
+
+  const unknownAdvisor = structuredClone(base);
+  unknownAdvisor.currentEvidence.cron_security.advisors.items.push({ fingerprint: 'f'.repeat(64), level: 'WARN', resource_kind: 'unknown' });
+  unknownAdvisor.currentEvidence.cron_security.advisors.items.sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+  unknownAdvisor.currentEvidence.cron_security.advisors.count += 1;
+  unknownAdvisor.currentEvidence.cron_security.advisors.sha256 = gate.sha256Hex(gate.canonicalJson(unknownAdvisor.currentEvidence.cron_security.advisors.items));
+  resign(unknownAdvisor);
+  assertDenied(() => verify(unknownAdvisor), 'RECOVERY_POSTCHECK_FAILED');
+
+  const rpcDrift = structuredClone(base);
+  rpcDrift.currentEvidence.rpc_security.items[0].owner = 'other_owner';
+  rpcDrift.currentEvidence.rpc_security.sha256 = gate.sha256Hex(gate.canonicalJson(rpcDrift.currentEvidence.rpc_security.items));
+  resign(rpcDrift);
+  assert.throws(() => verify(rpcDrift), /RPC_SECURITY_ATTESTATION_FAILED/);
+
+  const financeDrift = structuredClone(base);
+  financeDrift.currentEvidence.finance.policy.purchase_enabled = true;
+  resign(financeDrift);
+  assert.throws(() => verify(financeDrift), /FINANCE_POLICY_CHANGED/);
+
+  const contentSafetyDrift = structuredClone(base);
+  contentSafetyDrift.currentEvidence.premium_state.content_safety.active_rule_count = 1;
+  const { sha256: ignored, ...premiumUnsigned } = contentSafetyDrift.currentEvidence.premium_state;
+  contentSafetyDrift.currentEvidence.premium_state.sha256 = gate.sha256Hex(gate.canonicalJson(premiumUnsigned));
+  resign(contentSafetyDrift);
+  assert.throws(() => verify(contentSafetyDrift), /PREMIUM_POSTCHECK_FAILED/);
+});
+
+test('postcheck recovery permits reconciled concurrent finance rows but rejects source-attributed movement', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = await recoveryStateFixture(t, gate, policy);
+  const concurrent = structuredClone(fixture);
+  concurrent.currentEvidence.finance.transactions.items.push({
+    id: 'transaction-9999', status: 'pending', currency: 'BDAG',
+    created_at: '2026-10-17T21:00:00.000Z', blockchain_txid_sha256: null,
+    metadata: { source: 'legitimate-concurrent-operation' },
+  });
+  concurrent.currentEvidence.finance.transactions.count += 1;
+  concurrent.currentEvidence.finance.watermark = { created_at: '2026-10-17T21:00:00.000Z', id: 'transaction-9999' };
+  const { evidence_sha256: ignored, ...unsigned } = concurrent.currentEvidence;
+  concurrent.currentEvidence.evidence_sha256 = gate.sha256Hex(gate.canonicalJson(unsigned));
+  const verified = gate.verifyPostcheckRecovery({
+    policy: concurrent.controlledPolicy,
+    recoveryRequest: concurrent.recoveryRequest,
+    recoveryManifest: concurrent.recoveryManifest,
+    sourceManifest: concurrent.sourceManifest,
+    sourceObservation: concurrent.sourceObservation,
+    currentEvidence: concurrent.currentEvidence,
+    adapterSourceSha256: concurrent.adapterSourceSha256,
+  });
+  assert.equal(verified.finance.counts.transactions, 929);
+
+  concurrent.currentEvidence.finance.transactions.items.at(-1).metadata.release_id = policy.postcheck_recovery.approved_sources[0].release_id;
+  const { evidence_sha256: omitted, ...attributedUnsigned } = concurrent.currentEvidence;
+  concurrent.currentEvidence.evidence_sha256 = gate.sha256Hex(gate.canonicalJson(attributedUnsigned));
+  assertDenied(() => gate.verifyPostcheckRecovery({
+    policy: concurrent.controlledPolicy,
+    recoveryRequest: concurrent.recoveryRequest,
+    recoveryManifest: concurrent.recoveryManifest,
+    sourceManifest: concurrent.sourceManifest,
+    sourceObservation: concurrent.sourceObservation,
+    currentEvidence: concurrent.currentEvidence,
+    adapterSourceSha256: concurrent.adapterSourceSha256,
+  }), 'RELEASE_ATTRIBUTED_FINANCE');
+});
+
+test('recovery CLI dispatchers expose only fixed read-only verification inputs', () => {
+  const source = readFileSync(gateUrl, 'utf8');
+  const verifyStart = source.indexOf("if (command === 'verify-recovery-source')");
+  const postcheckStart = source.indexOf("if (command === 'postcheck-recovery')");
+  const nextCommand = source.indexOf("if (command === 'verify-function-contract')", postcheckStart);
+  assert.ok(verifyStart > 0 && postcheckStart > verifyStart && nextCommand > postcheckStart);
+  const recoveryDispatcher = source.slice(verifyStart, nextCommand);
+  assert.match(recoveryDispatcher, /verifyRecoveryArtifactProvenance/);
+  assert.match(recoveryDispatcher, /verifyPostcheckRecovery/);
+  assert.doesNotMatch(recoveryDispatcher, /execFileSync|spawn|supabase\s+(?:db|migration|functions)|--command|child_process/);
+  assert.match(source, /verify-recovery-source\|postcheck-recovery/);
 });
 
 test('duplicate traversal absolute symlink and unexpected artifact entries deny', async t => {

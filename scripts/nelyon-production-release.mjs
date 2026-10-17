@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, posix, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { verifyProductionPreSnapshot, verifyProductionSnapshotPair } from './nelyon-production-snapshot-adapter.mjs';
+import { verifyProductionPreSnapshot, verifyProductionRecoverySnapshot, verifyProductionSnapshotPair } from './nelyon-production-snapshot-adapter.mjs';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
@@ -1231,6 +1231,7 @@ export function buildManifest({
   generatedAt,
 }) {
   validateRequest(request, policy);
+  const recoveryMode = request.mode === 'postcheck_recovery';
   if (!risk || !['STANDARD', 'HIGH'].includes(risk.level) || !Array.isArray(risk.findings)) {
     deny('INVALID_RISK_CLASSIFICATION', 'manifest risk classification is incomplete');
   }
@@ -1251,8 +1252,8 @@ export function buildManifest({
     || !/^[0-9a-f]{64}$/.test(compiler?.snapshot_adapter_sha256 ?? '')) {
     deny('INVALID_COMPILER_IDENTITY', 'compiler SHA-256 is invalid');
   }
-  const contracts = [...(functionContracts ?? [])].map(stableCopy).sort((left, right) => String(left.name).localeCompare(String(right.name)));
-  const functionNames = [...affectedFunctions].sort();
+  const contracts = (recoveryMode ? [] : [...(functionContracts ?? [])]).map(stableCopy).sort((left, right) => String(left.name).localeCompare(String(right.name)));
+  const functionNames = (recoveryMode ? [] : [...affectedFunctions]).sort();
   if (canonicalJson(contracts.map(item => item.name)) !== canonicalJson(functionNames)
     || contracts.some(contract => typeof contract.entrypoint !== 'string'
       || (contract.import_map !== null && typeof contract.import_map !== 'string')
@@ -1286,7 +1287,7 @@ export function buildManifest({
       && candidate.path === finding.path
     )) === index)
     .sort((left, right) => `${left.code}:${left.resource}:${left.path}`.localeCompare(`${right.code}:${right.resource}:${right.path}`));
-  const productiveCount = classified?.productive?.length ?? 0;
+  const productiveCount = recoveryMode ? 0 : (classified?.productive?.length ?? 0);
   const result = blockers.length > 0
     ? 'DENY'
     : productiveCount === 0
@@ -1318,10 +1319,10 @@ export function buildManifest({
       productive_change_count: productiveCount,
     },
     resources: {
-      functions: [...affectedFunctions].sort(),
+      functions: functionNames,
       function_contracts: contracts,
-      migrations: [...migrations].map(stableCopy).sort((left, right) => left.version.localeCompare(right.version)),
-      config_changed: (classified?.config?.length ?? 0) > 0,
+      migrations: (recoveryMode ? [] : [...migrations]).map(stableCopy).sort((left, right) => left.version.localeCompare(right.version)),
+      config_changed: recoveryMode ? false : (classified?.config?.length ?? 0) > 0,
     },
     risk: stableCopy(risk),
     blockers,
@@ -1446,6 +1447,314 @@ export function verifyManifestBundle({ directory, expected }) {
     }
   }
   return { digest: actualDigest, manifest, provenance: actualProvenance };
+}
+
+const RECOVERY_RELEASE_FILES = ['auto-deploy-evidence.json', 'bundle', 'remote-evidence.json', 'request.json'];
+const RECOVERY_GATE_FILES = [
+  'gate-proof.json',
+  'migration-dry-run.json',
+  'postcheck-result.json',
+  'pre-function-revalidation.json',
+  'pre-migration-revalidation.json',
+  'pre-snapshot-verification.json',
+  'revalidation.json',
+  'release-observation.json',
+];
+
+function assertSafeRecoveryDirectory(directory, allowed, required, code = 'UNSAFE_RECOVERY_ARTIFACT') {
+  if (typeof directory !== 'string' || !isAbsolute(directory) || !existsSync(directory)) {
+    deny(code, 'recovery artifact directory must be an existing absolute path');
+  }
+  const root = lstatSync(directory);
+  if (!root.isDirectory() || root.isSymbolicLink()) deny(code, 'recovery artifact root is unsafe');
+  const entries = readdirSync(directory).sort();
+  if (entries.some(entry => !allowed.includes(entry)) || required.some(entry => !entries.includes(entry))) {
+    deny(code, 'recovery artifact entries are incomplete or unexpected');
+  }
+  for (const entry of entries) {
+    const stat = lstatSync(join(directory, entry));
+    const expectedDirectory = entry === 'bundle';
+    if (stat.isSymbolicLink() || (expectedDirectory ? !stat.isDirectory() : !stat.isFile())) {
+      deny(code, `recovery artifact entry ${entry} has an unsafe type`);
+    }
+  }
+  return true;
+}
+
+function readFixedJson(directory, name, code) {
+  const path = join(directory, name);
+  let body;
+  try {
+    body = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    deny(code, `${name} is missing or is not valid JSON`);
+  }
+  return body;
+}
+
+export function verifyRecoveryArtifactProvenance({ source, run, artifacts, releaseBundle, gateEvidence }) {
+  const code = 'RECOVERY_SOURCE_PROVENANCE_MISMATCH';
+  if (!source || !run || String(run.id) !== source.run_id || run.run_attempt !== source.run_attempt
+    || run.status !== 'completed' || run.conclusion !== 'failure' || run.event !== 'workflow_dispatch'
+    || run.head_sha !== source.source_sha || run.path !== '.github/workflows/nelyon-production-release.yml'
+    || run.repository?.full_name !== source.repository) {
+    deny(code, 'GitHub source run does not match the approved failed release');
+  }
+  if (!Array.isArray(artifacts)) deny(code, 'source artifact metadata is unavailable');
+  const expectedArtifacts = [source.gate_artifact, source.release_artifact];
+  for (const expected of expectedArtifacts) {
+    const matches = artifacts.filter(item => item?.name === expected?.name);
+    if (matches.length !== 1) deny(code, 'approved source artifact is missing or duplicated');
+    const actual = matches[0];
+    if (String(actual.id) !== expected.id || actual.name !== expected.name
+      || actual.digest !== expected.digest || !/^sha256:[0-9a-f]{64}$/.test(actual.digest ?? '')) {
+      deny(code, 'source artifact metadata does not match its full approved digest');
+    }
+  }
+
+  const releaseDirectory = resolve(releaseBundle?.directory ?? '');
+  const gateDirectory = resolve(gateEvidence?.directory ?? '');
+  assertSafeRecoveryDirectory(releaseDirectory, RECOVERY_RELEASE_FILES, ['bundle', 'remote-evidence.json', 'request.json']);
+  assertSafeRecoveryDirectory(gateDirectory, RECOVERY_GATE_FILES, ['release-observation.json']);
+  const bundleDirectory = join(releaseDirectory, 'bundle');
+  assertSafeRecoveryDirectory(bundleDirectory, BUNDLE_FILES, BUNDLE_FILES);
+
+  const manifestBytes = readFileSync(join(bundleDirectory, 'manifest.json'), 'utf8');
+  const actualManifestSha256 = sha256Hex(Buffer.from(manifestBytes, 'utf8'));
+  const claimedManifestSha256 = readFileSync(join(bundleDirectory, 'manifest.sha256'), 'utf8').trim();
+  if (actualManifestSha256 !== source.manifest_sha256
+    || claimedManifestSha256 !== actualManifestSha256
+    || !/^[0-9a-f]{64}$/.test(claimedManifestSha256)) {
+    deny(code, 'source manifest bytes do not match the approved digest');
+  }
+  const manifest = readFixedJson(bundleDirectory, 'manifest.json', code);
+  if (canonicalJson(manifest) !== manifestBytes) deny(code, 'source manifest is not canonical');
+  const sourceRequest = readFixedJson(releaseDirectory, 'request.json', code);
+  const observation = readFixedJson(gateDirectory, 'release-observation.json', code);
+  if (sourceRequest.repository !== source.repository
+    || sourceRequest.approvedSha !== source.source_sha
+    || sourceRequest.mainSha !== source.source_sha
+    || sourceRequest.releaseId !== source.release_id
+    || String(sourceRequest.runId) !== source.run_id
+    || sourceRequest.runAttempt !== source.run_attempt
+    || sourceRequest.mode !== 'release'
+    || manifest.identity?.approved_sha !== source.source_sha
+    || manifest.identity?.release_id !== source.release_id
+    || String(manifest.identity?.run_id) !== source.run_id
+    || manifest.identity?.run_attempt !== source.run_attempt
+    || manifest.identity?.mode !== 'release') {
+    deny(code, 'source request or manifest identity does not match the approved release');
+  }
+  const expectedMigrationNames = [source.expected_b7_migration.name];
+  const actualMigrationNames = (manifest.resources?.migrations ?? []).map(item => item?.path?.replace(/^.*\//, '').replace(/\.sql$/, ''));
+  const expectedFunctions = source.edge_functions.map(item => item.name);
+  if (canonicalJson(actualMigrationNames) !== canonicalJson(expectedMigrationNames)
+    || canonicalJson(manifest.resources?.functions) !== canonicalJson(expectedFunctions)) {
+    deny(code, 'source manifest productive resources do not match the approved B7 release');
+  }
+  const expectedSteps = {
+    pre_snapshot: 'success',
+    pre_verification: 'success',
+    migration_dry_run: 'success',
+    migrations: 'success',
+    functions: 'success',
+    post_snapshot: 'success',
+    postcheck: 'failure',
+  };
+  if (observation.schema_version !== 1 || observation.result !== 'INCOMPLETE_OR_FAILED'
+    || canonicalJson(observation.steps) !== canonicalJson(expectedSteps)
+    || observation.pre_evidence_sha256 !== source.pre_snapshot_evidence_sha256
+    || observation.post_evidence_sha256 !== source.post_snapshot_evidence_sha256) {
+    deny(code, 'source observation is not a successful mutation followed by failed postcheck');
+  }
+  return {
+    source_run_id: source.run_id,
+    source_release_id: source.release_id,
+    source_sha: source.source_sha,
+    manifest_sha256: actualManifestSha256,
+    source_artifact_digests: {
+      gate: source.gate_artifact.digest,
+      release: source.release_artifact.digest,
+    },
+    source_manifest: manifest,
+    source_request: sourceRequest,
+    source_observation: observation,
+  };
+}
+
+export function verifyPostcheckRecovery({
+  policy,
+  recoveryRequest,
+  recoveryManifest,
+  sourceManifest,
+  sourceObservation,
+  currentEvidence,
+  adapterSourceSha256,
+}) {
+  const code = 'RECOVERY_POSTCHECK_FAILED';
+  const source = policy?.postcheck_recovery?.approved_sources?.find(item => (
+    item.run_id === String(recoveryRequest?.recoverySourceRunId ?? '')
+  ));
+  if (!source
+    || recoveryRequest?.mode !== 'postcheck_recovery'
+    || recoveryRequest?.scopeConfirmation !== 'POSTCHECK_RECOVERY_READ_ONLY'
+    || recoveryRequest?.approvedSha !== recoveryManifest?.identity?.approved_sha
+    || recoveryRequest?.releaseId !== recoveryManifest?.identity?.release_id
+    || String(recoveryRequest?.runId) !== String(recoveryManifest?.identity?.run_id)
+    || recoveryRequest?.runAttempt !== recoveryManifest?.identity?.run_attempt) {
+    deny(code, 'recovery request, manifest, or approved source identity is invalid');
+  }
+  if (!Array.isArray(recoveryRequest.productiveResources)
+    || recoveryRequest.productiveResources.length !== 0
+    || canonicalJson(recoveryManifest?.resources) !== canonicalJson({
+      config_changed: false,
+      function_contracts: [],
+      functions: [],
+      migrations: [],
+    })) {
+    deny('RECOVERY_MUTATION_FORBIDDEN', 'postcheck recovery cannot carry productive resources');
+  }
+  const expectedSourceSteps = {
+    pre_snapshot: 'success',
+    pre_verification: 'success',
+    migration_dry_run: 'success',
+    migrations: 'success',
+    functions: 'success',
+    post_snapshot: 'success',
+    postcheck: 'failure',
+  };
+  if (sourceManifest?.identity?.approved_sha !== source.source_sha
+    || sourceManifest?.identity?.release_id !== source.release_id
+    || String(sourceManifest?.identity?.run_id) !== source.run_id
+    || sourceManifest?.identity?.run_attempt !== source.run_attempt
+    || canonicalJson(sourceObservation?.steps) !== canonicalJson(expectedSourceSteps)
+    || sourceObservation?.result !== 'INCOMPLETE_OR_FAILED'
+    || sourceObservation?.pre_evidence_sha256 !== source.pre_snapshot_evidence_sha256
+    || sourceObservation?.post_evidence_sha256 !== source.post_snapshot_evidence_sha256) {
+    deny(code, 'original release evidence is not the approved failed-postcheck source');
+  }
+  verifyProductionRecoverySnapshot({
+    recovery: currentEvidence,
+    policy,
+    request: recoveryRequest,
+    manifest: recoveryManifest,
+    adapterSourceSha256,
+  });
+
+  const migrations = currentEvidence.migrations;
+  const expectedVersion = source.expected_b7_migration.name.slice(0, 14);
+  const b7Rows = migrations.items.filter(item => (
+    item.version === expectedVersion
+    && `${item.version}_${item.name}` === source.expected_b7_migration.name
+  ));
+  if (migrations.count !== 337 || b7Rows.length !== 1
+    || `${migrations.latest?.version}_${migrations.latest?.name}` !== source.expected_b7_migration.name) {
+    deny(code, 'B7 migration is missing, duplicated, or not the exact latest migration');
+  }
+
+  if (currentEvidence.functions.count !== policy?.supabase?.expected_remote_function_count) {
+    deny(code, 'remote Edge Function inventory count changed unexpectedly');
+  }
+  const currentFunctions = new Map(currentEvidence.functions.items.map(item => [item.slug, item]));
+  const edgeAttestations = source.edge_functions.map(expected => {
+    const actual = currentFunctions.get(expected.name);
+    if (!actual || canonicalJson(actual) !== canonicalJson({
+      ezbr_sha256: expected.source_sha256,
+      slug: expected.name,
+      status: expected.status,
+      verify_jwt: expected.verify_jwt,
+      version: expected.version,
+    })) {
+      deny(code, `Edge Function ${expected.name} differs from the approved live attestation`);
+    }
+    return {
+      name: expected.name,
+      source_sha256: actual.ezbr_sha256,
+      status: actual.status,
+      verify_jwt: actual.verify_jwt,
+      version: actual.version,
+    };
+  });
+
+  const advisorItems = currentEvidence.cron_security.advisors.items;
+  const exceptionFingerprints = new Set(policy.security_advisor.exceptions.map(item => item.advisor_fingerprint));
+  const presentExceptions = advisorItems.filter(item => exceptionFingerprints.has(item.fingerprint));
+  const baselineItems = advisorItems.filter(item => !exceptionFingerprints.has(item.fingerprint));
+  const reconstructedBaseline = {
+    complete: true,
+    cron: currentEvidence.cron_security.cron.items,
+    security_findings: baselineItems,
+  };
+  if (presentExceptions.length !== exceptionFingerprints.size
+    || new Set(presentExceptions.map(item => item.fingerprint)).size !== exceptionFingerprints.size
+    || presentExceptions.some(item => item.level !== 'WARN'
+      || item.resource_kind !== 'authenticated_security_definer_function_executable')
+    || baselineItems.length !== policy.security_advisor.baseline.count
+    || sha256Hex(canonicalJson(reconstructedBaseline)) !== policy.security_advisor.baseline.cron_security_sha256) {
+    deny(code, 'current Security Advisor set is not the historical baseline plus the eleven approved exceptions');
+  }
+
+  const finance = currentEvidence.finance;
+  if (finance.transactions.count < 928 || finance.ledger_entries.count < 1918
+    || finance.ledger_accounts.count < 131 || finance.premium_transaction_count !== 0
+    || [...finance.transactions.items, ...finance.ledger_entries.items].some(item => containsReleaseIdentity(item, {
+      releaseId: source.release_id,
+      runId: source.run_id,
+    }))) {
+    deny('RELEASE_ATTRIBUTED_FINANCE', 'Finance baseline regressed or contains source-release-attributed movement');
+  }
+  const financeVerification = verifyFinancePostcheckFromRaw({
+    before: finance,
+    after: finance,
+    windowRows: { complete: true, transactions: [], ledger_entries: [] },
+    reconciliationResults: finance.reconciliation,
+    expectedPolicy: policy.supabase.finance_policy,
+    releaseIdentity: { releaseId: source.release_id, runId: source.run_id, runAttempt: source.run_attempt },
+  });
+
+  return {
+    schema_version: 1,
+    result: 'POSTCHECK_RECOVERY_SUCCESS',
+    source_run_id: source.run_id,
+    source_release_id: source.release_id,
+    source_sha: source.source_sha,
+    current_sha: recoveryRequest.approvedSha,
+    manifest_sha256: source.manifest_sha256,
+    source_artifact_digests: {
+      gate: source.gate_artifact.digest,
+      release: source.release_artifact.digest,
+    },
+    current_evidence_sha256: currentEvidence.evidence_sha256,
+    security_advisor: {
+      baseline_count: baselineItems.length,
+      baseline_sha256: policy.security_advisor.baseline.cron_security_sha256,
+      exception_count: presentExceptions.length,
+      exception_fingerprints: [...exceptionFingerprints].sort(),
+      current_count: advisorItems.length,
+    },
+    functions: {
+      count: currentEvidence.functions.count,
+      inventory_sha256: currentEvidence.functions.sha256,
+      items: edgeAttestations,
+    },
+    migrations: {
+      count: migrations.count,
+      latest: migrations.latest,
+      inventory_sha256: migrations.sha256,
+    },
+    finance: {
+      integrity: financeVerification.finance.integrity,
+      policy: financePolicyShape(finance.policy),
+      counts: {
+        transactions: finance.transactions.count,
+        ledger_entries: finance.ledger_entries.count,
+        ledger_accounts: finance.ledger_accounts.count,
+      },
+      reconciliation: finance.reconciliation,
+      premium_transaction_count: finance.premium_transaction_count,
+    },
+    premium_state: currentEvidence.premium_state,
+  };
 }
 
 export function validateReleaseHistory({ releaseId, pages, policy }) {
@@ -2105,7 +2414,7 @@ function parseCliArguments(argv) {
 }
 
 function printHelp() {
-  process.stdout.write('Usage: nelyon-production-release.mjs <plan|revalidate|verify-gate|verify-dry-run|verify-pre-snapshot|verify-function-contract|postcheck> [options]\n');
+  process.stdout.write('Usage: nelyon-production-release.mjs <plan|revalidate|verify-gate|verify-dry-run|verify-pre-snapshot|verify-function-contract|postcheck|verify-recovery-source|postcheck-recovery> [options]\n');
 }
 
 async function runCli(argv) {
@@ -2114,6 +2423,50 @@ async function runCli(argv) {
     return 0;
   }
   const { command, values } = parseCliArguments(argv);
+  if (command === 'verify-recovery-source') {
+    for (const required of ['policy', 'recovery-source-run', 'run', 'artifacts', 'release-bundle', 'gate-evidence', 'output']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    const policy = loadPolicy(values.policy);
+    const source = policy.postcheck_recovery.approved_sources.find(item => item.run_id === values['recovery-source-run']);
+    if (!source) deny('INVALID_RECOVERY_SOURCE', 'requested recovery source is not approved by policy');
+    const result = verifyRecoveryArtifactProvenance({
+      source,
+      run: JSON.parse(readFileSync(values.run, 'utf8')),
+      artifacts: JSON.parse(readFileSync(values.artifacts, 'utf8')),
+      releaseBundle: { directory: resolve(values['release-bundle']) },
+      gateEvidence: { directory: resolve(values['gate-evidence']) },
+    });
+    writeFileSync(resolve(values.output), canonicalJson({ schema_version: 1, result: 'RECOVERY_SOURCE_VERIFIED', ...result }), { encoding: 'utf8', flag: 'wx' });
+    process.stdout.write(`RECOVERY SOURCE VERIFIED ${result.source_run_id} ${result.manifest_sha256}\n`);
+    return 0;
+  }
+  if (command === 'postcheck-recovery') {
+    for (const required of ['policy', 'request', 'recovery-manifest', 'verified-source', 'current-snapshot', 'output']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    const policy = loadPolicy(values.policy);
+    const recoveryRequest = JSON.parse(readFileSync(values.request, 'utf8'));
+    validateRequest(recoveryRequest, policy);
+    const verifiedSource = JSON.parse(readFileSync(values['verified-source'], 'utf8'));
+    if (verifiedSource?.result !== 'RECOVERY_SOURCE_VERIFIED') {
+      deny('RECOVERY_SOURCE_PROVENANCE_MISMATCH', 'verified source record is missing');
+    }
+    const adapterPath = join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs');
+    const result = verifyPostcheckRecovery({
+      policy,
+      recoveryRequest,
+      recoveryManifest: JSON.parse(readFileSync(values['recovery-manifest'], 'utf8')),
+      sourceManifest: verifiedSource.source_manifest,
+      sourceObservation: verifiedSource.source_observation,
+      currentEvidence: JSON.parse(readFileSync(values['current-snapshot'], 'utf8')),
+      adapterSourceSha256: sha256Hex(readFileSync(adapterPath)),
+    });
+    const bytes = canonicalJson(result);
+    writeFileSync(resolve(values.output), bytes, { encoding: 'utf8', flag: 'wx' });
+    process.stdout.write(`POSTCHECK RECOVERY SUCCESS ${sha256Hex(bytes)}\n`);
+    return 0;
+  }
   if (command === 'verify-function-contract') {
     for (const required of ['manifest', 'function']) {
       if (!values[required]) throw new Error(`missing --${required}`);
