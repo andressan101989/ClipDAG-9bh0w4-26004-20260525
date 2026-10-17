@@ -1,7 +1,7 @@
 # Creator Premium Final A2: Security Advisor Remediation and Postcheck Recovery
 
 Date: 2026-10-17
-Status: Owner-approved conversational design; written specification pending owner review
+Status: Owner-approved written specification
 Repository: `andressan101989/ClipDAG-9bh0w4-26004-20260525`
 Base: `origin/main` at `0560b9e1fdc0869dfcd4d04f081de03ba31b66cb`
 Base tree: `d7f9e8ff9b01d4a9c449511faa0786f139110b7d`
@@ -69,6 +69,14 @@ Implementation must independently re-read these values from the GitHub API
 and original artifact bytes before constructing a recovery request. A value
 copied from this specification is not sufficient evidence and a prefix match
 is never accepted.
+
+The retained gate artifact contains the sanitized verification files and
+`release-observation.json`, but not the 1.6 MiB production pre/post snapshot
+JSON bodies. It records that both capture steps succeeded and binds their full
+evidence digests. Recovery therefore verifies every retained original byte,
+those recorded digests, the original manifest/request, and a fresh current
+snapshot. It must not claim that unavailable snapshot bodies were replayed or
+byte-for-byte revalidated.
 
 ## Goals
 
