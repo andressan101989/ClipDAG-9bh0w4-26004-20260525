@@ -24,6 +24,11 @@ on:
           - plan_only
           - gate_proof
           - release
+          - postcheck_recovery
+      recovery_source_run_id:
+        description: Approved source run ID, only for postcheck_recovery
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -70,6 +75,7 @@ jobs:
           INPUT_RELEASE_ID: ${{ inputs.release_id }}
           INPUT_SCOPE_CONFIRMATION: ${{ inputs.scope_confirmation }}
           INPUT_MODE: ${{ inputs.mode }}
+          INPUT_RECOVERY_SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
           REPOSITORY: ${{ github.repository }}
           WORKFLOW_REF: ${{ github.workflow_ref }}
           REF_NAME: ${{ github.ref }}
@@ -83,6 +89,13 @@ jobs:
           mkdir -p release-input release-artifact/bundle
           node --input-type=module <<'NODE'
           import { writeFileSync } from 'node:fs';
+          const recoveryMode = process.env.INPUT_MODE === 'postcheck_recovery';
+          if (recoveryMode) {
+            if (process.env.INPUT_RECOVERY_SOURCE_RUN_ID !== '39066492485') throw new Error('postcheck_recovery requires approved source run 39066492485');
+            if (process.env.INPUT_SCOPE_CONFIRMATION !== 'POSTCHECK_RECOVERY_READ_ONLY') throw new Error('postcheck_recovery requires POSTCHECK_RECOVERY_READ_ONLY');
+          } else if (process.env.INPUT_RECOVERY_SOURCE_RUN_ID) {
+            throw new Error('recovery_source_run_id is valid only for postcheck_recovery');
+          }
           const request = {
             actor: process.env.ACTOR,
             triggeringActor: process.env.TRIGGERING_ACTOR,
@@ -96,6 +109,8 @@ jobs:
             scopeConfirmation: process.env.INPUT_SCOPE_CONFIRMATION,
             runId: process.env.RUN_ID,
             runAttempt: Number(process.env.RUN_ATTEMPT),
+            recoverySourceRunId: recoveryMode ? process.env.INPUT_RECOVERY_SOURCE_RUN_ID : null,
+            productiveResources: [],
           };
           writeFileSync('release-input/request.json', JSON.stringify(request));
           const pages = [];
@@ -190,6 +205,10 @@ jobs:
     needs: plan
     if: >-
       needs.plan.outputs.mode == 'gate_proof' ||
+      (needs.plan.outputs.mode == 'postcheck_recovery' &&
+       needs.plan.outputs.result == 'NO PRODUCTIVE CHANGES' &&
+       fromJSON(needs.plan.outputs.productive_change_count) == 0 &&
+       needs.plan.outputs.blocked == 'false') ||
       (needs.plan.outputs.mode == 'release' &&
        needs.plan.outputs.result == 'PLAN READY' &&
        fromJSON(needs.plan.outputs.productive_change_count) > 0 &&
@@ -291,6 +310,12 @@ jobs:
           node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
           echo "GATE PROOF SUCCESS" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Verify postcheck recovery gate without deployment commands
+        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        run: |
+          set -euo pipefail
+          node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
+
       - name: Verify release gate and required Environment secrets
         if: needs.plan.outputs.mode == 'release'
         env:
@@ -298,6 +323,105 @@ jobs:
         run: |
           set -euo pipefail
           node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --auto-deploy-evidence gate-evidence/auto-deploy-evidence.json --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
+
+      - name: Download exact approved source release artifact
+        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: nelyon-release-39066492485-1
+          path: recovery-evidence/source-release
+          run-id: ${{ inputs.recovery_source_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download exact approved source gate artifact
+        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: nelyon-gate-evidence-39066492485-1
+          path: recovery-evidence/source-gate
+          run-id: ${{ inputs.recovery_source_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Fetch exact recovery source metadata
+        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          API_URL: ${{ github.api_url }}
+          SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          const headers = { Accept: 'application/vnd.github+json', Authorization: `Bearer ${process.env.GH_TOKEN}`, 'X-GitHub-Api-Version': '2022-11-28' };
+          const get = async url => {
+            const response = await fetch(url, { headers });
+            if (!response.ok) throw new Error(`${url} HTTP ${response.status}`);
+            return response.json();
+          };
+          const run = await get(`${process.env.API_URL}/repos/${process.env.REPOSITORY}/actions/runs/${process.env.SOURCE_RUN_ID}`);
+          writeFileSync('recovery-evidence/source-run.json', JSON.stringify(run));
+          const artifacts = [];
+          for (let page = 1; ; page += 1) {
+            const body = await get(`${process.env.API_URL}/repos/${process.env.REPOSITORY}/actions/runs/${process.env.SOURCE_RUN_ID}/artifacts?per_page=100&page=${page}`);
+            const items = body.artifacts ?? [];
+            artifacts.push(...items);
+            if (items.length < 100) break;
+          }
+          writeFileSync('recovery-evidence/source-artifacts.json', JSON.stringify(artifacts));
+          NODE
+
+      - name: Verify exact recovery source provenance
+        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        run: |
+          set -euo pipefail
+          node "$NELYON_HELPER" verify-recovery-source \
+            --policy "$NELYON_POLICY" \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
+            --run recovery-evidence/source-run.json \
+            --artifacts recovery-evidence/source-artifacts.json \
+            --release-bundle recovery-evidence/source-release \
+            --gate-evidence recovery-evidence/source-gate \
+            --output recovery-evidence/verified-source.json
+
+      - name: Capture fresh read-only postcheck recovery snapshot
+        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-production-snapshot-adapter.mjs capture \
+            --phase recovery \
+            --policy "$NELYON_POLICY" \
+            --request release-artifact/request.json \
+            --manifest release-artifact/bundle/manifest.json \
+            --output recovery-evidence/production-recovery.json
+
+      - name: Require read-only postcheck recovery success
+        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        run: |
+          set -euo pipefail
+          node "$NELYON_HELPER" postcheck-recovery \
+            --policy "$NELYON_POLICY" \
+            --request release-artifact/request.json \
+            --recovery-manifest release-artifact/bundle/manifest.json \
+            --verified-source recovery-evidence/verified-source.json \
+            --current-snapshot recovery-evidence/production-recovery.json \
+            --output recovery-evidence/postcheck-recovery-result.json
+          echo "POSTCHECK RECOVERY SUCCESS" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload sanitized postcheck recovery evidence
+        if: always() && needs.plan.outputs.mode == 'postcheck_recovery'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nelyon-postcheck-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            recovery-evidence/verified-source.json
+            recovery-evidence/production-recovery.json
+            recovery-evidence/postcheck-recovery-result.json
+          if-no-files-found: warn
+          retention-days: 90
+          compression-level: 0
 
       - name: Set up pinned Supabase CLI for an authorized release only
         if: needs.plan.outputs.mode == 'release'

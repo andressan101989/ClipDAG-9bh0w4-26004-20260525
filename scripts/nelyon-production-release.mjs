@@ -1953,7 +1953,7 @@ export function verifyConcurrency({ runs, currentRunId, complete }) {
 }
 
 export function requiredSecretsForMode(mode, secrets) {
-  if (mode === 'plan_only' || mode === 'gate_proof') return [];
+  if (mode === 'plan_only' || mode === 'gate_proof' || mode === 'postcheck_recovery') return [];
   if (mode !== 'release') deny('INVALID_MODE', 'unsupported release mode');
   const required = ['SUPABASE_ACCESS_TOKEN'];
   const missing = required.filter(name => typeof secrets?.[name] !== 'string' || secrets[name].length === 0);
