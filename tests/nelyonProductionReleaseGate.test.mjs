@@ -399,6 +399,31 @@ test('Supabase dry-run text is reduced to the exact manifest migration set', asy
     complete: true,
     pending_versions: ['20261010053524'],
   });
+  assert.deepEqual(gate.verifyMigrationDryRun({
+    text: JSON.stringify({
+      upToDate: false,
+      dryRun: true,
+      migrations: ['20261010053524_creator_premium_b7_full_functional_commercial_completion.sql'],
+      seeds: [],
+      roles: [],
+      message: 'Finished supabase db push.',
+    }),
+    manifest,
+  }), {
+    complete: true,
+    pending_versions: ['20261010053524'],
+  });
+  assertDenied(() => gate.verifyMigrationDryRun({
+    text: JSON.stringify({
+      upToDate: false,
+      dryRun: false,
+      migrations: ['20261010053524_creator_premium_b7_full_functional_commercial_completion.sql'],
+      seeds: [],
+      roles: [],
+      message: 'Finished supabase db push.',
+    }),
+    manifest,
+  }), 'MIGRATION_DRY_RUN_MISMATCH');
   assertDenied(() => gate.verifyMigrationDryRun({
     text: '20261010053524_creator_premium_b7_full_functional_commercial_completion.sql\n20261011000000_unexpected.sql\n',
     manifest,

@@ -455,8 +455,33 @@ export function verifyMigrationDryRun({ text, manifest }) {
     || text.includes('\0') || !Array.isArray(manifest?.resources?.migrations)) {
     deny('MIGRATION_DRY_RUN_MISMATCH', 'migration dry-run evidence is malformed');
   }
-  const matches = [...text.matchAll(/(?:^|[\s•])((20[0-9]{12})_[A-Za-z0-9][A-Za-z0-9_-]*\.sql)(?=\s|$)/gm)];
-  const pendingFiles = [...new Set(matches.map(match => match[1]))].sort();
+  const trimmed = text.trim();
+  let pendingFiles;
+  if (trimmed.startsWith('{')) {
+    let result;
+    try {
+      result = JSON.parse(trimmed);
+    } catch {
+      deny('MIGRATION_DRY_RUN_MISMATCH', 'structured migration dry-run evidence is invalid JSON');
+    }
+    const expectedKeys = ['dryRun', 'message', 'migrations', 'roles', 'seeds', 'upToDate'];
+    const migrations = result?.migrations;
+    if (!result || typeof result !== 'object' || Array.isArray(result)
+      || canonicalJson(Object.keys(result).sort()) !== canonicalJson(expectedKeys)
+      || result.dryRun !== true || typeof result.upToDate !== 'boolean'
+      || typeof result.message !== 'string' || result.message.length === 0
+      || !Array.isArray(migrations) || migrations.some(item => typeof item !== 'string')
+      || !Array.isArray(result.seeds) || result.seeds.length !== 0
+      || !Array.isArray(result.roles) || result.roles.length !== 0
+      || result.upToDate !== (migrations.length === 0)
+      || new Set(migrations).size !== migrations.length) {
+      deny('MIGRATION_DRY_RUN_MISMATCH', 'structured migration dry-run evidence is malformed');
+    }
+    pendingFiles = [...migrations].sort();
+  } else {
+    const matches = [...text.matchAll(/(?:^|[\s•])((20[0-9]{12})_[A-Za-z0-9][A-Za-z0-9_-]*\.sql)(?=\s|$)/gm)];
+    pendingFiles = [...new Set(matches.map(match => match[1]))].sort();
+  }
   const expectedFiles = manifest.resources.migrations.map(item => posix.basename(item?.path ?? '')).sort();
   const expected = manifest.resources.migrations.map(item => item?.version).sort();
   if (expected.some(version => !/^20[0-9]{12}$/.test(version ?? ''))
