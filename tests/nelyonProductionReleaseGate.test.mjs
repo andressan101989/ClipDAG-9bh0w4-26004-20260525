@@ -162,13 +162,15 @@ test('candidate baseline denies release but permits plan_only and gate_proof', a
   }), policy), 'BASELINE_NOT_VERIFIED');
 });
 
-test('expanded managed scope invalidates the historical baseline until owner evidence is refreshed', async () => {
+test('expanded managed scope is bound to refreshed owner evidence before cutover', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(gate.validatePolicy(policy), true);
-  assert.equal(policy.baseline.state, 'candidate');
-  assert.equal(policy.baseline.evidence, null);
-  assert.equal(policy.baseline.verified_by, null);
-  assert.equal(policy.baseline.verified_at, null);
+  assert.equal(policy.baseline.state, 'verified');
+  assert.match(policy.baseline.evidence, /^[0-9a-f]{64}$/);
+  assert.equal(policy.baseline.verified_by, OWNER);
+  assert.ok(Number.isFinite(Date.parse(policy.baseline.verified_at)));
+  assert.deepEqual(policy.baseline.blocked_resources, []);
+  assert.match(policy.baseline.evidence_digests.function_source_parity, /^[0-9a-f]{64}$/);
   assert.equal(policy.cutover.state, 'pending');
   assert.equal(policy.cutover.verified_by, null);
   assert.equal(policy.cutover.verified_at, null);
@@ -176,7 +178,7 @@ test('expanded managed scope invalidates the historical baseline until owner evi
   assertDenied(() => gate.validateRequest(request({
     mode: 'release',
     scopeConfirmation: 'RELEASE_STANDARD',
-  }), policy), 'BASELINE_NOT_VERIFIED');
+  }), policy), 'CUTOVER_NOT_VERIFIED');
 });
 
 test('verified cutover requires an owner-bound external evidence record', async () => {
