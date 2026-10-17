@@ -1935,10 +1935,11 @@ test('auto-deploy evidence digest binds canonical bytes without requiring a poli
   }
 });
 
-test('plan_only and gate_proof never require Supabase deployment secrets', async () => {
+test('plan_only gate_proof and postcheck recovery never require Supabase deployment secrets', async () => {
   const { gate } = await loadGateAndPolicy();
   assert.deepEqual(gate.requiredSecretsForMode('plan_only', {}), []);
   assert.deepEqual(gate.requiredSecretsForMode('gate_proof', {}), []);
+  assert.deepEqual(gate.requiredSecretsForMode('postcheck_recovery', {}), []);
   assertDenied(() => gate.requiredSecretsForMode('release', {}), 'MISSING_SECRETS');
   assert.deepEqual(gate.requiredSecretsForMode('release', { SUPABASE_ACCESS_TOKEN: 'scoped-deploy-token' }), ['SUPABASE_ACCESS_TOKEN']);
 });
@@ -2544,7 +2545,7 @@ function workflowJob(text, name, nextName) {
   return text.slice(start, end === -1 ? text.length : end);
 }
 
-test('workflow trigger is exclusively workflow_dispatch with four required inputs', () => {
+test('workflow trigger is exclusively workflow_dispatch with four required inputs and one optional recovery source', () => {
   const text = workflowText();
   const trigger = text.slice(text.indexOf('on:'), text.indexOf('\npermissions:'));
   assert.match(trigger, /^on:\s*\n\s+workflow_dispatch:/m);
@@ -2552,7 +2553,8 @@ test('workflow trigger is exclusively workflow_dispatch with four required input
   for (const input of ['approved_sha', 'release_id', 'scope_confirmation', 'mode']) {
     assert.match(trigger, new RegExp(`\\n      ${input}:\\n        description:.*\\n        required: true`));
   }
-  assert.match(trigger, /mode:[\s\S]*type: choice[\s\S]*- plan_only[\s\S]*- gate_proof[\s\S]*- release/);
+  assert.match(trigger, /recovery_source_run_id:\n\s+description:.*\n\s+required: false/);
+  assert.match(trigger, /mode:[\s\S]*type: choice[\s\S]*- plan_only[\s\S]*- gate_proof[\s\S]*- release[\s\S]*- postcheck_recovery/);
 });
 
 test('workflow uses exact immutable action pins Node and Supabase CLI versions', () => {
@@ -2614,6 +2616,30 @@ test('plan_only cannot schedule deploy and gate_proof contains no Supabase mutat
   assert.doesNotMatch(deploy, /needs\.plan\.outputs\.mode == 'plan_only'/);
   assert.match(deploy, /if: needs\.plan\.outputs\.mode == 'gate_proof'[\s\S]*verify-gate/);
   assert.match(deploy, /if: needs\.plan\.outputs\.mode == 'release'[\s\S]*supabase\/setup-cli/);
+});
+
+test('workflow routes postcheck_recovery through exact source artifacts and no mutation', () => {
+  const text = workflowText();
+  const plan = workflowJob(text, 'plan', 'deploy');
+  const deploy = workflowJob(text, 'deploy');
+  assert.match(plan, /INPUT_RECOVERY_SOURCE_RUN_ID:\s*\$\{\{ inputs\.recovery_source_run_id \}\}/);
+  assert.match(plan, /postcheck_recovery[\s\S]*39066492485[\s\S]*POSTCHECK_RECOVERY_READ_ONLY/);
+  assert.match(plan, /recoverySourceRunId:[\s\S]*productiveResources:\s*\[\]/);
+  assert.match(deploy, /needs\.plan\.outputs\.mode == 'postcheck_recovery'[\s\S]*needs\.plan\.outputs\.result == 'NO PRODUCTIVE CHANGES'/);
+  assert.match(deploy, /name: Download exact approved source release artifact[\s\S]*name: nelyon-release-39066492485-1[\s\S]*run-id: \$\{\{ inputs\.recovery_source_run_id \}\}[\s\S]*github-token: \$\{\{ github\.token \}\}/);
+  assert.match(deploy, /name: Download exact approved source gate artifact[\s\S]*name: nelyon-gate-evidence-39066492485-1[\s\S]*run-id: \$\{\{ inputs\.recovery_source_run_id \}\}/);
+  const verifySource = deploy.indexOf(' verify-recovery-source ');
+  const capture = deploy.indexOf('--phase recovery');
+  const recover = deploy.indexOf(' postcheck-recovery ');
+  assert.ok(verifySource > 0 && capture > verifySource && recover > capture);
+  assert.match(deploy, /name: Upload sanitized postcheck recovery evidence[\s\S]*name: nelyon-postcheck-recovery-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}[\s\S]*retention-days: 90/);
+  const recoveryRegion = deploy.slice(deploy.indexOf('name: Download exact approved source release artifact'), deploy.indexOf('name: Upload sanitized postcheck recovery evidence'));
+  assert.doesNotMatch(recoveryRegion, /supabase\s+(?:db\s+push|migration|functions\s+deploy)|--phase\s+(?:pre|post)\b/);
+  for (const mutation of ['Set up pinned Supabase CLI', 'Verify exact remote migration dry-run', 'Apply exact manifest migrations', 'Deploy each exact manifest function', 'Require postcheck before release success']) {
+    const index = deploy.indexOf(`name: ${mutation}`);
+    assert.ok(index > 0);
+    assert.match(deploy.slice(index, index + 260), /if:.*mode == 'release'/s);
+  }
 });
 
 test('release path revalidates before secrets and before every mutation', () => {
@@ -2702,6 +2728,7 @@ test('runbook covers the simplified single-owner release finance and recovery co
     '## Future release procedure',
     '## Concurrent finance reconciliation',
     '## Failure recovery and rollback',
+    '## Creator Premium B7 postcheck recovery',
     '## Stop conditions',
     '## Zero-mutation postcheck',
   ]) assert.match(text, new RegExp(section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
@@ -2727,6 +2754,9 @@ test('runbook covers the simplified single-owner release finance and recovery co
     'current empty deployment approval history',
     'forward-only corrective migration',
     'previously approved reproducible Edge source',
+    'POSTCHECK_RECOVERY_READ_ONLY',
+    'nelyon-postcheck-recovery-<run-id>-<run-attempt>',
+    'does not mean `PHYSICAL_PASS`',
     'transactions confirmed after the pre-snapshot even when created before it',
   ]) assert.ok(text.includes(literal), `runbook missing ${literal}`);
   assert.doesNotMatch(text, /NELYON-APPROVE|Review deployments|paste the exact generated approval token/);
