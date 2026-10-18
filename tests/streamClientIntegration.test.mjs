@@ -318,16 +318,32 @@ assert.match(upload,/onFiles=\{\(\)=>\{setIosVideoGalleryVisible\(false\);void p
 assert.match(upload,/deleteOwnedIosVideoCache\(selectedMedia\.ownedCacheUri\)/);
 assert.match(galleryService,/if \(!uri\.startsWith\(`\$\{cacheRoot\}\$\{CACHE_PREFIX\}`\)\) return/);
 let selectedInfoCalls=0;
+const selectedInfoOptions=[];
+const networkStates=[];
 const selected=await resolveGallerySelection({
   asset:{id:'private-id',filename:'video.mov',duration:60},
-  getInfo:async(_id,options)=>{selectedInfoCalls++;assert.deepEqual(options,{shouldDownloadFromNetwork:true});
-    return {localUri:'file:///local.mov',filename:'video.mov',duration:60};},
+  getInfo:async(_id,options)=>{selectedInfoCalls++;selectedInfoOptions.push(options);
+    return options.shouldDownloadFromNetwork
+      ? {localUri:'file:///local.mov',filename:'video.mov',duration:60}
+      : {filename:'video.mov',duration:60,isNetworkAsset:true};},
   fileFactory:()=>({exists:true,size:MAX_SIZE}),
   copy:()=>({uri:'file:///cache/safe.mov',size:MAX_SIZE}),
+  onNetworkState:value=>networkStates.push(value),
 });
-assert.equal(selectedInfoCalls,1);
+assert.equal(selectedInfoCalls,2);
+assert.deepEqual(selectedInfoOptions,[{shouldDownloadFromNetwork:false},{shouldDownloadFromNetwork:true}]);
+assert.deepEqual(networkStates,[true]);
 assert.equal(selected.fileSize,MAX_SIZE);
 assert.equal(selected.durationMs,MAX_DURATION_MS);
+const premium180=await resolveGallerySelection({
+  asset:{id:'premium-id',filename:'premium.mov',duration:180},
+  getInfo:async(_id,options)=>options.shouldDownloadFromNetwork
+    ? {localUri:'file:///premium.mov',filename:'premium.mov',duration:180}
+    : {filename:'premium.mov',duration:180,isNetworkAsset:false},
+  fileFactory:()=>({exists:true,size:1}),copy:()=>({uri:'file:///cache/premium.mov',size:1}),
+  maxDurationMs:180_000,
+});
+assert.equal(premium180.durationMs,180_000);
 await assert.rejects(()=>resolveGallerySelection({
   asset:{id:'x',filename:'x.mp4',duration:1},getInfo:async()=>({filename:'x.mp4',duration:1}),
   fileFactory:()=>({}),copy:()=>({}),

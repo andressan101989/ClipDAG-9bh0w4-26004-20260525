@@ -25,6 +25,7 @@ import { useAuth } from '@/hooks/useAuth';
 import {
   creatorPremiumLifecyclePresentation,
   formatCreatorPremiumBdag,
+  visibleCreatorPremiumContents,
 } from '@/services/creatorPremiumPresentation.mjs';
 import {
   creatorPremiumCommercialSummaryErrorMessage,
@@ -171,6 +172,10 @@ function CreatorPremiumHubContent() {
       return available || selectedContentIds.includes(item.id);
     }),
     [contents, selectedContentIds],
+  );
+  const visibleContents = useMemo(
+    () => visibleCreatorPremiumContents(contents),
+    [contents],
   );
   const planGroups = useMemo(() => ([
     { status: 'draft' as const, label: 'Borradores', items: plans.filter(plan => plan.status === 'draft') },
@@ -465,13 +470,13 @@ function CreatorPremiumHubContent() {
                 <MaterialCommunityIcons name="plus" size={21} color={Colors.textOnBrand} />
                 <Text style={styles.primaryButtonText}>Crear contenido Premium</Text>
               </Pressable>
-              {contents.length === 0 ? (
+              {visibleContents.length === 0 ? (
                 <EmptyState
                   icon="image-multiple-outline"
                   title="Aún no tienes contenido Premium"
                   copy="Crea un borrador con una vista previa pública y un original privado."
                 />
-              ) : contents.map(item => {
+              ) : visibleContents.map(item => {
                 const presentation = creatorPremiumLifecyclePresentation(item);
                 return (
                 <Pressable

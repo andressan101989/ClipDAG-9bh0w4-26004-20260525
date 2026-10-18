@@ -85,13 +85,12 @@ test('F1 plan orchestration follows the canonical plan-family then plan then con
   }
 });
 
-test('iOS Photos selection avoids export/transcoding and catches permission, iCloud and cancellation paths', () => {
+test('iOS Photos selection uses the canonical MediaLibrary materialization path', () => {
   const body = editor.slice(editor.indexOf('const pickVideoFromPhotos'), editor.indexOf('const pickVideoFromFiles'));
-  assert.match(body, /requestMediaLibraryPermissionsAsync/);
-  assert.doesNotMatch(body, /Promise\.resolve\(\{\s*granted:\s*true/);
-  assert.match(body, /VideoExportPreset\.Passthrough/);
-  assert.match(body, /UIImagePickerPreferredAssetRepresentationMode\.Current/);
-  assert.match(body, /selectCreatorPremiumVideoFromPhotos/);
+  assert.match(body, /Platform\.OS\s*===\s*['"]ios['"][\s\S]*setIosVideoGalleryVisible\(true\)/);
+  assert.match(editor, /IosVideoGalleryPicker/);
+  assert.match(editor, /maxDurationMs=\{CREATOR_PREMIUM_VIDEO_MAX_DURATION_MS\}/);
+  assert.doesNotMatch(editor, /VideoExportPreset\.Passthrough|UIImagePickerPreferredAssetRepresentationMode\.Current/);
 });
 
 test('editor selects owned active plans and submits mappings atomically on the server', () => {

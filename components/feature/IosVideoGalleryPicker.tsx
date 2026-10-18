@@ -14,6 +14,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import {
+  IOS_VIDEO_MAX_DURATION_MS,
   iosVideoQuery,
   mergeUniqueAssets,
   resolveIosVideoAsset,
@@ -28,6 +29,8 @@ type Props = {
   onFiles: () => void;
   onSelected: (video: ResolvedIosVideo) => void;
   onError: (code: IosVideoResolutionCode | 'permission_denied' | 'query_failed') => void;
+  maxDurationMs?: number;
+  telemetryScope?: 'feed' | 'creator_premium';
 };
 
 function durationLabel(seconds: number): string {
@@ -41,6 +44,8 @@ export function IosVideoGalleryPicker({
   onFiles,
   onSelected,
   onError,
+  maxDurationMs = IOS_VIDEO_MAX_DURATION_MS,
+  telemetryScope = 'feed',
 }: Props) {
   const [assets, setAssets] = useState<MediaLibrary.Asset[]>([]);
   const [loading, setLoading] = useState(false);
@@ -53,6 +58,7 @@ export function IosVideoGalleryPicker({
   const [downloading, setDownloading] = useState(false);
   const [selectedId, setSelectedId] = useState<string>();
   const selectionLockRef = useRef(false);
+  const selectionAbortRef = useRef<AbortController | null>(null);
   const pageLockRef = useRef(false);
 
   const loadPage = useCallback(async (after?: string) => {
@@ -115,18 +121,42 @@ export function IosVideoGalleryPicker({
     return () => { active = false; };
   }, [visible, loadPage, onError]);
 
+  useEffect(() => {
+    if (!visible) selectionAbortRef.current?.abort();
+  }, [visible]);
+
+  useEffect(() => () => {
+    selectionAbortRef.current?.abort();
+  }, []);
+
   const selectAsset = useCallback(async (asset: MediaLibrary.Asset) => {
     if (selectionLockRef.current) return;
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    selectionAbortRef.current = controller;
     selectionLockRef.current = true;
     setSelectedId(asset.id);
     setPreparing(true);
     setDownloading(false);
     try {
-      const video = await resolveIosVideoAsset(asset, setDownloading);
+      const video = await resolveIosVideoAsset(asset, {
+        maxDurationMs,
+        signal: controller.signal,
+        onNetworkState: setDownloading,
+        onTelemetry: event => console.info('[MediaLibraryVideo] resolution', {
+          scope: telemetryScope,
+          stage: event.stage,
+          code: event.code,
+          elapsedMs: event.elapsedMs,
+          networkAsset: event.networkAsset,
+        }),
+      });
       onSelected(video);
     } catch (error) {
       const safe = error as Partial<IosVideoResolutionError>;
       const code: IosVideoResolutionCode = safe.code === 'download_failed'
+        || safe.code === 'materialize_timeout'
+        || safe.code === 'selection_cancelled'
         || safe.code === 'video_too_large'
         || safe.code === 'video_too_long'
         || safe.code === 'unsupported_format'
@@ -134,17 +164,24 @@ export function IosVideoGalleryPicker({
         ? safe.code
         : 'file_unavailable';
       console.warn('[Upload] Media library video resolution failed', {
+        scope: telemetryScope,
         stage: safe.stage ?? 'validation',
         code,
+        elapsedMs: Math.max(0, Date.now() - startedAt),
       });
-      onError(code);
+      if (code !== 'selection_cancelled') onError(code);
     } finally {
+      if (selectionAbortRef.current === controller) selectionAbortRef.current = null;
       selectionLockRef.current = false;
       setPreparing(false);
       setDownloading(false);
       setSelectedId(undefined);
     }
-  }, [onError, onSelected]);
+  }, [maxDurationMs, onError, onSelected, telemetryScope]);
+
+  const cancelPreparation = useCallback(() => {
+    selectionAbortRef.current?.abort();
+  }, []);
 
   const manageAccess = useCallback(async () => {
     try {
@@ -159,7 +196,15 @@ export function IosVideoGalleryPicker({
   }, [loadPage]);
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={() => {
+        selectionAbortRef.current?.abort();
+        onClose();
+      }}
+    >
       <View style={styles.container}>
         <View style={styles.header}>
           <Pressable onPress={onClose} disabled={preparing}><Text style={styles.action}>Cerrar</Text></Pressable>
@@ -211,6 +256,9 @@ export function IosVideoGalleryPicker({
             <Text style={styles.preparingText}>
               {downloading ? 'Descargando video desde iCloud...' : 'Preparando video...'}
             </Text>
+            <Pressable onPress={cancelPreparation} style={styles.cancelPreparation}>
+              <Text style={styles.cancelPreparationText}>Cancelar preparación</Text>
+            </Pressable>
           </View>
         ) : null}
       </View>
@@ -236,4 +284,6 @@ const styles = StyleSheet.create({
   footer: { padding: Spacing.lg },
   preparing: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: Spacing.md, backgroundColor: 'rgba(0,0,0,0.72)' },
   preparingText: { color: '#fff', fontSize: FontSize.md, fontWeight: FontWeight.semibold },
+  cancelPreparation: { minHeight: 44, justifyContent: 'center', paddingHorizontal: Spacing.md },
+  cancelPreparationText: { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
 });
