@@ -4,6 +4,7 @@ import { evaluateTextRules } from './ruleEngine.mjs'
 import { AudioPipelineError, WHISPER_MODEL, bytesToBase64, downloadStreamAudioBytes, makeProbeWav, normalizeWhisperResult, selectStreamAudioDownloadRoute, timecodeForMatch, validateStreamAudioTargetType } from './audioPipeline.mjs'
 import { VISUAL_AI_PROVIDER, VISUAL_MODEL, VisualProbeError, runVisualMultiImageProviderProbe, runVisualProviderProbe } from './visualProbe.mjs'
 import { MAX_PREMIUM_VISUAL_IMAGE_BYTES, MAX_VISUAL_IMAGE_BYTES, VisualPipelineError, analyzeVisualBytes, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps } from './visualPipeline.mjs'
+import { POLICY_CONTEXT_PROMPT_VERSION, PolicyContextError, policyContextErrorFrom, runPolicyContextAnalysis, runPolicyContextProviderProbe } from './policyContext.mjs'
 import { streamAccountId, streamCustomerCode, streamFetch } from '../_shared/stream.ts'
 import { createPremiumStreamAudioDownloadGrant, createPremiumStreamPlaybackGrant } from '../_shared/premiumStreamSecurity.ts'
 import { getObjectBytes, isR2Transient } from '../_shared/r2.ts'
@@ -103,7 +104,7 @@ Deno.serve(async req => {
   const bearer = req.headers.get('Authorization')?.slice('Bearer '.length) ?? ''
   const apiKey = req.headers.get('apikey') ?? ''
   const dispatchAuthorized = Boolean(expectedSecret && suppliedSecret && secretsEqual(suppliedSecret, expectedSecret))
-  const serviceProbeAuthorized = ['visual_provider_probe', 'visual_multi_image_probe', 'provider_probe'].includes(String(body.action ?? '')) &&
+  const serviceProbeAuthorized = ['visual_provider_probe', 'visual_multi_image_probe', 'provider_probe', 'policy_context_provider_probe'].includes(String(body.action ?? '')) &&
     Boolean((serviceRoleKey && ((bearer && secretsEqual(bearer, serviceRoleKey)) || (apiKey && secretsEqual(apiKey, serviceRoleKey)))) || jwtRole(bearer) === 'service_role')
   const serviceRunAuthorized = body.action === 'run_once' && jwtRole(bearer) === 'service_role'
   if (!dispatchAuthorized && !serviceProbeAuthorized && !serviceRunAuthorized) {
@@ -138,6 +139,18 @@ Deno.serve(async req => {
     } catch (error) {
       const issue = error instanceof AudioPipelineError ? error : new AudioPipelineError('workers_ai_probe_failed')
       return json({ success: false, action: 'provider_probe', configured: issue.code !== 'workers_ai_configuration_missing', provider: 'Cloudflare Workers AI', model: WHISPER_MODEL, error: issue.code }, issue.status)
+    }
+  }
+  if (body.action === 'policy_context_provider_probe') {
+    try {
+      const result = await runPolicyContextProviderProbe({ token: Deno.env.get('CLOUDFLARE_AI_TOKEN')?.trim(), accountId: streamAccountId() })
+      return json({ success: true, action: 'policy_context_provider_probe', configured: true, provider: VISUAL_AI_PROVIDER,
+        model: VISUAL_MODEL, schema_valid: true, cases_valid: result.cases.length, error: null })
+    } catch (error) {
+      const issue = policyContextErrorFrom(error)
+      return json({ success: false, action: 'policy_context_provider_probe',
+        configured: issue.code !== 'visual_workers_ai_configuration_missing', provider: VISUAL_AI_PROVIDER,
+        model: VISUAL_MODEL, schema_valid: false, cases_valid: 0, error: issue.code }, issue.status)
     }
   }
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
@@ -323,6 +336,82 @@ Deno.serve(async req => {
       else visualFailed += 1
     }
   }
+
+  let contextClaimed = 0, contextAnalyzed = 0, contextRetried = 0, contextFailed = 0
+  const contextErrors: { scan_id: string; code: string; retryable: boolean; provider_called: boolean }[] = []
+  const { data: contextData, error: contextClaimError } = await admin.rpc(
+    'claim_creator_premium_content_safety_context_v1',
+    { p_limit: 1 },
+  )
+  if (!contextClaimError) for (const value of Array.isArray(contextData) ? contextData : []) {
+    const claim = object(value); contextClaimed += 1
+    const visualResult = object(claim.visual_result)
+    const findings = Array.isArray(visualResult.findings) ? visualResult.findings.map(value => {
+      const finding = object(value)
+      return {
+        category: finding.category,
+        triage_level: finding.triage_level,
+        description: finding.description,
+      }
+    }) : []
+    try {
+      if (!uuid(claim.scan_id) || typeof claim.content_fingerprint !== 'string' ||
+          !/^[0-9a-f]{64}$/u.test(claim.content_fingerprint) || typeof claim.text !== 'string' ||
+          !['complete', 'no_speech', 'not_applicable'].includes(String(claim.transcript_coverage)) ||
+          typeof claim.transcript_text !== 'string') {
+        throw new PolicyContextError('creator_premium_context_claim_invalid', { status: 400 })
+      }
+      const input = {
+        text: claim.text,
+        transcript: { coverage: claim.transcript_coverage, text: claim.transcript_text },
+        visual: {
+          coverage: 'complete',
+          review_required: visualResult.review_required,
+          findings,
+          summary: visualResult.summary,
+        },
+      }
+      const result = await runPolicyContextAnalysis({ token: Deno.env.get('CLOUDFLARE_AI_TOKEN')?.trim(),
+        accountId: streamAccountId(), input })
+      const fingerprint = await sha256(`${claim.scan_id}|${claim.content_fingerprint}|${VISUAL_AI_PROVIDER}|${VISUAL_MODEL}|${POLICY_CONTEXT_PROMPT_VERSION}|${JSON.stringify(result)}`)
+      const { error } = await admin.rpc('complete_creator_premium_content_safety_context_v1', {
+        p_scan_id: claim.scan_id,
+        p_content_fingerprint: claim.content_fingerprint,
+        p_context_result: result,
+        p_evaluation_fingerprint: fingerprint,
+      })
+      if (error) throw new PolicyContextError('creator_premium_context_completion_failed', { retryable: true, providerCalled: true })
+      contextAnalyzed += 1
+    } catch (error) {
+      const issue = policyContextErrorFrom(error)
+      console.warn('creator_premium_context_processing_failed', {
+        code: issue.code,
+        retryable: issue.retryable,
+        provider_called: issue.providerCalled,
+        attempt_count: Number(claim.attempt_count ?? 0),
+        provider_status_code: issue.providerTelemetry?.status_code ?? null,
+        provider_correlation_id: issue.providerTelemetry?.request_correlation_id ?? null,
+        provider_carrier: issue.providerTelemetry?.carrier ?? null,
+        provider_finish_reason: issue.providerTelemetry?.finish_reason ?? null,
+        provider_response_bytes: issue.providerTelemetry?.response_bytes ?? null,
+        provider_input_tokens: issue.providerTelemetry?.input_tokens ?? null,
+        provider_output_tokens: issue.providerTelemetry?.output_tokens ?? null,
+        provider_total_tokens: issue.providerTelemetry?.total_tokens ?? null,
+      })
+      if (uuid(claim.scan_id)) {
+        const { data } = await admin.rpc('fail_creator_premium_content_safety_context_v1', {
+          p_scan_id: claim.scan_id,
+          p_error_code: issue.code,
+          p_retryable: issue.retryable,
+          p_provider_called: issue.providerCalled,
+        })
+        if (object(data).context_status === 'pending') contextRetried += 1
+        else contextFailed += 1
+      } else contextFailed += 1
+      contextErrors.push({ scan_id: String(claim.scan_id ?? ''), code: issue.code,
+        retryable: issue.retryable, provider_called: issue.providerCalled })
+    }
+  }
   const { data: publicationData, error: publicationError } = await admin.rpc(
     'reconcile_creator_premium_publications_v1',
     { p_limit: 25 },
@@ -332,5 +421,7 @@ Deno.serve(async req => {
     audio: { claimed: audioClaimed, analyzed: audioAnalyzed, retried: audioRetried, failed: audioFailed, cleanup_completed: cleanupCompleted },
     transcripts: { evaluated: transcriptEvaluated, alerts: transcriptAlerts },
     visual: { claimed: visualClaimed, analyzed: visualAnalyzed, advanced: visualAdvanced, retried: visualRetried, failed: visualFailed, alerts: visualAlerts, errors: visualErrors },
+    premium_context: { claimed: contextClaimed, analyzed: contextAnalyzed, retried: contextRetried, failed: contextFailed,
+      claim_error: contextClaimError ? 'creator_premium_context_claim_failed' : null, errors: contextErrors },
     premium_publication: publicationData })
 })

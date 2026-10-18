@@ -3,8 +3,20 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import {
+  POLICY_CONTEXT_PROMPT_VERSION,
+  POLICY_CONTEXT_SCHEMA_VERSION,
+  PolicyContextError,
+  buildPolicyContextProbeRequest,
+  buildPolicyContextRequest,
+  runPolicyContextAnalysis,
+  validatePolicyContextProbeResult,
+  validatePolicyContextResult,
+} from '../supabase/functions/content-safety-scan/policyContext.mjs'
+
 const root = process.cwd()
 const evidencePath = join(root, 'docs', 'creator-premium-content-safety-p2-evidence-v1.json')
+const workerPath = join(root, 'supabase', 'functions', 'content-safety-scan', 'index.ts')
 
 function evidence() {
   assert.equal(existsSync(evidencePath), true, 'P2 evidence contract must exist')
@@ -86,5 +98,186 @@ test('P2 private E2E gate requires persisted evidence and a private result befor
     'content_remains_private',
   ])
   assert.equal(value.gates.private_media_policy_e2e.new_upload_allowed, false)
+})
+
+const completeImageInput = Object.freeze({
+  text: 'Curso de historia del arte sobre un mural urbano.',
+  transcript: { coverage: 'not_applicable', text: '' },
+  visual: {
+    coverage: 'complete',
+    review_required: false,
+    findings: [],
+    summary: 'A presenter stands beside a painted mural.',
+  },
+})
+
+const allowResult = Object.freeze({
+  schema_version: 'creator-premium-context-p2-v1',
+  policy_id: 'nelyon.creator_premium.general.p1.v1',
+  decision: 'allow',
+  categories: ['education'],
+  coverage: { text: 'complete', transcript: 'not_applicable', visual: 'complete' },
+  uncertainty: 'unambiguous',
+  age_uncertainty: 'not_relevant',
+  consent_uncertainty: 'not_relevant',
+  certainty_basis: 'discrete_contract',
+  rationale_codes: ['educational_context'],
+})
+
+test('P2 production request uses the existing single forced tool and carries no numeric confidence field', () => {
+  const request = buildPolicyContextRequest(completeImageInput)
+  assert.equal(request.stream, false)
+  assert.equal(request.parallel_tool_calls, false)
+  assert.deepEqual(request.tool_choice, { type: 'function', function: { name: 'report_visual_safety' } })
+  assert.equal(request.tools.length, 1)
+  assert.equal(request.tools[0].function.strict, true)
+  assert.equal(request.tools[0].function.name, 'report_visual_safety')
+  assert.equal(request.tools[0].function.parameters.properties.confidence, undefined)
+  assert.equal(request.tools[0].function.parameters.properties.confidence_score, undefined)
+  assert.match(request.messages[0].content, /never infer or assert age/i)
+  assert.match(request.messages[0].content, /appearance cannot prove consent/i)
+  assert.match(request.messages[0].content, /negation, quotation, education/i)
+  assert.doesNotMatch(JSON.stringify(request), /user_id|owner_user_id|signed_url|access_token/i)
+})
+
+test('P2 validator accepts an unambiguous contextual allow bound to actual modality coverage', () => {
+  assert.equal(POLICY_CONTEXT_SCHEMA_VERSION, 'creator-premium-context-p2-v1')
+  assert.equal(POLICY_CONTEXT_PROMPT_VERSION, 'creator-premium-context-p2-v1')
+  assert.deepEqual(validatePolicyContextResult(allowResult, completeImageInput), allowResult)
+})
+
+test('P2 validator routes uncertainty through review and never accepts appearance as age or consent proof', () => {
+  const review = {
+    ...allowResult,
+    decision: 'review',
+    categories: ['age_uncertain', 'consent_uncertain'],
+    uncertainty: 'ambiguous',
+    age_uncertainty: 'present',
+    consent_uncertainty: 'present',
+    rationale_codes: ['age_requires_review', 'consent_requires_review'],
+  }
+  assert.deepEqual(validatePolicyContextResult(review, completeImageInput), review)
+
+  for (const invalid of [
+    { ...allowResult, age_uncertainty: 'adult' },
+    { ...allowResult, consent_uncertainty: 'confirmed' },
+    { ...allowResult, confidence: 0.99 },
+    { ...allowResult, decision: 'allow', uncertainty: 'ambiguous' },
+    { ...allowResult, decision: 'allow', age_uncertainty: 'present' },
+    { ...allowResult, decision: 'allow', categories: ['explicit_sexual_activity'] },
+    { ...allowResult, coverage: { ...allowResult.coverage, transcript: 'complete' } },
+  ]) {
+    assert.throws(
+      () => validatePolicyContextResult(invalid, completeImageInput),
+      error => error instanceof PolicyContextError && error.code === 'creator_premium_context_schema_invalid',
+    )
+  }
+})
+
+test('P2 validator preserves severe block and contextual review without keyword-only enforcement', () => {
+  const severe = {
+    ...allowResult,
+    decision: 'block',
+    categories: ['non_consensual_intimate_content'],
+    consent_uncertainty: 'present',
+    rationale_codes: ['severe_explicit_context'],
+  }
+  assert.deepEqual(validatePolicyContextResult(severe, completeImageInput), severe)
+
+  const educational = validatePolicyContextResult({
+    ...allowResult,
+    categories: ['education'],
+    rationale_codes: ['quoted_or_negated_context', 'educational_context'],
+  }, completeImageInput)
+  assert.equal(educational.decision, 'allow')
+
+  const ambiguous = {
+    ...allowResult,
+    decision: 'review',
+    categories: ['contradictory_signals'],
+    uncertainty: 'ambiguous',
+    rationale_codes: ['ambiguous_context'],
+  }
+  assert.deepEqual(validatePolicyContextResult(ambiguous, completeImageInput), ambiguous)
+})
+
+test('P2 transcript coverage distinguishes complete, no speech, and not applicable', () => {
+  const video = {
+    ...completeImageInput,
+    transcript: { coverage: 'complete', text: 'Este documental condena la violencia y no la promueve.' },
+  }
+  const result = {
+    ...allowResult,
+    coverage: { text: 'complete', transcript: 'complete', visual: 'complete' },
+    categories: ['education'],
+    rationale_codes: ['quoted_or_negated_context', 'educational_context'],
+  }
+  assert.deepEqual(validatePolicyContextResult(result, video), result)
+  assert.throws(
+    () => validatePolicyContextResult({ ...result, coverage: { ...result.coverage, transcript: 'no_speech' } }, video),
+    error => error.code === 'creator_premium_context_schema_invalid',
+  )
+})
+
+test('P2 fixed synthetic probe covers negation, quotation, education, ambiguity, age, consent, and severe block', () => {
+  const request = buildPolicyContextProbeRequest()
+  assert.equal(request.tools.length, 1)
+  assert.equal(request.tools[0].function.name, 'report_visual_safety')
+  assert.equal(request.tools[0].function.strict, true)
+  assert.equal(request.tools[0].function.parameters.properties.cases.maxItems, 7)
+  const expected = [
+    ['educational_quote', 'allow'],
+    ['negated_threat', 'allow'],
+    ['ambiguous_threat', 'review'],
+    ['uncertain_age', 'review'],
+    ['uncertain_consent', 'review'],
+    ['explicit_non_consent', 'block'],
+    ['explicit_sexual_activity', 'block'],
+  ]
+  const value = { cases: expected.map(([id, decision]) => ({ id, decision })) }
+  assert.deepEqual(validatePolicyContextProbeResult(value), value)
+  assert.throws(
+    () => validatePolicyContextProbeResult({ cases: value.cases.map((item, index) => index === 0 ? { ...item, decision: 'block' } : item) }),
+    error => error.code === 'creator_premium_context_probe_semantics_invalid',
+  )
+})
+
+test('P2 provider transport rejects malformed, refused, truncated, and ambiguous tool output fail-closed', async () => {
+  const envelopes = [
+    [{ success: true, result: { response: JSON.stringify(allowResult) } }, 'visual_workers_ai_tool_call_missing'],
+    [{ success: true, result: { tool_calls: [
+      { name: 'report_visual_safety', arguments: allowResult },
+      { name: 'report_visual_safety', arguments: allowResult },
+    ] } }, 'visual_workers_ai_tool_call_ambiguous'],
+    [{ success: true, result: { choices: [{ finish_reason: 'content_filter', message: { refusal: 'refused', tool_calls: [] } }] } }, 'visual_workers_ai_tool_call_refused'],
+    [{ success: true, result: { choices: [{ finish_reason: 'length', message: { refusal: null, tool_calls: [] } }] } }, 'visual_workers_ai_tool_call_truncated'],
+  ]
+  for (const [payload, code] of envelopes) {
+    await assert.rejects(
+      () => runPolicyContextAnalysis({
+        token: 'dedicated-ai-token',
+        accountId: 'account-id',
+        input: completeImageInput,
+        fetchImpl: async () => new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'content-type': 'application/json', 'cf-ray': 'p2-test-EWR' },
+        }),
+      }),
+      error => error.code === code && error.providerCalled === true,
+      code,
+    )
+  }
+})
+
+test('P2 extends the canonical worker with one bounded context claim and a service-role probe', () => {
+  const worker = readFileSync(workerPath, 'utf8')
+  assert.match(worker, /runPolicyContextAnalysis/)
+  assert.match(worker, /runPolicyContextProviderProbe/)
+  assert.match(worker, /body\.action === 'policy_context_provider_probe'/)
+  assert.match(worker, /claim_creator_premium_content_safety_context_v1'[\s\S]{0,120}p_limit:\s*1/)
+  assert.match(worker, /complete_creator_premium_content_safety_context_v1/)
+  assert.match(worker, /fail_creator_premium_content_safety_context_v1/)
+  assert.match(worker, /premium_context:/)
+  assert.doesNotMatch(worker, /p_limit:\s*[2-9][0-9]*[^\n]*creator_premium_content_safety_context/i)
 })
 
