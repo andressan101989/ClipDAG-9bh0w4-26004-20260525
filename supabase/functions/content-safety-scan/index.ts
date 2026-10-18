@@ -307,6 +307,14 @@ Deno.serve(async req => {
         provider_called: issue.providerCalled || providerCalled,
         source_kind: String(scan.source_kind),
         attempt_count: Number(scan.attempt_count ?? 0),
+        provider_status_code: issue.providerTelemetry?.status_code ?? null,
+        provider_correlation_id: issue.providerTelemetry?.request_correlation_id ?? null,
+        provider_carrier: issue.providerTelemetry?.carrier ?? null,
+        provider_finish_reason: issue.providerTelemetry?.finish_reason ?? null,
+        provider_response_bytes: issue.providerTelemetry?.response_bytes ?? null,
+        provider_input_tokens: issue.providerTelemetry?.input_tokens ?? null,
+        provider_output_tokens: issue.providerTelemetry?.output_tokens ?? null,
+        provider_total_tokens: issue.providerTelemetry?.total_tokens ?? null,
       })
       const { data } = await admin.rpc('fail_content_safety_visual_scan', { p_scan_id: scan.scan_id, p_error_code: issue.code,
         p_retryable: issue.retryable, p_provider_called: issue.providerCalled || providerCalled })

@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { Buffer } from 'node:buffer'
 
 import { makeProbeWav, WHISPER_MODEL } from '../supabase/functions/content-safety-scan/audioPipeline.mjs'
-import { VISUAL_MODEL } from '../supabase/functions/content-safety-scan/visualProbe.mjs'
+import { VISUAL_MODEL, VISUAL_TOOL_NAME } from '../supabase/functions/content-safety-scan/visualProbe.mjs'
 import {
   CloudflareProviderAdapterError,
   buildWorkersAiEndpoint,
@@ -26,12 +27,18 @@ function validVisualEnvelope(overrides = {}) {
   return {
     success: true,
     result: {
-      response: JSON.stringify({
-        objects: [
-          { shape: 'square', color: 'red' },
-          { shape: 'circle', color: 'blue' },
-        ],
-      }),
+      choices: [{
+        index: 0,
+        finish_reason: 'tool_calls',
+        message: { role: 'assistant', content: null, refusal: null, tool_calls: [{
+          id: 'call_visual_1', type: 'function', function: { name: VISUAL_TOOL_NAME, arguments: JSON.stringify({
+            objects: [
+              { shape: 'square', color: 'red' },
+              { shape: 'circle', color: 'blue' },
+            ],
+          }) },
+        }] },
+      }],
       usage: { prompt_tokens: 40, completion_tokens: 15, total_tokens: 55 },
       ...overrides,
     },
@@ -89,7 +96,9 @@ test('visual adapter uses the exact Cloudflare endpoint, request contract, and s
   assert.equal(call.options.headers.Authorization, `Bearer ${TOKEN}`)
   assert.equal(call.options.headers['Content-Type'], 'application/json')
   const body = JSON.parse(call.options.body)
-  assert.equal(body.response_format.type, 'json_schema')
+  assert.equal(body.tools[0].function.name, VISUAL_TOOL_NAME)
+  assert.equal(body.tools[0].function.strict, true)
+  assert.equal(body.parallel_tool_calls, false)
   assert.match(body.messages[1].content[1].image_url.url, /^data:image\/png;base64,/u)
   assert.deepEqual(result.validation, { visionInput: true, structuredOutput: true, schemaValid: true })
   assert.deepEqual(result.receipt.usage, { input_tokens: 40, output_tokens: 15, total_tokens: 55 })

@@ -295,7 +295,7 @@ function mapVisualProbeError(error) {
   if (error.code === 'visual_workers_ai_forbidden') return providerStatusError(403)
   if (error.code === 'visual_workers_ai_temporarily_unavailable') return providerStatusError(error.status)
   if (error.code === 'visual_workers_ai_model_unavailable') return providerStatusError(error.status)
-  return new CloudflareProviderAdapterError('PROVIDER_VISUAL_RESPONSE_INVALID', { status: error.status, providerCalled: true })
+  return new CloudflareProviderAdapterError('PROVIDER_VISUAL_RESPONSE_INVALID', { status: error.status, retryable: error.retryable, providerCalled: true })
 }
 
 function exactOptionKeys(options) {

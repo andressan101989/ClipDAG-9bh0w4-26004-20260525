@@ -255,6 +255,20 @@ export function createSemanticWorkerHandler({
           const providerCallCount = Number.isInteger(error?.providerCallCount)
             ? error.providerCallCount
             : error?.providerCalled ? 1 : 0
+          console.warn('visual_semantic_processing_failed', {
+            code: safeVisualErrorCode(error),
+            retryable: Boolean(error?.retryable),
+            provider_called: Boolean(error?.providerCalled),
+            provider_call_count: providerCallCount,
+            provider_status_code: error?.providerTelemetry?.status_code ?? null,
+            provider_correlation_id: error?.providerTelemetry?.request_correlation_id ?? null,
+            provider_carrier: error?.providerTelemetry?.carrier ?? null,
+            provider_finish_reason: error?.providerTelemetry?.finish_reason ?? null,
+            provider_response_bytes: error?.providerTelemetry?.response_bytes ?? null,
+            provider_input_tokens: error?.providerTelemetry?.input_tokens ?? null,
+            provider_output_tokens: error?.providerTelemetry?.output_tokens ?? null,
+            provider_total_tokens: error?.providerTelemetry?.total_tokens ?? null,
+          })
           await failVisualJob(
             client,
             job,
