@@ -1,0 +1,112 @@
+{
+  "schema_version": "nelyon.creator_premium_content_safety_policy.v1",
+  "policy_id": "nelyon.creator_premium.general.p1.v1",
+  "title": "Creator Premium General Content Safety P1",
+  "normative_approval": {
+    "status": "approved",
+    "source": "owner_prompt",
+    "authorized_phase": "CREATOR-PREMIUM-CONTENT-SAFETY-P1",
+    "authorized_at": "2026-10-18",
+    "owner_bound": true
+  },
+  "scope": {
+    "creator_premium_general": true,
+    "public_feed_surfaces": [
+      "preview",
+      "teaser",
+      "thumbnail",
+      "notification",
+      "discovery"
+    ],
+    "explicit_adult_premium": false,
+    "mobile_explicit_adult": false,
+    "finance_effect": false
+  },
+  "decision_matrix": {
+    "allow": [
+      "courses",
+      "tutorials",
+      "education",
+      "entertainment",
+      "dance",
+      "humor",
+      "sport",
+      "fashion",
+      "kissing_and_affection",
+      "swimwear",
+      "non_explicit_sensual_clothing",
+      "non_sexual_artistic_content"
+    ],
+    "review": [
+      "contextual_artistic_or_medical_nudity",
+      "incidental_blood_or_informational_context",
+      "documentary_violence",
+      "age_uncertain",
+      "consent_uncertain",
+      "contradictory_signals",
+      "low_confidence",
+      "incomplete_multimodal_coverage"
+    ],
+    "block": [
+      "explicit_sexual_activity",
+      "pornography",
+      "sexualized_explicit_genital_exposure",
+      "child_sexual_exploitation",
+      "non_consensual_intimate_content",
+      "sexual_violence",
+      "torture",
+      "mutilation",
+      "graphic_murder",
+      "graphic_serious_assault",
+      "explicit_promotion_of_severe_harm"
+    ]
+  },
+  "context_contract": {
+    "classify_content_and_context_together": true,
+    "keywords_are_context_only": true,
+    "educational_or_medical_text_is_not_blocked_by_words_alone": true,
+    "skin_or_swimwear_is_not_automatic_rejection": true,
+    "missing_required_modality": "review",
+    "uncertain_age_or_consent": "review"
+  },
+  "activation": {
+    "status": "approved_activation_pending",
+    "enabled": false,
+    "auto_publish_enabled": false,
+    "blockers": [
+      "contextual_text_classification_unverified",
+      "contextual_transcript_classification_unverified",
+      "age_uncertainty_signal_unavailable",
+      "consent_uncertainty_signal_unavailable",
+      "model_confidence_signal_unavailable",
+      "account_quota_headroom_unverified",
+      "private_media_policy_e2e_unverified"
+    ],
+    "disable_strategy": "forward_only_policy_revision",
+    "activation_strategy": "forward_only_policy_revision_after_all_blockers_are_verified"
+  },
+  "publication": {
+    "auto_publish_requires_all_modalities": true,
+    "requires_current_generation": true,
+    "requires_current_owner_and_permissions": true,
+    "requires_provider_validity": true,
+    "requires_active_approved_policy": true,
+    "requires_unambiguous_allow": true,
+    "technical_failure": "fail_closed",
+    "ambiguous_or_incomplete": "human_review",
+    "http_200_is_evidence": false
+  },
+  "administrative_review": {
+    "private_by_default": true,
+    "authorized_reviewers_only": true,
+    "audit_required": true,
+    "manual_decision_is_not_fabricated": true,
+    "child_exploitation_block_cannot_be_overridden_by_ordinary_review": true
+  },
+  "finance": {
+    "purchase_enabled": false,
+    "subscription_enabled": false,
+    "refunds_enabled": false,
+    "platform_fee_bps": 0
+  }
+}
