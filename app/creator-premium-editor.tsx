@@ -26,6 +26,7 @@ import {
   creatorPremiumLifecycleActions,
   creatorPremiumLifecyclePresentation,
   prepareCreatorPremiumVideoPickerAsset,
+  selectCreatorPremiumVideoFromPhotos,
 } from '@/services/creatorPremiumPresentation.mjs';
 import {
   cancelMyCreatorPremiumSubmission,
@@ -310,19 +311,19 @@ export default function CreatorPremiumEditor() {
 
   const pickImage = useCallback(async (role: 'teaser' | 'private') => {
     if (busy || readOnly) return;
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Permiso requerido', 'Permite el acceso a tus fotos para seleccionar esta imagen.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: role === 'teaser',
-      aspect: role === 'teaser' ? [4, 5] : undefined,
-      quality: 0.9,
-    });
-    if (result.canceled || !result.assets[0]) return;
     try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permiso requerido', 'Permite el acceso a tus fotos para seleccionar esta imagen.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: role === 'teaser',
+        aspect: role === 'teaser' ? [4, 5] : undefined,
+        quality: 0.9,
+      });
+      if (result.canceled || !result.assets[0]) return;
       const file = await imageFile(result.assets[0]);
       if (role === 'teaser') setTeaser(file);
       else setPrivateFile(file);
@@ -333,30 +334,34 @@ export default function CreatorPremiumEditor() {
 
   const pickVideoFromPhotos = useCallback(async () => {
     if (busy || readOnly) return;
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Permiso requerido', 'Permite el acceso a tus fotos para seleccionar este video.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['videos'],
-      allowsEditing: false,
-      quality: 1,
-      preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
-    });
-    if (result.canceled || !result.assets[0]) return;
-    const asset = result.assets[0];
-    try {
-      setPrivateFile(await videoFile({
+    const selection = await selectCreatorPremiumVideoFromPhotos({
+      requestPermission: () => Platform.OS === 'ios'
+        ? Promise.resolve({ granted: true })
+        : ImagePicker.requestMediaLibraryPermissionsAsync(),
+      launchPicker: () => ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: false,
+        quality: 1,
+        videoExportPreset: ImagePicker.VideoExportPreset.HighestQuality,
+        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Automatic,
+      }),
+      prepareAsset: (asset: ImagePicker.ImagePickerAsset) => videoFile({
         uri: asset.uri,
         mimeType: asset.mimeType,
         fileName: asset.fileName,
         sizeBytes: asset.fileSize,
         durationMs: asset.duration,
-      }));
-    } catch (reason) {
-      Alert.alert('Video no compatible', videoPickerError(reason));
+      }),
+    });
+    if (selection.status === 'permission_required') {
+      Alert.alert('Permiso requerido', 'Permite el acceso a tus fotos para seleccionar este video.');
+      return;
     }
+    if (selection.status === 'failed') {
+      Alert.alert('No se pudo seleccionar el video', selection.message);
+      return;
+    }
+    if (selection.status === 'selected') setPrivateFile(selection.file);
   }, [busy, readOnly]);
 
   const pickVideoFromFiles = useCallback(async () => {

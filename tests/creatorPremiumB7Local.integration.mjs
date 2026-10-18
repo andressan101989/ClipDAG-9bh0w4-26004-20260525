@@ -31,6 +31,10 @@ const c1Files = readdirSync(migrations).filter(name => name.endsWith('_creator_p
 const c1Sql = c1Files.length === 1
   ? readFileSync(new URL(`../supabase/migrations/${c1Files[0]}`, import.meta.url), 'utf8')
   : '';
+const c3Files = readdirSync(migrations).filter(name => name.endsWith('_creator_premium_c3_visual_retry_producer.sql'));
+const c3Sql = c3Files.length === 1
+  ? readFileSync(new URL(`../supabase/migrations/${c3Files[0]}`, import.meta.url), 'utf8')
+  : '';
 
 const A2_B7_BLOB = '43f014260e0ecfa6f0634e61e1646594bcf13e1d';
 const C1_MIGRATION_BLOB = '4605ac94221a52d47190b1575ab1a71e23c82fac';
@@ -184,6 +188,13 @@ test('C1 disposable harness binds exactly one forward-only cancellation migratio
   assert.equal(c1Files.length, 1);
   assert.match(c1Files[0], /^\d{14}_creator_premium_c1_submission_cancellation\.sql$/);
   assert.match(c1Sql, /cancel_my_creator_premium_submission_v1/);
+});
+
+test('C3 disposable harness binds exactly one forward-only visual retry producer migration', () => {
+  assert.equal(c3Files.length, 1);
+  assert.match(c3Files[0], /^\d{14}_creator_premium_c3_visual_retry_producer\.sql$/);
+  assert.match(c3Sql, /content_safety_visual_producer_scan_id/);
+  assert.match(c3Sql, /case\s+when\s+scan\.visual_status='pending'\s+and\s+scan\.visual_analysis_id\s+is\s+null\s+then\s+0\s+else\s+1\s+end/i);
 });
 
 test('B7 disposable harness contains executable lifecycle and financial invariants, not install-only smoke checks', () => {
@@ -431,6 +442,7 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
 
     psql(db, chain.at(-1).sql);
     psql(db, c1Sql);
+    psql(db, c3Sql);
     assert.equal(psql(db, `select has_function_privilege('anon','public.cancel_my_creator_premium_submission_v1(uuid)','execute')`).stdout, 'f');
     assert.equal(psql(db, `select has_function_privilege('service_role','public.cancel_my_creator_premium_submission_v1(uuid)','execute')`).stdout, 'f');
     assert.equal(psql(db, `select has_function_privilege('authenticated','public.cancel_my_creator_premium_submission_v1(uuid)','execute')`).stdout, 't');
@@ -472,6 +484,74 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
         (select count(*) from private.content_safety_scans where target_type='creator_premium' and target_id=content.id)::text
       from private.creator_premium_contents content where content.id='${id.legacyPending}'
     `).stdout, 'pending|true|1');
+    assert.equal(psql(db, `
+      begin;
+      do $$
+      declare
+        v_source private.content_safety_scans;
+        v_retry_id uuid;
+        v_claim jsonb;
+        v_failure jsonb;
+      begin
+        select * into strict v_source
+        from private.content_safety_scans
+        where target_type='creator_premium' and target_id='${id.legacyPending}';
+
+        update private.content_safety_scans
+        set visual_status='failed',visual_attempt_count=1,visual_provider_call_count=1,
+            visual_last_error_code='visual_workers_ai_structured_output_invalid_json',
+            visual_completed_at=clock_timestamp(),visual_started_at=null
+        where id=v_source.id;
+
+        insert into private.content_safety_scans
+        select (pg_catalog.jsonb_populate_record(
+          null::private.content_safety_scans,
+          pg_catalog.to_jsonb(v_source)||pg_catalog.jsonb_build_object(
+            'id',pg_catalog.gen_random_uuid(),
+            'target_id',pg_catalog.gen_random_uuid(),
+            'content_fingerprint',pg_catalog.repeat('c',64),
+            'requested_reason','retry',
+            'visual_status','pending',
+            'visual_attempt_count',0,
+            'visual_provider_call_count',0,
+            'visual_available_at','2000-01-01T00:00:00Z',
+            'visual_started_at',null,
+            'visual_completed_at',null,
+            'visual_last_error_code',null,
+            'created_at',pg_catalog.clock_timestamp(),
+            'updated_at',pg_catalog.clock_timestamp()
+          )
+        )).* returning id into v_retry_id;
+
+        if private.content_safety_visual_producer_scan_id(
+          v_source.visual_video_asset_id,v_source.visual_media_asset_id
+        ) is distinct from v_retry_id then
+          raise exception 'c3_pending_retry_not_promoted';
+        end if;
+
+        v_claim:=public.claim_content_safety_visual_scans(1);
+        if pg_catalog.jsonb_array_length(v_claim)<>1
+           or v_claim->0->>'scan_id'<>v_retry_id::text
+           or (v_claim->0->>'attempt_count')::integer<>1 then
+          raise exception 'c3_pending_retry_not_claimed';
+        end if;
+
+        v_failure:=public.fail_content_safety_visual_scan(
+          v_retry_id,'c3_disposable_terminal_failure',false,false
+        );
+        if v_failure->>'visual_status'<>'failed' then
+          raise exception 'c3_retry_not_failed_for_admin_recovery';
+        end if;
+        if private.content_safety_visual_producer_scan_id(
+          v_source.visual_video_asset_id,v_source.visual_media_asset_id
+        ) is distinct from v_source.id then
+          raise exception 'c3_failed_producer_not_preserved_for_admin_retry';
+        end if;
+      end;
+      $$;
+      rollback;
+      select 'c3_visual_retry_pass';
+    `).stdout, 'c3_visual_retry_pass');
 
     const functions = psql(db, `select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('search_admin_creator_premium_content_v1','get_admin_creator_premium_content_v1','admin_review_creator_premium_content_v1','get_creator_premium_commerce_v1','get_my_creator_premium_subscriptions_v1','get_my_creator_premium_commercial_summary_v1','admin_refund_creator_premium_purchase_v1','admin_refund_creator_premium_subscription_period_v1')`).stdout;
     assert.equal(functions, '8');

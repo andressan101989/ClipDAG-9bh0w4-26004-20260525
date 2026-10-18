@@ -108,17 +108,36 @@ export function visualStructuredResponseValue(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new VisualProbeError('visual_workers_ai_response_malformed')
   if (payload.success === false) throw new VisualProbeError('visual_workers_ai_response_rejected')
   const result = payload.result && typeof payload.result === 'object' && !Array.isArray(payload.result) ? payload.result : payload
+  const structuredOutputError = code => new VisualProbeError(code, 502, { retryable: true, providerCalled: true })
+  if (result.choices !== undefined && (!Array.isArray(result.choices) || result.choices.length > 1)) {
+    throw structuredOutputError('visual_workers_ai_structured_output_ambiguous')
+  }
   const firstChoice = Array.isArray(result.choices) && result.choices[0] && typeof result.choices[0] === 'object' ? result.choices[0] : null
   const message = firstChoice?.message && typeof firstChoice.message === 'object' ? firstChoice.message : null
-  const candidate = result.response ?? message?.content ?? firstChoice?.text
+  const carriers = [result.response, message?.content, firstChoice?.text]
+    .filter(value => value !== undefined && value !== null)
+  if (carriers.length > 1) throw structuredOutputError('visual_workers_ai_structured_output_ambiguous')
+  const candidate = carriers[0]
   if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) return candidate
-  const structuredOutputError = code => new VisualProbeError(code, 502, { retryable: true, providerCalled: true })
   if (Array.isArray(candidate)) throw structuredOutputError('visual_workers_ai_structured_output_content_parts')
   if (candidate === undefined || candidate === null) throw structuredOutputError('visual_workers_ai_structured_output_missing')
   if (typeof candidate !== 'string') throw structuredOutputError('visual_workers_ai_structured_output_type_invalid')
-  if (candidate.includes('```')) throw structuredOutputError('visual_workers_ai_structured_output_fenced')
+  let normalized = candidate.trim()
+  if (normalized.startsWith('<think>')) {
+    const thought = /^<think>[\s\S]*?<\/think>\s*([\s\S]+)$/u.exec(normalized)
+    if (!thought) throw structuredOutputError('visual_workers_ai_structured_output_invalid_json')
+    normalized = thought[1].trim()
+  }
+  if (normalized.startsWith('```')) {
+    const fenced = /^```(?:json)?\s*\r?\n?([\s\S]*?)\r?\n?```$/iu.exec(normalized)
+    if (!fenced) throw structuredOutputError('visual_workers_ai_structured_output_fenced')
+    normalized = fenced[1].trim()
+  }
+  if (normalized.includes('```') || /<\/?think>/iu.test(normalized)) {
+    throw structuredOutputError('visual_workers_ai_structured_output_invalid_wrapper')
+  }
   try {
-    const parsed = JSON.parse(candidate)
+    const parsed = JSON.parse(normalized)
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not_object')
     return parsed
   } catch {

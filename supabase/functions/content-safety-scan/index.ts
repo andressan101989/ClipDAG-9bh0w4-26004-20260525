@@ -254,7 +254,8 @@ Deno.serve(async req => {
             !['image/jpeg', 'image/png', 'image/webp'].includes(String(scan.mime_type))) throw new VisualPipelineError('invalid_canonical_image_source')
         const imageByteLimit = isPremium ? MAX_PREMIUM_VISUAL_IMAGE_BYTES : MAX_VISUAL_IMAGE_BYTES
         const result = await getObjectBytes(scan.bucket_name, scan.object_key, imageByteLimit).catch(error => {
-          throw new VisualPipelineError(isR2Transient(error) ? 'r2_visual_temporarily_unavailable' : String((error as Error)?.message ?? 'r2_visual_fetch_failed'), { retryable: isR2Transient(error) })
+          const retryable = isR2Transient(error)
+          throw new VisualPipelineError(retryable ? 'r2_visual_temporarily_unavailable' : 'r2_visual_fetch_rejected', { retryable })
         })
         mimeType = String(scan.mime_type)
         if (result.contentType && result.contentType.split(';')[0].trim().toLowerCase() !== mimeType) throw new VisualPipelineError('r2_visual_mime_mismatch')
@@ -300,6 +301,13 @@ Deno.serve(async req => {
       }
     } catch (error) {
       const issue = error instanceof VisualPipelineError ? error : new VisualPipelineError('visual_processing_unexpected', { retryable: true, providerCalled })
+      console.warn('visual_processing_failed', {
+        code: issue.code,
+        retryable: issue.retryable,
+        provider_called: issue.providerCalled || providerCalled,
+        source_kind: String(scan.source_kind),
+        attempt_count: Number(scan.attempt_count ?? 0),
+      })
       const { data } = await admin.rpc('fail_content_safety_visual_scan', { p_scan_id: scan.scan_id, p_error_code: issue.code,
         p_retryable: issue.retryable, p_provider_called: issue.providerCalled || providerCalled })
       visualErrors.push({ scan_id: String(scan.scan_id), code: issue.code, retryable: issue.retryable, provider_called: issue.providerCalled || providerCalled })
