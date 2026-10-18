@@ -76,6 +76,9 @@ export function validateStreamAudioDeliveryRedirect(value, expectedIdentity, exp
   } catch {
     throw new AudioPipelineError('stream_audio_url_invalid')
   }
+  if (rawValue.includes('#') || rawValue.includes('\\') || url.toString() !== rawValue) {
+    throw new AudioPipelineError('stream_audio_url_untrusted_scheme')
+  }
   const authority = rawValue.match(/^https:\/\/([^/?#]+)(?:\/|$)/u)?.[1] ?? ''
   if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash) {
     throw new AudioPipelineError('stream_audio_url_untrusted_scheme')
@@ -151,7 +154,7 @@ export async function downloadStreamAudioBytes({ route, fetchImpl = globalThis.f
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get('location')
       if (!location || redirect === 3) throw new AudioPipelineError('stream_audio_redirect_rejected')
-      current = route.validateRedirect(new URL(location, current).toString())
+      current = route.validateRedirect(location)
       continue
     }
     if (!response.ok) {
