@@ -67,31 +67,39 @@ export function validateSignedStreamAudioUrl(value, signedAudioUrl) {
   return candidate.url.toString()
 }
 
-export function validateStreamAudioDeliveryRedirect(value, uid, expectedUrl) {
+export function validateStreamAudioDeliveryRedirect(value, expectedIdentity, expectedUrl, { allowQueryless = false } = {}) {
+  const rawValue = String(value ?? '')
   let url, expected
   try {
-    url = new URL(String(value ?? ''))
+    url = new URL(rawValue)
     expected = new URL(String(expectedUrl ?? ''))
   } catch {
     throw new AudioPipelineError('stream_audio_url_invalid')
   }
+  const authority = rawValue.match(/^https:\/\/([^/?#]+)(?:\/|$)/u)?.[1] ?? ''
   if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash) {
     throw new AudioPipelineError('stream_audio_url_untrusted_scheme')
   }
-  if (url.origin !== expected.origin) throw new AudioPipelineError('stream_audio_url_untrusted_host')
-  let pathname
-  try { pathname = decodeURIComponent(url.pathname) } catch { throw new AudioPipelineError('stream_audio_url_untrusted_path') }
-  const parts = pathname.split('/').filter(Boolean)
-  if (parts.length !== 3 || parts[0]?.toLowerCase() !== String(uid ?? '').trim().toLowerCase()) {
-    throw new AudioPipelineError('stream_audio_url_untrusted_identity')
+  if (!authority || authority.includes('@') || authority.includes(':')) {
+    throw new AudioPipelineError('stream_audio_url_untrusted_scheme')
   }
-  if (parts[1]?.toLowerCase() !== 'dl') throw new AudioPipelineError('stream_audio_url_untrusted_path')
-  if (parts[2]?.toLowerCase() !== 'audio.m4a') throw new AudioPipelineError('stream_audio_url_untrusted_format')
-  const keys = [...url.searchParams.keys()]
-  const proof = url.searchParams.getAll('p')
-  const signature = url.searchParams.getAll('s')
-  if (keys.length !== 2 || proof.length !== 1 || signature.length !== 1 ||
-      !STREAM_DELIVERY_PROOF_PATTERN.test(proof[0]) || !STREAM_DELIVERY_PROOF_PATTERN.test(signature[0])) {
+  if (url.origin !== expected.origin) throw new AudioPipelineError('stream_audio_url_untrusted_host')
+  const identity = String(expectedIdentity ?? '').trim()
+  if (!identity || !url.pathname.startsWith(`/${identity}/`)) throw new AudioPipelineError('stream_audio_url_untrusted_identity')
+  if (url.pathname !== `/${identity}/dl/audio.m4a`) throw new AudioPipelineError('stream_audio_url_untrusted_path')
+  if (!url.search) {
+    if (allowQueryless) return url.toString()
+    throw new AudioPipelineError('stream_audio_url_untrusted_proof')
+  }
+  const pairs = url.search.slice(1).split('&').map(value => {
+    const separator = value.indexOf('=')
+    return separator < 1 ? null : { key: value.slice(0, separator), value: value.slice(separator + 1) }
+  })
+  const proof = pairs.find(item => item?.key === 'p')
+  const signature = pairs.find(item => item?.key === 's')
+  if (pairs.length !== 2 || pairs.some(item => !item || !['p', 's'].includes(item.key)) ||
+      pairs.filter(item => item?.key === 'p').length !== 1 || pairs.filter(item => item?.key === 's').length !== 1 ||
+      !STREAM_DELIVERY_PROOF_PATTERN.test(proof?.value ?? '') || !STREAM_DELIVERY_PROOF_PATTERN.test(signature?.value ?? '')) {
     throw new AudioPipelineError('stream_audio_url_untrusted_proof')
   }
   return url.toString()
@@ -108,10 +116,11 @@ export async function selectStreamAudioDownloadRoute({ targetType, uid, customer
   const canonicalTargetType = validateStreamAudioTargetType(targetType)
   const canonicalProviderUrl = validateStreamAudioUrl(providerUrl, uid, customerCode)
   if (canonicalTargetType === 'video') {
+    const canonicalIdentity = new URL(canonicalProviderUrl).pathname.split('/').filter(Boolean)[0]
     return {
       access: 'public',
       url: canonicalProviderUrl,
-      validateRedirect: value => validateStreamAudioDeliveryRedirect(value, uid, canonicalProviderUrl),
+      validateRedirect: value => validateStreamAudioDeliveryRedirect(value, canonicalIdentity, canonicalProviderUrl, { allowQueryless: true }),
     }
   }
 
@@ -120,6 +129,9 @@ export async function selectStreamAudioDownloadRoute({ targetType, uid, customer
   }
   const signedDownload = await createPrivateGrant({ cloudflareUid: uid, customerCode })
   const signedAudioUrl = validateSignedStreamAudioUrl(signedDownload?.audioUrl, signedDownload?.audioUrl)
+  if (new URL(signedAudioUrl).origin !== new URL(canonicalProviderUrl).origin) {
+    throw new AudioPipelineError('stream_audio_url_untrusted_host')
+  }
   return {
     access: 'premium_private',
     url: signedAudioUrl,
