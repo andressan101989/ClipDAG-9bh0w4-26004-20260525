@@ -144,6 +144,9 @@ const PROTECTED_TEST_RPC_IDENTITIES = [
   ['report_creator_premium_content_v1', ['uuid', 'text', 'text']],
   ['search_admin_creator_premium_content_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer']],
   ['cancel_my_creator_premium_submission_v1', ['uuid']],
+  ['submit_my_creator_premium_content_with_plans_v1', ['uuid', 'uuid[]', 'uuid']],
+  ['retire_my_creator_premium_content_v1', ['uuid']],
+  ['delete_my_creator_premium_plan_draft_v1', ['uuid', 'uuid']],
 ];
 
 function rpcSecurityRows(overrides = {}) {
@@ -398,8 +401,8 @@ test('RPC security normalization preserves overload identity hashes definitions 
   const raw = rpcSecurityRows();
   const snapshot = adapter.normalizeRpcSecurityAttestations(raw);
   assert.equal(snapshot.complete, true);
-  assert.equal(snapshot.count, 12);
-  assert.equal(snapshot.items.length, 12);
+  assert.equal(snapshot.count, 15);
+  assert.equal(snapshot.items.length, 15);
   assert.deepEqual(snapshot.items.map(item => item.name), [...snapshot.items.map(item => item.name)].sort());
   const firstRaw = raw.find(item => item.name === snapshot.items[0].name);
   assert.equal(
@@ -544,7 +547,7 @@ test('fixed documented recovery capture uses four read-only SQL requests and red
     observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
   });
   assert.equal(result.phase, 'recovery');
-  assert.equal(result.rpc_security.count, 12);
+  assert.equal(result.rpc_security.count, 15);
   assert.equal(result.premium_state.complete, true);
   assert.equal(calls.length, 9);
   const sqlCalls = calls.filter(call => (call.options.method ?? 'GET') === 'POST');
@@ -1043,18 +1046,18 @@ test('security advisor fingerprints bind semantic object identity, not mutable a
   assert.equal(first.items[0].resource_kind, lint.name);
 });
 
-test('phase-bound RPC attestations include a new protected RPC only after its manifest migration', async () => {
+test('phase-bound RPC attestations include F1 protected RPCs only after the manifest migration', async () => {
   const adapter = await loadAdapter();
   const controlledPolicy = structuredClone(policy);
   const controlledManifest = manifest();
   controlledManifest.resources.migrations = [{
-    path: 'supabase/migrations/20261017193000_creator_premium_c1_submission_cancellation.sql',
-    version: '20261017193000',
+    path: 'supabase/migrations/20261018211327_creator_premium_qa_final_f1.sql',
+    version: '20261018211327',
   }];
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
-  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre')), 11);
-  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post')), 12);
-  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery')), 12);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre')), 12);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post')), 15);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery')), 15);
 });
 
 test('postcheck advisor delta accepts only exact phase-approved fingerprints', async () => {

@@ -17,6 +17,10 @@ const C1_NEGATIVE_TEST_EVIDENCE_SHA256 = 'ca8588f28303eb27e251207a72a85a35b7c75c
 const C1_MIGRATION = '20261017193000_creator_premium_c1_submission_cancellation';
 const C1_MIGRATION_BLOB = '4605ac94221a52d47190b1575ab1a71e23c82fac';
 const C1_SOURCE_SHA = 'aa722ea6f1bb9aef6fc49da64c4c6dc8303b4e95';
+const F1_NEGATIVE_TEST_EVIDENCE_SHA256 = '3605ab40e6e5c5de5d3a11465eb858836a20d936aa26f144cf9a96fa80c10a52';
+const F1_MIGRATION = '20261018211327_creator_premium_qa_final_f1';
+const F1_MIGRATION_BLOB = '2283f1283ac801a3668c3ed189e5c11f769fc2e3';
+const F1_SOURCE_SHA = 'c62441f08f0ecd9aaa60117ab6fc49f0b2072cc8';
 const SECURITY_ADVISOR_RPC_EXCEPTIONS = [
   ['f9c25bdf8e5c7f7ff7385410370dac9fe2ded1a0468f76d8bd2d265186718f32', 'get_creator_premium_commerce_v1', ['uuid'], 'p_content_id uuid', '30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
   ['b5ca8be9cf9433a21ee7f19906d8a23340ef629d6cedd414c196b431ab5dfaf1', 'get_admin_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', '2a91f72e122beeee0f3d3c9f59ef99f13d2aefab9bcbc987594a5ac43c40a47e', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
@@ -30,6 +34,9 @@ const SECURITY_ADVISOR_RPC_EXCEPTIONS = [
   ['b55221bf7e4ec14f761ca29bc13589854080dccb3049e7dbcd996c37eb7223cf', 'get_admin_creator_premium_refund_candidates_v1', ['uuid'], 'p_content_id uuid', '9f35908f01a3ff9100f0fc2d562d4c2471a33bb15a54d1dbbcf754bacde9ea00', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
   ['38f8cee50f0713a548ea30ea5d3d7cb5d9151bd97b4885da47cc2726b83706ca', 'admin_refund_creator_premium_purchase_v1', ['uuid', 'uuid', 'text'], 'p_receipt_id uuid, p_idempotency_key uuid, p_reason_code text', '13a0a7da560d681b0b04a8505bc09eb1fe12e31cf04779be984872f926ee6d45', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
   ['053c9a441c11dc657382c6448b017d8fcf73c16fb5a3e4baf6275e24e2216129', 'cancel_my_creator_premium_submission_v1', ['uuid'], 'p_content_id uuid', '5be58f4d190e19a04ed32c7de88d1ace55778ac68c5c39d21cac5ad979f27a57', C1_NEGATIVE_TEST_EVIDENCE_SHA256, C1_MIGRATION, C1_MIGRATION_BLOB, C1_SOURCE_SHA],
+  ['1c20753b55dcdb2d0a8e6a3365fcf45453495a74a49d76b9b51af4e51d7b923f', 'submit_my_creator_premium_content_with_plans_v1', ['uuid', 'uuid[]', 'uuid'], 'p_content_id uuid, p_plan_ids uuid[], p_client_request_id uuid', '955a476101b0886c0c751081da20d3296ec4f18bac2f65d41ac0322b782d0a3f', F1_NEGATIVE_TEST_EVIDENCE_SHA256, F1_MIGRATION, F1_MIGRATION_BLOB, F1_SOURCE_SHA],
+  ['b0cdd5e8a440096ebc6bbd35fee9b785180d71ae6d06209ade7feaa6c0877c4d', 'retire_my_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', '82b9564d166f1619207dc1ba05e63e79b232636f973f433079881c31fda2fbf2', F1_NEGATIVE_TEST_EVIDENCE_SHA256, F1_MIGRATION, F1_MIGRATION_BLOB, F1_SOURCE_SHA],
+  ['5ceb93fa71004f64ba75a7bd251fadaf66d7ebdce81fb48904fd988ed9023fef', 'delete_my_creator_premium_plan_draft_v1', ['uuid', 'uuid'], 'p_plan_id uuid, p_client_request_id uuid', '40cbc02821cceb68cdd5a31cfd531d9ec8f537d36c47acb1fc7fcafd0df42ed3', F1_NEGATIVE_TEST_EVIDENCE_SHA256, F1_MIGRATION, F1_MIGRATION_BLOB, F1_SOURCE_SHA],
 ];
 const B7_EDGE_ATTESTATIONS = [
   ['ads-v2-delivery', 10, true, '4510ecc897a50a2f9e23d0b326f9bdfc630ce88e5f7bcea0c59e9476233d0536'],
