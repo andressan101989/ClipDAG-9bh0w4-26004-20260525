@@ -2,10 +2,12 @@ import { businessActorHasAdvertiserOwnerMediaAccess,businessActorHasAnyCapabilit
 import { authenticatedClient,authenticatedUser,admin,corsHeaders,json } from '../_shared/mediaAuth.ts';
 import { CREATOR_PREMIUM_STREAM_PURPOSE } from '../_shared/premiumStreamSecurity.ts';
 import {
-  CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS,STREAM_MAX_DURATION_SECONDS,STREAM_MAX_SIZE_BYTES,
-  StreamProviderError,safeFilename,sanitizeProviderError,streamApiBase,streamFetch,streamToken,
+  STREAM_MAX_DURATION_SECONDS,STREAM_MAX_SIZE_BYTES,StreamProviderError,safeFilename,
+  sanitizeProviderError,streamApiBase,streamFetch,streamToken,
   validateStreamMime,validateStreamSize,
 } from '../_shared/stream.ts';
+
+const CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS=180;
 
 function encodeTusMetadata(value:string):string {
   const bytes=new TextEncoder().encode(value);

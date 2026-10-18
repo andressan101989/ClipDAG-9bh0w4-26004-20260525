@@ -1,6 +1,5 @@
 export const STREAM_MAX_SIZE_BYTES=200_000_000;
 export const STREAM_MAX_DURATION_SECONDS=60;
-export const CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS=180;
 export const STREAM_MIME_TYPES=new Set(['video/mp4','video/quicktime','video/webm']);
 export type StreamAssetStatus='uploading'|'processing'|'ready'|'failed';
 
