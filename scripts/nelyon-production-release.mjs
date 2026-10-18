@@ -46,7 +46,7 @@ const B7_EDGE_ATTESTATIONS = [
   ['video-semantic-index', 10, true, '81a0d1119016d1e4c56958f4d9a51afc5bf99552a9cd56cf8079c9adfafcaae5'],
 ];
 const P2_RELATION_ADVISOR_EXCEPTION = {
-  advisor_fingerprint: 'f498338b96d43bbbf507b286d3503474889e67679b84b6dc3116d63d36c337c0',
+  advisor_fingerprint: '8088d6be7ca6bd32b041ed429091a56f26d26ac0d7148eb5bf15f9e3c5e70bd6',
   advisor_type: 'table',
   advisor_severity: 'INFO',
   object: { schema: 'private', name: 'creator_premium_content_safety_context_evaluations' },
