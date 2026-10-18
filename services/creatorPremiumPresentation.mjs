@@ -83,6 +83,55 @@ export function prepareCreatorPremiumVideoPickerAsset(asset, options = {}) {
   });
 }
 
+function creatorPremiumVideoSelectionFailure(reason) {
+  const raw = reason && typeof reason === 'object'
+    ? [reason.code, reason.message, reason.exception].filter(value => typeof value === 'string').join(' ')
+    : String(reason ?? '');
+  if (/PHPhotosErrorDomain[\s\S]*3164|3164[\s\S]*PHPhotosErrorDomain/i.test(raw)) {
+    return {
+      code: 'creator_premium_video_photos_export_failed',
+      message: 'Photos no pudo preparar este video. Ábrelo en Photos, espera a que termine la descarga desde iCloud y vuelve a intentarlo; también puedes elegirlo desde Files.',
+    };
+  }
+  const code = reason instanceof Error ? reason.message : '';
+  if (code === 'creator_premium_video_mime_invalid') {
+    return { code, message: 'Usa MP4, QuickTime o WebM.' };
+  }
+  if (code === 'creator_premium_video_size_invalid') {
+    return { code, message: 'El video debe pesar menos de 200 MB.' };
+  }
+  if (code === 'creator_premium_video_duration_invalid') {
+    return { code, message: 'El video debe durar como máximo 60 segundos.' };
+  }
+  if (code === 'creator_premium_video_asset_unreadable') {
+    return {
+      code,
+      message: 'Photos todavía no entregó un archivo local legible. Descarga el video por completo y vuelve a intentarlo; también puedes elegirlo desde Files.',
+    };
+  }
+  return {
+    code: 'creator_premium_video_picker_failed',
+    message: 'No se pudo preparar el video seleccionado. Inténtalo de nuevo o elígelo desde Files.',
+  };
+}
+
+export async function selectCreatorPremiumVideoFromPhotos({
+  requestPermission,
+  launchPicker,
+  prepareAsset,
+}) {
+  try {
+    const permission = await requestPermission();
+    if (!permission?.granted) return { status: 'permission_required' };
+    const result = await launchPicker();
+    const asset = result?.assets?.[0];
+    if (result?.canceled || !asset) return { status: 'cancelled' };
+    return { status: 'selected', file: await prepareAsset(asset) };
+  } catch (reason) {
+    return { status: 'failed', ...creatorPremiumVideoSelectionFailure(reason) };
+  }
+}
+
 const base = (state, label, copy, options = {}) => ({
   state,
   label,

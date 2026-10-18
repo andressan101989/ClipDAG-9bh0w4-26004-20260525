@@ -44,7 +44,7 @@ test('iOS video assets use the native local file size and never fetch a file URI
   const videoFileBody = editor.slice(editor.indexOf('async function videoFile'), editor.indexOf('function videoPickerError'));
   assert.match(videoFileBody, /sizeForUri:\s*uri\s*=>\s*new\s+File\(uri\)\.size/);
   assert.doesNotMatch(videoFileBody, /fetch\(asset\.uri\)/);
-  assert.match(editor, /preferredAssetRepresentationMode\s*:\s*ImagePicker\.UIImagePickerPreferredAssetRepresentationMode\.Current/);
+  assert.match(editor, /preferredAssetRepresentationMode\s*:\s*ImagePicker\.UIImagePickerPreferredAssetRepresentationMode\.Automatic/);
   assert.match(editor, /copyToCacheDirectory\s*:\s*true/);
 });
 
@@ -89,7 +89,7 @@ test('plan preflight distinguishes an unmapped plan from a mapped draft or retir
 });
 
 test('nonconforming Workers AI structured output stays fail-closed but is bounded-retryable', () => {
-  for (const response of ['not-json', '```json\n{"objects":[]}\n```']) {
+  for (const response of ['not-json', 'result: {"objects":[]}']) {
     assert.throws(
       () => visualStructuredResponseValue({ success: true, result: { response } }),
       error => error instanceof VisualProbeError
