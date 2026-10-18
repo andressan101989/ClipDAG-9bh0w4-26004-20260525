@@ -101,4 +101,3 @@ separate forward-only activation revision only if the evidence is complete.
       reconciliation anomalies.
 - [ ] Report each gate as DEMONSTRATED or BLOCKED, real versus simulated tests,
       inference count/cost, production state, and the exact physical-QA step.
-

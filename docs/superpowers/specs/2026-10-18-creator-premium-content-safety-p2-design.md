@@ -107,4 +107,3 @@ is not demonstrable.
 - A bounded synthetic provider probe is allowed only after quota headroom is
   observed. Existing QA media is reused; no new upload is created.
 - Production releases use only the canonical workflow and exact manifests.
-
