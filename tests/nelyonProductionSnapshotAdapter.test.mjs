@@ -453,7 +453,7 @@ test('RPC security normalization preserves overload identity hashes definitions 
   assert.notEqual(overload.items[0].identity_arguments, overload.items[1].identity_arguments);
 });
 
-test('Premium postcheck state preserves historical minima while allowing owner-created QA content', async () => {
+test('Premium postcheck state preserves historical minima while allowing a fully drained review queue', async () => {
   const adapter = await loadAdapter();
   const state = adapter.normalizePremiumPostcheckState(premiumPostcheckSnapshot());
   assert.equal(adapter.validatePremiumPostcheckState(state, state.relation_security.items), true);
@@ -470,12 +470,16 @@ test('Premium postcheck state preserves historical minima while allowing owner-c
   assert.equal(adapter.validatePremiumPostcheckState(physicalQaState, state.relation_security.items), true);
   assert.equal(adapter.validatePremiumStateTransition(physicalQaState, structuredClone(physicalQaState)), true);
   assert.throws(() => adapter.validatePremiumStateTransition(physicalQaState, state), /PREMIUM_POSTCHECK_FAILED/);
+  const drainedQueueState = adapter.normalizePremiumPostcheckState(premiumPostcheckSnapshot({
+    pending_review_count: 0,
+  }));
+  assert.equal(adapter.validatePremiumPostcheckState(drainedQueueState, state.relation_security.items), true);
   for (const drift of [
     { content_safety: { ...state.content_safety, approved_rule_count: 1 } },
     { content_safety: { ...state.content_safety, active_rule_count: 1 } },
     { content_safety: { ...state.content_safety, fabricated_pass_count: 1 } },
     { legacy: { ...state.legacy, content_count: 1 } },
-    { legacy: { ...state.legacy, pending_review_count: 0 } },
+    { legacy: { ...state.legacy, pending_review_count: -1 } },
     { legacy: { ...state.legacy, deleted_count: 0 } },
     { legacy: { ...state.legacy, content_count: 2, pending_review_count: 2, deleted_count: 1 } },
   ]) assert.throws(() => adapter.validatePremiumPostcheckState({ ...state, ...drift }, state.relation_security.items), /PREMIUM_POSTCHECK_FAILED/);
