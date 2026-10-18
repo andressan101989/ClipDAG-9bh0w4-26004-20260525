@@ -2,29 +2,29 @@
   "baseline": {
     "authority_source": "owner-control-plane",
     "blocked_resources": [],
-    "evidence": "5e9643177950ab7434a4c7b09e9516cf04008d862b27786b55ff48f27f61929d",
+    "evidence": "a13a7b269aeb99c7dddfa5687d4438cd5e3a5495b8d34f067a6982e8458615e1",
     "evidence_digests": {
       "config_verify_jwt": "9f7f6b42cccd5086f862b1f40e659935d8a44f14943eeed80c8d7928e84f9fb9",
       "cron_security": "2dd76dccc8b348eb932fee5c8ada572f57243287f3ca96bf851a75a2e9244846",
       "finance": "94c297fb891f7c13beb92f2cfaec3145ba1ca3b23bbcd74ce39e084a8365b566",
-      "function_source_parity": "9777827b64eefc314609f95b255a802a345baaad1d76d02f3b7b43e4ef363006",
-      "managed_functions": "9a568d0d051e7c013abc8d135f232866ba936e35e52e4313953d80a222b7b042",
-      "migrations": "8c8be16a84c0a04e8119c1a65a86e7ef1b4f6deabf7bf11f93daf2dfd6e7dbb9",
+      "function_source_parity": "029a409b91a623a1a90f8e26e65f5395163a2f78048503d005447a8fa48a7a1a",
+      "managed_functions": "557db737ca1edbe75a601816e85e95d830e64205a03a9446151874d9f17de64f",
+      "migrations": "966f9d15659a6b7e48302ac00af8b0b339e0942fe60ba13b980a25fefc01d88a",
       "unmanaged_functions": "e56ae5b19eb2158499e33128470663eab37cf2c6be03b3732a7d09a4d80213aa"
     },
-    "latest_migration": "20261017193000_creator_premium_c1_submission_cancellation",
-    "migration_count": 338,
+    "latest_migration": "20261018050000_creator_premium_c3_visual_retry_producer",
+    "migration_count": 339,
     "prior_release": {
       "kind": "post-release",
-      "manifest_sha256": "e558213e06d24e782b0ed3174a53e0cbaa9c77cf53d894b28e50163be093e22f",
-      "postcheck_evidence_sha256": "f046e1c232cd745daf7f1546328830046d818d7a96a887c43b31df2c4bf378ae",
-      "release_id": "nelyon-c2-release-20261018T034127Z"
+      "manifest_sha256": "9265d39edd186090bc9eaa5f154dbc19fb575e452fe0e55fc6aa48b96203da07",
+      "postcheck_evidence_sha256": "0af95cfcda7df9553ff2604eb576d07365cc4b87443b205cbdc7a41c15a90159",
+      "release_id": "nelyon-c3-release2-20261018T050338Z"
     },
     "requires_separate_policy_commit": true,
-    "reviewed_policy_sha256": "93b9976d1006e5393f82998e4152cefdab68599e8a6e24cdda88773894ea6af1",
-    "sha": "6d4b7666d37566a16fb32fadc57c400615541ca0",
+    "reviewed_policy_sha256": "c32f019f653362dcf76fe0b9dc5466d9a8eeb8d57127a34d6b7200e7ad012327",
+    "sha": "e7151e953a9b8f43705e21185fccdf2c7686b6f1",
     "state": "verified",
-    "verified_at": "2026-10-18T04:56:46.823Z",
+    "verified_at": "2026-10-18T13:39:25.296Z",
     "verified_by": "andressan101989"
   },
   "baseline_authority": {
