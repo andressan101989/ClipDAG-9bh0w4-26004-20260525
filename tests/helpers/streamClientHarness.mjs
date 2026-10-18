@@ -20,8 +20,29 @@ export const mergeGalleryAssets=(current,incoming)=>{
 };
 export const galleryPermissionAccepted=permission=>permission.status==='granted'
   &&['all','limited'].includes(permission.accessPrivileges);
-export async function resolveGallerySelection({asset,getInfo,fileFactory,copy}) {
-  const info=await getInfo(asset.id,{shouldDownloadFromNetwork:true});
+export async function resolveGallerySelection({
+  asset,getInfo,fileFactory,copy,maxDurationMs=MAX_DURATION_MS,onNetworkState=()=>{},
+  signal,materializeTimeoutMs=120_000,
+}) {
+  try {
+    const availability=await getInfo(asset.id,{shouldDownloadFromNetwork:false});
+    onNetworkState(availability.isNetworkAsset===true);
+  } catch {
+    // The network-enabled request below remains authoritative.
+  }
+  if(signal?.aborted) throw Object.assign(new Error('selection_cancelled'),{code:'selection_cancelled'});
+  const materialization=getInfo(asset.id,{shouldDownloadFromNetwork:true});
+  const info=await new Promise((resolve,reject)=>{
+    let settled=false;
+    const cleanup=()=>{clearTimeout(timer);signal?.removeEventListener('abort',onAbort);};
+    const resolveOnce=value=>{if(settled)return;settled=true;cleanup();resolve(value);};
+    const rejectOnce=reason=>{if(settled)return;settled=true;cleanup();reject(reason);};
+    const onAbort=()=>rejectOnce(Object.assign(new Error('selection_cancelled'),{code:'selection_cancelled'}));
+    const timer=setTimeout(()=>rejectOnce(Object.assign(new Error('materialize_timeout'),{code:'materialize_timeout'})),materializeTimeoutMs);
+    signal?.addEventListener('abort',onAbort,{once:true});
+    if(signal?.aborted) onAbort();
+    materialization.then(resolveOnce,rejectOnce);
+  });
   if(!info.localUri) throw Object.assign(new Error('file_unavailable'),{code:'file_unavailable'});
   const mimeType=galleryMime(info.filename||asset.filename);
   if(!mimeType) throw Object.assign(new Error('unsupported_format'),{code:'unsupported_format'});
@@ -29,7 +50,7 @@ export async function resolveGallerySelection({asset,getInfo,fileFactory,copy}) 
   if(!source.exists||source.size<=0) throw Object.assign(new Error('file_unavailable'),{code:'file_unavailable'});
   if(source.size>MAX_SIZE) throw Object.assign(new Error('video_too_large'),{code:'video_too_large'});
   const durationMs=mediaLibraryDurationToMs(info.duration??asset.duration);
-  if(durationMs>MAX_DURATION_MS) throw Object.assign(new Error('video_too_long'),{code:'video_too_long'});
+  if(durationMs>maxDurationMs) throw Object.assign(new Error('video_too_long'),{code:'video_too_long'});
   const destination=copy(source,mimeType);
   return {uri:destination.uri,type:'video',mimeType,fileSize:destination.size,durationMs};
 }

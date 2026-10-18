@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
 
-import * as presentation from '../services/creatorPremiumPresentation.mjs';
 import {
   VISUAL_TOOL_NAME,
   VisualProbeError,
@@ -13,6 +12,8 @@ import { validateVisualSafetyResult } from '../supabase/functions/content-safety
 const root = new URL('../', import.meta.url);
 const read = relative => readFileSync(new URL(relative, root), 'utf8');
 const editor = read('app/creator-premium-editor.tsx');
+const gallery = read('components/feature/IosVideoGalleryPicker.tsx');
+const galleryService = read('services/iosVideoGalleryService.ts');
 const scanner = read('supabase/functions/content-safety-scan/index.ts');
 
 const safeVisualResult = Object.freeze({
@@ -22,56 +23,30 @@ const safeVisualResult = Object.freeze({
   summary: 'No safety signal.',
 });
 
-test('PhotoKit 3164 is contained as a recoverable result instead of an unhandled rejection', async () => {
-  assert.equal(typeof presentation.selectCreatorPremiumVideoFromPhotos, 'function');
-  const result = await presentation.selectCreatorPremiumVideoFromPhotos({
-    requestPermission: async () => ({ granted: true, accessPrivileges: 'limited' }),
-    launchPicker: async () => {
-      throw new Error("The operation couldn't be completed. (PHPhotosErrorDomain error 3164.)");
-    },
-    prepareAsset: async () => assert.fail('asset preparation must not run after a native picker rejection'),
-  });
-
-  assert.equal(result.status, 'failed');
-  assert.equal(result.code, 'creator_premium_video_photos_export_failed');
-  assert.match(result.message, /Photos/i);
-  assert.match(result.message, /iCloud|descarg/i);
-  assert.doesNotMatch(result.message, /3164/);
+test('PhotoKit 3164 export path is bypassed by explicit MediaLibrary materialization', () => {
+  assert.doesNotMatch(editor, /VideoExportPreset|preferredAssetRepresentationMode/);
+  assert.match(editor, /IosVideoGalleryPicker/);
+  assert.match(galleryService, /shouldDownloadFromNetwork:\s*false/);
+  assert.match(galleryService, /shouldDownloadFromNetwork:\s*true/);
+  assert.match(editor, /download_failed[\s\S]*iCloud/);
+  assert.doesNotMatch(editor, /3164/);
 });
 
-test('video picker orchestration handles permission, cancellation and a local selected asset', async () => {
-  let launches = 0;
-  assert.deepEqual(await presentation.selectCreatorPremiumVideoFromPhotos({
-    requestPermission: async () => ({ granted: false }),
-    launchPicker: async () => { launches += 1; },
-    prepareAsset: async () => assert.fail('permission denial must stop before preparation'),
-  }), { status: 'permission_required' });
-  assert.equal(launches, 0);
-
-  assert.deepEqual(await presentation.selectCreatorPremiumVideoFromPhotos({
-    requestPermission: async () => ({ granted: true }),
-    launchPicker: async () => ({ canceled: true, assets: [] }),
-    prepareAsset: async () => assert.fail('cancellation must stop before preparation'),
-  }), { status: 'cancelled' });
-
-  const selected = { uri: 'file:///private/video.mp4', mimeType: 'video/mp4' };
-  const localFile = { ...selected, fileName: 'video.mp4', sizeBytes: 4096 };
-  assert.deepEqual(await presentation.selectCreatorPremiumVideoFromPhotos({
-    requestPermission: async () => ({ granted: true, accessPrivileges: 'all' }),
-    launchPicker: async () => ({ canceled: false, assets: [selected] }),
-    prepareAsset: async asset => {
-      assert.equal(asset, selected);
-      return localFile;
-    },
-  }), { status: 'selected', file: localFile });
+test('video picker orchestration handles permission, cancellation and a selected local asset', () => {
+  assert.match(gallery, /requestPermissionsAsync\(false\)/);
+  assert.match(gallery, /permission\.accessPrivileges === 'limited'/);
+  assert.match(gallery, /onRequestClose=\{\(\)\s*=>/);
+  assert.match(gallery, /resolveIosVideoAsset\(asset/);
+  assert.match(gallery, /try\s*\{[\s\S]*catch\s*\(error\)/);
+  assert.match(editor, /handleIosVideoSelected/);
+  assert.match(editor, /ownedCacheUri/);
 });
 
-test('iOS picker avoids transcoding, requests Photos access, and catches every picker promise', () => {
-  assert.match(editor, /videoExportPreset\s*:\s*ImagePicker\.VideoExportPreset\.Passthrough/);
-  assert.match(editor, /preferredAssetRepresentationMode\s*:\s*ImagePicker\.UIImagePickerPreferredAssetRepresentationMode\.Current/);
-  assert.match(editor, /requestMediaLibraryPermissionsAsync/);
-  assert.doesNotMatch(editor, /Platform\.OS\s*===\s*'ios'[\s\S]{0,120}granted:\s*true/);
-  assert.match(editor, /selectCreatorPremiumVideoFromPhotos\s*\(/);
+test('iOS picker materializes through MediaLibrary and catches every fallback picker promise', () => {
+  assert.match(editor, /IosVideoGalleryPicker/);
+  assert.match(editor, /Platform\.OS\s*===\s*'ios'[\s\S]*setIosVideoGalleryVisible\(true\)/);
+  assert.match(editor, /handleIosVideoGalleryError/);
+  assert.doesNotMatch(editor, /videoExportPreset|preferredAssetRepresentationMode/);
   const imagePickerBody = editor.slice(editor.indexOf('const pickImage'), editor.indexOf('const pickVideoFromPhotos'));
   assert.match(imagePickerBody, /try\s*\{/);
   assert.match(imagePickerBody, /catch\s*\(reason\)/);

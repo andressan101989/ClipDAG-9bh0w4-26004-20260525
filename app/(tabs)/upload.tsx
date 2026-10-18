@@ -497,6 +497,13 @@ export default function UploadScreen() {
       );
       return;
     }
+    if(code==='materialize_timeout') {
+      showAlert(
+        'La preparación tardó demasiado',
+        'Abre el video en Fotos para completar su descarga o selecciónalo desde Archivos.',
+      );
+      return;
+    }
     if(code==='video_too_long') {
       showAlert('Video demasiado largo','El video no puede superar 60 segundos.');
       return;

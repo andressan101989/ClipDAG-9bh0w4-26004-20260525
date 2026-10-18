@@ -21,13 +21,14 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { IosVideoGalleryPicker } from '@/components/feature/IosVideoGalleryPicker';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import {
+  CREATOR_PREMIUM_VIDEO_MAX_DURATION_MS,
   collectCreatorPremiumPlanPages,
   creatorPremiumLifecycleActions,
   creatorPremiumLifecyclePresentation,
   prepareCreatorPremiumVideoPickerAsset,
-  selectCreatorPremiumVideoFromPhotos,
 } from '@/services/creatorPremiumPresentation.mjs';
 import {
   cancelMyCreatorPremiumSubmission,
@@ -50,6 +51,11 @@ import {
 import { uploadCreatorPremiumImagePair } from '@/services/creatorPremiumMediaService';
 import { uploadCreatorPremiumVideoMedia } from '@/services/creatorPremiumStreamService';
 import {
+  deleteOwnedIosVideoCache,
+  type IosVideoResolutionCode,
+  type ResolvedIosVideo,
+} from '@/services/iosVideoGalleryService';
+import {
   creatorPremiumErrorMessage as messageFor,
   creatorPremiumSubmissionBlockerMessage,
   creatorPremiumSubmissionMediaBlocker,
@@ -61,6 +67,7 @@ type LocalFile = {
   mimeType: string;
   fileName: string;
   sizeBytes: number;
+  ownedCacheUri?: string;
 };
 
 const PREMIUM = Colors.purple;
@@ -98,13 +105,16 @@ async function videoFile(asset: {
   fileName?: string | null;
   sizeBytes?: number | null;
   durationMs?: number | null;
+  ownedCacheUri?: string | null;
 }): Promise<LocalFile> {
   const normalized = prepareCreatorPremiumVideoPickerAsset({
     ...asset,
     fileName: asset.fileName ?? `premium-${randomUUID()}.mp4`,
   }, { sizeForUri: uri => new File(uri).size });
   if (!normalized) throw new Error('creator_premium_video_asset_invalid');
-  return normalized;
+  return asset.ownedCacheUri
+    ? { ...normalized, ownedCacheUri: asset.ownedCacheUri }
+    : normalized;
 }
 
 function videoPickerError(reason: unknown): string {
@@ -149,6 +159,7 @@ export default function CreatorPremiumEditor() {
   const offerAttempt = useRef<{ signature: string; key: string } | null>(null);
   const submissionAttempt = useRef<{ signature: string; key: string } | null>(null);
   const uploadAbort = useRef<AbortController | null>(null);
+  const ownedVideoCache = useRef<string | null>(null);
   const [contentId, setContentId] = useState(routeContentId ?? '');
   const [item, setItem] = useState<CreatorPremiumOwnerItem | null>(null);
   const [plans, setPlans] = useState<CreatorPremiumPlanItem[]>([]);
@@ -170,6 +181,7 @@ export default function CreatorPremiumEditor() {
   const [retiring, setRetiring] = useState(false);
   const [processing, setProcessing] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [iosVideoGalleryVisible, setIosVideoGalleryVisible] = useState(false);
 
   const lifecyclePresentation = creatorPremiumLifecyclePresentation(item ?? {});
   const lifecycleActions = creatorPremiumLifecycleActions(item ?? {});
@@ -178,6 +190,20 @@ export default function CreatorPremiumEditor() {
   const busy = saving || uploading || submitting || deleting || cancelling || reopening || retiring;
   const mediaLocked = Boolean(item?.teaser_attached || item?.original_attached || item?.video_attached);
   const eligiblePlans = useMemo(() => plans.filter(plan => plan.status === 'active'), [plans]);
+
+  const cleanupOwnedVideoCache = useCallback(() => {
+    const uri = ownedVideoCache.current;
+    ownedVideoCache.current = null;
+    deleteOwnedIosVideoCache(uri);
+  }, []);
+
+  const replacePrivateFile = useCallback((next: LocalFile | null) => {
+    const previousUri = ownedVideoCache.current;
+    const nextUri = next?.ownedCacheUri ?? null;
+    if (previousUri && previousUri !== nextUri) deleteOwnedIosVideoCache(previousUri);
+    ownedVideoCache.current = nextUri;
+    setPrivateFile(next);
+  }, []);
 
   const load = useCallback(async (targetId: string, silent = false, throwOnError = false) => {
     if (!silent) setLoading(true);
@@ -211,8 +237,11 @@ export default function CreatorPremiumEditor() {
 
   useEffect(() => {
     void load(routeContentId ?? '');
-    return () => uploadAbort.current?.abort();
-  }, [load, routeContentId]);
+    return () => {
+      uploadAbort.current?.abort();
+      cleanupOwnedVideoCache();
+    };
+  }, [cleanupOwnedVideoCache, load, routeContentId]);
 
   useEffect(() => {
     if (!contentId || !lifecyclePresentation.polling) return;
@@ -290,53 +319,54 @@ export default function CreatorPremiumEditor() {
       if (result.canceled || !result.assets[0]) return;
       const file = await imageFile(result.assets[0]);
       if (role === 'teaser') setTeaser(file);
-      else setPrivateFile(file);
+      else replacePrivateFile(file);
     } catch (reason) {
       Alert.alert('No se pudo leer la imagen', messageFor(reason));
     }
-  }, [busy, readOnly]);
+  }, [busy, readOnly, replacePrivateFile]);
 
   const pickVideoFromPhotos = useCallback(async () => {
     if (busy || readOnly) return;
-    const selection = await selectCreatorPremiumVideoFromPhotos({
-      requestPermission: () => ImagePicker.requestMediaLibraryPermissionsAsync(),
-      launchPicker: () => ImagePicker.launchImageLibraryAsync({
+    if (Platform.OS === 'ios') {
+      setIosVideoGalleryVisible(true);
+      return;
+    }
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permiso requerido', 'Permite el acceso a tus videos para seleccionar uno.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['videos'],
         allowsEditing: false,
         quality: 1,
-        videoExportPreset: ImagePicker.VideoExportPreset.Passthrough,
-        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
-      }),
-      prepareAsset: (asset: ImagePicker.ImagePickerAsset) => videoFile({
+      });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      replacePrivateFile(await videoFile({
         uri: asset.uri,
         mimeType: asset.mimeType,
         fileName: asset.fileName,
         sizeBytes: asset.fileSize,
         durationMs: asset.duration,
-      }),
-    });
-    if (selection.status === 'permission_required') {
-      Alert.alert('Permiso requerido', 'Permite el acceso a tus fotos para seleccionar este video.');
-      return;
+      }));
+    } catch (reason) {
+      Alert.alert('No se pudo seleccionar el video', videoPickerError(reason));
     }
-    if (selection.status === 'failed') {
-      Alert.alert('No se pudo seleccionar el video', selection.message);
-      return;
-    }
-    if (selection.status === 'selected') setPrivateFile(selection.file);
-  }, [busy, readOnly]);
+  }, [busy, readOnly, replacePrivateFile]);
 
   const pickVideoFromFiles = useCallback(async () => {
     if (busy || readOnly) return;
-    const result = await DocumentPicker.getDocumentAsync({
-      type: ['video/mp4', 'video/quicktime', 'video/webm'],
-      copyToCacheDirectory: true,
-      multiple: false,
-    });
-    if (result.canceled || !result.assets[0]) return;
-    const asset = result.assets[0];
     try {
-      setPrivateFile(await videoFile({
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['video/mp4', 'video/quicktime', 'video/webm'],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      replacePrivateFile(await videoFile({
         uri: asset.uri,
         mimeType: asset.mimeType,
         fileName: asset.name,
@@ -346,7 +376,57 @@ export default function CreatorPremiumEditor() {
     } catch (reason) {
       Alert.alert('Video no compatible', videoPickerError(reason));
     }
-  }, [busy, readOnly]);
+  }, [busy, readOnly, replacePrivateFile]);
+
+  const handleIosVideoSelected = useCallback(async (video: ResolvedIosVideo) => {
+    try {
+      const file = await videoFile({
+        uri: video.uri,
+        mimeType: video.mimeType,
+        fileName: video.fileName,
+        sizeBytes: video.fileSize,
+        durationMs: video.durationMs,
+        ownedCacheUri: video.ownedCacheUri,
+      });
+      replacePrivateFile(file);
+      setIosVideoGalleryVisible(false);
+    } catch (reason) {
+      deleteOwnedIosVideoCache(video.ownedCacheUri);
+      Alert.alert('Video no compatible', videoPickerError(reason));
+    }
+  }, [replacePrivateFile]);
+
+  const handleIosVideoGalleryError = useCallback((code: IosVideoResolutionCode | 'permission_denied' | 'query_failed') => {
+    if (code === 'permission_denied') {
+      Alert.alert('Acceso a videos requerido', 'Permite el acceso a tus videos para seleccionarlos desde Photos.');
+      return;
+    }
+    if (code === 'query_failed') {
+      Alert.alert('No se cargó Photos', 'Inténtalo de nuevo o elige el video desde Files.');
+      return;
+    }
+    if (code === 'download_failed') {
+      Alert.alert('No se pudo preparar el video', 'Comprueba la conexión y que Photos haya terminado de descargarlo desde iCloud; también puedes elegirlo desde Files.');
+      return;
+    }
+    if (code === 'materialize_timeout') {
+      Alert.alert('La preparación tardó demasiado', 'Abre el video en Photos para completar su descarga o selecciónalo desde Files.');
+      return;
+    }
+    if (code === 'video_too_long') {
+      Alert.alert('Video demasiado largo', 'El video debe durar como máximo 180 segundos.');
+      return;
+    }
+    if (code === 'video_too_large') {
+      Alert.alert('Video demasiado grande', 'El video debe pesar como máximo 200 MB.');
+      return;
+    }
+    if (code === 'unsupported_format') {
+      Alert.alert('Formato no compatible', 'Selecciona un video MP4, QuickTime o WebM.');
+      return;
+    }
+    Alert.alert('Video no disponible', 'Photos no entregó un archivo local legible. Selecciona otro video o usa Files.');
+  }, []);
 
   const uploadMedia = useCallback(async () => {
     if (busy || readOnly) return;
@@ -384,6 +464,7 @@ export default function CreatorPremiumEditor() {
         });
       }
       setProcessing('ready');
+      cleanupOwnedVideoCache();
       setTeaser(null);
       setPrivateFile(null);
       await load(id);
@@ -395,7 +476,7 @@ export default function CreatorPremiumEditor() {
       if (uploadAbort.current === controller) uploadAbort.current = null;
       setUploading(false);
     }
-  }, [busy, kind, load, privateFile, readOnly, saveDraft, teaser]);
+  }, [busy, cleanupOwnedVideoCache, kind, load, privateFile, readOnly, saveDraft, teaser]);
 
   const submit = useCallback(async () => {
     if (busy || (!lifecycleActions.canSubmit && !lifecycleActions.canRetry)) return;
@@ -699,6 +780,18 @@ export default function CreatorPremiumEditor() {
           </View>
         ) : null}
       </ScrollView>
+      <IosVideoGalleryPicker
+        visible={iosVideoGalleryVisible}
+        onClose={() => setIosVideoGalleryVisible(false)}
+        onFiles={() => {
+          setIosVideoGalleryVisible(false);
+          void pickVideoFromFiles();
+        }}
+        onSelected={handleIosVideoSelected}
+        onError={handleIosVideoGalleryError}
+        maxDurationMs={CREATOR_PREMIUM_VIDEO_MAX_DURATION_MS}
+        telemetryScope="creator_premium"
+      />
     </KeyboardAvoidingView>
   );
 }

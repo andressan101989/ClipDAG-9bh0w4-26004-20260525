@@ -95,9 +95,9 @@ test('lifecycle presentation distinguishes processing, policy, retry, approval, 
 test('native iOS video selection defaults to Photos and retains explicit Files fallback', () => {
   const photoBody = editor.slice(editor.indexOf('const pickVideoFromPhotos'), editor.indexOf('const pickVideoFromFiles'));
   const filesBody = editor.slice(editor.indexOf('const pickVideoFromFiles'), editor.indexOf('const uploadMedia'));
-  assert.match(photoBody, /requestMediaLibraryPermissionsAsync/);
-  assert.match(photoBody, /launchImageLibraryAsync/);
-  assert.match(photoBody, /mediaTypes\s*:\s*\[\s*['"]videos['"]\s*\]/);
+  assert.match(photoBody, /Platform\.OS\s*===\s*['"]ios['"][\s\S]*setIosVideoGalleryVisible\(true\)/);
+  assert.match(editor, /IosVideoGalleryPicker/);
+  assert.match(editor, /maxDurationMs=\{CREATOR_PREMIUM_VIDEO_MAX_DURATION_MS\}/);
   assert.doesNotMatch(photoBody, /DocumentPicker/);
   assert.match(filesBody, /DocumentPicker\.getDocumentAsync/);
   assert.match(editor, /Elegir desde Files/);
