@@ -290,6 +290,36 @@
         "technical_approval": "verified"
       },
       {
+        "advisor_fingerprint": "1c20753b55dcdb2d0a8e6a3365fcf45453495a74a49d76b9b51af4e51d7b923f",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "submit_my_creator_premium_content_with_plans_v1", "argument_types": ["uuid", "uuid[]", "uuid"], "identity_arguments": "p_content_id uuid, p_plan_ids uuid[], p_client_request_id uuid" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "955a476101b0886c0c751081da20d3296ec4f18bac2f65d41ac0322b782d0a3f" },
+        "authorization": { "functional_reason": "Submits caller-owned content while atomically versioning only the selected owned active plans and preserving canonical safety validation.", "controls": ["active_plan_validation", "authenticated_session", "idempotency_key", "negative_authorization_tests", "owner_scope", "transactional_versioning"], "negative_test_evidence_sha256": "3605ab40e6e5c5de5d3a11465eb858836a20d936aa26f144cf9a96fa80c10a52" },
+        "origin": { "migration": "20261018211327_creator_premium_qa_final_f1", "migration_blob": "2283f1283ac801a3668c3ed189e5c11f769fc2e3", "source_sha": "c62441f08f0ecd9aaa60117ab6fc49f0b2072cc8" },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "b0cdd5e8a440096ebc6bbd35fee9b785180d71ae6d06209ade7feaa6c0877c4d",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "retire_my_creator_premium_content_v1", "argument_types": ["uuid"], "identity_arguments": "p_content_id uuid" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "82b9564d166f1619207dc1ba05e63e79b232636f973f433079881c31fda2fbf2" },
+        "authorization": { "functional_reason": "Withdraws only caller-owned published content when no financial history exists, retaining private media, mappings, safety evidence, and audit history.", "controls": ["authenticated_session", "financial_history_guard", "idempotent_replay", "negative_authorization_tests", "owner_scope", "plan_locking"], "negative_test_evidence_sha256": "3605ab40e6e5c5de5d3a11465eb858836a20d936aa26f144cf9a96fa80c10a52" },
+        "origin": { "migration": "20261018211327_creator_premium_qa_final_f1", "migration_blob": "2283f1283ac801a3668c3ed189e5c11f769fc2e3", "source_sha": "c62441f08f0ecd9aaa60117ab6fc49f0b2072cc8" },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "5ceb93fa71004f64ba75a7bd251fadaf66d7ebdce81fb48904fd988ed9023fef",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": { "schema": "public", "name": "delete_my_creator_premium_plan_draft_v1", "argument_types": ["uuid", "uuid"], "identity_arguments": "p_plan_id uuid, p_client_request_id uuid" },
+        "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "40cbc02821cceb68cdd5a31cfd531d9ec8f537d36c47acb1fc7fcafd0df42ed3" },
+        "authorization": { "functional_reason": "Deletes only a caller-owned draft plan with no content, offer, subscription, or period dependency and preserves every active or historical version.", "controls": ["authenticated_session", "dependency_guard", "idempotency_key", "negative_authorization_tests", "owner_scope", "status_guard"], "negative_test_evidence_sha256": "3605ab40e6e5c5de5d3a11465eb858836a20d936aa26f144cf9a96fa80c10a52" },
+        "origin": { "migration": "20261018211327_creator_premium_qa_final_f1", "migration_blob": "2283f1283ac801a3668c3ed189e5c11f769fc2e3", "source_sha": "c62441f08f0ecd9aaa60117ab6fc49f0b2072cc8" },
+        "technical_approval": "verified"
+      },
+      {
         "advisor_fingerprint": "8088d6be7ca6bd32b041ed429091a56f26d26ac0d7148eb5bf15f9e3c5e70bd6",
         "advisor_type": "table",
         "advisor_severity": "INFO",
