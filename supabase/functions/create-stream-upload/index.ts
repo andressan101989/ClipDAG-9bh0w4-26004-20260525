@@ -2,9 +2,68 @@ import { businessActorHasAdvertiserOwnerMediaAccess,businessActorHasAnyCapabilit
 import { authenticatedClient,authenticatedUser,admin,corsHeaders,json } from '../_shared/mediaAuth.ts';
 import { CREATOR_PREMIUM_STREAM_PURPOSE } from '../_shared/premiumStreamSecurity.ts';
 import {
-  STREAM_MAX_DURATION_SECONDS,STREAM_MAX_SIZE_BYTES,safeFilename,sanitizeProviderError,
-  streamFetch,validateStreamMime,validateStreamSize,
+  CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS,STREAM_MAX_DURATION_SECONDS,STREAM_MAX_SIZE_BYTES,
+  StreamProviderError,safeFilename,sanitizeProviderError,streamApiBase,streamFetch,streamToken,
+  validateStreamMime,validateStreamSize,
 } from '../_shared/stream.ts';
+
+function encodeTusMetadata(value:string):string {
+  const bytes=new TextEncoder().encode(value);
+  let binary='';
+  for(const byte of bytes) binary+=String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function tusMetadataHeader(entries:Record<string,string|null>):string {
+  return Object.entries(entries)
+    .map(([key,value])=>value===null?key:`${key} ${encodeTusMetadata(value)}`)
+    .join(',');
+}
+
+async function createPremiumTusUpload(input:{
+  assetId:string;
+  ownerId:string;
+  premiumContentId:string;
+  fileName:string;
+  sizeBytes:number;
+  expiresAt:string;
+  environment:string;
+}):Promise<{uid:string;uploadUrl:string}> {
+  const metadata={
+    name:input.fileName,
+    requiresignedurls:null,
+    maxDurationSeconds:String(CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS),
+    expiry:input.expiresAt,
+    asset_id:input.assetId,
+    purpose:CREATOR_PREMIUM_STREAM_PURPOSE,
+    premium_content_id:input.premiumContentId,
+    environment:input.environment,
+  };
+  const response=await fetch(`${streamApiBase()}?direct_user=true`,{
+    method:'POST',
+    headers:{
+      Authorization:`Bearer ${streamToken()}`,
+      'Tus-Resumable':'1.0.0',
+      'Upload-Length':String(input.sizeBytes),
+      'Upload-Creator':input.ownerId,
+      'Upload-Metadata':tusMetadataHeader(metadata),
+    },
+  });
+  if(!response.ok) {
+    const transient=response.status===408||response.status===425||response.status===429||response.status>=500;
+    throw new StreamProviderError(
+      transient?'stream_provider_temporarily_unavailable':'stream_provider_rejected',
+      transient?503:502,
+      transient,
+    );
+  }
+  const uid=response.headers.get('stream-media-id')?.trim()??'';
+  const uploadUrl=response.headers.get('location')?.trim()??'';
+  if(!uid||!uploadUrl.startsWith('https://')) {
+    throw new StreamProviderError('stream_provider_invalid_response',502);
+  }
+  return {uid,uploadUrl};
+}
 
 Deno.serve(async(req)=>{
   if(req.method==='OPTIONS') return new Response('ok',{headers:corsHeaders});
@@ -83,15 +142,29 @@ Deno.serve(async(req)=>{
     const environment=Deno.env.get('DENO_DEPLOYMENT_ID')?'production':'development';
     const metadata:Record<string,string>={asset_id:id,purpose,environment};
     if(isPremium) metadata.premium_content_id=String(premiumContentId);
-    const providerContract={
-      maxDurationSeconds:STREAM_MAX_DURATION_SECONDS,creator:ownerId,requireSignedURLs:false,
-      allowedOrigins:[],expiry:expiresAt,meta:metadata,
-    };
-    if(isPremium) providerContract.requireSignedURLs=true;
-    const provider=await streamFetch('/direct_upload',{method:'POST',body:JSON.stringify(providerContract)});
-    const result=provider.result as Record<string,unknown>|undefined;
-    uid=typeof result?.uid==='string'?result.uid:undefined;
-    const uploadUrl=typeof result?.uploadURL==='string'&&result.uploadURL.startsWith('https://')?result.uploadURL:null;
+    let uploadUrl:string|null=null;
+    if(isPremium) {
+      const provider=await createPremiumTusUpload({
+        assetId:id,
+        ownerId,
+        premiumContentId:String(premiumContentId),
+        fileName:safeFilename(body.file_name),
+        sizeBytes:size,
+        expiresAt,
+        environment,
+      });
+      uid=provider.uid;
+      uploadUrl=provider.uploadUrl;
+    } else {
+      const providerContract={
+        maxDurationSeconds:STREAM_MAX_DURATION_SECONDS,creator:ownerId,requireSignedURLs:false,
+        allowedOrigins:[],expiry:expiresAt,meta:metadata,
+      };
+      const provider=await streamFetch('/direct_upload',{method:'POST',body:JSON.stringify(providerContract)});
+      const result=provider.result as Record<string,unknown>|undefined;
+      uid=typeof result?.uid==='string'?result.uid:undefined;
+      uploadUrl=typeof result?.uploadURL==='string'&&result.uploadURL.startsWith('https://')?result.uploadURL:null;
+    }
     if(!uid) throw new Error('stream_provider_invalid_response');
     if(!uploadUrl) {
       const persisted=await compensateUid(uid,'stream_provider_invalid_response');
@@ -106,10 +179,13 @@ Deno.serve(async(req)=>{
       if(!persisted) return json({error:'asset_state_failed'},503);
       return json({error:'asset_state_failed'},503);
     }
-    return json({success:true,data:{
-      assetId:id,uploadUrl,method:'POST',formField:'file',expiresAt,
-      maxDurationSeconds:STREAM_MAX_DURATION_SECONDS,maxSizeBytes:STREAM_MAX_SIZE_BYTES,
-      ownerId,
+    return json({success:true,data:isPremium?{
+      assetId:id,uploadUrl,protocol:'tus',method:'PATCH',expiresAt,
+      maxDurationSeconds:CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS,
+      maxSizeBytes:STREAM_MAX_SIZE_BYTES,ownerId,
+    }:{
+      assetId:id,uploadUrl,protocol:'multipart',method:'POST',formField:'file',expiresAt,
+      maxDurationSeconds:STREAM_MAX_DURATION_SECONDS,maxSizeBytes:STREAM_MAX_SIZE_BYTES,ownerId,
     }});
   } catch(error) {
     const safe=sanitizeProviderError(error);

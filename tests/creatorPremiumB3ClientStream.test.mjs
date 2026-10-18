@@ -36,7 +36,11 @@ function compile(source, filename) {
   }).outputText;
 }
 
-function loadStreamService(invoke) {
+function loadStreamService(invoke, { UploadClass = class {
+  constructor(_file, options) { this.options = options; }
+  start() { this.options.onSuccess(); }
+  async abort() {}
+} } = {}) {
   const module = { exports: {} };
   class MockFile {
     constructor(uri) {
@@ -59,6 +63,7 @@ function loadStreamService(invoke) {
     require(specifier) {
       if (specifier === 'expo-file-system') return { File: MockFile };
       if (specifier === 'expo/fetch') return { fetch: async () => ({ ok: true, status: 200 }) };
+      if (specifier === 'tus-js-client') return { Upload: UploadClass };
       if (specifier === '@/template') return {
         getSupabaseClient: () => ({
           functions: { invoke },
@@ -82,17 +87,19 @@ function loadStreamService(invoke) {
   return module.exports;
 }
 
-test('streamService creates exact Premium direct-upload context without changing Feed creation', async () => {
+test('streamService creates exact Premium TUS context without changing Feed creation', async () => {
   const calls = [];
   const service = loadStreamService(async (name, options) => {
     calls.push({ name, body: structuredClone(options.body) });
+    const premium = options.body.purpose === 'creator_premium_video';
     return { data: { success: true, data: {
       assetId: videoAssetId,
       uploadUrl: 'https://upload.example.test/direct',
-      method: 'POST',
-      formField: 'file',
+      protocol: premium ? 'tus' : 'multipart',
+      method: premium ? 'PATCH' : 'POST',
+      ...(premium ? {} : { formField: 'file' }),
       expiresAt: new Date(Date.now() + 600_000).toISOString(),
-      maxDurationSeconds: 60,
+      maxDurationSeconds: premium ? 180 : 60,
       maxSizeBytes: 200_000_000,
     } }, error: null };
   });
@@ -110,6 +117,40 @@ test('streamService creates exact Premium direct-upload context without changing
   assert.deepEqual(calls[1].body, {
     purpose: 'feed_video', mime_type: 'video/mp4', size_bytes: 1000, file_name: 'feed.mp4',
   });
+});
+
+test('Premium TUS upload uses bounded retries, compliant chunks and observable progress', async () => {
+  const captures = [];
+  class MockTusUpload {
+    constructor(file, options) {
+      captures.push({ file, options });
+      this.options = options;
+    }
+    start() {
+      this.options.onProgress(5_242_880, 10_485_760);
+      this.options.onSuccess();
+    }
+    async abort() {}
+  }
+  const service = loadStreamService(async () => ({ data: null, error: null }), {
+    UploadClass: MockTusUpload,
+  });
+  const progress = [];
+  await service.uploadCreatorPremiumVideoWithTus({
+    uri: 'file:///premium.mp4',
+    fileName: 'premium.mp4',
+    mimeType: 'video/mp4',
+    sizeBytes: 10_485_760,
+    uploadUrl: 'https://upload.example.test/tus',
+    onProgress: (...values) => progress.push(values),
+  });
+  assert.equal(captures.length, 1);
+  assert.equal(captures[0].file.uri, 'file:///premium.mp4');
+  assert.equal(captures[0].options.uploadUrl, 'https://upload.example.test/tus');
+  assert.equal(captures[0].options.uploadSize, 10_485_760);
+  assert.equal(captures[0].options.chunkSize, 5 * 1024 * 1024);
+  assert.deepEqual(Array.from(captures[0].options.retryDelays), [0, 1_000, 3_000, 5_000]);
+  assert.deepEqual(progress, [[50, 5_242_880, 10_485_760]]);
 });
 
 test('Premium processing accepts ready with null URLs only under entitlement-required mode', async () => {
@@ -147,10 +188,10 @@ function loadPremiumService({
   deleteTeaser = async () => {},
   createVideo = async () => ({
     assetId: videoAssetId, uploadUrl: 'https://upload.example.test/direct',
-    method: 'POST', formField: 'file', expiresAt: new Date(Date.now() + 600_000).toISOString(),
-    maxDurationSeconds: 60, maxSizeBytes: 200_000_000,
+    protocol: 'tus', method: 'PATCH', expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    maxDurationSeconds: 180, maxSizeBytes: 200_000_000,
   }),
-  postVideo = async () => {},
+  uploadTus = async () => {},
   waitVideo = async () => ({
     assetId: videoAssetId, status: 'ready', progress: 100, durationSeconds: 12,
     width: 1920, height: 1080, hlsUrl: null, dashUrl: null, thumbnailUrl: null,
@@ -186,7 +227,7 @@ function loadPremiumService({
       };
       if (specifier === '@/services/streamService') return {
         createCreatorPremiumStreamUpload: createVideo,
-        postVideoToStreamUploadUrl: postVideo,
+        uploadCreatorPremiumVideoWithTus: uploadTus,
         waitForCreatorPremiumStreamReady: waitVideo,
         deleteStreamVideo: deleteVideo,
         getCreatorPremiumStreamCleanupAssetId: getCleanupAssetId,
@@ -225,7 +266,16 @@ test('Premium video flow reuses B2 teaser, uploads privately, polls safely, and 
       calls.push(['create', structuredClone(value)]);
       return { assetId: videoAssetId, uploadUrl: 'https://upload.example.test/direct' };
     },
-    postVideo: async value => { calls.push(['post', structuredClone(value)]); },
+    uploadTus: async value => {
+      calls.push(['tus', {
+        uri: value.uri,
+        fileName: value.fileName,
+        mimeType: value.mimeType,
+        sizeBytes: value.sizeBytes,
+        uploadUrl: value.uploadUrl,
+        hasProgressCallback: typeof value.onProgress === 'function',
+      }]);
+    },
     waitVideo: async value => {
       calls.push(['wait', value]);
       return { status: 'ready', playbackMode: 'premium_entitlement_required' };
@@ -248,6 +298,7 @@ test('Premium video flow reuses B2 teaser, uploads privately, polls safely, and 
   });
   assert.equal(calls[2][1].uri, input.video.uri);
   assert.equal(calls[2][1].uploadUrl, 'https://upload.example.test/direct');
+  assert.equal(calls[2][1].hasProgressCallback, true);
   assert.equal(calls[3][1], videoAssetId);
   assert.deepEqual(calls[4], ['rpc', 'set_my_creator_premium_video_media_v1', {
     p_content_id: contentId, p_teaser_asset_id: teaserAssetId, p_video_asset_id: videoAssetId,
@@ -344,8 +395,8 @@ test('Premium upload-contract cleanup carrier is non-enumerable and survives a f
     if (name === 'create-stream-upload') return { data: { success: true, data: {
       assetId: videoAssetId,
       uploadUrl: 'http://invalid.example.test/direct',
-      method: 'POST', formField: 'file', expiresAt: new Date(Date.now() + 600_000).toISOString(),
-      maxDurationSeconds: 60, maxSizeBytes: 200_000_000,
+      protocol: 'tus', method: 'PATCH', expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      maxDurationSeconds: 180, maxSizeBytes: 200_000_000,
     } }, error: null };
     return { data: { success: false, error: 'video_cleanup_failed' }, error: null };
   });

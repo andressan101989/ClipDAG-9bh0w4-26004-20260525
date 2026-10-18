@@ -16,7 +16,7 @@ import {
   deleteStreamVideo,
   getCreatorPremiumStreamCleanupAssetId,
   getSafeStreamError,
-  postVideoToStreamUploadUrl,
+  uploadCreatorPremiumVideoWithTus,
   waitForCreatorPremiumStreamReady,
   type CreatorPremiumStreamProcessingDescriptor,
 } from '@/services/streamService';
@@ -39,6 +39,7 @@ export interface UploadCreatorPremiumVideoMediaInput {
     timeoutMs?:number;
     processingTimeoutMs?:number;
     pollIntervalMs?:number;
+    onUploadProgress?:(progress:number)=>void;
     onProgress?:(state:CreatorPremiumStreamProcessingDescriptor)=>void;
   };
 }
@@ -145,11 +146,15 @@ export async function uploadCreatorPremiumVideoMedia(
       fileName:input.video.fileName,
     });
     videoAssetId=contract.assetId;
-    await postVideoToStreamUploadUrl({
+    await uploadCreatorPremiumVideoWithTus({
       uri:input.video.uri,
+      fileName:input.video.fileName,
+      mimeType:input.video.mimeType,
+      sizeBytes:input.video.sizeBytes,
       uploadUrl:contract.uploadUrl,
       signal:input.video.signal,
       timeoutMs:input.video.timeoutMs,
+      onProgress:progress=>input.video.onUploadProgress?.(progress),
     });
     await waitForCreatorPremiumStreamReady(videoAssetId,{
       signal:input.video.signal,

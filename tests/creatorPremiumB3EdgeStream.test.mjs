@@ -126,18 +126,44 @@ function loadCreateStreamUpload({
       CREATOR_PREMIUM_STREAM_PURPOSE: 'creator_premium_video',
     },
     '../_shared/stream.ts': {
+      CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS: 180,
       STREAM_MAX_DURATION_SECONDS: 60,
       STREAM_MAX_SIZE_BYTES: 200_000_000,
+      StreamProviderError: class StreamProviderError extends Error {
+        constructor(code, httpStatus = 502, transient = false) {
+          super(code);
+          this.code = code;
+          this.httpStatus = httpStatus;
+          this.transient = transient;
+        }
+      },
       safeFilename: value => String(value ?? 'video'),
       sanitizeProviderError: () => ({ code: 'provider_error', message: 'provider_error', status: 502 }),
+      streamApiBase: () => 'https://api.cloudflare.test/accounts/account/stream',
       async streamFetch(pathname, init) {
-        providerCalls.push({ pathname, body: JSON.parse(String(init.body)) });
+        providerCalls.push({ kind: 'direct', pathname, body: JSON.parse(String(init.body)) });
         return { success: true, result: { uid: 'provider-uid', uploadURL: 'https://upload.example.test/direct' } };
       },
+      streamToken: () => 'test-token',
       validateStreamMime: value => ['video/mp4', 'video/quicktime', 'video/webm'].includes(String(value)) ? String(value) : null,
       validateStreamSize: value => Number(value) > 0 && Number(value) <= 200_000_000 ? Number(value) : null,
     },
   }, {
+    fetch: async (url, init) => {
+      providerCalls.push({
+        kind: 'tus',
+        url: String(url),
+        method: init.method,
+        headers: Object.fromEntries(new Headers(init.headers).entries()),
+      });
+      return new Response(null, {
+        status: 201,
+        headers: {
+          Location: 'https://upload.example.test/tus',
+          'stream-media-id': 'provider-uid',
+        },
+      });
+    },
     Deno: {
       env: { get: name => name === 'DENO_DEPLOYMENT_ID' ? 'deployment' : undefined },
       serve(fn) { handler = fn; },
@@ -170,7 +196,14 @@ test('create-stream-upload rejects malformed or mixed Premium context before res
   }
 });
 
-test('Premium direct upload uses caller authorization, private reservation, signed URLs, and content metadata', async () => {
+function decodeTusMetadata(value) {
+  return Object.fromEntries(String(value).split(',').map(entry => {
+    const [key, encoded] = entry.split(' ');
+    return [key, encoded ? Buffer.from(encoded, 'base64').toString('utf8') : ''];
+  }));
+}
+
+test('Premium TUS upload uses caller authorization, private reservation, signed URLs, and correlation metadata', async () => {
   const denied = loadCreateStreamUpload({ authorized: false });
   assert.equal((await post(denied.handler, upload)).response.status, 403);
   assert.equal(denied.rpcCalls.length, 0);
@@ -186,13 +219,23 @@ test('Premium direct upload uses caller authorization, private reservation, sign
   assert.equal(harness.rpcCalls[0].args.p_owner_id, userId);
   assert.equal(harness.rpcCalls[0].args.p_purpose, 'creator_premium_video');
   assert.equal(harness.providerCalls.length, 1);
-  const provider = harness.providerCalls[0].body;
-  assert.equal(provider.requireSignedURLs, true);
-  assert.equal(provider.meta.purpose, 'creator_premium_video');
-  assert.equal(provider.meta.premium_content_id, contentId);
-  assert.equal(provider.meta.asset_id, payload.data.assetId);
-  assert.equal(provider.meta.environment, 'production');
-  assert.equal(Object.hasOwn(provider, 'apiToken'), false);
+  const provider = harness.providerCalls[0];
+  assert.equal(provider.kind, 'tus');
+  assert.equal(provider.url, 'https://api.cloudflare.test/accounts/account/stream?direct_user=true');
+  assert.equal(provider.method, 'POST');
+  assert.equal(provider.headers['tus-resumable'], '1.0.0');
+  assert.equal(provider.headers['upload-length'], '1024');
+  assert.equal(provider.headers['upload-creator'], userId);
+  const metadata = decodeTusMetadata(provider.headers['upload-metadata']);
+  assert.equal(metadata.requiresignedurls, '');
+  assert.equal(metadata.maxDurationSeconds, '180');
+  assert.equal(metadata.purpose, 'creator_premium_video');
+  assert.equal(metadata.premium_content_id, contentId);
+  assert.equal(metadata.asset_id, payload.data.assetId);
+  assert.equal(metadata.environment, 'production');
+  assert.equal(payload.data.protocol, 'tus');
+  assert.equal(payload.data.method, 'PATCH');
+  assert.equal(payload.data.maxDurationSeconds, 180);
 });
 
 test('Feed and Business keep unsigned direct uploads and never receive Premium metadata', async () => {

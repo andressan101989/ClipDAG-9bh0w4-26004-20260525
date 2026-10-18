@@ -105,14 +105,15 @@ test('native iOS video selection defaults to Photos and retains explicit Files f
   assert.match(editor, /prepareCreatorPremiumVideoPickerAsset/);
 });
 
-test('video picker normalization enforces MIME, bytes, and the 60-second Photos limit', () => {
+test('video picker normalization enforces MIME, bytes, and the 180-second Photos limit', () => {
   const { normalizeCreatorPremiumVideoPickerAsset: normalize } = presentationApi();
   assert.deepEqual(normalize({ uri: 'file:///ok.mov', mimeType: 'video/quicktime', fileName: 'ok.mov', sizeBytes: 12, durationMs: 60_000 }), {
     uri: 'file:///ok.mov', mimeType: 'video/quicktime', fileName: 'ok.mov', sizeBytes: 12,
   });
   assert.throws(() => normalize({ uri: 'file:///bad.bin', mimeType: 'application/octet-stream', fileName: 'bad.bin', sizeBytes: 12, durationMs: 1000 }), /creator_premium_video_mime_invalid/);
   assert.throws(() => normalize({ uri: 'file:///large.mp4', mimeType: 'video/mp4', fileName: 'large.mp4', sizeBytes: 200_000_001, durationMs: 1000 }), /creator_premium_video_size_invalid/);
-  assert.throws(() => normalize({ uri: 'file:///long.mp4', mimeType: 'video/mp4', fileName: 'long.mp4', sizeBytes: 12, durationMs: 60_001 }), /creator_premium_video_duration_invalid/);
+  assert.equal(normalize({ uri: 'file:///edge.mp4', mimeType: 'video/mp4', fileName: 'edge.mp4', sizeBytes: 12, durationMs: 180_000 }).sizeBytes, 12);
+  assert.throws(() => normalize({ uri: 'file:///long.mp4', mimeType: 'video/mp4', fileName: 'long.mp4', sizeBytes: 12, durationMs: 180_001 }), /creator_premium_video_duration_invalid/);
   assert.equal(normalize(null), null, 'picker cancellation must be a no-op');
 });
 
@@ -172,11 +173,11 @@ test('lifecycle actions expose only server-supported commands for each state', (
   const { creatorPremiumLifecycleActions: actions } = presentationApi();
   assert.deepEqual(actions({ lifecycle_status: 'draft', verification_status: 'not_requested' }), {
     editable: true, canSubmit: true, canDelete: true,
-    canCancel: false, canRetry: false, canReopen: false,
+    canCancel: false, canRetry: false, canReopen: false, canRetire: false,
   });
   assert.deepEqual(actions({ lifecycle_status: 'pending_review', verification_status: 'pending' }), {
     editable: false, canSubmit: false, canDelete: false,
-    canCancel: true, canRetry: false, canReopen: false,
+    canCancel: true, canRetry: false, canReopen: false, canRetire: false,
   });
   assert.equal(actions({
     lifecycle_status: 'pending_review', verification_status: 'failed',
@@ -187,10 +188,14 @@ test('lifecycle actions expose only server-supported commands for each state', (
     verification_error_code: 'content_safety_policy_not_configured',
   }).canRetry, false);
   assert.equal(actions({ lifecycle_status: 'rejected', verification_status: 'blocked' }).canReopen, true);
-  for (const lifecycle_status of ['published', 'quarantined', 'removed', 'deleted']) {
+  assert.deepEqual(actions({ lifecycle_status: 'published' }), {
+    editable: false, canSubmit: false, canDelete: false,
+    canCancel: false, canRetry: false, canReopen: false, canRetire: true,
+  });
+  for (const lifecycle_status of ['quarantined', 'removed', 'deleted']) {
     assert.deepEqual(actions({ lifecycle_status }), {
       editable: false, canSubmit: false, canDelete: false,
-      canCancel: false, canRetry: false, canReopen: false,
+      canCancel: false, canRetry: false, canReopen: false, canRetire: false,
     }, lifecycle_status);
   }
 });

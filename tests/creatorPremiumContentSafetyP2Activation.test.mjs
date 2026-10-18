@@ -13,7 +13,11 @@ const sql = matches.length === 1
 const evidenceUrl = new URL('../docs/creator-premium-content-safety-p2-activation-v1.json', import.meta.url)
 const evidenceBytes = existsSync(evidenceUrl) ? readFileSync(evidenceUrl) : Buffer.alloc(0)
 const evidence = evidenceBytes.length ? JSON.parse(evidenceBytes.toString('utf8')) : null
-const evidenceSha256 = createHash('sha256').update(evidenceBytes).digest('hex')
+// Git stores this JSON artifact with LF endings. Normalize checkout-specific
+// CRLF so the owner-bound digest remains the Git byte contract on Windows too.
+const evidenceSha256 = createHash('sha256')
+  .update(evidenceBytes.toString('utf8').replace(/\r\n/g, '\n'))
+  .digest('hex')
 
 const gateIds = [
   'contextual_text_classification',

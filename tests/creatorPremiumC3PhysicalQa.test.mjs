@@ -66,11 +66,11 @@ test('video picker orchestration handles permission, cancellation and a local se
   }), { status: 'selected', file: localFile });
 });
 
-test('iOS picker avoids Expo passthrough export and every picker promise is caught', () => {
-  assert.match(editor, /videoExportPreset\s*:\s*ImagePicker\.VideoExportPreset\.HighestQuality/);
-  assert.match(editor, /preferredAssetRepresentationMode\s*:\s*ImagePicker\.UIImagePickerPreferredAssetRepresentationMode\.Automatic/);
-  assert.doesNotMatch(editor, /preferredAssetRepresentationMode\s*:\s*ImagePicker\.UIImagePickerPreferredAssetRepresentationMode\.Current/);
-  assert.match(editor, /Platform\.OS\s*===\s*'ios'[\s\S]*granted:\s*true/);
+test('iOS picker avoids transcoding, requests Photos access, and catches every picker promise', () => {
+  assert.match(editor, /videoExportPreset\s*:\s*ImagePicker\.VideoExportPreset\.Passthrough/);
+  assert.match(editor, /preferredAssetRepresentationMode\s*:\s*ImagePicker\.UIImagePickerPreferredAssetRepresentationMode\.Current/);
+  assert.match(editor, /requestMediaLibraryPermissionsAsync/);
+  assert.doesNotMatch(editor, /Platform\.OS\s*===\s*'ios'[\s\S]{0,120}granted:\s*true/);
   assert.match(editor, /selectCreatorPremiumVideoFromPhotos\s*\(/);
   const imagePickerBody = editor.slice(editor.indexOf('const pickImage'), editor.indexOf('const pickVideoFromPhotos'));
   assert.match(imagePickerBody, /try\s*\{/);
