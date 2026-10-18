@@ -95,7 +95,7 @@ test('cloned drafts expose unavailable selected mappings so the creator can remo
   assert.match(hub, /toggleContent\(item\.id\)/);
 });
 
-test('Hub and editor use keyset continuation and exact owner detail beyond the first 100 rows', () => {
+test('Hub paginates while editor exhausts keyset pages before applying an exact plan snapshot', () => {
   assert.match(hub, /contentNextCursor/);
   assert.match(hub, /planNextCursor/);
   assert.match(hub, /loadMoreContents/);
@@ -103,8 +103,8 @@ test('Hub and editor use keyset continuation and exact owner detail beyond the f
   assert.match(hub, /cursor:\s*contentNextCursor/);
   assert.match(hub, /cursor:\s*planNextCursor/);
   assert.match(editor, /fetchMyCreatorPremiumContent\(targetId\)/);
-  assert.match(editor, /planNextCursor/);
-  assert.match(editor, /loadMorePlans/);
+  assert.match(editor, /collectCreatorPremiumPlanPages\(fetchMyCreatorPremiumPlans\)/);
+  assert.doesNotMatch(editor, /planNextCursor|loadMorePlans/);
 });
 
 test('editor supports truthful draft, media, commercial, and automatic verification workflows', () => {
