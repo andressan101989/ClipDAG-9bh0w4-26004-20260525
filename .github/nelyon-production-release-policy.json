@@ -2,7 +2,7 @@
   "baseline": {
     "authority_source": "owner-control-plane",
     "blocked_resources": [],
-    "evidence": "a13a7b269aeb99c7dddfa5687d4438cd5e3a5495b8d34f067a6982e8458615e1",
+    "evidence": "73df3cf6df1aed92f84e31003e329b6f80a4fae9647b73f5d62a7605518cb6dd",
     "evidence_digests": {
       "config_verify_jwt": "9f7f6b42cccd5086f862b1f40e659935d8a44f14943eeed80c8d7928e84f9fb9",
       "cron_security": "2dd76dccc8b348eb932fee5c8ada572f57243287f3ca96bf851a75a2e9244846",
@@ -21,10 +21,10 @@
       "release_id": "nelyon-c3-release2-20261018T050338Z"
     },
     "requires_separate_policy_commit": true,
-    "reviewed_policy_sha256": "c32f019f653362dcf76fe0b9dc5466d9a8eeb8d57127a34d6b7200e7ad012327",
+    "reviewed_policy_sha256": "602cea4481c8ff516bdd6116ff7ce9b0fbbd7c2351b3965b0dd69084ebe47c70",
     "sha": "e7151e953a9b8f43705e21185fccdf2c7686b6f1",
     "state": "verified",
-    "verified_at": "2026-10-18T13:39:25.296Z",
+    "verified_at": "2026-10-18T13:44:11.478Z",
     "verified_by": "andressan101989"
   },
   "baseline_authority": {
