@@ -1,0 +1,86 @@
+{
+  "schema_version": "nelyon.creator_premium_content_safety_activation_evidence.v1",
+  "phase": "CREATOR-PREMIUM-CONTENT-SAFETY-P2",
+  "policy_id": "nelyon.creator_premium.general.p1.v1",
+  "owner_authorization": {
+    "source": "owner_prompt",
+    "owner_bound": true,
+    "approved_scope": "creator_premium_general",
+    "explicit_adult_premium": false,
+    "verified_date": "2026-10-18"
+  },
+  "gates": {
+    "contextual_text_classification": {
+      "status": "verified",
+      "basis": "strict contextual contract tests and persisted live image/video evidence"
+    },
+    "contextual_transcript_classification": {
+      "status": "verified",
+      "basis": "complete signed Stream audio transcript binding and contextual contract tests"
+    },
+    "age_uncertainty_signal": {
+      "status": "verified",
+      "basis": "discrete uncertainty routes sexual-risk ambiguity to review without identity or biometric inference"
+    },
+    "consent_uncertainty_signal": {
+      "status": "verified",
+      "basis": "discrete uncertainty requires review for intimate-risk ambiguity and never treats appearance as consent"
+    },
+    "model_confidence_contract": {
+      "status": "verified",
+      "basis": "strict discrete schema and complete modality coverage; no fabricated numeric confidence"
+    },
+    "account_quota_headroom": {
+      "status": "verified",
+      "basis": "official Cloudflare Workers AI dashboard"
+    },
+    "private_media_policy_e2e": {
+      "status": "verified",
+      "basis": "private image and Stream video provider results persisted and canonical recovery postcheck passed"
+    }
+  },
+  "quota": {
+    "source": "cloudflare_workers_ai_dashboard",
+    "workers_ai_allowance_neurons": 10000,
+    "workers_ai_used_neurons": 409.62,
+    "workers_ai_headroom_neurons": 9590.38,
+    "stream_credential_reused": false,
+    "verified_date": "2026-10-18"
+  },
+  "live_provider_evidence": {
+    "provider": "cloudflare_workers_ai",
+    "model": "@cf/google/gemma-4-26b-a4b-it",
+    "inference_count": 2,
+    "modalities": [
+      "image",
+      "video"
+    ],
+    "image_transcript_coverage": "not_applicable",
+    "video_transcript_coverage": "complete",
+    "visual_coverage": "complete",
+    "text_coverage": "complete",
+    "persisted_status": "completed",
+    "activation_effect_during_evidence_capture": false
+  },
+  "recovery": {
+    "source_release_run_id": 39157300357,
+    "run_id": 39159725066,
+    "result": "POSTCHECK_RECOVERY_SUCCESS",
+    "current_evidence_sha256": "e3b6589253f5e5ee99a66d5cdeea15535962023ac8e3840c66255cc551f0d970",
+    "security_advisor_count": 567,
+    "approved_exception_count": 13,
+    "finance_integrity": "PASS",
+    "production_mutations": 0
+  },
+  "activation": {
+    "decision": "approved",
+    "enabled": true,
+    "auto_publish_allow_only": true,
+    "review_remains_private": true,
+    "block_remains_private_or_rejected": true,
+    "technical_failure": "fail_closed",
+    "explicit_adult_premium": false,
+    "finance_effect": false,
+    "disable_strategy": "forward_only_policy_revision"
+  }
+}
