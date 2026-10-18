@@ -231,8 +231,10 @@ export function validatePolicyContextResult(value, input) {
       !subset(value.categories, POLICY_BLOCK_CATEGORIES))) schemaInvalid()
   if (value.age_uncertainty === 'present' && !value.categories.some(category =>
     category === 'age_uncertain' || category === 'child_sexual_exploitation')) schemaInvalid()
+  if (value.categories.includes('age_uncertain') && value.age_uncertainty !== 'present') schemaInvalid()
   if (value.consent_uncertainty === 'present' && !value.categories.some(category =>
     ['consent_uncertain', 'non_consensual_intimate_content', 'sexual_violence'].includes(category))) schemaInvalid()
+  if (value.categories.includes('consent_uncertain') && value.consent_uncertainty !== 'present') schemaInvalid()
   if (value.categories.includes('child_sexual_exploitation') && value.age_uncertainty !== 'present') schemaInvalid()
   if (value.categories.some(category => ['non_consensual_intimate_content', 'sexual_violence'].includes(category)) &&
       value.consent_uncertainty !== 'present') schemaInvalid()
