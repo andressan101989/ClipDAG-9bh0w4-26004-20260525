@@ -518,6 +518,28 @@ export async function retireMyCreatorPremiumPlan(planId: string) {
   } | undefined;
 }
 
+export async function deleteMyCreatorPremiumPlanDraft(
+  planId: string,
+  clientRequestId: string,
+) {
+  if (!planId || !clientRequestId) throw new Error('creator_premium_plan_delete_invalid');
+  const { data, error } = await db().rpc('delete_my_creator_premium_plan_draft_v1', {
+    p_plan_id: planId,
+    p_client_request_id: clientRequestId,
+  });
+  if (error) throw error;
+  const result = firstRow(data) as {
+    id: string;
+    status: 'deleted';
+    deleted: true;
+    replayed: boolean;
+  } | undefined;
+  if (!result || result.id !== planId || result.status !== 'deleted' || result.deleted !== true) {
+    throw new Error('creator_premium_plan_delete_not_confirmed');
+  }
+  return result;
+}
+
 export async function fetchMyCreatorPremiumPlans(
   options: { limit?: number; cursor?: CreatorPremiumCursor | null } = {},
 ): Promise<CreatorPremiumPage<CreatorPremiumPlanItem>> {
@@ -545,6 +567,37 @@ export async function publishMyCreatorPremiumContent(contentId: string) {
   if (!result || result.content_id !== contentId
       || result.lifecycle_status !== 'pending_review'
       || result.submission_ready !== true) {
+    throw new Error('creator_premium_submission_not_confirmed');
+  }
+  return result;
+}
+
+export async function publishMyCreatorPremiumContentWithPlans(
+  contentId: string,
+  planIds: string[],
+  clientRequestId: string,
+) {
+  if (!contentId || !clientRequestId) throw new Error('creator_premium_plan_selection_invalid');
+  const uniquePlanIds = [...new Set(planIds)].sort();
+  const { data, error } = await db().rpc('submit_my_creator_premium_content_with_plans_v1', {
+    p_content_id: contentId,
+    p_plan_ids: uniquePlanIds,
+    p_client_request_id: clientRequestId,
+  });
+  if (error) throw error;
+  const result = firstRow(data) as {
+    content_id: string;
+    lifecycle_status: 'pending_review';
+    submission_ready: true;
+    active_plan_ids: string[];
+    versioned_plan_ids: string[];
+    replayed: boolean;
+  } | undefined;
+  if (!result || result.content_id !== contentId
+      || result.lifecycle_status !== 'pending_review'
+      || result.submission_ready !== true
+      || !Array.isArray(result.active_plan_ids)
+      || !Array.isArray(result.versioned_plan_ids)) {
     throw new Error('creator_premium_submission_not_confirmed');
   }
   return result;
@@ -581,6 +634,24 @@ export async function deleteMyCreatorPremiumDraft(contentId: string) {
     video_assets_scheduled: number;
     cleanup_scheduled: boolean;
   } | undefined;
+}
+
+export async function retireMyCreatorPremiumContent(contentId: string) {
+  if (!contentId) throw new Error('creator_premium_invalid_content');
+  const { data, error } = await db().rpc('retire_my_creator_premium_content_v1', {
+    p_content_id: contentId,
+  });
+  if (error) throw error;
+  const result = firstRow(data) as {
+    content_id: string;
+    lifecycle_status: 'removed';
+    removed_at: string;
+    replayed: boolean;
+  } | undefined;
+  if (!result || result.content_id !== contentId || result.lifecycle_status !== 'removed') {
+    throw new Error('creator_premium_content_retire_not_confirmed');
+  }
+  return result;
 }
 
 export async function getMyCreatorPremiumEntitlement(

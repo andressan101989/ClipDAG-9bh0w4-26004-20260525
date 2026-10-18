@@ -35,6 +35,7 @@ import {
   activateMyCreatorPremiumPlan,
   cloneMyCreatorPremiumPlanVersion,
   createMyCreatorPremiumPlanDraft,
+  deleteMyCreatorPremiumPlanDraft,
   fetchMyCreatorPremiumCommercialSummary,
   fetchMyCreatorPremiumContents,
   fetchMyCreatorPremiumPlans,
@@ -120,6 +121,7 @@ function CreatorPremiumHubContent() {
   const [savingPlan, setSavingPlan] = useState(false);
   const planCreateAttempt = useRef<{ signature: string; key: string } | null>(null);
   const planCloneAttempts = useRef(new Map<string, string>());
+  const planDeleteAttempts = useRef(new Map<string, string>());
   const contextGeneration = useRef(0);
   const requestGeneration = useRef(0);
   const contentPageGeneration = useRef(0);
@@ -137,6 +139,7 @@ function CreatorPremiumHubContent() {
     loadInFlight.current = false;
     planCreateAttempt.current = null;
     planCloneAttempts.current.clear();
+    planDeleteAttempts.current.clear();
   }
 
   useEffect(() => {
@@ -345,7 +348,7 @@ function CreatorPremiumHubContent() {
     }
   }, [editingPlan, load, planDays, planDescription, planName, planPrice, selectedContentIds]);
 
-  const runPlanAction = useCallback(async (plan: CreatorPremiumPlanItem, action: 'activate' | 'clone' | 'retire') => {
+  const runPlanAction = useCallback(async (plan: CreatorPremiumPlanItem, action: 'activate' | 'clone' | 'retire' | 'delete') => {
     if (busyId) return;
     setBusyId(plan.id);
     try {
@@ -356,9 +359,15 @@ function CreatorPremiumHubContent() {
         await cloneMyCreatorPremiumPlanVersion(plan.id, clientRequestId);
       }
       if (action === 'retire') await retireMyCreatorPremiumPlan(plan.id);
+      if (action === 'delete') {
+        const clientRequestId = planDeleteAttempts.current.get(plan.id) ?? randomUUID();
+        planDeleteAttempts.current.set(plan.id, clientRequestId);
+        await deleteMyCreatorPremiumPlanDraft(plan.id, clientRequestId);
+      }
       const refreshed = await load(true);
       if (!refreshed) throw new Error('creator_premium_plan_refresh_failed');
       if (action === 'clone') planCloneAttempts.current.delete(plan.id);
+      if (action === 'delete') planDeleteAttempts.current.delete(plan.id);
     } catch (reason) {
       Alert.alert('No se actualizó el plan', creatorPremiumErrorMessage(reason));
     } finally {
@@ -366,16 +375,19 @@ function CreatorPremiumHubContent() {
     }
   }, [busyId, load]);
 
-  const confirmPlanAction = useCallback((plan: CreatorPremiumPlanItem, action: 'activate' | 'retire') => {
+  const confirmPlanAction = useCallback((plan: CreatorPremiumPlanItem, action: 'activate' | 'retire' | 'delete') => {
     const activate = action === 'activate';
+    const deleting = action === 'delete';
     Alert.alert(
-      activate ? 'Activar plan' : 'Retirar plan',
+      activate ? 'Activar plan' : deleting ? 'Eliminar borrador' : 'Retirar plan',
       activate
         ? 'El plan quedará listo para uso futuro. Las suscripciones siguen deshabilitadas.'
+        : deleting
+          ? 'Solo se eliminará si no tiene contenido, suscripciones ni historial asociado. Esta acción no se puede deshacer.'
         : 'El plan dejará de aceptar futuras suscripciones cuando finanzas se habiliten.',
       [
         { text: 'Cancelar', style: 'cancel' },
-        { text: activate ? 'Activar' : 'Retirar', style: activate ? 'default' : 'destructive', onPress: () => void runPlanAction(plan, action) },
+        { text: activate ? 'Activar' : deleting ? 'Eliminar' : 'Retirar', style: activate ? 'default' : 'destructive', onPress: () => void runPlanAction(plan, action) },
       ],
     );
   }, [runPlanAction]);
@@ -575,6 +587,9 @@ function CreatorPremiumHubContent() {
                             </Pressable>
                             <Pressable style={styles.smallButton} onPress={() => confirmPlanAction(plan, 'activate')} disabled={busyId === plan.id}>
                               <Text style={styles.smallButtonText}>Activar</Text>
+                            </Pressable>
+                            <Pressable style={styles.dangerButton} onPress={() => confirmPlanAction(plan, 'delete')} disabled={busyId === plan.id}>
+                              <Text style={styles.dangerButtonText}>Eliminar borrador</Text>
                             </Pressable>
                           </>
                         ) : (

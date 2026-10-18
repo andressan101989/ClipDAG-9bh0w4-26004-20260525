@@ -20,6 +20,7 @@ export type CreatorPremiumLifecycleActions = Readonly<{
   canCancel: boolean;
   canRetry: boolean;
   canReopen: boolean;
+  canRetire: boolean;
 }>;
 
 export type CreatorPremiumVideoPickerAsset = Readonly<{

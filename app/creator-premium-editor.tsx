@@ -36,9 +36,10 @@ import {
   fetchMyCreatorPremiumPlans,
   normalizeCreatorPremiumPriceBdag,
   publishMyCreatorPremiumContent,
+  publishMyCreatorPremiumContentWithPlans,
   reopenMyCreatorPremiumRejected,
+  retireMyCreatorPremiumContent,
   setMyCreatorPremiumOffer,
-  setMyCreatorPremiumPlanContents,
   updateMyCreatorPremiumDraft,
   type CreatorPremiumAccessMode,
   type CreatorPremiumContentKind,
@@ -110,7 +111,7 @@ function videoPickerError(reason: unknown): string {
   const code = reason instanceof Error ? reason.message : '';
   if (code === 'creator_premium_video_mime_invalid') return 'Usa MP4, QuickTime o WebM.';
   if (code === 'creator_premium_video_size_invalid') return 'El video debe pesar menos de 200 MB.';
-  if (code === 'creator_premium_video_duration_invalid') return 'El video debe durar como máximo 60 segundos.';
+  if (code === 'creator_premium_video_duration_invalid') return 'El video debe durar como máximo 180 segundos.';
   if (code === 'creator_premium_video_asset_unreadable') return 'Descarga el video por completo en Photos y vuelve a intentarlo.';
   return messageFor(reason);
 }
@@ -151,6 +152,7 @@ export default function CreatorPremiumEditor() {
   const insets = useSafeAreaInsets();
   const requestId = useRef(randomUUID());
   const offerAttempt = useRef<{ signature: string; key: string } | null>(null);
+  const submissionAttempt = useRef<{ signature: string; key: string } | null>(null);
   const uploadAbort = useRef<AbortController | null>(null);
   const [contentId, setContentId] = useState(routeContentId ?? '');
   const [item, setItem] = useState<CreatorPremiumOwnerItem | null>(null);
@@ -172,6 +174,7 @@ export default function CreatorPremiumEditor() {
   const [deleting, setDeleting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [reopening, setReopening] = useState(false);
+  const [retiring, setRetiring] = useState(false);
   const [processing, setProcessing] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -179,9 +182,9 @@ export default function CreatorPremiumEditor() {
   const lifecycleActions = creatorPremiumLifecycleActions(item ?? {});
   const verificationRetryable = lifecycleActions.canRetry;
   const readOnly = Boolean(item && !lifecycleActions.editable);
-  const busy = saving || uploading || submitting || deleting || cancelling || reopening;
+  const busy = saving || uploading || submitting || deleting || cancelling || reopening || retiring;
   const mediaLocked = Boolean(item?.teaser_attached || item?.original_attached || item?.video_attached);
-  const draftPlans = useMemo(() => plans.filter(plan => plan.status === 'draft'), [plans]);
+  const eligiblePlans = useMemo(() => plans.filter(plan => plan.status === 'active'), [plans]);
 
   const load = useCallback(async (targetId: string, silent = false, throwOnError = false) => {
     if (!silent) setLoading(true);
@@ -201,7 +204,9 @@ export default function CreatorPremiumEditor() {
       setKind(found.content_kind);
       setAccessMode(found.access_mode);
       setPrice(found.price_bdag === null ? '' : String(found.price_bdag));
-      setSelectedPlanIds(planPage.items.filter(plan => plan.mapped_content_ids.includes(found.id)).map(plan => plan.id));
+      setSelectedPlanIds(planPage.items
+        .filter(plan => plan.status === 'active' && plan.mapped_content_ids.includes(found.id))
+        .map(plan => plan.id));
       return found;
     } catch (reason) {
       if (throwOnError) throw reason;
@@ -220,7 +225,9 @@ export default function CreatorPremiumEditor() {
       const page = await fetchMyCreatorPremiumPlans({ limit: 100, cursor: planNextCursor });
       setPlans(current => appendUnique(current, page.items));
       if (contentId) {
-        const mapped = page.items.filter(plan => plan.mapped_content_ids.includes(contentId)).map(plan => plan.id);
+        const mapped = page.items
+          .filter(plan => plan.status === 'active' && plan.mapped_content_ids.includes(contentId))
+          .map(plan => plan.id);
         setSelectedPlanIds(current => [...new Set([...current, ...mapped])]);
       }
       setPlanNextCursor(page.nextCursor);
@@ -241,19 +248,6 @@ export default function CreatorPremiumEditor() {
     const timer = setInterval(() => { void load(contentId, true); }, 4000);
     return () => clearInterval(timer);
   }, [contentId, lifecyclePresentation.polling, load]);
-
-  const applyPlanMappings = useCallback(async (targetId: string) => {
-    if (!subscriptionModes.has(accessMode)) return;
-    for (const plan of draftPlans) {
-      const currentlyMapped = plan.mapped_content_ids.includes(targetId);
-      const shouldBeMapped = selectedPlanIds.includes(plan.id);
-      if (currentlyMapped === shouldBeMapped) continue;
-      const next = shouldBeMapped
-        ? [...new Set([...plan.mapped_content_ids, targetId])]
-        : plan.mapped_content_ids.filter(id => id !== targetId);
-      await setMyCreatorPremiumPlanContents(plan.id, next);
-    }
-  }, [accessMode, draftPlans, selectedPlanIds]);
 
   const saveDraft = useCallback(async (): Promise<string> => {
     const cleanTitle = title.trim();
@@ -290,9 +284,8 @@ export default function CreatorPremiumEditor() {
         clientRequestId: offerAttempt.current.key,
       });
     }
-    await applyPlanMappings(targetId);
     return targetId;
-  }, [accessMode, applyPlanMappings, contentId, description, kind, price, title]);
+  }, [accessMode, contentId, description, kind, price, title]);
 
   const handleSave = useCallback(async () => {
     if (busy || readOnly) return;
@@ -335,15 +328,13 @@ export default function CreatorPremiumEditor() {
   const pickVideoFromPhotos = useCallback(async () => {
     if (busy || readOnly) return;
     const selection = await selectCreatorPremiumVideoFromPhotos({
-      requestPermission: () => Platform.OS === 'ios'
-        ? Promise.resolve({ granted: true })
-        : ImagePicker.requestMediaLibraryPermissionsAsync(),
+      requestPermission: () => ImagePicker.requestMediaLibraryPermissionsAsync(),
       launchPicker: () => ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['videos'],
         allowsEditing: false,
         quality: 1,
-        videoExportPreset: ImagePicker.VideoExportPreset.HighestQuality,
-        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Automatic,
+        videoExportPreset: ImagePicker.VideoExportPreset.Passthrough,
+        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
       }),
       prepareAsset: (asset: ImagePicker.ImagePickerAsset) => videoFile({
         uri: asset.uri,
@@ -416,6 +407,7 @@ export default function CreatorPremiumEditor() {
           video: {
             ...privateFile,
             signal: controller.signal,
+            onUploadProgress: progress => setProcessing(`uploading · ${Math.round(progress)}%`),
             onProgress: state => setProcessing(state.status === 'ready' ? 'ready' : `${state.status}${state.progress === null ? '' : ` · ${Math.round(state.progress)}%`}`),
           },
         });
@@ -451,15 +443,34 @@ export default function CreatorPremiumEditor() {
     setError(null);
     try {
       const id = verificationRetryable && contentId ? contentId : await saveDraft();
+      const planIds = subscriptionModes.has(accessMode)
+        ? [...new Set(selectedPlanIds)].sort()
+        : [];
+      if (!verificationRetryable && subscriptionModes.has(accessMode) && planIds.length === 0) {
+        setError('Selecciona por lo menos un plan activo para publicar este contenido.');
+        return;
+      }
       if (!verificationRetryable) {
         const preflight = await load(id, true, true);
         if (!preflight) throw new Error('creator_premium_submission_not_confirmed');
-        if (preflight.submission_blocker) {
+        if (preflight.submission_blocker
+            && !(preflight.submission_blocker === 'creator_premium_plan_mapping_required'
+              && planIds.length > 0)) {
           setError(creatorPremiumSubmissionBlockerMessage(preflight.submission_blocker, preflight));
           return;
         }
       }
-      const rpcResult = await publishMyCreatorPremiumContent(id);
+      const signature = `${id}:${planIds.join(',')}`;
+      if (submissionAttempt.current?.signature !== signature) {
+        submissionAttempt.current = { signature, key: randomUUID() };
+      }
+      const rpcResult = verificationRetryable
+        ? await publishMyCreatorPremiumContent(id)
+        : await publishMyCreatorPremiumContentWithPlans(
+          id,
+          planIds,
+          submissionAttempt.current.key,
+        );
       const refreshed = await load(id, true, true);
       const notice = creatorPremiumSubmissionNotice({ contentId: id, rpcResult, refreshed });
       if (!notice) throw new Error('creator_premium_submission_not_confirmed');
@@ -469,7 +480,7 @@ export default function CreatorPremiumEditor() {
     } finally {
       setSubmitting(false);
     }
-  }, [busy, contentId, item, kind, lifecycleActions.canRetry, lifecycleActions.canSubmit, load, privateFile, saveDraft, teaser, verificationRetryable]);
+  }, [accessMode, busy, contentId, item, kind, lifecycleActions.canRetry, lifecycleActions.canSubmit, load, privateFile, saveDraft, selectedPlanIds, teaser, verificationRetryable]);
 
   const confirmDelete = useCallback(() => {
     if (!contentId || busy || !lifecycleActions.canDelete) return;
@@ -527,6 +538,27 @@ export default function CreatorPremiumEditor() {
       setReopening(false);
     }
   }, [busy, contentId, lifecycleActions.canReopen, load]);
+
+  const confirmRetire = useCallback(() => {
+    if (!contentId || busy || !lifecycleActions.canRetire) return;
+    Alert.alert(
+      'Retirar publicación',
+      'Dejará de mostrarse y no admitirá accesos nuevos. Los medios y el historial se conservarán. Si existen compras o suscripciones, el servidor bloqueará la operación.',
+      [
+        { text: 'Mantener publicada', style: 'cancel' },
+        {
+          text: 'Retirar', style: 'destructive', onPress: () => {
+            setRetiring(true);
+            setError(null);
+            void retireMyCreatorPremiumContent(contentId)
+              .then(() => router.replace('/creator-monetization'))
+              .catch(reason => setError(messageFor(reason)))
+              .finally(() => setRetiring(false));
+          },
+        },
+      ],
+    );
+  }, [busy, contentId, lifecycleActions.canRetire, router]);
 
   const togglePlan = useCallback((planId: string) => {
     if (busy || readOnly) return;
@@ -611,7 +643,7 @@ export default function CreatorPremiumEditor() {
             <MaterialCommunityIcons name={kind === 'image' ? 'image-lock-outline' : 'file-lock-outline'} size={34} color={PREMIUM} />
             <View style={styles.pickerCopy}>
               <Text style={styles.pickerTitle}>{privateFile ? privateFile.fileName : item && (item.original_attached || item.video_attached) ? 'Original privado vinculado' : `Seleccionar ${kind === 'image' ? 'imagen' : 'video'}`}</Text>
-              <Text style={styles.helper}>{kind === 'video' ? 'MP4, QuickTime o WebM · máximo 200 MB y 60 segundos.' : 'El original nunca se usa como vista previa pública.'}</Text>
+              <Text style={styles.helper}>{kind === 'video' ? 'MP4, QuickTime o WebM · máximo 200 MB y 180 segundos.' : 'El original nunca se usa como vista previa pública.'}</Text>
             </View>
           </Pressable>
           {kind === 'video' && !readOnly ? (
@@ -632,9 +664,9 @@ export default function CreatorPremiumEditor() {
 
         {subscriptionModes.has(accessMode) ? (
           <Section title="Planes">
-            {draftPlans.length === 0 ? (
-              <Text style={styles.helper}>Crea un plan borrador desde el Hub y vuelve para asociarlo.</Text>
-            ) : draftPlans.map(plan => {
+            {eligiblePlans.length === 0 ? (
+              <Text style={styles.helper}>Activa un plan desde el Hub para poder asociarlo.</Text>
+            ) : eligiblePlans.map(plan => {
               const selected = selectedPlanIds.includes(plan.id);
               return (
                 <Pressable key={plan.id} style={[styles.planRow, selected && styles.planRowSelected]} onPress={() => togglePlan(plan.id)} disabled={busy || readOnly}>
@@ -646,6 +678,7 @@ export default function CreatorPremiumEditor() {
                 </Pressable>
               );
             })}
+            <Text style={styles.helper}>La selección se aplica de forma atómica al publicar y crea una nueva versión inmutable del plan cuando cambia su contenido.</Text>
             {planNextCursor ? (
               <Pressable style={styles.secondaryButton} onPress={() => void loadMorePlans()} disabled={busy || loadingMorePlans}>
                 {loadingMorePlans
@@ -672,7 +705,7 @@ export default function CreatorPremiumEditor() {
           </View>
         </Section>
 
-        {lifecycleActions.editable || lifecycleActions.canRetry || lifecycleActions.canCancel || lifecycleActions.canReopen ? (
+        {lifecycleActions.editable || lifecycleActions.canRetry || lifecycleActions.canCancel || lifecycleActions.canReopen || lifecycleActions.canRetire ? (
           <View style={styles.actions}>
             {lifecycleActions.editable ? <Pressable style={styles.secondaryButton} onPress={() => void handleSave()} disabled={busy}>
               {saving ? <ActivityIndicator color={PREMIUM} /> : <><MaterialCommunityIcons name="content-save-outline" size={20} color={PREMIUM} /><Text style={styles.secondaryText}>Guardar borrador</Text></>}
@@ -692,6 +725,11 @@ export default function CreatorPremiumEditor() {
             {contentId && lifecycleActions.canDelete ? (
               <Pressable style={styles.deleteButton} onPress={confirmDelete} disabled={busy}>
                 {deleting ? <ActivityIndicator color={Colors.error} /> : <><MaterialCommunityIcons name="trash-can-outline" size={20} color={Colors.error} /><Text style={styles.deleteText}>Eliminar borrador</Text></>}
+              </Pressable>
+            ) : null}
+            {contentId && lifecycleActions.canRetire ? (
+              <Pressable style={styles.deleteButton} onPress={confirmRetire} disabled={busy}>
+                {retiring ? <ActivityIndicator color={Colors.error} /> : <><MaterialCommunityIcons name="archive-arrow-down-outline" size={20} color={Colors.error} /><Text style={styles.deleteText}>Retirar publicación</Text></>}
               </Pressable>
             ) : null}
           </View>

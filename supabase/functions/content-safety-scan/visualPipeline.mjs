@@ -6,6 +6,7 @@ export const VISUAL_SAMPLE_STRATEGY = 'percentile_5_v1'
 export const MAX_VISUAL_IMAGE_BYTES = 10 * 1024 * 1024
 export const MAX_PREMIUM_VISUAL_IMAGE_BYTES = 25_000_000
 export const MAX_VISUAL_FRAME_BYTES = 2 * 1024 * 1024
+export const MAX_PREMIUM_VIDEO_DURATION_SECONDS = 180
 export const VISUAL_CATEGORIES = Object.freeze(['violence', 'threat', 'sexual', 'self_harm', 'drugs', 'weapons', 'fraud', 'spam', 'other'])
 export const VISUAL_TRIAGE_LEVELS = Object.freeze(['low', 'medium', 'high', 'critical'])
 
@@ -50,7 +51,7 @@ const exactKeys = (value, allowed) => value && typeof value === 'object' && !Arr
   Object.keys(value).length === allowed.length && Object.keys(value).every(key => allowed.includes(key))
 
 export function sampleVideoFrameTimestamps(durationSeconds) {
-  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 60) throw new VisualPipelineError('invalid_stream_duration')
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > MAX_PREMIUM_VIDEO_DURATION_SECONDS) throw new VisualPipelineError('invalid_stream_duration')
   const durationMs = Math.round(durationSeconds * 1000)
   const low = Math.min(250, Math.max(0, durationMs - 1))
   const high = Math.max(low, durationMs - 250)
@@ -82,7 +83,7 @@ function signedStreamThumbnail(value) {
 
 export function buildStreamFrameUrl(uid, customerCode, timestampMs) {
   const safeUid = cleanUid(uid), safeCode = cleanCustomerCode(customerCode)
-  if (!Number.isInteger(timestampMs) || timestampMs < 0 || timestampMs > 60000) throw new VisualPipelineError('invalid_stream_frame_timestamp')
+  if (!Number.isInteger(timestampMs) || timestampMs < 0 || timestampMs > MAX_PREMIUM_VIDEO_DURATION_SECONDS * 1000) throw new VisualPipelineError('invalid_stream_frame_timestamp')
   const url = new URL(`https://customer-${safeCode}.cloudflarestream.com/${safeUid}/thumbnails/thumbnail.jpg`)
   url.searchParams.set('time', `${(timestampMs / 1000).toFixed(3)}s`)
   url.searchParams.set('height', '512')
@@ -103,7 +104,7 @@ export function validateStreamFrameUrl(value, uid, customerCode) {
 }
 
 export function buildSignedStreamFrameUrl(signedThumbnailUrl, timestampMs) {
-  if (!Number.isInteger(timestampMs) || timestampMs < 0 || timestampMs > 60000) throw new VisualPipelineError('invalid_stream_frame_timestamp')
+  if (!Number.isInteger(timestampMs) || timestampMs < 0 || timestampMs > MAX_PREMIUM_VIDEO_DURATION_SECONDS * 1000) throw new VisualPipelineError('invalid_stream_frame_timestamp')
   const url = signedStreamThumbnail(signedThumbnailUrl)
   url.searchParams.set('time', `${(timestampMs / 1000).toFixed(3)}s`)
   url.searchParams.set('height', '512')

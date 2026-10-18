@@ -5,7 +5,7 @@ export const CREATOR_PREMIUM_VIDEO_MIME_TYPES = Object.freeze([
 ]);
 
 export const CREATOR_PREMIUM_VIDEO_MAX_BYTES = 200_000_000;
-export const CREATOR_PREMIUM_VIDEO_MAX_DURATION_MS = 60_000;
+export const CREATOR_PREMIUM_VIDEO_MAX_DURATION_MS = 180_000;
 
 const POLICY_ERROR_CODES = new Set([
   'content_safety_policy_not_configured',
@@ -101,7 +101,7 @@ function creatorPremiumVideoSelectionFailure(reason) {
     return { code, message: 'El video debe pesar menos de 200 MB.' };
   }
   if (code === 'creator_premium_video_duration_invalid') {
-    return { code, message: 'El video debe durar como máximo 60 segundos.' };
+    return { code, message: 'El video debe durar como máximo 180 segundos.' };
   }
   if (code === 'creator_premium_video_asset_unreadable') {
     return {
@@ -233,6 +233,7 @@ export function creatorPremiumLifecycleActions(input = {}) {
     canCancel: presentation.canCancel,
     canRetry: presentation.canRetry,
     canReopen: lifecycle === 'rejected',
+    canRetire: lifecycle === 'published',
   });
 }
 

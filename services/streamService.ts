@@ -1,10 +1,12 @@
 import { File } from 'expo-file-system';
 import { fetch as expoFetch } from 'expo/fetch';
+import { Upload } from 'tus-js-client';
 import { getSupabaseClient } from '@/template';
 import { invokeRpcWithSingleAuthRefresh } from '@/services/mediaService';
 
 export const STREAM_MAX_SIZE_BYTES=200_000_000;
 export const STREAM_MAX_DURATION_MS=60_000;
+export const CREATOR_PREMIUM_STREAM_MAX_DURATION_MS=180_000;
 export const STREAM_MIME_TYPES=new Set(['video/mp4','video/quicktime','video/webm']);
 const UUID_PATTERN=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const STREAM_STATUSES=new Set(['pending','uploading','processing','ready','failed','delete_pending','deleted']);
@@ -158,8 +160,12 @@ export function extractNullableStreamRpcUuid(data:unknown,functionName:string):s
 }
 
 export interface StreamUploadContract {
-  assetId:string;uploadUrl:string;method:'POST';formField:'file';expiresAt:string;
+  assetId:string;uploadUrl:string;protocol:'multipart';method:'POST';formField:'file';expiresAt:string;
   maxDurationSeconds:number;maxSizeBytes:number;
+}
+export interface CreatorPremiumStreamUploadContract {
+  assetId:string;uploadUrl:string;protocol:'tus';method:'PATCH';expiresAt:string;
+  maxDurationSeconds:180;maxSizeBytes:number;
 }
 export async function createStreamUpload(input:{
   mimeType:string;sizeBytes:number;fileName:string;operationId?:string;
@@ -174,7 +180,7 @@ export async function createStreamUpload(input:{
     const assetId=typeof contract.assetId==='string'&&UUID_PATTERN.test(contract.assetId)?contract.assetId:null;
     const expiresAt=typeof contract.expiresAt==='string'?Date.parse(contract.expiresAt):NaN;
     const validContract=assetId!==null&&isHttpsStreamUrl(contract.uploadUrl)
-      &&contract.method==='POST'&&contract.formField==='file'
+      &&contract.protocol==='multipart'&&contract.method==='POST'&&contract.formField==='file'
       &&contract.maxDurationSeconds===60&&contract.maxSizeBytes===STREAM_MAX_SIZE_BYTES
       &&Number.isFinite(expiresAt)&&expiresAt>=Date.now()-300_000;
     if(!assetId||validContract!==true) {
@@ -187,7 +193,7 @@ export async function createStreamUpload(input:{
 
 export async function createCreatorPremiumStreamUpload(input:{
   contentId:string;mimeType:string;sizeBytes:number;fileName:string;operationId?:string;
-}):Promise<StreamUploadContract> {
+}):Promise<CreatorPremiumStreamUploadContract> {
   const operationId=input.operationId??createStreamOperationId();
   try {
     if(!UUID_PATTERN.test(input.contentId)) throw new Error('invalid_premium_content');
@@ -200,8 +206,8 @@ export async function createCreatorPremiumStreamUpload(input:{
     const assetId=typeof contract.assetId==='string'&&UUID_PATTERN.test(contract.assetId)?contract.assetId:null;
     const expiresAt=typeof contract.expiresAt==='string'?Date.parse(contract.expiresAt):NaN;
     const validContract=assetId!==null&&isHttpsStreamUrl(contract.uploadUrl)
-      &&contract.method==='POST'&&contract.formField==='file'
-      &&contract.maxDurationSeconds===60&&contract.maxSizeBytes===STREAM_MAX_SIZE_BYTES
+      &&contract.protocol==='tus'&&contract.method==='PATCH'
+      &&contract.maxDurationSeconds===180&&contract.maxSizeBytes===STREAM_MAX_SIZE_BYTES
       &&Number.isFinite(expiresAt)&&expiresAt>=Date.now()-300_000;
     if(!assetId||validContract!==true) {
       if(assetId) {
@@ -210,11 +216,79 @@ export async function createCreatorPremiumStreamUpload(input:{
       }
       throw new Error('invalid_premium_stream_upload_contract');
     }
-    return contract as unknown as StreamUploadContract;
+    return contract as unknown as CreatorPremiumStreamUploadContract;
   } catch(error) {
     if(getCreatorPremiumStreamCleanupAssetId(error)) throw error;
     throw streamError(error,'STREAM_CREATE_UPLOAD',operationId);
   }
+}
+
+export async function uploadCreatorPremiumVideoWithTus(input:{
+  uri:string;
+  fileName:string;
+  mimeType:string;
+  sizeBytes:number;
+  uploadUrl:string;
+  signal?:AbortSignal;
+  operationId?:string;
+  timeoutMs?:number;
+  onProgress?:(progress:number,bytesUploaded:number,bytesTotal:number)=>void;
+}):Promise<void> {
+  const operationId=input.operationId??createStreamOperationId();
+  throwIfStreamAborted(input.signal,'STREAM_DIRECT_POST',operationId);
+  if(!input.uri||!isHttpsStreamUrl(input.uploadUrl)
+    ||!validateStreamVideoMime(input.mimeType)||!validateStreamVideoSize(input.sizeBytes)) {
+    throw streamError(new Error('invalid_premium_tus_upload'), 'STREAM_DIRECT_POST', operationId);
+  }
+  await new Promise<void>((resolve,reject)=>{
+    let settled=false;
+    let upload:Upload|undefined;
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const cleanup=()=>{
+      if(timer) clearTimeout(timer);
+      input.signal?.removeEventListener('abort',abort);
+    };
+    const finish=(error?:unknown)=>{
+      if(settled) return;
+      settled=true;
+      cleanup();
+      if(error) reject(streamError(error,'STREAM_DIRECT_POST',operationId));
+      else resolve();
+    };
+    const abort=()=>{
+      void upload?.abort(false).catch(()=>{});
+      finish(Object.assign(new Error('aborted'),{name:'AbortError',code:'aborted'}));
+    };
+    input.signal?.addEventListener('abort',abort,{once:true});
+    timer=setTimeout(()=>{
+      void upload?.abort(false).catch(()=>{});
+      finish({name:'TimeoutError',code:'stream_upload_timeout',message:'stream_upload_timeout'});
+    },input.timeoutMs??600_000);
+    try {
+      upload=new Upload({
+        uri:input.uri,
+        name:input.fileName,
+        type:input.mimeType,
+      } as unknown as File,{
+        uploadUrl:input.uploadUrl,
+        uploadSize:input.sizeBytes,
+        retryDelays:[0,1_000,3_000,5_000],
+        chunkSize:5*1024*1024,
+        storeFingerprintForResuming:false,
+        removeFingerprintOnSuccess:true,
+        onProgress:(bytesUploaded,bytesTotal)=>{
+          const progress=bytesTotal>0?Math.min(100,Math.max(0,(bytesUploaded/bytesTotal)*100)):0;
+          input.onProgress?.(progress,bytesUploaded,bytesTotal);
+        },
+        onError:error=>finish(error),
+        onSuccess:()=>finish(),
+      });
+      if(input.signal?.aborted) abort();
+      else upload.start();
+    } catch(error) {
+      finish(error);
+    }
+  });
 }
 
 export async function postVideoToStreamUploadUrl(input:{
@@ -276,7 +350,7 @@ function validateCreatorPremiumProcessing(
   const validReady=value.status!=='ready'||(
     Number.isFinite(value.durationSeconds)
     && Number(value.durationSeconds)>0
-    && Number(value.durationSeconds)<=60
+    && Number(value.durationSeconds)<=180
     && typeof value.readyAt==='string'
   );
   if(value.assetId!==expectedAssetId

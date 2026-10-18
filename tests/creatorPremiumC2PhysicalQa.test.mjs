@@ -44,7 +44,8 @@ test('iOS video assets use the native local file size and never fetch a file URI
   const videoFileBody = editor.slice(editor.indexOf('async function videoFile'), editor.indexOf('function videoPickerError'));
   assert.match(videoFileBody, /sizeForUri:\s*uri\s*=>\s*new\s+File\(uri\)\.size/);
   assert.doesNotMatch(videoFileBody, /fetch\(asset\.uri\)/);
-  assert.match(editor, /preferredAssetRepresentationMode\s*:\s*ImagePicker\.UIImagePickerPreferredAssetRepresentationMode\.Automatic/);
+  assert.match(editor, /preferredAssetRepresentationMode\s*:\s*ImagePicker\.UIImagePickerPreferredAssetRepresentationMode\.Current/);
+  assert.match(editor, /videoExportPreset\s*:\s*ImagePicker\.VideoExportPreset\.Passthrough/);
   assert.match(editor, /copyToCacheDirectory\s*:\s*true/);
 });
 
