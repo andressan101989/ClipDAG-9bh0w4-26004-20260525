@@ -1,182 +1,56 @@
-/* eslint-disable import/first */
 /**
- * app/_layout.tsx — Root layout with full provider chain restored
+ * app/_layout.tsx — configuration-safe Expo Router root
  *
- * WalletConnect: real WalletConnectModalProvider mounted via
- *   components/feature/WalletConnectProvider.native.tsx (iOS/Android)
- *   components/feature/WalletConnectProvider.tsx (web stub)
+ * Keep this module free of application services that can fail while their
+ * runtime configuration is loading. Expo Router must register this default
+ * export before it evaluates the rest of the app so every route, including
+ * login fallbacks, remains below the canonical AlertProvider.
  */
 
-console.log('[BOOT] 0 - _layout module start');
-
-import { useContext } from 'react';
-import { View, ActivityIndicator } from 'react-native';
-import { Stack } from 'expo-router';
-console.log('[BOOT] 1 - expo-router imported');
+import { lazy, Suspense, type ReactNode } from 'react';
+import { ActivityIndicator, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
-import { NelyonLogo } from '@/components/ui/NelyonLogo';
-import { Colors } from '@/constants/theme';
+import { AlertProvider } from '@/template/ui/context';
 
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-console.log('[BOOT] 2 - safe-area imported');
+const RootAppRuntime = lazy(() => import('../components/feature/RootAppRuntime'));
 
-import { AlertProvider, AuthProvider as TemplateAuthProvider } from '@/template';
-console.log('[BOOT] 3 - template providers imported');
+interface RootProviderBoundaryProps {
+  children: ReactNode;
+}
 
-import { I18nProvider } from '@/contexts/I18nContext';
-console.log('[BOOT] 4 - I18nProvider imported');
-
-import { AuthProvider, AuthContext } from '@/contexts/AuthContext';
-console.log('[BOOT] 5 - AuthProvider imported');
-
-import { FeedProvider } from '@/contexts/FeedContext';
-import { StoriesProvider } from '@/contexts/StoriesContext';
-console.log('[BOOT] 6 - Feed+Stories providers imported');
-
-import { MessagesProvider } from '@/contexts/MessagesContext';
-import { NotificationsProvider } from '@/contexts/NotificationsContext';
-console.log('[BOOT] 7 - Messages+Notifications providers imported');
-
-import { ShopProvider } from '@/contexts/ShopContext';
-import { MarketplaceCartProvider } from '@/contexts/MarketplaceCartContext';
-console.log('[BOOT] 8 - ShopProvider imported');
-
-import { WalletConnectProvider } from '@/components/feature/WalletConnectProvider';
-console.log('[BOOT] 8b - WalletConnectProvider imported');
-
-import { AgoraCallProvider } from '@/contexts/AgoraCallContext';
-console.log('[BOOT] 8c - AgoraCallProvider imported');
-
-import { IncomingCallModal } from '@/components/feature/IncomingCallModal';
-console.log('[BOOT] 8d - IncomingCallModal imported');
-
-import { PushNotificationHandler } from '@/components/feature/PushNotificationHandler';
-console.log('[BOOT] 8e - PushNotificationHandler imported');
-
-import { IosCallKitActionHandler } from '@/components/feature/IosCallKitActionHandler';
-import { WalletConnectReturnHandler } from '@/components/feature/WalletConnectReturnHandler';
-import { PersonalizationGate } from '@/components/feature/PersonalizationGate';
-console.log('[BOOT] 8f - IosCallKitActionHandler imported');
-
-console.log('[BOOT] 9 - all imports done');
-
-function AppShell() {
-  const authCtx = useContext(AuthContext);
-  const isAuthReady = authCtx?.isAuthReady ?? false;
-
-  if (!isAuthReady) {
-    return (
-      <View style={{ flex: 1, backgroundColor: Colors.bg, alignItems: 'center', justifyContent: 'center' }}>
-        <NelyonLogo style={{ width: 260, height: 64, marginBottom: 24 }} />
-        <ActivityIndicator size="large" color="#1F79FF" />
-      </View>
-    );
-  }
-
+export function RootProviderBoundary({ children }: RootProviderBoundaryProps) {
   return (
-    <PersonalizationGate>
-    <FeedProvider>
-      <StoriesProvider>
-        <MessagesProvider>
-          <NotificationsProvider>
-            <ShopProvider>
-              <MarketplaceCartProvider>
-               <WalletConnectProvider>
-                <AgoraCallProvider>
-                  <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.bg } }}>
-                    <Stack.Screen name="index" />
-                    <Stack.Screen name="boot-test" />
-                    <Stack.Screen name="stress-test" />
-                    <Stack.Screen name="login" />
-                    <Stack.Screen name="onboarding/personalization" />
-                    <Stack.Screen name="(tabs)" />
-                    <Stack.Screen name="cart" />
-                    <Stack.Screen name="checkout" />
-                    <Stack.Screen name="checkout/reservation/[id]" />
-                    <Stack.Screen name="orders/index" />
-                    <Stack.Screen name="orders/[id]" />
-                    <Stack.Screen name="seller/orders/index" />
-                    <Stack.Screen name="seller/orders/[id]" />
-                    <Stack.Screen
-                      name="chat/[userId]"
-                      options={{ headerShown: false }}
-                    />
-                    <Stack.Screen
-                      name="creator/[id]"
-                      options={{ headerShown: true, title: '' }}
-                    />
-                    <Stack.Screen name="video/[id]" />
-                    <Stack.Screen name="my-premium-library" />
-                    <Stack.Screen name="creator-premium-offer/[contentId]" />
-                    <Stack.Screen name="creator-premium-viewer/[contentId]" />
-                    <Stack.Screen
-                      name="product/[id]"
-                      options={{ headerShown: true, title: '' }}
-                    />
-                    <Stack.Screen
-                      name="live/[sessionId]"
-                      options={{ presentation: 'fullScreenModal', headerShown: false }}
-                    />
-                    <Stack.Screen
-                      name="battle/[roomId]"
-                      options={{ presentation: 'fullScreenModal', headerShown: false }}
-                    />
-                    <Stack.Screen
-                      name="call/[userId]"
-                      options={{ presentation: 'fullScreenModal', headerShown: false }}
-                    />
-                    <Stack.Screen
-                      name="video-call/[userId]"
-                      options={{ presentation: 'fullScreenModal', headerShown: false }}
-                    />
-                    <Stack.Screen
-                      name="group-call/[roomId]"
-                      options={{ presentation: 'fullScreenModal', headerShown: false }}
-                    />
-                    <Stack.Screen
-                      name="live/broadcast/[streamId]"
-                      options={{ presentation: 'fullScreenModal', headerShown: false }}
-                    />
-                    <Stack.Screen
-                      name="live/watch/[streamId]"
-                      options={{ presentation: 'fullScreenModal', headerShown: false }}
-                    />
-                  </Stack>
-                  <IncomingCallModal />
-                  <PushNotificationHandler />
-                  <WalletConnectReturnHandler />
-                  <IosCallKitActionHandler />
-                </AgoraCallProvider>
-               </WalletConnectProvider>
-              </MarketplaceCartProvider>
-            </ShopProvider>
-          </NotificationsProvider>
-        </MessagesProvider>
-      </StoriesProvider>
-    </FeedProvider>
-    </PersonalizationGate>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AlertProvider>
+        <ErrorBoundary module="RootLayout" showReset>
+          {children}
+        </ErrorBoundary>
+      </AlertProvider>
+    </GestureHandlerRootView>
   );
 }
 
 export default function RootLayout() {
-  console.log('[BOOT] 10 - RootLayout render');
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <ErrorBoundary module="RootLayout" showReset>
-        <AlertProvider>
-          <SafeAreaProvider>
-          <TemplateAuthProvider>
-            <I18nProvider>
-              <AuthProvider>
-                <AppShell />
-              </AuthProvider>
-            </I18nProvider>
-          </TemplateAuthProvider>
-          </SafeAreaProvider>
-        </AlertProvider>
-      </ErrorBoundary>
-    </GestureHandlerRootView>
+    <RootProviderBoundary>
+      <Suspense
+        fallback={(
+          <View
+            style={{
+              flex: 1,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: '#05070D',
+            }}
+          >
+            <ActivityIndicator size="large" color="#1F79FF" />
+          </View>
+        )}
+      >
+        <RootAppRuntime />
+      </Suspense>
+    </RootProviderBoundary>
   );
 }

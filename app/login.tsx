@@ -9,7 +9,7 @@ import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useAuth } from '@/hooks/useAuth';
-import { useAlert } from '@/template';
+import { useAlert } from '@/template/ui/hook';
 import { CyberButton } from '@/components/ui/CyberButton';
 import { NelyonLogo } from '@/components/ui/NelyonLogo';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';

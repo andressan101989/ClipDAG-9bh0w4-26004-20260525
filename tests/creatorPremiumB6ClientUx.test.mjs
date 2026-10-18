@@ -249,10 +249,12 @@ test('library teaser hydration is canonical, public-projection-only, bounded, an
 
 test('consumer Premium entry and both B6 routes are registered without payment actions', () => {
   const profile = read('app/(tabs)/profile.tsx');
-  const layout = read('app/_layout.tsx');
+  const rootLayout = read('app/_layout.tsx');
+  const runtime = read('components/feature/RootAppRuntime.tsx');
   assert.match(profile, /router\.push\(['"]\/my-premium-library['"]\)/);
-  assert.match(layout, /name="my-premium-library"/);
-  assert.match(layout, /name="creator-premium-viewer\/\[contentId\]"/);
+  assert.match(rootLayout, /RootAppRuntime/);
+  assert.match(runtime, /name="my-premium-library"/);
+  assert.match(runtime, /name="creator-premium-viewer\/\[contentId\]"/);
   for (const file of [
     'app/my-premium-library.tsx',
     'app/creator-premium-viewer/[contentId].tsx',
