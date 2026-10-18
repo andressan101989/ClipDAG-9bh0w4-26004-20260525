@@ -22,6 +22,19 @@ function tusMetadataHeader(entries:Record<string,string|null>):string {
     .join(',');
 }
 
+function canonicalCloudflareTusLocation(value:string,uid:string):string|null {
+  try {
+    const url=new URL(value);
+    const expectedPath=`/tus/${uid}`;
+    if(url.protocol!=='https:'||url.hostname!=='upload.videodelivery.net'||url.port
+      ||url.username||url.password||url.hash||url.pathname!==expectedPath
+      ||(url.search!==''&&url.search!=='?tusv2=true')) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 async function createPremiumTusUpload(input:{
   assetId:string;
   ownerId:string;
@@ -60,8 +73,9 @@ async function createPremiumTusUpload(input:{
     );
   }
   const uid=response.headers.get('stream-media-id')?.trim()??'';
-  const uploadUrl=response.headers.get('location')?.trim()??'';
-  if(!uid||!uploadUrl.startsWith('https://')) {
+  const rawUploadUrl=response.headers.get('location')?.trim()??'';
+  const uploadUrl=uid?canonicalCloudflareTusLocation(rawUploadUrl,uid):null;
+  if(!uid||!uploadUrl) {
     throw new StreamProviderError('stream_provider_invalid_response',502);
   }
   return {uid,uploadUrl};

@@ -34,6 +34,16 @@ export type CreatorPremiumVideoPickerAsset = Readonly<{
 export const CREATOR_PREMIUM_VIDEO_MIME_TYPES: readonly string[];
 export const CREATOR_PREMIUM_VIDEO_MAX_BYTES: number;
 export const CREATOR_PREMIUM_VIDEO_MAX_DURATION_MS: number;
+export function collectCreatorPremiumPlanPages<
+  TPlan extends { id: string },
+  TCursor extends { timestamp?: string; id?: string },
+>(
+  fetchPage: (options: { limit: number; cursor: TCursor | null }) => Promise<{
+    items: TPlan[];
+    nextCursor: TCursor | null;
+  }>,
+  options?: { pageSize?: number; maxPages?: number },
+): Promise<TPlan[]>;
 export function formatCreatorPremiumBdag(
   value: string | null | undefined,
   options?: { empty?: string },

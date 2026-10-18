@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import {
+  collectCreatorPremiumPlanPages,
   creatorPremiumLifecycleActions,
   creatorPremiumLifecyclePresentation,
   prepareCreatorPremiumVideoPickerAsset,
@@ -43,7 +44,6 @@ import {
   updateMyCreatorPremiumDraft,
   type CreatorPremiumAccessMode,
   type CreatorPremiumContentKind,
-  type CreatorPremiumCursor,
   type CreatorPremiumOwnerItem,
   type CreatorPremiumPlanItem,
 } from '@/services/creatorPremiumService';
@@ -116,11 +116,6 @@ function videoPickerError(reason: unknown): string {
   return messageFor(reason);
 }
 
-function appendUnique<T extends { id: string }>(current: T[], incoming: T[]): T[] {
-  const seen = new Set(current.map(item => item.id));
-  return [...current, ...incoming.filter(item => !seen.has(item.id))];
-}
-
 function Choice<T extends string>({ selected, label, icon, onPress, disabled }: {
   selected: boolean;
   label: string;
@@ -157,8 +152,6 @@ export default function CreatorPremiumEditor() {
   const [contentId, setContentId] = useState(routeContentId ?? '');
   const [item, setItem] = useState<CreatorPremiumOwnerItem | null>(null);
   const [plans, setPlans] = useState<CreatorPremiumPlanItem[]>([]);
-  const [planNextCursor, setPlanNextCursor] = useState<CreatorPremiumCursor | null>(null);
-  const [loadingMorePlans, setLoadingMorePlans] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [kind, setKind] = useState<CreatorPremiumContentKind>('image');
@@ -192,10 +185,9 @@ export default function CreatorPremiumEditor() {
     try {
       const [found, planPage] = await Promise.all([
         targetId ? fetchMyCreatorPremiumContent(targetId) : Promise.resolve(null),
-        fetchMyCreatorPremiumPlans({ limit: 100 }),
+        collectCreatorPremiumPlanPages(fetchMyCreatorPremiumPlans),
       ]);
-      setPlans(planPage.items);
-      setPlanNextCursor(planPage.nextCursor);
+      setPlans(planPage);
       if (!targetId) return null;
       if (!found) throw new Error('creator_premium_content_not_found');
       setItem(found);
@@ -204,7 +196,7 @@ export default function CreatorPremiumEditor() {
       setKind(found.content_kind);
       setAccessMode(found.access_mode);
       setPrice(found.price_bdag === null ? '' : String(found.price_bdag));
-      setSelectedPlanIds(planPage.items
+      setSelectedPlanIds(planPage
         .filter(plan => plan.status === 'active' && plan.mapped_content_ids.includes(found.id))
         .map(plan => plan.id));
       return found;
@@ -216,27 +208,6 @@ export default function CreatorPremiumEditor() {
       if (!silent) setLoading(false);
     }
   }, []);
-
-  const loadMorePlans = useCallback(async () => {
-    if (!planNextCursor || loadingMorePlans) return;
-    setLoadingMorePlans(true);
-    setError(null);
-    try {
-      const page = await fetchMyCreatorPremiumPlans({ limit: 100, cursor: planNextCursor });
-      setPlans(current => appendUnique(current, page.items));
-      if (contentId) {
-        const mapped = page.items
-          .filter(plan => plan.status === 'active' && plan.mapped_content_ids.includes(contentId))
-          .map(plan => plan.id);
-        setSelectedPlanIds(current => [...new Set([...current, ...mapped])]);
-      }
-      setPlanNextCursor(page.nextCursor);
-    } catch (reason) {
-      setError(messageFor(reason));
-    } finally {
-      setLoadingMorePlans(false);
-    }
-  }, [contentId, loadingMorePlans, planNextCursor]);
 
   useEffect(() => {
     void load(routeContentId ?? '');
@@ -679,13 +650,6 @@ export default function CreatorPremiumEditor() {
               );
             })}
             <Text style={styles.helper}>La selección se aplica de forma atómica al publicar y crea una nueva versión inmutable del plan cuando cambia su contenido.</Text>
-            {planNextCursor ? (
-              <Pressable style={styles.secondaryButton} onPress={() => void loadMorePlans()} disabled={busy || loadingMorePlans}>
-                {loadingMorePlans
-                  ? <ActivityIndicator color={PREMIUM} />
-                  : <Text style={styles.secondaryText}>Cargar más planes</Text>}
-              </Pressable>
-            ) : null}
           </Section>
         ) : null}
 

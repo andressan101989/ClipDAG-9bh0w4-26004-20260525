@@ -134,6 +134,18 @@ export const validateStreamVideoDuration=(value:unknown):boolean=>
   value===null||value===undefined||(Number.isFinite(Number(value))&&Number(value)>0&&Number(value)<=STREAM_MAX_DURATION_MS);
 export const isHttpsStreamUrl=(value:unknown):value is string=>
   typeof value==='string'&&value.startsWith('https://');
+export function isCanonicalCloudflareTusUploadUrl(value:unknown):value is string {
+  if(typeof value!=='string') return false;
+  try {
+    const url=new URL(value);
+    return url.protocol==='https:'&&url.hostname==='upload.videodelivery.net'&&!url.port
+      &&!url.username&&!url.password&&!url.hash
+      &&/^\/tus\/[A-Za-z0-9_-]{20,128}$/.test(url.pathname)
+      &&(url.search===''||url.search==='?tusv2=true');
+  } catch {
+    return false;
+  }
+}
 export function isHlsUrl(value:unknown):boolean {
   if(typeof value!=='string') return false;
   const clean=value.toLowerCase().split('?')[0];
@@ -205,7 +217,7 @@ export async function createCreatorPremiumStreamUpload(input:{
     const contract=data.data as Record<string,unknown>;
     const assetId=typeof contract.assetId==='string'&&UUID_PATTERN.test(contract.assetId)?contract.assetId:null;
     const expiresAt=typeof contract.expiresAt==='string'?Date.parse(contract.expiresAt):NaN;
-    const validContract=assetId!==null&&isHttpsStreamUrl(contract.uploadUrl)
+    const validContract=assetId!==null&&isCanonicalCloudflareTusUploadUrl(contract.uploadUrl)
       &&contract.protocol==='tus'&&contract.method==='PATCH'
       &&contract.maxDurationSeconds===180&&contract.maxSizeBytes===STREAM_MAX_SIZE_BYTES
       &&Number.isFinite(expiresAt)&&expiresAt>=Date.now()-300_000;
@@ -236,7 +248,7 @@ export async function uploadCreatorPremiumVideoWithTus(input:{
 }):Promise<void> {
   const operationId=input.operationId??createStreamOperationId();
   throwIfStreamAborted(input.signal,'STREAM_DIRECT_POST',operationId);
-  if(!input.uri||!isHttpsStreamUrl(input.uploadUrl)
+  if(!input.uri||!isCanonicalCloudflareTusUploadUrl(input.uploadUrl)
     ||!validateStreamVideoMime(input.mimeType)||!validateStreamVideoSize(input.sizeBytes)) {
     throw streamError(new Error('invalid_premium_tus_upload'), 'STREAM_DIRECT_POST', operationId);
   }

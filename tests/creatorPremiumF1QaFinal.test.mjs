@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   CREATOR_PREMIUM_VIDEO_MAX_DURATION_MS,
+  collectCreatorPremiumPlanPages,
   creatorPremiumLifecycleActions,
   normalizeCreatorPremiumVideoPickerAsset,
 } from '../services/creatorPremiumPresentation.mjs';
@@ -54,6 +55,9 @@ test('Premium Stream uses one resumable TUS contract while Feed keeps basic POST
   assert.match(createStream, /stream-media-id/i);
   assert.match(createStream, /protocol:\s*'tus'/);
   assert.match(createStream, /maxDurationSeconds:\s*CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS/);
+  assert.match(createStream, /upload\.videodelivery\.net/);
+  assert.match(createStream, /\/tus\//);
+  assert.doesNotMatch(createStream, /uploadUrl\.startsWith\('https:\/\/'\)/);
   assert.match(createStream, /\/direct_upload/);
   assert.match(stream, /uploadCreatorPremiumVideoWithTus/);
   assert.match(stream, /retryDelays:\s*\[0,\s*1_000,\s*3_000,\s*5_000\]/);
@@ -62,6 +66,23 @@ test('Premium Stream uses one resumable TUS contract while Feed keeps basic POST
   assert.match(stream, /abort\(false\)/);
   assert.match(premiumStream, /uploadCreatorPremiumVideoWithTus/);
   assert.doesNotMatch(premiumStream, /postVideoToStreamUploadUrl/);
+});
+
+test('F1 plan orchestration follows the canonical plan-family then plan then content lock order', () => {
+  const submit = migration.slice(
+    migration.indexOf('create function public.submit_my_creator_premium_content_with_plans_v1'),
+    migration.indexOf('create function public.retire_my_creator_premium_content_v1'),
+  );
+  const retire = migration.slice(
+    migration.indexOf('create function public.retire_my_creator_premium_content_v1'),
+    migration.indexOf('create function public.delete_my_creator_premium_plan_draft_v1'),
+  );
+  for (const body of [submit, retire]) {
+    const familyLock = body.indexOf('creator-premium-plan-version:');
+    const planLock = body.indexOf('creator-premium-plan:');
+    const contentLock = body.indexOf('creator-premium-content:');
+    assert.ok(familyLock >= 0 && planLock > familyLock && contentLock > planLock);
+  }
 });
 
 test('iOS Photos selection avoids export/transcoding and catches permission, iCloud and cancellation paths', () => {
@@ -75,6 +96,8 @@ test('iOS Photos selection avoids export/transcoding and catches permission, iCl
 
 test('editor selects owned active plans and submits mappings atomically on the server', () => {
   assert.match(editor, /eligiblePlans\s*=\s*useMemo\(\(\)\s*=>\s*plans\.filter\(plan\s*=>\s*plan\.status\s*===\s*'active'/);
+  assert.match(editor, /collectCreatorPremiumPlanPages\(fetchMyCreatorPremiumPlans\)/);
+  assert.doesNotMatch(editor, /planNextCursor|loadMorePlans|Cargar m.s planes/);
   assert.match(editor, /publishMyCreatorPremiumContentWithPlans/);
   assert.doesNotMatch(editor, /const\s+draftPlans\s*=\s*useMemo/);
   assert.match(service, /submit_my_creator_premium_content_with_plans_v1/);
@@ -84,6 +107,28 @@ test('editor selects owned active plans and submits mappings atomically on the s
   assert.match(migration, /set_my_creator_premium_plan_contents_v1/i);
   assert.match(migration, /submit_my_creator_premium_content_for_review_v1/i);
   assert.match(migration, /activate_my_creator_premium_plan_v1/i);
+});
+
+test('active-plan snapshot includes a mapping beyond the first 100 rows before submit', async () => {
+  const rows = Array.from({ length: 101 }, (_, index) => ({
+    id: `plan-${String(index + 1).padStart(3, '0')}`,
+    status: index === 100 ? 'active' : 'retired',
+    mapped_content_ids: index === 100 ? ['content-outside-page-one'] : [],
+  }));
+  const calls = [];
+  const result = await collectCreatorPremiumPlanPages(async ({ cursor }) => {
+    calls.push(cursor);
+    if (cursor === null) {
+      return { items: rows.slice(0, 100), nextCursor: { timestamp: '2026-10-18T00:00:00Z', id: 'page-2' } };
+    }
+    return { items: rows.slice(100), nextCursor: null };
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(result.length, 101);
+  assert.deepEqual(
+    result.filter(plan => plan.status === 'active' && plan.mapped_content_ids.includes('content-outside-page-one')).map(plan => plan.id),
+    ['plan-101'],
+  );
 });
 
 test('owner lifecycle exposes safe published withdrawal and dependency-free draft plan deletion', () => {

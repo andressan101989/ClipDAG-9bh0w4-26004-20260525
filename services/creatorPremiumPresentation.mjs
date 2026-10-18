@@ -12,6 +12,38 @@ const POLICY_ERROR_CODES = new Set([
   'content_safety_audio_policy_not_configured',
 ]);
 
+export async function collectCreatorPremiumPlanPages(fetchPage, options = {}) {
+  const pageSize = Number.isInteger(options.pageSize) ? options.pageSize : 100;
+  const maxPages = Number.isInteger(options.maxPages) ? options.maxPages : 100;
+  if (typeof fetchPage !== 'function' || pageSize < 1 || pageSize > 100 || maxPages < 1) {
+    throw new Error('creator_premium_plan_snapshot_invalid');
+  }
+
+  const collected = [];
+  const seenIds = new Set();
+  const seenCursors = new Set();
+  let cursor = null;
+  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    const page = await fetchPage({ limit: pageSize, cursor });
+    if (!page || !Array.isArray(page.items)) {
+      throw new Error('creator_premium_plan_snapshot_invalid');
+    }
+    for (const item of page.items) {
+      if (!item || typeof item.id !== 'string' || !item.id || seenIds.has(item.id)) continue;
+      seenIds.add(item.id);
+      collected.push(item);
+    }
+    if (!page.nextCursor) return collected;
+    const cursorKey = `${page.nextCursor.timestamp ?? ''}:${page.nextCursor.id ?? ''}`;
+    if (cursorKey === ':' || seenCursors.has(cursorKey)) {
+      throw new Error('creator_premium_plan_snapshot_invalid');
+    }
+    seenCursors.add(cursorKey);
+    cursor = page.nextCursor;
+  }
+  throw new Error('creator_premium_plan_snapshot_too_large');
+}
+
 function groupedWhole(value) {
   return value.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
