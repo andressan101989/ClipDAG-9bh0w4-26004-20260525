@@ -1,0 +1,107 @@
+{
+  "schema_version": "nelyon.creator_premium_content_safety_p2_evidence.v1",
+  "policy_id": "nelyon.creator_premium.general.p1.v1",
+  "baseline": {
+    "observed_at": "2026-10-18T18:19:35.593007Z",
+    "git_sha": "6234e423664e5247a1dea5bcc92b8ab3ee97ad18",
+    "git_tree": "a1793c9e648254b6a995d798cd79db80dfd862d8",
+    "project_ref": "aewwdlvbwpczqyvkwvvj",
+    "project_health": "ACTIVE_HEALTHY",
+    "migrations": 340,
+    "latest_migration": "20261018120000_creator_premium_content_safety_p1_policy_gate",
+    "edge_functions": 34,
+    "content_safety_scan_version": 41,
+    "video_semantic_index_version": 13,
+    "rules_approved": 0,
+    "rules_active": 0,
+    "finance": {
+      "purchase_enabled": false,
+      "subscription_enabled": false,
+      "refunds_enabled": false,
+      "platform_fee_bps": 0
+    },
+    "explicit_adult_premium": false
+  },
+  "activation": {
+    "status": "approved_activation_pending",
+    "enabled": false,
+    "auto_publish_enabled": false,
+    "strategy": "two_checkpoint_forward_only",
+    "require_all_gates_demonstrated": true,
+    "blockers": [
+      "contextual_text_classification_unverified",
+      "contextual_transcript_classification_unverified",
+      "age_uncertainty_signal_unavailable",
+      "consent_uncertainty_signal_unavailable",
+      "model_confidence_signal_unavailable",
+      "account_quota_headroom_unverified",
+      "private_media_policy_e2e_unverified"
+    ]
+  },
+  "context_result": {
+    "schema_version": "creator-premium-context-p2-v1",
+    "decisions": ["allow", "review", "block"],
+    "coverage": {
+      "text": ["complete"],
+      "transcript": ["complete", "no_speech", "not_applicable"],
+      "visual": ["complete"]
+    },
+    "uncertainty": ["unambiguous", "ambiguous"],
+    "age_uncertainty": ["not_relevant", "present"],
+    "consent_uncertainty": ["not_relevant", "present"],
+    "numeric_confidence_allowed": false,
+    "age_identity_assertion_allowed": false,
+    "consent_proof_from_appearance_allowed": false,
+    "unknown_or_incomplete": "review_or_technical_failure"
+  },
+  "gates": {
+    "contextual_text": {
+      "status": "implementation_pending",
+      "requires": ["semantic_context", "negation", "quotation", "education", "ambiguity", "strict_persistence_binding"]
+    },
+    "contextual_transcript": {
+      "status": "implementation_pending",
+      "requires": ["semantic_context", "negation", "education", "threat_context", "coverage_state", "transcript_fingerprint_binding"]
+    },
+    "age_uncertainty": {
+      "status": "implementation_pending",
+      "identity_inference_forbidden": true
+    },
+    "consent_uncertainty": {
+      "status": "implementation_pending",
+      "appearance_is_proof": false
+    },
+    "model_confidence": {
+      "status": "implementation_pending",
+      "calibrated_probability_available": false,
+      "approved_substitute": "strict_discrete_uncertainty_and_complete_coverage"
+    },
+    "account_quota_headroom": {
+      "status": "demonstrated",
+      "source": "cloudflare_dashboard_workers_ai_usage",
+      "account_id": "24a176456cf57435119db8caf3af61dd",
+      "observed_at": "2026-10-18T18:24:48.533Z",
+      "daily_allocation_neurons": 10000,
+      "used_neurons": 409.62,
+      "headroom_neurons": 9590.38,
+      "reset": "00:00 UTC",
+      "stream_token_reused": false,
+      "max_live_inferences": 5
+    },
+    "private_media_policy_e2e": {
+      "status": "pending_live_evidence",
+      "required_chain": [
+        "private_media_source",
+        "visual_analysis_bound",
+        "audio_transcript_bound_or_not_applicable",
+        "canonical_text_bound",
+        "context_evaluation_persisted",
+        "p1_decision_observed",
+        "reconciler_observed",
+        "content_remains_private"
+      ],
+      "reuse_authorized_qa_media": true,
+      "new_upload_allowed": false
+    }
+  }
+}
