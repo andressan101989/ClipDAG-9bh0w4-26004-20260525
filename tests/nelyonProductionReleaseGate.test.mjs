@@ -54,7 +54,7 @@ const A2_PREEXISTING_FINGERPRINTS = [
   '44c69807ea7e06dadbd8f841ec50a8911c25a76b28ed8096ec6fea66d129b55b',
   '92d3ea284e4ee4c77be88f4a3cade83460caa098dbbc3028587388cf0158933b',
 ];
-const P2_RELATION_ADVISOR_FINGERPRINT = 'f498338b96d43bbbf507b286d3503474889e67679b84b6dc3116d63d36c337c0';
+const P2_RELATION_ADVISOR_FINGERPRINT = '8088d6be7ca6bd32b041ed429091a56f26d26ac0d7148eb5bf15f9e3c5e70bd6';
 
 async function loadGateAndPolicy() {
   assert.ok(existsSync(policyUrl), 'release policy must exist');
