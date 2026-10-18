@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 
 const root = process.cwd()
 const policyPath = join(root, 'docs', 'creator-premium-content-safety-policy-general-v1.json')
+const migrationSuffix = '_creator_premium_content_safety_p1_policy_gate.sql'
+
+function loadMigration() {
+  const migrations = join(root, 'supabase', 'migrations')
+  const matches = readdirSync(migrations).filter(name => name.endsWith(migrationSuffix))
+  assert.equal(matches.length, 1, 'P1 must have exactly one forward-only policy migration')
+  return readFileSync(join(migrations, matches[0]), 'utf8')
+}
 
 function loadPolicy() {
   assert.equal(existsSync(policyPath), true, 'P1 policy artifact must exist')
@@ -72,4 +80,45 @@ test('P1 policy bytes have a stable digest suitable for SQL and release evidence
   const digest = createHash('sha256').update(readFileSync(policyPath)).digest('hex')
   assert.match(digest, /^[0-9a-f]{64}$/)
   assert.notEqual(digest, '0'.repeat(64))
+})
+
+test('P1 migration embeds the immutable policy identity and artifact digest', () => {
+  const sql = loadMigration()
+  assert.match(sql, /creator_premium_content_safety_policy_p1_v1\(\)/i)
+  assert.match(sql, /nelyon\.creator_premium\.general\.p1\.v1/i)
+  assert.match(sql, /43da0f9039abb930aa34e09d513220713264e46b0f4187f91a769c1f9a3af52b/i)
+  assert.match(sql, /"explicit_adult_premium"\s*:\s*false/i)
+  assert.match(sql, /"auto_publish_enabled"\s*:\s*false/i)
+})
+
+test('P1 decision engine is private, fail-closed, and preserves contextual review', () => {
+  const sql = loadMigration()
+  assert.match(sql, /creator_premium_content_safety_decision_p1_v1\(p_scan_id uuid\)/i)
+  assert.match(sql, /security definer\s+set search_path\s*=\s*''/i)
+  assert.match(sql, /not v_policy_enabled[\s\S]*'decision'\s*,\s*'awaiting_policy'/i)
+  assert.match(sql, /source_type\s*=\s*'text_rule'[\s\S]*'decision'\s*,\s*'review'/i)
+  assert.match(sql, /evidence->>'policy_id'\s*=\s*v_policy_id/i)
+  assert.match(sql, /evidence->>'policy_decision'\s*=\s*'block'/i)
+  assert.match(sql, /'decision'\s*,\s*'block'/i)
+  assert.match(sql, /v_policy_decision->>'decision'<>'allow'/i)
+  for (const signature of [
+    'private.creator_premium_content_safety_policy_p1_v1()',
+    'private.creator_premium_content_safety_decision_p1_v1(uuid)',
+  ]) {
+    assert.match(sql, new RegExp(`revoke all on function ${signature.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*from public, anon, authenticated, service_role`, 'i'))
+  }
+})
+
+test('P1 finalizer consumes the decision without weakening generation, fingerprint, or provider fences', () => {
+  const sql = loadMigration()
+  assert.match(sql, /create or replace function private\.finalize_creator_premium_safety_scan_v1\(p_scan_id uuid\)/i)
+  assert.match(sql, /verification_scan_id\s+is distinct from\s+v_scan\.id/i)
+  assert.match(sql, /verification_fingerprint\s+is distinct from\s+v_scan\.content_fingerprint/i)
+  assert.match(sql, /v_current_fingerprint<>v_scan\.content_fingerprint/i)
+  assert.match(sql, /v_scan\.status='failed'[\s\S]*creator_premium_safety_provider_failed/i)
+  assert.match(sql, /creator_premium_content_safety_decision_p1_v1\(v_scan\.id\)/i)
+  assert.match(sql, /v_policy_decision->>'decision'='awaiting_policy'[\s\S]*content_safety_policy_not_configured/i)
+  assert.match(sql, /v_policy_decision->>'decision'='review'[\s\S]*creator_premium_safety_review_required/i)
+  assert.match(sql, /v_policy_decision->>'decision'='block'[\s\S]*lifecycle_status='rejected'[\s\S]*verification_status='blocked'[\s\S]*creator_premium_safety_blocked/i)
+  assert.match(sql, /v_policy_decision->>'decision'<>'allow'[\s\S]*creator_premium_safety_decision_invalid/i)
 })
