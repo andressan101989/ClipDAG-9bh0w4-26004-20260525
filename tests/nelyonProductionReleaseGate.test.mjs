@@ -54,6 +54,7 @@ const A2_PREEXISTING_FINGERPRINTS = [
   '44c69807ea7e06dadbd8f841ec50a8911c25a76b28ed8096ec6fea66d129b55b',
   '92d3ea284e4ee4c77be88f4a3cade83460caa098dbbc3028587388cf0158933b',
 ];
+const P2_RELATION_ADVISOR_FINGERPRINT = 'f498338b96d43bbbf507b286d3503474889e67679b84b6dc3116d63d36c337c0';
 
 async function loadGateAndPolicy() {
   assert.ok(existsSync(policyUrl), 'release policy must exist');
@@ -144,7 +145,7 @@ function assertDenied(fn, expectedCode) {
   });
 }
 
-function recoveryArtifactFixture(t, gate, policy) {
+function recoveryArtifactFixture(t, gate, policy, sourceIndex = 0) {
   const root = mkdtempSync(join(tmpdir(), 'nelyon-recovery-source-'));
   t.after(() => rmSync(root, { force: true, recursive: true }));
   const releaseDirectory = join(root, 'release');
@@ -152,7 +153,7 @@ function recoveryArtifactFixture(t, gate, policy) {
   const bundleDirectory = join(releaseDirectory, 'bundle');
   mkdirSync(bundleDirectory, { recursive: true });
   mkdirSync(gateDirectory, { recursive: true });
-  const source = structuredClone(policy.postcheck_recovery.approved_sources[0]);
+  const source = structuredClone(policy.postcheck_recovery.approved_sources[sourceIndex]);
   const sourceManifest = {
     schema_version: 1,
     identity: {
@@ -164,10 +165,10 @@ function recoveryArtifactFixture(t, gate, policy) {
     },
     resources: {
       functions: source.edge_functions.map(item => item.name),
-      migrations: [{
-        path: `supabase/migrations/${source.expected_b7_migration.name}.sql`,
-        version: '20261010053524',
-      }],
+      migrations: source.expected_migrations.map(item => ({
+        path: `supabase/migrations/${item.name}.sql`,
+        version: item.name.slice(0, 14),
+      })),
     },
   };
   const manifestBytes = gate.canonicalJson(sourceManifest);
@@ -229,13 +230,13 @@ function recoveryArtifactFixture(t, gate, policy) {
   };
 }
 
-async function recoveryStateFixture(t, gate, policy) {
+async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
   const adapter = await import(`${adapterUrl.href}?recovery=${Date.now()}-${Math.random()}`);
   const controlledPolicy = structuredClone(policy);
   const recoveryRequest = request({
     mode: 'postcheck_recovery',
     scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
-    recoverySourceRunId: '39066492485',
+    recoverySourceRunId: policy.postcheck_recovery.approved_sources[sourceIndex].run_id,
     productiveResources: [],
   });
   const adapterSourceSha256 = '6'.repeat(64);
@@ -253,13 +254,14 @@ async function recoveryStateFixture(t, gate, policy) {
     },
     resources: { functions: [], function_contracts: [], migrations: [], config_changed: false },
   };
-  const source = controlledPolicy.postcheck_recovery.approved_sources[0];
+  const source = controlledPolicy.postcheck_recovery.approved_sources[sourceIndex];
+  const latestMigration = source.expected_latest_migration;
   const migrationRows = [
-    ...Array.from({ length: 336 }, (_, index) => ({
+    ...Array.from({ length: source.expected_migration_count - 1 }, (_, index) => ({
       version: `2025${String(index).padStart(10, '0')}`,
       name: `historical_${String(index).padStart(3, '0')}`,
     })),
-    { version: '20261010053524', name: 'creator_premium_b7_full_functional_commercial_completion' },
+    { version: latestMigration.slice(0, 14), name: latestMigration.slice(15) },
   ];
   const functionRows = [
     ...source.edge_functions.map(item => ({
@@ -269,7 +271,7 @@ async function recoveryStateFixture(t, gate, policy) {
       verify_jwt: item.verify_jwt,
       ezbr_sha256: item.source_sha256,
     })),
-    ...Array.from({ length: 22 }, (_, index) => ({
+    ...Array.from({ length: 34 - source.edge_functions.length }, (_, index) => ({
       slug: `unmanaged-${String(index + 1).padStart(2, '0')}`,
       status: 'ACTIVE',
       version: index + 1,
@@ -329,6 +331,7 @@ async function recoveryStateFixture(t, gate, policy) {
     'creator_premium_plan_contents', 'creator_premium_plans', 'creator_premium_purchase_receipts',
     'creator_premium_subscription_periods', 'creator_premium_subscriptions',
   ];
+  if (source.run_id === '39157300357') relationNames.unshift('creator_premium_content_safety_context_evaluations');
   const fetchImpl = async (url, options = {}) => {
     const pathname = new URL(url).pathname;
     const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -346,7 +349,9 @@ async function recoveryStateFixture(t, gate, policy) {
       if (body.query.includes('nelyon-finance-snapshot-v1')) return json([{ snapshot: finance }], 201);
       if (body.query.includes('nelyon-cron-snapshot-v1')) return json([{ snapshot: { schema_version: 1, complete: true, query_id: 'nelyon-cron-snapshot-v1', count: 0, items: [] } }], 201);
       if (body.query.includes('pg_get_function_identity_arguments')) {
-        return json(controlledPolicy.security_advisor.exceptions.map(exception => ({
+        return json(controlledPolicy.security_advisor.exceptions
+          .filter(exception => Array.isArray(exception.object.argument_types))
+          .map(exception => ({
           schema: exception.object.schema,
           name: exception.object.name,
           identity_arguments: exception.object.identity_arguments,
@@ -357,7 +362,7 @@ async function recoveryStateFixture(t, gate, policy) {
           acl: exception.attestation.acl,
           execute: exception.attestation.execute,
           definition: `CREATE FUNCTION public.${exception.object.name}() RETURNS jsonb SECURITY DEFINER`,
-        })), 201);
+          })), 201);
       }
       if (body.query.includes('nelyon-premium-postcheck-state-v1')) {
         return json([{ snapshot: {
@@ -367,12 +372,13 @@ async function recoveryStateFixture(t, gate, policy) {
           approved_rule_count: 0,
           active_rule_count: 0,
           fabricated_pass_count: 0,
-          content_count: 2,
-          pending_review_count: 1,
-          deleted_count: 1,
+          content_count: source.premium_legacy.content_count,
+          pending_review_count: source.premium_legacy.pending_review_count,
+          deleted_count: source.premium_legacy.deleted_count,
           relations: relationNames.map(name => ({
             schema: 'private', name, owner: 'postgres', rls_enabled: true, force_rls: true,
-            acl: [{ grantee: 'postgres', privilege_type: 'SELECT', is_grantable: false }],
+            acl: ['DELETE', 'INSERT', 'MAINTAIN', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']
+              .map(privilege_type => ({ grantee: 'postgres', privilege_type, is_grantable: false })),
           })),
         } }], 201);
       }
@@ -389,7 +395,9 @@ async function recoveryStateFixture(t, gate, policy) {
     observedAt: '2026-10-17T22:00:01.000Z',
     adapterSourceSha256,
   });
-  const rpcItems = controlledPolicy.security_advisor.exceptions.map(exception => ({
+  const rpcItems = controlledPolicy.security_advisor.exceptions
+    .filter(exception => Array.isArray(exception.object.argument_types))
+    .map(exception => ({
     schema: exception.object.schema,
     name: exception.object.name,
     identity_arguments: exception.object.identity_arguments,
@@ -400,7 +408,7 @@ async function recoveryStateFixture(t, gate, policy) {
     acl: exception.attestation.acl,
     execute: exception.attestation.execute,
     definition_sha256: exception.attestation.definition_sha256,
-  })).sort((left, right) => `${left.schema}.${left.name}(${left.argument_types.join(',')})`.localeCompare(`${right.schema}.${right.name}(${right.argument_types.join(',')})`));
+    })).sort((left, right) => `${left.schema}.${left.name}(${left.argument_types.join(',')})`.localeCompare(`${right.schema}.${right.name}(${right.argument_types.join(',')})`));
   currentEvidence.rpc_security = { complete: true, count: rpcItems.length, items: rpcItems, sha256: gate.sha256Hex(gate.canonicalJson(rpcItems)) };
   const baselineAdvisorItems = Array.from({ length: 554 }, (_, index) => ({
     fingerprint: String(index + 1).padStart(64, '0'),
@@ -429,7 +437,10 @@ async function recoveryStateFixture(t, gate, policy) {
     identity: { approved_sha: source.source_sha, release_id: source.release_id, run_id: source.run_id, run_attempt: source.run_attempt, mode: 'release' },
     resources: {
       functions: source.edge_functions.map(item => item.name),
-      migrations: [{ path: `supabase/migrations/${source.expected_b7_migration.name}.sql`, version: '20261010053524' }],
+      migrations: source.expected_migrations.map(item => ({
+        path: `supabase/migrations/${item.name}.sql`,
+        version: item.name.slice(0, 14),
+      })),
     },
   };
   const sourceObservation = {
@@ -469,16 +480,18 @@ test('policy accepts the exact repository owner project modes and managed functi
   assert.equal(policy.environment.required_reviewer, null);
 });
 
-test('Security Advisor exceptions are exact RPC-bound verified attestations', async () => {
+test('Security Advisor exceptions are exact object-bound verified attestations', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(gate.validateSecurityAdvisorPolicy(policy.security_advisor), true);
   assert.equal(policy.security_advisor.baseline.count, 554);
   assert.equal(policy.security_advisor.baseline.cron_security_sha256, '2dd76dccc8b348eb932fee5c8ada572f57243287f3ca96bf851a75a2e9244846');
   const exceptions = policy.security_advisor.exceptions;
-  assert.equal(exceptions.length, 12);
-  assert.deepEqual(exceptions.map(item => item.advisor_fingerprint).sort(), A2_EXCEPTION_FINGERPRINTS);
+  assert.equal(exceptions.length, 13);
+  assert.deepEqual(exceptions.map(item => item.advisor_fingerprint).sort(), [...A2_EXCEPTION_FINGERPRINTS, P2_RELATION_ADVISOR_FINGERPRINT].sort());
   assert.equal(exceptions.some(item => A2_PREEXISTING_FINGERPRINTS.includes(item.advisor_fingerprint)), false);
-  for (const exception of exceptions) {
+  const rpcExceptions = exceptions.filter(item => item.advisor_type === 'authenticated_security_definer_function_executable');
+  assert.equal(rpcExceptions.length, 12);
+  for (const exception of rpcExceptions) {
     assert.equal(exception.advisor_type, 'authenticated_security_definer_function_executable');
     assert.equal(exception.advisor_severity, 'WARN');
     assert.equal(exception.object.schema, 'public');
@@ -509,6 +522,39 @@ test('Security Advisor exceptions are exact RPC-bound verified attestations', as
     }
     assert.equal(exception.technical_approval, 'verified');
   }
+  const relationException = exceptions.find(item => item.advisor_fingerprint === P2_RELATION_ADVISOR_FINGERPRINT);
+  assert.deepEqual(relationException, {
+    advisor_fingerprint: P2_RELATION_ADVISOR_FINGERPRINT,
+    advisor_type: 'table',
+    advisor_severity: 'INFO',
+    object: { schema: 'private', name: 'creator_premium_content_safety_context_evaluations' },
+    attestation: {
+      owner: 'postgres',
+      rls_enabled: true,
+      force_rls: true,
+      acl: [
+        { grantee: 'postgres', privilege_type: 'DELETE', is_grantable: false },
+        { grantee: 'postgres', privilege_type: 'INSERT', is_grantable: false },
+        { grantee: 'postgres', privilege_type: 'MAINTAIN', is_grantable: false },
+        { grantee: 'postgres', privilege_type: 'REFERENCES', is_grantable: false },
+        { grantee: 'postgres', privilege_type: 'SELECT', is_grantable: false },
+        { grantee: 'postgres', privilege_type: 'TRIGGER', is_grantable: false },
+        { grantee: 'postgres', privilege_type: 'TRUNCATE', is_grantable: false },
+        { grantee: 'postgres', privilege_type: 'UPDATE', is_grantable: false },
+      ],
+    },
+    authorization: {
+      functional_reason: 'Stores private service-only P2 contextual evidence; the absence of permissive RLS policies is intentional fail-closed isolation.',
+      controls: ['force_rls', 'negative_authorization_tests', 'owner_only_acl', 'private_schema', 'service_rpc_only'],
+      negative_test_evidence_sha256: '3d84738f44200f1198ab7e61aff788e4fc847f7ced6139f5fa73632e993a1d0e',
+    },
+    origin: {
+      migration: '20261018170000_creator_premium_content_safety_p2_evidence_runtime',
+      migration_blob: '8cb2e43095a733c60c5753f7a80f4e1ed2e1c4cd',
+      source_sha: 'b2e20b64fad627fc732db66e6b3c3088f5371fbc',
+    },
+    technical_approval: 'verified',
+  });
   for (const mutate of [
     candidate => { candidate.exceptions[0].advisor_fingerprint = `${candidate.exceptions[0].advisor_fingerprint.slice(0, 63)}*`; },
     candidate => { candidate.exceptions.push(structuredClone(candidate.exceptions[0])); },
@@ -524,9 +570,13 @@ test('Security Advisor exceptions are exact RPC-bound verified attestations', as
 
 test('recovery source is exact immutable failed-postcheck authority', async () => {
   const { gate, policy } = await loadGateAndPolicy();
-  assert.equal(policy.postcheck_recovery.approved_sources.length, 1);
+  assert.equal(policy.postcheck_recovery.approved_sources.length, 2);
+  for (const source of policy.postcheck_recovery.approved_sources) {
+    assert.equal(gate.validateRecoverySource(source), true);
+    assert.ok(source.expected_migrations.length >= 1);
+    assert.match(source.premium_relation_security_sha256, /^[0-9a-f]{64}$/);
+  }
   const source = policy.postcheck_recovery.approved_sources[0];
-  assert.equal(gate.validateRecoverySource(source), true);
   assert.equal(source.run_id, '39066492485');
   assert.equal(source.run_attempt, 1);
   assert.equal(source.release_id, 'nelyon-b7-autonomous-20261017T202315Z');
@@ -554,10 +604,12 @@ test('postcheck recovery request requires its exact read-only confirmation', asy
   assert.equal(gate.validateRequest(request({
     mode: 'postcheck_recovery',
     scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
+    recoverySourceRunId: '39066492485',
   }), policy).mode, 'postcheck_recovery');
   assertDenied(() => gate.validateRequest(request({
     mode: 'postcheck_recovery',
     scopeConfirmation: 'RELEASE_STANDARD',
+    recoverySourceRunId: '39066492485',
   }), policy), 'SCOPE_CONFIRMATION_MISMATCH');
 });
 
@@ -1331,7 +1383,11 @@ test('governance-only delta reports NO PRODUCTIVE CHANGES', async () => {
 test('postcheck recovery manifest strips every productive resource from the read-only route', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const input = manifestInput(policy, {
-    request: request({ mode: 'postcheck_recovery', scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY' }),
+    request: request({
+      mode: 'postcheck_recovery',
+      scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
+      recoverySourceRunId: '39066492485',
+    }),
     classified: {
       all: [{ status: 'A', path: 'supabase/migrations/20261010000000_forbidden.sql', fileType: 'file' }],
       config: [{ status: 'M', path: 'supabase/config.toml', fileType: 'file' }],
@@ -1442,10 +1498,32 @@ test('postcheck recovery verifies B7 current state without productive resources'
   assert.equal(result.migrations.count, 337);
   assert.equal(result.functions.items.length, 12);
   assert.equal(result.security_advisor.baseline_count, 554);
-  assert.equal(result.security_advisor.exception_count, 12);
+  assert.equal(result.security_advisor.exception_count, 13);
   assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
   assert.equal(result.premium_state.legacy.content_count, 2);
   assert.doesNotMatch(JSON.stringify(result), /fixture-token|authorization/i);
+});
+
+test('postcheck recovery verifies the exact P2 migration Edge version and Premium relation authority', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = await recoveryStateFixture(t, gate, policy, 1);
+  const result = gate.verifyPostcheckRecovery({
+    policy: fixture.controlledPolicy,
+    recoveryRequest: fixture.recoveryRequest,
+    recoveryManifest: fixture.recoveryManifest,
+    sourceManifest: fixture.sourceManifest,
+    sourceObservation: fixture.sourceObservation,
+    currentEvidence: fixture.currentEvidence,
+    adapterSourceSha256: fixture.adapterSourceSha256,
+  });
+  assert.equal(result.result, 'POSTCHECK_RECOVERY_SUCCESS');
+  assert.equal(result.source_run_id, '39157300357');
+  assert.equal(result.migrations.count, 341);
+  assert.equal(`${result.migrations.latest.version}_${result.migrations.latest.name}`, '20261018170000_creator_premium_content_safety_p2_evidence_runtime');
+  assert.deepEqual(result.functions.items.map(item => item.name), ['content-safety-scan']);
+  assert.equal(result.functions.items[0].version, 42);
+  assert.deepEqual(result.premium_state.legacy, { content_count: 4, pending_review_count: 2, deleted_count: 2 });
+  assert.equal(result.premium_state.relation_security.sha256, '055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6');
 });
 
 test('postcheck recovery fails closed on mutation requests and every protected-state drift', async t => {
@@ -2612,11 +2690,13 @@ test('workflow routes postcheck_recovery through exact source artifacts and no m
   const plan = workflowJob(text, 'plan', 'deploy');
   const deploy = workflowJob(text, 'deploy');
   assert.match(plan, /INPUT_RECOVERY_SOURCE_RUN_ID:\s*\$\{\{ inputs\.recovery_source_run_id \}\}/);
-  assert.match(plan, /postcheck_recovery[\s\S]*39066492485[\s\S]*POSTCHECK_RECOVERY_READ_ONLY/);
+  assert.match(plan, /postcheck_recovery[\s\S]*POSTCHECK_RECOVERY_READ_ONLY/);
   assert.match(plan, /recoverySourceRunId:[\s\S]*productiveResources:\s*\[\]/);
+  assert.match(plan, /recovery_release_artifact_name/);
+  assert.match(plan, /recovery_gate_artifact_name/);
   assert.match(deploy, /needs\.plan\.outputs\.mode == 'postcheck_recovery'[\s\S]*needs\.plan\.outputs\.result == 'NO PRODUCTIVE CHANGES'/);
-  assert.match(deploy, /name: Download exact approved source release artifact[\s\S]*name: nelyon-release-39066492485-1[\s\S]*run-id: \$\{\{ inputs\.recovery_source_run_id \}\}[\s\S]*github-token: \$\{\{ github\.token \}\}/);
-  assert.match(deploy, /name: Download exact approved source gate artifact[\s\S]*name: nelyon-gate-evidence-39066492485-1[\s\S]*run-id: \$\{\{ inputs\.recovery_source_run_id \}\}/);
+  assert.match(deploy, /name: Download exact approved source release artifact[\s\S]*name: \$\{\{ needs\.plan\.outputs\.recovery_release_artifact_name \}\}[\s\S]*run-id: \$\{\{ inputs\.recovery_source_run_id \}\}[\s\S]*github-token: \$\{\{ github\.token \}\}/);
+  assert.match(deploy, /name: Download exact approved source gate artifact[\s\S]*name: \$\{\{ needs\.plan\.outputs\.recovery_gate_artifact_name \}\}[\s\S]*run-id: \$\{\{ inputs\.recovery_source_run_id \}\}/);
   const verifySource = deploy.indexOf(' verify-recovery-source ');
   const capture = deploy.indexOf('--phase recovery');
   const recover = deploy.indexOf(' postcheck-recovery ');
@@ -2717,7 +2797,7 @@ test('runbook covers the simplified single-owner release finance and recovery co
     '## Future release procedure',
     '## Concurrent finance reconciliation',
     '## Failure recovery and rollback',
-    '## Creator Premium B7 postcheck recovery',
+    '## Creator Premium postcheck recovery',
     '## Stop conditions',
     '## Zero-mutation postcheck',
   ]) assert.match(text, new RegExp(section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));

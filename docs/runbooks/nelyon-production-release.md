@@ -289,30 +289,31 @@ Edge recovery redeploys previously approved reproducible Edge source through a
 new explicitly authorized release. Never infer a rollback artifact from a remote bundle hash
 or deploy an unlisted local function such as `bdag-economy`.
 
-## Creator Premium B7 postcheck recovery
+## Creator Premium postcheck recovery
 
-`postcheck_recovery` is the read-only continuation for the approved source run
-`39066492485` (`nelyon-b7-autonomous-20261017T202315Z`). It is eligible only
-because the source run completed its pre-snapshot, baseline verification,
-migration dry-run, B7 migration, all twelve sequential Edge deployments, and
-post-snapshot before failing in the ordinary postcheck. The historical
-artifacts contain sanitized verification records and evidence digests; they do
-not contain the full historical snapshot bodies, credentials, or private rows.
+`postcheck_recovery` is the read-only continuation for an exact failed release
+listed in `postcheck_recovery.approved_sources`. Every source is bound to its
+run attempt, release ID, source SHA, full artifact IDs and digests, canonical
+manifest digest, pre/post evidence digests, migration inventory, Edge
+attestations, Premium relation-security digest, and legacy counts. A source is
+eligible only when every mutation step and the post-snapshot succeeded and only
+the ordinary postcheck failed. Historical artifacts contain sanitized
+verification records and evidence digests; they do not contain credentials or
+private rows.
 
 Dispatch the canonical workflow from the exact current `main` SHA with:
 
 - `mode`: `postcheck_recovery`;
 - `scope_confirmation`: `POSTCHECK_RECOVERY_READ_ONLY`;
-- `recovery_source_run_id`: `39066492485`; and
+- `recovery_source_run_id`: one exact run ID present in the reviewed policy; and
 - a new unique recovery release ID.
 
 The plan must contain zero productive resources. After the `production`
-Environment boundary, the workflow downloads only
-`nelyon-release-39066492485-1` and
-`nelyon-gate-evidence-39066492485-1` from the exact source run. It verifies the
-full GitHub artifact IDs/digests, source SHA, request, canonical manifest bytes,
+Environment boundary, the workflow derives both artifact names from that exact
+policy source and downloads them from the selected run. It verifies the full
+GitHub artifact IDs/digests, source SHA, request, canonical manifest bytes,
 pre/post evidence digests, and the failed-postcheck step shape before opening a
-Supabase connection.
+Supabase connection. Caller-supplied artifact names are never accepted.
 
 The fresh capture uses the reviewed Snapshot Adapter with `--phase recovery`.
 Its only database calls are the four fixed read-only SQL requests for finance,
@@ -322,15 +323,20 @@ Security Advisor, and physical-backup endpoints. Recovery never invokes
 Supabase CLI setup, `supabase db push`, migration application, function deploy,
 generic SQL, policy writes, secret rotation, or a caller-supplied command.
 
-Success requires B7 exactly once, 337 migrations, all twelve pinned Edge
-versions/digests/`verify_jwt` contracts, the historical 554-finding Advisor
-baseline plus exactly eleven individually attested exceptions, exact RPC
-owner/definer/search-path/ACL/definition evidence, fresh healthy backup state,
-Finance OFF with zero canonical reconciliation anomalies and no source-run
-attribution, Content Safety fail-closed, protected relation RLS/FORCE RLS, and
-legacy counts `2 / 1 / 1`. Any unknown or missing fingerprint, artifact drift,
-RPC attestation change, source-attributed finance row, missing backup,
-concurrent release, or production mismatch is a hard stop.
+Success requires the source-specific migration count/latest migration, every
+source-pinned Edge version/digest/`verify_jwt` contract, the historical
+554-finding Advisor baseline plus the exact individually attested exception
+set, exact RPC owner/definer/search-path/ACL/definition evidence, fresh healthy
+backup state, Finance OFF with zero canonical reconciliation anomalies and no
+source-run attribution, Content Safety fail-closed, the exact Premium relation
+security digest, and exact legacy counts. The P2 source `39157300357` requires
+341 migrations with `20261018170000_creator_premium_content_safety_p2_evidence_runtime`
+latest, `content-safety-scan` v42, relation digest
+`055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6`,
+and legacy counts `4 / 2 / 2`. Any unknown or missing fingerprint, artifact
+drift, RPC attestation change, relation addition or mutation, source-attributed
+finance row, missing backup, concurrent release, or production mismatch is a
+hard stop.
 
 If an RPC is demonstrated vulnerable, do not add an exception. Create one
 focal forward-only corrective migration, prove its negative and positive cases

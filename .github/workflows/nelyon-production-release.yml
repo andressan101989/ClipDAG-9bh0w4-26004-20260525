@@ -55,6 +55,8 @@ jobs:
       blocked: ${{ steps.expose.outputs.blocked }}
       compiler_sha256: ${{ steps.expose.outputs.compiler_sha256 }}
       artifact_name: ${{ steps.expose.outputs.artifact_name }}
+      recovery_release_artifact_name: ${{ steps.expose.outputs.recovery_release_artifact_name }}
+      recovery_gate_artifact_name: ${{ steps.expose.outputs.recovery_gate_artifact_name }}
     steps:
       - name: Checkout exact approved SHA
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -91,7 +93,7 @@ jobs:
           import { writeFileSync } from 'node:fs';
           const recoveryMode = process.env.INPUT_MODE === 'postcheck_recovery';
           if (recoveryMode) {
-            if (process.env.INPUT_RECOVERY_SOURCE_RUN_ID !== '39066492485') throw new Error('postcheck_recovery requires approved source run 39066492485');
+            if (!/^[1-9][0-9]*$/.test(process.env.INPUT_RECOVERY_SOURCE_RUN_ID ?? '')) throw new Error('postcheck_recovery requires a numeric approved source run');
             if (process.env.INPUT_SCOPE_CONFIRMATION !== 'POSTCHECK_RECOVERY_READ_ONLY') throw new Error('postcheck_recovery requires POSTCHECK_RECOVERY_READ_ONLY');
           } else if (process.env.INPUT_RECOVERY_SOURCE_RUN_ID) {
             throw new Error('recovery_source_run_id is valid only for postcheck_recovery');
@@ -166,6 +168,8 @@ jobs:
           import { appendFileSync, readFileSync } from 'node:fs';
           import { verifyAutoDeployEvidenceDigest } from './scripts/nelyon-production-release.mjs';
           const manifest = JSON.parse(readFileSync('release-artifact/bundle/manifest.json', 'utf8'));
+          const policy = JSON.parse(readFileSync('.github/nelyon-production-release-policy.json', 'utf8'));
+          const request = JSON.parse(readFileSync('release-input/request.json', 'utf8'));
           const digest = readFileSync('release-artifact/bundle/manifest.sha256', 'utf8').trim();
           if (process.env.INPUT_MODE === 'release') {
             const evidence = JSON.parse(readFileSync('release-input/auto-deploy-evidence.json', 'utf8'));
@@ -179,6 +183,10 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT, `blocked=${manifest.result === 'DENY'}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `compiler_sha256=${manifest.compiler.sha256}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `artifact_name=nelyon-release-${process.env.RUN_ID}-${process.env.RUN_ATTEMPT}\n`);
+          const recoverySource = policy.postcheck_recovery.approved_sources.find(item => item.run_id === request.recoverySourceRunId);
+          if (process.env.INPUT_MODE === 'postcheck_recovery' && !recoverySource) throw new Error('approved recovery source is unavailable');
+          appendFileSync(process.env.GITHUB_OUTPUT, `recovery_release_artifact_name=${recoverySource?.release_artifact?.name ?? ''}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `recovery_gate_artifact_name=${recoverySource?.gate_artifact?.name ?? ''}\n`);
           NODE
           cat release-artifact/bundle/summary.md >> "$GITHUB_STEP_SUMMARY"
 
@@ -328,7 +336,7 @@ jobs:
         if: needs.plan.outputs.mode == 'postcheck_recovery'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          name: nelyon-release-39066492485-1
+          name: ${{ needs.plan.outputs.recovery_release_artifact_name }}
           path: recovery-evidence/source-release
           run-id: ${{ inputs.recovery_source_run_id }}
           github-token: ${{ github.token }}
@@ -337,7 +345,7 @@ jobs:
         if: needs.plan.outputs.mode == 'postcheck_recovery'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          name: nelyon-gate-evidence-39066492485-1
+          name: ${{ needs.plan.outputs.recovery_gate_artifact_name }}
           path: recovery-evidence/source-gate
           run-id: ${{ inputs.recovery_source_run_id }}
           github-token: ${{ github.token }}

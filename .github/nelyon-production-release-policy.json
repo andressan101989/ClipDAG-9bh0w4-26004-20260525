@@ -82,7 +82,11 @@
         "manifest_sha256": "95700e7ad2221bf113b58da0719f41feed40f76389caeba59e3457d603998045",
         "pre_snapshot_evidence_sha256": "5866d0a628eb390ed47b21b17c0910387274a213a0d70702fd8253cc143aee38",
         "post_snapshot_evidence_sha256": "0625cc7c5509b1c48b442fca8cab715bbbcd759ea1dc154044cc574a76cf6ad6",
-        "expected_b7_migration": { "blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "name": "20261010053524_creator_premium_b7_full_functional_commercial_completion" },
+        "expected_migrations": [
+          { "blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d", "name": "20261010053524_creator_premium_b7_full_functional_commercial_completion" }
+        ],
+        "expected_migration_count": 337,
+        "expected_latest_migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion",
         "edge_functions": [
           { "name": "ads-v2-delivery", "source_sha256": "4510ecc897a50a2f9e23d0b326f9bdfc630ce88e5f7bcea0c59e9476233d0536", "status": "ACTIVE", "verify_jwt": true, "version": 10 },
           { "name": "cleanup-stale-media-uploads", "source_sha256": "f12df4ce69b11715faee6cb81a3afe7a8b6b275798c0a47e1442ea884dffce8d", "status": "ACTIVE", "verify_jwt": false, "version": 51 },
@@ -111,7 +115,38 @@
           "function:get-stream-playback",
           "function:stream-webhook",
           "function:video-semantic-index"
-        ]
+        ],
+        "premium_relation_security_sha256": "c0a6af305569c7cafa7c2bd84d8c4a715ede9409a984be709ffdfd0ffe935b3c",
+        "premium_legacy": { "content_count": 2, "pending_review_count": 1, "deleted_count": 1 }
+      },
+      {
+        "run_id": "39157300357",
+        "run_attempt": 1,
+        "release_id": "nelyon-p2-technical-release-20261018T190718Z",
+        "source_sha": "b2e20b64fad627fc732db66e6b3c3088f5371fbc",
+        "repository": "andressan101989/ClipDAG-9bh0w4-26004-20260525",
+        "mutation_status": "completed",
+        "post_snapshot_status": "success",
+        "postcheck_status": "failure",
+        "gate_artifact": { "id": "12147615800", "name": "nelyon-gate-evidence-39157300357-1", "digest": "sha256:3a6369bcb8a3b69ef5a3b804a47dc245bd06ad9de2033b0f7afa84b9f48f0cfe" },
+        "release_artifact": { "id": "12147188981", "name": "nelyon-release-39157300357-1", "digest": "sha256:53caa1369fc09b3a5f1d81db25565f6e8bf1a8b99f457cea0ea709b7b39c5bbc" },
+        "manifest_sha256": "11eb4044e5e0f4900b8e2f68be050b2eb95b8e59aac60f5cf82d2ccda64673b0",
+        "pre_snapshot_evidence_sha256": "942690271875e7ab055138cafc9b2b087c61a9151c357354488169913ac9b589",
+        "post_snapshot_evidence_sha256": "253b9eb6b2a8c42a3a2627b14da3f4a569cc8c3481658048fbc2df4e11a1a5bb",
+        "expected_migrations": [
+          { "blob": "8cb2e43095a733c60c5753f7a80f4e1ed2e1c4cd", "name": "20261018170000_creator_premium_content_safety_p2_evidence_runtime" }
+        ],
+        "expected_migration_count": 341,
+        "expected_latest_migration": "20261018170000_creator_premium_content_safety_p2_evidence_runtime",
+        "edge_functions": [
+          { "name": "content-safety-scan", "source_sha256": "74777e11d9df4b14c079131dc514233d2f3932424512cb740c15c497849d35ad", "status": "ACTIVE", "verify_jwt": true, "version": 42 }
+        ],
+        "productive_resources": [
+          "migration:20261018170000_creator_premium_content_safety_p2_evidence_runtime",
+          "function:content-safety-scan"
+        ],
+        "premium_relation_security_sha256": "055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6",
+        "premium_legacy": { "content_count": 4, "pending_review_count": 2, "deleted_count": 2 }
       }
     ]
   },
@@ -252,6 +287,16 @@
         "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "5be58f4d190e19a04ed32c7de88d1ace55778ac68c5c39d21cac5ad979f27a57" },
         "authorization": { "functional_reason": "Returns caller-owned pending review content to draft while fencing stale verification workers and preserving media and financial history.", "controls": ["account_operational_check", "authenticated_session", "content_ownership", "idempotent_replay", "lifecycle_validation", "negative_authorization_tests", "stale_scan_generation_fence"], "negative_test_evidence_sha256": "ca8588f28303eb27e251207a72a85a35b7c75c794664ebe6132ddb3a6cdf984c" },
         "origin": { "migration": "20261017193000_creator_premium_c1_submission_cancellation", "migration_blob": "4605ac94221a52d47190b1575ab1a71e23c82fac", "source_sha": "aa722ea6f1bb9aef6fc49da64c4c6dc8303b4e95" },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "f498338b96d43bbbf507b286d3503474889e67679b84b6dc3116d63d36c337c0",
+        "advisor_type": "table",
+        "advisor_severity": "INFO",
+        "object": { "schema": "private", "name": "creator_premium_content_safety_context_evaluations" },
+        "attestation": { "owner": "postgres", "rls_enabled": true, "force_rls": true, "acl": [{ "grantee": "postgres", "privilege_type": "DELETE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "INSERT", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "MAINTAIN", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "REFERENCES", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "SELECT", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "TRIGGER", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "TRUNCATE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "UPDATE", "is_grantable": false }] },
+        "authorization": { "functional_reason": "Stores private service-only P2 contextual evidence; the absence of permissive RLS policies is intentional fail-closed isolation.", "controls": ["force_rls", "negative_authorization_tests", "owner_only_acl", "private_schema", "service_rpc_only"], "negative_test_evidence_sha256": "3d84738f44200f1198ab7e61aff788e4fc847f7ced6139f5fa73632e993a1d0e" },
+        "origin": { "migration": "20261018170000_creator_premium_content_safety_p2_evidence_runtime", "migration_blob": "8cb2e43095a733c60c5753f7a80f4e1ed2e1c4cd", "source_sha": "b2e20b64fad627fc732db66e6b3c3088f5371fbc" },
         "technical_approval": "verified"
       }
     ]
