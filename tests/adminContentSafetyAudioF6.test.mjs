@@ -202,6 +202,35 @@ test("bounded audio download rejects redirects and maps transient failures witho
   assert.equal(redirectCalls,4);
 });
 
+test("audio downloader rejects non-canonical raw Location values before a second fetch",async()=>{
+  const uid="0123456789abcdef0123456789abcdef",customerCode="example-code";
+  const providerUrl=`https://customer-${customerCode}.cloudflarestream.com/${uid}/downloads/audio.m4a`;
+  const route=await selectStreamAudioDownloadRoute({targetType:"video",uid,customerCode,providerUrl});
+  const proof=`p=${"A".repeat(64)}&s=${"b".repeat(66)}`;
+  const canonical=`https://customer-${customerCode}.cloudflarestream.com/${uid}/dl/audio.m4a?${proof}`;
+  for(const location of [
+    canonical.replace(".com/", ".com:443/"),
+    `/${uid}/dl/audio.m4a?${proof}`,
+    canonical.replace("https://customer-", "HTTPS://CUSTOMER-"),
+    canonical.replace("customer-example", "customer-%65xample"),
+    canonical.replace("/dl/audio.m4a", "/dl/../dl/audio.m4a"),
+    canonical.replace("/dl/audio.m4a", "\\dl\\audio.m4a"),
+    `${canonical}#`,
+  ]) {
+    let calls=0;
+    await assert.rejects(
+      downloadStreamAudioBytes({route,fetchImpl:async()=>{
+        calls+=1;
+        if(calls>1) throw new Error("non-canonical redirect was fetched");
+        return new Response(null,{status:302,headers:{location}});
+      }}),
+      error=>error instanceof AudioPipelineError,
+      location,
+    );
+    assert.equal(calls,1,location);
+  }
+});
+
 test("unknown or absent server claim target types fail closed before signing",async()=>{
   const uid="0123456789abcdef0123456789abcdef",customerCode="example-code";
   const providerUrl=`https://customer-${customerCode}.cloudflarestream.com/${uid}/downloads/audio.m4a`;
