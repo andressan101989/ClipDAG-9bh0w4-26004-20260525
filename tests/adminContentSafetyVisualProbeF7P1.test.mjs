@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import {
   VISUAL_AI_PROVIDER,
   VISUAL_MODEL,
+  VISUAL_TOOL_NAME,
   VisualProbeError,
   buildVisualMultiImageProbeRequest,
   buildVisualProbeRequest,
@@ -20,43 +21,45 @@ const worker = readFileSync(join(root, 'supabase', 'functions', 'content-safety-
 
 const validProviderPayload = {
   success: true,
-  result: { response: { objects: [{ shape: 'square', color: 'red' }, { shape: 'circle', color: 'blue' }] } },
+  result: { tool_calls: [{ name: VISUAL_TOOL_NAME, arguments: { objects: [{ shape: 'square', color: 'red' }, { shape: 'circle', color: 'blue' }] } }] },
 }
 
-test('probe request uses documented vision parts, synthetic PNG, and JSON schema', () => {
+test('probe request uses documented vision parts, synthetic PNG, and strict function calling', () => {
   const request = buildVisualProbeRequest()
   const content = request.messages[1].content
   assert.equal(content[0].type, 'text')
   assert.equal(content[1].type, 'image_url')
   assert.match(content[1].image_url.url, /^data:image\/png;base64,/)
-  assert.equal(request.response_format.type, 'json_schema')
+  assert.equal(request.tools[0].function.name, VISUAL_TOOL_NAME)
+  assert.equal(request.tools[0].function.strict, true)
+  assert.equal(request.parallel_tool_calls, false)
   assert.equal(request.chat_template_kwargs.enable_thinking, false)
-  assert.deepEqual(request.response_format.json_schema.required, ['objects'])
-  assert.equal(request.response_format.json_schema.additionalProperties, false)
+  assert.deepEqual(request.tools[0].function.parameters.required, ['objects'])
+  assert.equal(request.tools[0].function.parameters.additionalProperties, false)
   const png = Buffer.from(makeSyntheticVisualProbeImage().split(',')[1], 'base64')
   assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10])
 })
 
 test('valid structured output must recognize the synthetic red square and blue circle', () => {
   assert.deepEqual(validateVisualProbeResponse(validProviderPayload), { visionInput: true, structuredOutput: true, schemaValid: true })
-  assert.deepEqual(validateVisualProbeResponse({ success: true, result: { choices: [{ message: { content: JSON.stringify(validProviderPayload.result.response) } }] } }), { visionInput: true, structuredOutput: true, schemaValid: true })
-  assert.throws(() => validateVisualProbeResponse({ result: { response: { objects: [{ shape: 'square', color: 'red' }] } } }), error => error.code === 'visual_workers_ai_image_not_recognized')
+  assert.deepEqual(validateVisualProbeResponse({ success: true, result: { choices: [{ finish_reason: 'tool_calls', message: { content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: VISUAL_TOOL_NAME, arguments: JSON.stringify(validProviderPayload.result.tool_calls[0].arguments) } }] } }] } }), { visionInput: true, structuredOutput: true, schemaValid: true })
+  assert.throws(() => validateVisualProbeResponse({ result: { tool_calls: [{ name: VISUAL_TOOL_NAME, arguments: { objects: [{ shape: 'square', color: 'red' }] } }] } }), error => error.code === 'visual_workers_ai_image_not_recognized')
 })
 
 test('multi-image probe sends two separate image parts and requires schema-valid recognition', async () => {
   const request = buildVisualMultiImageProbeRequest()
   assert.equal(request.messages[1].content.filter(part => part.type === 'image_url').length, 2)
-  assert.equal(request.response_format.type, 'json_schema')
+  assert.equal(request.tools[0].function.name, VISUAL_TOOL_NAME)
   const result = await runVisualMultiImageProviderProbe({
     token: 'server-secret',
     accountId: 'account-id',
-    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ success: true, result: { response: { image_count: 2 } } }) }),
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ success: true, result: { tool_calls: [{ name: VISUAL_TOOL_NAME, arguments: { image_count: 2 } }] } }) }),
   })
   assert.deepEqual(result, { visionInput: true, structuredOutput: true, schemaValid: true, multiImage: true })
   await assert.rejects(() => runVisualMultiImageProviderProbe({
     token: 'server-secret',
     accountId: 'account-id',
-    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ success: true, result: { response: { image_count: 1 } } }) }),
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ success: true, result: { tool_calls: [{ name: VISUAL_TOOL_NAME, arguments: { image_count: 1 } }] } }) }),
   }), error => error.code === 'visual_workers_ai_multi_image_not_recognized')
 })
 
@@ -74,7 +77,7 @@ test('malformed, fenced, partial, and schema-invalid output fail closed', () => 
 
 test('provider probe maps configuration and provider failures to safe stable codes', async () => {
   await assert.rejects(() => runVisualProviderProbe({ token: '', accountId: 'account', fetchImpl: async () => assert.fail('fetch called') }), error => error.code === 'visual_workers_ai_configuration_missing')
-  for (const [status, code] of [[401, 'visual_workers_ai_unauthorized'], [403, 'visual_workers_ai_forbidden'], [404, 'visual_workers_ai_model_unavailable']]) {
+  for (const [status, code] of [[400, 'visual_workers_ai_request_rejected'], [401, 'visual_workers_ai_unauthorized'], [403, 'visual_workers_ai_forbidden'], [404, 'visual_workers_ai_model_unavailable']]) {
     await assert.rejects(() => runVisualProviderProbe({ token: 'server-secret', accountId: 'account', fetchImpl: async () => ({ ok: false, status }) }), error => error.code === code && !error.message.includes('server-secret'))
   }
 })

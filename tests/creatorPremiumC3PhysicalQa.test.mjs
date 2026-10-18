@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import * as presentation from '../services/creatorPremiumPresentation.mjs';
 import {
+  VISUAL_TOOL_NAME,
   VisualProbeError,
   visualStructuredResponseValue,
 } from '../supabase/functions/content-safety-scan/visualProbe.mjs';
@@ -76,64 +77,60 @@ test('iOS picker avoids Expo passthrough export and every picker promise is caug
   assert.match(imagePickerBody, /catch\s*\(reason\)/);
 });
 
-test('Workers AI accepts only deterministic wrappers before strict schema validation', () => {
-  const fenced = visualStructuredResponseValue({
+test('Workers AI rejects every text wrapper and accepts only the authorized tool carrier', () => {
+  const toolValue = visualStructuredResponseValue({
     success: true,
-    result: { response: `\`\`\`json\n${JSON.stringify(safeVisualResult)}\n\`\`\`` },
+    result: { tool_calls: [{ name: VISUAL_TOOL_NAME, arguments: safeVisualResult }] },
   });
-  assert.deepEqual(validateVisualSafetyResult(fenced, { sourceKind: 'eligible_image' }), safeVisualResult);
-
-  const thoughtWrapped = visualStructuredResponseValue({
-    success: true,
-    result: { response: `<think>internal reasoning omitted</think>\n${JSON.stringify(safeVisualResult)}` },
-  });
-  assert.deepEqual(validateVisualSafetyResult(thoughtWrapped, { sourceKind: 'eligible_image' }), safeVisualResult);
+  assert.deepEqual(validateVisualSafetyResult(toolValue, { sourceKind: 'eligible_image' }), safeVisualResult);
 
   for (const response of [
+    JSON.stringify(safeVisualResult),
     `result: ${JSON.stringify(safeVisualResult)}`,
-    `\`\`\`json\n${JSON.stringify(safeVisualResult)}\n\`\`\` trailing`,
-    '<think>unterminated',
+    `\`\`\`json\n${JSON.stringify(safeVisualResult)}\n\`\`\``,
+    `<think>internal reasoning omitted</think>\n${JSON.stringify(safeVisualResult)}`,
     '{"schema_version":"visual-safety-v1"',
   ]) {
     assert.throws(
       () => visualStructuredResponseValue({ success: true, result: { response } }),
       error => error instanceof VisualProbeError
+        && error.code === 'visual_workers_ai_tool_call_missing'
         && error.providerCalled === true
         && error.retryable === true,
     );
   }
 });
 
-test('Workers AI fails closed on ambiguous response carriers or multiple choices', () => {
-  const encoded = JSON.stringify(safeVisualResult);
+test('Workers AI fails closed on ambiguous tool carriers or multiple choices', () => {
+  const call = { name: VISUAL_TOOL_NAME, arguments: safeVisualResult };
   for (const payload of [
     {
       success: true,
       result: {
-        response: encoded,
-        choices: [{ message: { content: encoded } }],
+        tool_calls: [call],
+        choices: [{ finish_reason: 'tool_calls', message: { content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: VISUAL_TOOL_NAME, arguments: JSON.stringify(safeVisualResult) } }] } }],
       },
     },
     {
       success: true,
       result: {
         choices: [
-          { message: { content: encoded } },
-          { message: { content: encoded } },
+          { finish_reason: 'tool_calls', message: { content: null, tool_calls: [] } },
+          { finish_reason: 'tool_calls', message: { content: null, tool_calls: [] } },
         ],
       },
     },
     {
       success: true,
       result: {
-        choices: [{ message: { content: encoded }, text: encoded }],
+        tool_calls: [call, call],
       },
     },
   ]) {
     assert.throws(
       () => visualStructuredResponseValue(payload),
       error => error instanceof VisualProbeError
-        && error.code === 'visual_workers_ai_structured_output_ambiguous'
+        && error.code === 'visual_workers_ai_tool_call_ambiguous'
         && error.providerCalled === true
         && error.retryable === true,
     );

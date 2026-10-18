@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
   VISUAL_MODEL,
+  VISUAL_TOOL_NAME,
   buildVisualProbeRequest,
   makeSyntheticVisualProbeImage,
   validateVisualProbeResponse,
@@ -534,7 +535,7 @@ function runLocalContracts() {
   const visualRequest = buildVisualProbeRequest()
   const visual = validateVisualProbeResponse({
     success: true,
-    result: { response: { objects: [{ shape: 'square', color: 'red' }, { shape: 'circle', color: 'blue' }] } },
+    result: { tool_calls: [{ name: VISUAL_TOOL_NAME, arguments: { objects: [{ shape: 'square', color: 'red' }, { shape: 'circle', color: 'blue' }] } }] },
   })
   const audioPayloads = [
     { result: { transcription_info: { text: 'Esta es una muestra sintética benigna.', word_count: 6, language: 'es' }, segments: [{ start: 0, end: 1.2, text: 'Esta es una muestra sintética benigna.' }] } },
