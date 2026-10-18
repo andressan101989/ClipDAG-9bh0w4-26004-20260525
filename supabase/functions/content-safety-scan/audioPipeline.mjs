@@ -39,6 +39,7 @@ export function validateStreamAudioUrl(value, uid, customerCode) {
 }
 
 const SIGNED_STREAM_TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
+const STREAM_DELIVERY_PROOF_PATTERN = /^[A-Za-z0-9_-]{1,4096}$/
 
 function signedStreamAudio(value) {
   let url
@@ -66,6 +67,36 @@ export function validateSignedStreamAudioUrl(value, signedAudioUrl) {
   return candidate.url.toString()
 }
 
+export function validateStreamAudioDeliveryRedirect(value, uid, expectedUrl) {
+  let url, expected
+  try {
+    url = new URL(String(value ?? ''))
+    expected = new URL(String(expectedUrl ?? ''))
+  } catch {
+    throw new AudioPipelineError('stream_audio_url_invalid')
+  }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash) {
+    throw new AudioPipelineError('stream_audio_url_untrusted_scheme')
+  }
+  if (url.origin !== expected.origin) throw new AudioPipelineError('stream_audio_url_untrusted_host')
+  let pathname
+  try { pathname = decodeURIComponent(url.pathname) } catch { throw new AudioPipelineError('stream_audio_url_untrusted_path') }
+  const parts = pathname.split('/').filter(Boolean)
+  if (parts.length !== 3 || parts[0]?.toLowerCase() !== String(uid ?? '').trim().toLowerCase()) {
+    throw new AudioPipelineError('stream_audio_url_untrusted_identity')
+  }
+  if (parts[1]?.toLowerCase() !== 'dl') throw new AudioPipelineError('stream_audio_url_untrusted_path')
+  if (parts[2]?.toLowerCase() !== 'audio.m4a') throw new AudioPipelineError('stream_audio_url_untrusted_format')
+  const keys = [...url.searchParams.keys()]
+  const proof = url.searchParams.getAll('p')
+  const signature = url.searchParams.getAll('s')
+  if (keys.length !== 2 || proof.length !== 1 || signature.length !== 1 ||
+      !STREAM_DELIVERY_PROOF_PATTERN.test(proof[0]) || !STREAM_DELIVERY_PROOF_PATTERN.test(signature[0])) {
+    throw new AudioPipelineError('stream_audio_url_untrusted_proof')
+  }
+  return url.toString()
+}
+
 export function validateStreamAudioTargetType(value) {
   if (value !== 'video' && value !== 'creator_premium') {
     throw new AudioPipelineError('stream_audio_target_type_invalid', { status: 422 })
@@ -73,25 +104,14 @@ export function validateStreamAudioTargetType(value) {
   return value
 }
 
-function streamAudioIdentity(value) {
-  return decodeURIComponent(new URL(value).pathname).split('/').filter(Boolean)[0]
-}
-
 export async function selectStreamAudioDownloadRoute({ targetType, uid, customerCode, providerUrl, createPrivateGrant }) {
   const canonicalTargetType = validateStreamAudioTargetType(targetType)
   const canonicalProviderUrl = validateStreamAudioUrl(providerUrl, uid, customerCode)
   if (canonicalTargetType === 'video') {
-    const canonicalIdentity = streamAudioIdentity(canonicalProviderUrl)
     return {
       access: 'public',
       url: canonicalProviderUrl,
-      validateRedirect: value => {
-        const candidate = validateStreamAudioUrl(value, uid, customerCode)
-        if (streamAudioIdentity(candidate).toLowerCase() !== canonicalIdentity.toLowerCase()) {
-          throw new AudioPipelineError('stream_audio_url_untrusted_identity')
-        }
-        return candidate
-      },
+      validateRedirect: value => validateStreamAudioDeliveryRedirect(value, uid, canonicalProviderUrl),
     }
   }
 
@@ -103,7 +123,7 @@ export async function selectStreamAudioDownloadRoute({ targetType, uid, customer
   return {
     access: 'premium_private',
     url: signedAudioUrl,
-    validateRedirect: value => validateSignedStreamAudioUrl(value, signedAudioUrl),
+    validateRedirect: value => validateStreamAudioDeliveryRedirect(value, uid, signedAudioUrl),
   }
 }
 

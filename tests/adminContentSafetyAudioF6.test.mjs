@@ -41,6 +41,7 @@ test("private Stream audio accepts only the exact signed token authority",()=>{
 test("public audio claims preserve the canonical download without invoking the Premium signer",async()=>{
   const uid="0123456789abcdef0123456789abcdef",customerCode="example-code";
   const providerUrl=`https://customer-${customerCode}.cloudflarestream.com/${uid}/downloads/audio.m4a`;
+  const deliveryUrl=`https://customer-${customerCode}.cloudflarestream.com/${uid}/dl/audio.m4a?p=${"A".repeat(64)}&s=${"b".repeat(66)}`;
   const routeWithoutSigner=await selectStreamAudioDownloadRoute({targetType:"video",uid,customerCode,providerUrl});
   assert.equal(routeWithoutSigner.url,providerUrl);
   let signerCalls=0;
@@ -51,7 +52,7 @@ test("public audio claims preserve the canonical download without invoking the P
   assert.equal(route.url,providerUrl);
   assert.equal(route.access,"public");
   assert.equal(signerCalls,0);
-  assert.equal(route.validateRedirect(providerUrl.replace("/downloads/","/dl/")),providerUrl.replace("/downloads/","/dl/"));
+  assert.equal(route.validateRedirect(deliveryUrl),deliveryUrl);
   assert.throws(()=>route.validateRedirect(`https://evil.example/${uid}/downloads/audio.m4a`),AudioPipelineError);
   const bytes=await downloadStreamAudioBytes({route,fetchImpl:async(url,init)=>{
     assert.equal(url,providerUrl);
@@ -66,6 +67,7 @@ test("Premium audio claims require the exact private signed route and never fall
   const providerUrl=`https://customer-${customerCode}.cloudflarestream.com/${uid}/downloads/audio.m4a`;
   const token="eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ2aWRlbyIsImRvd25sb2FkYWJsZSI6dHJ1ZX0.signature";
   const signedUrl=`https://customer-${customerCode}.cloudflarestream.com/${token}/downloads/audio.m4a`;
+  const deliveryUrl=`https://customer-${customerCode}.cloudflarestream.com/${uid}/dl/audio.m4a?p=${"A".repeat(519)}&s=${"b".repeat(66)}`;
   let signerCalls=0;
   const route=await selectStreamAudioDownloadRoute({
     targetType:"creator_premium",uid,customerCode,providerUrl,
@@ -74,13 +76,22 @@ test("Premium audio claims require the exact private signed route and never fall
   assert.equal(route.url,signedUrl);
   assert.equal(route.access,"premium_private");
   assert.equal(signerCalls,1);
-  assert.equal(route.validateRedirect(signedUrl.replace("/downloads/","/dl/")),signedUrl.replace("/downloads/","/dl/"));
+  assert.equal(route.validateRedirect(deliveryUrl),deliveryUrl);
   assert.throws(()=>route.validateRedirect(providerUrl),AudioPipelineError);
   const bytes=await downloadStreamAudioBytes({route,fetchImpl:async url=>{
     assert.equal(url,signedUrl);
     return new Response(new Uint8Array([4,5]),{status:200,headers:{"content-length":"2"}});
   }});
   assert.deepEqual([...bytes],[4,5]);
+  let privateCalls=0;
+  const redirectedBytes=await downloadStreamAudioBytes({route,fetchImpl:async url=>{
+    privateCalls+=1;
+    if(privateCalls===1){assert.equal(url,signedUrl);return new Response(null,{status:302,headers:{location:deliveryUrl}});}
+    assert.equal(url,deliveryUrl);
+    return new Response(new Uint8Array([6,7]),{status:200,headers:{"content-length":"2","content-type":"audio/mp4"}});
+  }});
+  assert.equal(privateCalls,2);
+  assert.deepEqual([...redirectedBytes],[6,7]);
 
   await assert.rejects(
     selectStreamAudioDownloadRoute({
@@ -89,6 +100,36 @@ test("Premium audio claims require the exact private signed route and never fall
     }),
     error=>error instanceof AudioPipelineError&&error.code==="stream_signing_configuration_missing",
   );
+});
+
+test("Stream audio delivery redirects are exact-origin exact-asset and proof-bound",async()=>{
+  const uid="0123456789abcdef0123456789abcdef",otherUid="fedcba9876543210fedcba9876543210",customerCode="example-code";
+  const providerUrl=`https://customer-${customerCode}.cloudflarestream.com/${uid}/downloads/audio.m4a`;
+  const token="eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ2aWRlbyIsImRvd25sb2FkYWJsZSI6dHJ1ZX0.signature";
+  const signedUrl=`https://customer-${customerCode}.cloudflarestream.com/${token}/downloads/audio.m4a`;
+  const route=await selectStreamAudioDownloadRoute({
+    targetType:"creator_premium",uid,customerCode,providerUrl,
+    createPrivateGrant:async()=>({audioUrl:signedUrl}),
+  });
+  const proof=`p=${"A".repeat(519)}&s=${"b".repeat(66)}`;
+  const canonical=`https://customer-${customerCode}.cloudflarestream.com/${uid}/dl/audio.m4a?${proof}`;
+  assert.equal(route.validateRedirect(canonical),canonical);
+  for(const candidate of [
+    canonical.replace("https://","http://"),
+    canonical.replace(`customer-${customerCode}.cloudflarestream.com`,"evil.example"),
+    canonical.replace(uid,otherUid),
+    canonical.replace("/dl/audio.m4a","/downloads/audio.m4a"),
+    canonical.replace("audio.m4a","default.mp4"),
+    canonical.replace(`?${proof}`,`?p=${"A".repeat(519)}`),
+    canonical.replace(`?${proof}`,`?p=${"A".repeat(519)}&s=`),
+    canonical.replace(`?${proof}`,`?p=${"A".repeat(519)}&s=${"b".repeat(66)}&extra=1`),
+    canonical.replace(`?${proof}`,`?p=${"A".repeat(519)}&p=duplicate&s=${"b".repeat(66)}`),
+    canonical.replace(`?${proof}`,`?p=invalid%2Fproof&s=${"b".repeat(66)}`),
+    canonical.replace(`?${proof}`,`?p=${"A".repeat(4097)}&s=${"b".repeat(66)}`),
+    canonical.replace("https://", "https://user@example.com@"),
+    canonical.replace(".com/", ".com:444/"),
+    `${canonical}#fragment`,
+  ]) assert.throws(()=>route.validateRedirect(candidate),AudioPipelineError,candidate);
 });
 
 test("bounded audio download rejects redirects and maps transient failures without external traffic",async()=>{
@@ -108,6 +149,16 @@ test("bounded audio download rejects redirects and maps transient failures witho
     downloadStreamAudioBytes({route,fetchImpl:async()=>new Response(null,{status:503})}),
     error=>error instanceof AudioPipelineError&&error.code==="stream_audio_temporarily_unavailable"&&error.retryable===true,
   );
+  const deliveryUrl=`https://customer-${customerCode}.cloudflarestream.com/${uid}/dl/audio.m4a?p=${"A".repeat(64)}&s=${"b".repeat(66)}`;
+  let calls=0;
+  const bytes=await downloadStreamAudioBytes({route,fetchImpl:async url=>{
+    calls+=1;
+    if(calls===1){assert.equal(url,providerUrl);return new Response(null,{status:302,headers:{location:deliveryUrl}});}
+    assert.equal(url,deliveryUrl);
+    return new Response(new Uint8Array([7,8,9]),{status:200,headers:{"content-length":"3","content-type":"audio/mp4"}});
+  }});
+  assert.equal(calls,2);
+  assert.deepEqual([...bytes],[7,8,9]);
 });
 
 test("unknown or absent server claim target types fail closed before signing",async()=>{
