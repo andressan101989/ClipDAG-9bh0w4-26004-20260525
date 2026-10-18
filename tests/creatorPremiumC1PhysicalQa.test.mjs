@@ -102,7 +102,7 @@ test('native iOS video selection defaults to Photos and retains explicit Files f
   assert.match(filesBody, /DocumentPicker\.getDocumentAsync/);
   assert.match(editor, /Elegir desde Files/);
   assert.match(editor, /duration/i);
-  assert.match(editor, /normalizeCreatorPremiumVideoPickerAsset/);
+  assert.match(editor, /prepareCreatorPremiumVideoPickerAsset/);
 });
 
 test('video picker normalization enforces MIME, bytes, and the 60-second Photos limit', () => {

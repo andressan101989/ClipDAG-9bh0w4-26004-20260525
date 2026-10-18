@@ -1036,7 +1036,7 @@ function collectFunctionSources(directory, root, files = {}) {
   return files;
 }
 
-test('post-B7 baseline produces no stale Edge deployment delta for the C1-only tree', async () => {
+test('C2 shared visual probe delta resolves to only its two canonical Edge consumers', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const repositoryRoot = new URL('..', import.meta.url);
   const rootPath = repositoryRoot.pathname.startsWith('/') && /^[A-Za-z]:/.test(repositoryRoot.pathname.slice(1))
@@ -1059,7 +1059,7 @@ test('post-B7 baseline produces no stale Edge deployment delta for the C1-only t
     configBefore,
     configAfter,
   });
-  assert.deepEqual(affected, []);
+  assert.deepEqual(affected, ['content-safety-scan', 'video-semantic-index']);
   assert.deepEqual(gate.analyzeFunctionReproducibility({ affectedFunctions: affected, graph }), {
     allowed: true,
     blockedFunctions: [],

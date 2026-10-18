@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { randomUUID } from 'expo-crypto';
+import { File } from 'expo-file-system';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
@@ -24,7 +25,7 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import {
   creatorPremiumLifecycleActions,
   creatorPremiumLifecyclePresentation,
-  normalizeCreatorPremiumVideoPickerAsset,
+  prepareCreatorPremiumVideoPickerAsset,
 } from '@/services/creatorPremiumPresentation.mjs';
 import {
   cancelMyCreatorPremiumSubmission,
@@ -48,6 +49,7 @@ import { uploadCreatorPremiumImagePair } from '@/services/creatorPremiumMediaSer
 import { uploadCreatorPremiumVideoMedia } from '@/services/creatorPremiumStreamService';
 import {
   creatorPremiumErrorMessage as messageFor,
+  creatorPremiumSubmissionBlockerMessage,
   creatorPremiumSubmissionMediaBlocker,
   creatorPremiumSubmissionNotice,
 } from '@/services/creatorPremiumIntegrationState';
@@ -95,22 +97,10 @@ async function videoFile(asset: {
   sizeBytes?: number | null;
   durationMs?: number | null;
 }): Promise<LocalFile> {
-  const fileName = asset.fileName ?? `premium-${randomUUID()}.mp4`;
-  const extension = fileName.toLowerCase().split('.').pop();
-  const mimeType = asset.mimeType
-    ?? (extension === 'mov' ? 'video/quicktime' : extension === 'webm' ? 'video/webm' : 'video/mp4');
-  let sizeBytes = asset.sizeBytes ?? 0;
-  if (!sizeBytes) {
-    const response = await fetch(asset.uri);
-    sizeBytes = (await response.blob()).size;
-  }
-  const normalized = normalizeCreatorPremiumVideoPickerAsset({
-    uri: asset.uri,
-    mimeType,
-    fileName,
-    sizeBytes,
-    durationMs: asset.durationMs,
-  });
+  const normalized = prepareCreatorPremiumVideoPickerAsset({
+    ...asset,
+    fileName: asset.fileName ?? `premium-${randomUUID()}.mp4`,
+  }, { sizeForUri: uri => new File(uri).size });
   if (!normalized) throw new Error('creator_premium_video_asset_invalid');
   return normalized;
 }
@@ -120,6 +110,7 @@ function videoPickerError(reason: unknown): string {
   if (code === 'creator_premium_video_mime_invalid') return 'Usa MP4, QuickTime o WebM.';
   if (code === 'creator_premium_video_size_invalid') return 'El video debe pesar menos de 200 MB.';
   if (code === 'creator_premium_video_duration_invalid') return 'El video debe durar como máximo 60 segundos.';
+  if (code === 'creator_premium_video_asset_unreadable') return 'Descarga el video por completo en Photos y vuelve a intentarlo.';
   return messageFor(reason);
 }
 
@@ -351,6 +342,7 @@ export default function CreatorPremiumEditor() {
       mediaTypes: ['videos'],
       allowsEditing: false,
       quality: 1,
+      preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
     });
     if (result.canceled || !result.assets[0]) return;
     const asset = result.assets[0];
@@ -371,7 +363,7 @@ export default function CreatorPremiumEditor() {
     if (busy || readOnly) return;
     const result = await DocumentPicker.getDocumentAsync({
       type: ['video/mp4', 'video/quicktime', 'video/webm'],
-      copyToCacheDirectory: false,
+      copyToCacheDirectory: true,
       multiple: false,
     });
     if (result.canceled || !result.assets[0]) return;
@@ -457,7 +449,10 @@ export default function CreatorPremiumEditor() {
       if (!verificationRetryable) {
         const preflight = await load(id, true, true);
         if (!preflight) throw new Error('creator_premium_submission_not_confirmed');
-        if (preflight.submission_blocker) throw new Error(preflight.submission_blocker);
+        if (preflight.submission_blocker) {
+          setError(creatorPremiumSubmissionBlockerMessage(preflight.submission_blocker, preflight));
+          return;
+        }
       }
       const rpcResult = await publishMyCreatorPremiumContent(id);
       const refreshed = await load(id, true, true);
