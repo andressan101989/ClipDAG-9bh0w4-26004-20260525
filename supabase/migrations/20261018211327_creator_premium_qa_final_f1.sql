@@ -759,6 +759,10 @@ declare
   v_content private.creator_premium_contents;
   v_command public.idempotency_keys;
   v_selected_plan_ids uuid[];
+  v_affected_plan_ids uuid[] := '{}'::uuid[];
+  v_affected_plan_keys text[] := '{}'::text[];
+  v_selected_plan_keys text[] := '{}'::text[];
+  v_actual_plan_keys text[] := '{}'::text[];
   v_actual_active_plan_ids uuid[] := '{}'::uuid[];
   v_versioned_plan_ids uuid[] := '{}'::uuid[];
   v_activate_plan_ids uuid[] := '{}'::uuid[];
@@ -768,6 +772,7 @@ declare
   v_clone record;
   v_submission record;
   v_plan_id uuid;
+  v_plan_key text;
   v_clone_request_id uuid;
   v_selected boolean;
   v_mapped boolean;
@@ -848,6 +853,61 @@ begin
     return;
   end if;
 
+  -- Canonical plan commands take the plan-family lock, then the concrete plan,
+  -- and only then content rows. Match that order so submit cannot deadlock with
+  -- clone/activate/retire/set-contents during a concurrent plan change.
+  select coalesce(pg_catalog.array_agg(affected.plan_key order by affected.plan_key), '{}'::text[])
+  into v_affected_plan_keys
+  from (
+    select distinct plan.plan_key
+    from private.creator_premium_plans plan
+    where plan.creator_id = v_actor
+      and (
+        plan.id = any(v_selected_plan_ids)
+        or (
+          plan.status = 'active'
+          and exists (
+            select 1
+            from private.creator_premium_plan_contents mapping
+            where mapping.plan_id = plan.id
+              and mapping.creator_id = v_actor
+              and mapping.content_id = p_content_id
+          )
+        )
+      )
+  ) affected;
+  foreach v_plan_key in array v_affected_plan_keys loop
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(
+        'creator-premium-plan-version:' || v_actor::text || ':' || v_plan_key,
+        0
+      )
+    );
+  end loop;
+
+  select coalesce(pg_catalog.array_agg(plan.id order by plan.id), '{}'::uuid[])
+  into v_affected_plan_ids
+  from private.creator_premium_plans plan
+  where plan.creator_id = v_actor
+    and (
+      plan.id = any(v_selected_plan_ids)
+      or (
+        plan.status = 'active'
+        and exists (
+          select 1
+          from private.creator_premium_plan_contents mapping
+          where mapping.plan_id = plan.id
+            and mapping.creator_id = v_actor
+            and mapping.content_id = p_content_id
+        )
+      )
+    );
+  foreach v_plan_id in array v_affected_plan_ids loop
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended('creator-premium-plan:' || v_plan_id::text, 0)
+    );
+  end loop;
+
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended('creator-premium-content:' || p_content_id::text, 0)
   );
@@ -879,6 +939,12 @@ begin
   if v_count <> pg_catalog.cardinality(v_selected_plan_ids) then
     raise exception using errcode = '55000', message = 'creator_premium_active_plan_required';
   end if;
+  select coalesce(pg_catalog.array_agg(distinct plan.plan_key order by plan.plan_key), '{}'::text[])
+  into v_selected_plan_keys
+  from private.creator_premium_plans plan
+  where plan.id = any(v_selected_plan_ids)
+    and plan.creator_id = v_actor
+    and plan.status = 'active';
 
   perform plan.id
   from private.creator_premium_plans plan
@@ -984,6 +1050,19 @@ begin
     and mapping.creator_id = v_actor
     and plan.status = 'active';
 
+  select coalesce(pg_catalog.array_agg(distinct plan.plan_key order by plan.plan_key), '{}'::text[])
+  into v_actual_plan_keys
+  from private.creator_premium_plan_contents mapping
+  join private.creator_premium_plans plan
+    on plan.id = mapping.plan_id
+   and plan.creator_id = mapping.creator_id
+  where mapping.content_id = p_content_id
+    and mapping.creator_id = v_actor
+    and plan.status = 'active';
+  if v_actual_plan_keys is distinct from v_selected_plan_keys then
+    raise exception using errcode = '40001', message = 'creator_premium_plan_selection_stale';
+  end if;
+
   if v_content.access_mode in ('subscription','purchase_or_subscription')
      and pg_catalog.cardinality(v_actual_active_plan_ids) = 0 then
     raise exception using errcode = '55000', message = 'creator_premium_active_plan_required';
@@ -1033,6 +1112,10 @@ as $$
 declare
   v_actor uuid := auth.uid();
   v_content private.creator_premium_contents;
+  v_affected_plan_ids uuid[] := '{}'::uuid[];
+  v_affected_plan_keys text[] := '{}'::text[];
+  v_plan_id uuid;
+  v_plan_key text;
   v_now timestamptz := pg_catalog.clock_timestamp();
 begin
   if v_actor is null then
@@ -1047,6 +1130,37 @@ begin
   if p_content_id is null then
     raise exception using errcode = '22023', message = 'creator_premium_invalid_content';
   end if;
+
+  select coalesce(pg_catalog.array_agg(distinct plan.plan_key order by plan.plan_key), '{}'::text[])
+  into v_affected_plan_keys
+  from private.creator_premium_plan_contents mapping
+  join private.creator_premium_plans plan
+    on plan.id = mapping.plan_id
+   and plan.creator_id = mapping.creator_id
+  where mapping.content_id = p_content_id
+    and mapping.creator_id = v_actor;
+  foreach v_plan_key in array v_affected_plan_keys loop
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(
+        'creator-premium-plan-version:' || v_actor::text || ':' || v_plan_key,
+        0
+      )
+    );
+  end loop;
+
+  select coalesce(pg_catalog.array_agg(plan.id order by plan.id), '{}'::uuid[])
+  into v_affected_plan_ids
+  from private.creator_premium_plan_contents mapping
+  join private.creator_premium_plans plan
+    on plan.id = mapping.plan_id
+   and plan.creator_id = mapping.creator_id
+  where mapping.content_id = p_content_id
+    and mapping.creator_id = v_actor;
+  foreach v_plan_id in array v_affected_plan_ids loop
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended('creator-premium-plan:' || v_plan_id::text, 0)
+    );
+  end loop;
 
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended('creator-premium-content:' || p_content_id::text, 0)

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -77,11 +78,14 @@ const otherUserId = '10000000-0000-4000-8000-000000000002';
 const contentId = '20000000-0000-4000-8000-000000000001';
 const assetId = '30000000-0000-4000-8000-000000000001';
 const secondAssetId = '30000000-0000-4000-8000-000000000002';
+const providerUid = 'abcdef0123456789abcdef0123456789';
+const providerTusUrl = `https://upload.videodelivery.net/tus/${providerUid}?tusv2=true`;
 
 function loadCreateStreamUpload({
   authorized = true,
   businessAllowed = true,
   user = { id: userId },
+  tusLocation = providerTusUrl,
 } = {}) {
   let handler;
   const providerCalls = [];
@@ -138,7 +142,11 @@ function loadCreateStreamUpload({
         }
       },
       safeFilename: value => String(value ?? 'video'),
-      sanitizeProviderError: () => ({ code: 'provider_error', message: 'provider_error', status: 502 }),
+      sanitizeProviderError: error => ({
+        code: error?.code ?? error?.message ?? 'provider_error',
+        message: error?.code ?? error?.message ?? 'provider_error',
+        status: error?.httpStatus ?? 502,
+      }),
       streamApiBase: () => 'https://api.cloudflare.test/accounts/account/stream',
       async streamFetch(pathname, init) {
         providerCalls.push({ kind: 'direct', pathname, body: JSON.parse(String(init.body)) });
@@ -159,8 +167,8 @@ function loadCreateStreamUpload({
       return new Response(null, {
         status: 201,
         headers: {
-          Location: 'https://upload.example.test/tus',
-          'stream-media-id': 'provider-uid',
+          Location: tusLocation,
+          'stream-media-id': providerUid,
         },
       });
     },
@@ -236,6 +244,17 @@ test('Premium TUS upload uses caller authorization, private reservation, signed 
   assert.equal(payload.data.protocol, 'tus');
   assert.equal(payload.data.method, 'PATCH');
   assert.equal(payload.data.maxDurationSeconds, 180);
+  assert.equal(payload.data.uploadUrl, providerTusUrl);
+});
+
+test('Premium TUS upload rejects a provider Location outside the canonical Cloudflare upload origin', async () => {
+  const harness = loadCreateStreamUpload({
+    tusLocation: `https://attacker.example/tus/${providerUid}?tusv2=true`,
+  });
+  const { response, json: payload } = await post(harness.handler, upload);
+  assert.equal(response.status, 502);
+  assert.equal(payload.error, 'stream_provider_invalid_response');
+  assert.equal(harness.updates.some(update => update.status === 'failed'), true);
 });
 
 test('Feed and Business keep unsigned direct uploads and never receive Premium metadata', async () => {

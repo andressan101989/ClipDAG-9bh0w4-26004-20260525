@@ -1,9 +1,10 @@
 // Real disposable PostgreSQL proof for Creator Premium QA Final F1.
 // Set RUN_CREATOR_PREMIUM_F1_LOCAL=1 to execute it.
 import assert from 'node:assert/strict'
+import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import test from 'node:test'
 
 const enabled = process.env.RUN_CREATOR_PREMIUM_F1_LOCAL === '1'
@@ -43,7 +44,8 @@ const F1_RPC_SECURITY_CASES = [
     caseIds: [
       'submit_anon_acl', 'submit_service_role_acl', 'submit_cross_owner',
       'submit_active_plan_required', 'submit_atomic_active_version',
-      'submit_idempotent_replay', 'submit_scan_enqueued', 'submit_finance_no_side_effect',
+      'submit_idempotent_replay', 'submit_scan_enqueued', 'submit_concurrent_lock_order',
+      'submit_finance_no_side_effect',
     ],
   },
   {
@@ -96,6 +98,46 @@ function psql(db, sql, { allowFailure = false } = {}) {
   return docker(`psql -X -q -v ON_ERROR_STOP=1 -U supabase_admin -d ${db} -At -F '|'`, {
     input: sql, allowFailure,
   })
+}
+
+function psqlConcurrent(db, sql, marker = null) {
+  assert.match(db, /^[a-z0-9_]+$/)
+  const child = spawn('docker', [
+    'exec', '-i', container, '/bin/sh', '-c',
+    `psql -X -q -v ON_ERROR_STOP=1 -U supabase_admin -d ${db} -At -F '|'`,
+  ], { stdio: ['pipe', 'pipe', 'pipe'] })
+  let stdout = ''
+  let stderr = ''
+  let markerResolved = marker === null
+  let resolveMarker
+  let rejectMarker
+  const markerReady = new Promise((resolve, reject) => {
+    resolveMarker = resolve
+    rejectMarker = reject
+    if (markerResolved) resolve()
+  })
+  child.stdout.setEncoding('utf8')
+  child.stderr.setEncoding('utf8')
+  child.stdout.on('data', chunk => {
+    stdout += chunk
+    if (!markerResolved && stdout.includes(marker)) {
+      markerResolved = true
+      resolveMarker()
+    }
+  })
+  child.stderr.on('data', chunk => { stderr += chunk })
+  const completion = new Promise((resolve, reject) => {
+    child.on('error', error => {
+      if (!markerResolved) rejectMarker(error)
+      reject(error)
+    })
+    child.on('close', status => {
+      if (!markerResolved) rejectMarker(new Error(`marker not observed: ${marker}\n${stdout}\n${stderr}`))
+      resolve({ status, stdout: stdout.trim(), stderr: stderr.trim() })
+    })
+  })
+  child.stdin.end(sql)
+  return { markerReady, completion }
 }
 
 function asRole(db, role, actor, sql, { allowFailure = false } = {}) {
@@ -172,13 +214,15 @@ test('F1 disposable harness binds one forward migration after the activated P2 c
 test('F1 disposable database proves 180s isolation, plan versioning, owner lifecycle, ACL, and finance invariants', {
   skip: !enabled,
   timeout: 900_000,
-}, t => {
+}, async t => {
   const db = `premium_f1_${randomUUID().replaceAll('-', '').slice(0, 10)}`
   const uid = () => randomUUID()
   const id = {
     creator: uid(), other: uid(), buyer: uid(),
     currentContent: uid(), currentScan: uid(), targetContent: uid(), currentTeaser: uid(), currentOriginal: uid(),
     targetTeaser: uid(), targetOriginal: uid(), activePlanRequest: uid(), submitRequest: uid(),
+    concurrentContent: uid(), concurrentTeaser: uid(), concurrentOriginal: uid(),
+    concurrentPlanRequest: uid(), concurrentCloneRequest: uid(), concurrentSubmitRequest: uid(),
     safetyVideoRequest: uid(),
     draftDeleteRequest: uid(), dependentDeleteRequest: uid(),
     published: uid(), publishedScan: uid(), publishedTeaser: uid(), publishedOriginal: uid(),
@@ -316,6 +360,77 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
       '${activePlan.id}',array['${id.currentContent}']::uuid[]
     ) result`)).mapped_content_count, 1)
     assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.activate_my_creator_premium_plan_v1('${activePlan.id}') result`)).status, 'active')
+
+    // Two real sessions prove the canonical family -> plan -> content lock order.
+    // The activation session owns the family lock before submit starts. With the
+    // previous content-first F1 order this forms a deterministic deadlock; the
+    // fixed submit waits without owning the content row, so activation reaches
+    // its expected domain rejection and submit then completes.
+    const concurrent = createDraft('Concurrent subscription content', 'subscription', id.concurrentContent)
+    psql(db, mediaFixture({
+      owner: id.creator, content: concurrent.id,
+      teaser: id.concurrentTeaser, original: id.concurrentOriginal,
+    }))
+    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_image_media_v1(
+      '${concurrent.id}','${id.concurrentTeaser}','${id.concurrentOriginal}'
+    ) result`)).media_ready, true)
+    const concurrentPlan = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.create_my_creator_premium_plan_draft_v1(
+      'Concurrency family','Lock ordering proof',99.00000000,30,'${id.concurrentPlanRequest}'
+    ) result`))
+    asRole(db, 'authenticated', id.creator, `select public.set_my_creator_premium_plan_contents_v1(
+      '${concurrentPlan.id}',array['${id.currentContent}']::uuid[]
+    )`)
+    asRole(db, 'authenticated', id.creator, `select public.activate_my_creator_premium_plan_v1('${concurrentPlan.id}')`)
+    const concurrentClone = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.clone_my_creator_premium_plan_version_v1(
+      '${concurrentPlan.id}','${id.concurrentCloneRequest}'
+    ) result`))
+    asRole(db, 'authenticated', id.creator, `select public.set_my_creator_premium_plan_contents_v1(
+      '${concurrentClone.id}',array['${id.currentContent}','${concurrent.id}']::uuid[]
+    )`)
+    const concurrentPlanKey = psql(db, `select plan_key from private.creator_premium_plans where id='${concurrentClone.id}'`).stdout
+    assert.match(concurrentPlanKey, /^[a-z0-9_]+$/)
+    const activation = psqlConcurrent(db, `
+      begin;
+      select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+        'creator-premium-plan-version:${id.creator}:${concurrentPlanKey}',0
+      ));
+      select 'F1_FAMILY_LOCK_READY';
+      select pg_catalog.pg_sleep(1);
+      set local request.jwt.claim.sub='${id.creator}';
+      set local request.jwt.claim.role='authenticated';
+      set local role authenticated;
+      do $activation$
+      begin
+        perform 1 from public.activate_my_creator_premium_plan_v1('${concurrentClone.id}');
+        raise exception 'expected activation domain rejection';
+      exception when sqlstate '55000' then
+        if sqlerrm <> 'creator_premium_plan_content_review_required' then raise; end if;
+      end
+      $activation$;
+      select 'F1_ACTIVATION_EXPECTED_BLOCK';
+      commit;
+    `, 'F1_FAMILY_LOCK_READY')
+    await activation.markerReady
+    const concurrentSubmit = psqlConcurrent(db, `
+      begin;
+      set local request.jwt.claim.sub='${id.creator}';
+      set local request.jwt.claim.role='authenticated';
+      set local role authenticated;
+      select to_jsonb(result) from public.submit_my_creator_premium_content_with_plans_v1(
+        '${concurrent.id}',array['${concurrentPlan.id}']::uuid[],'${id.concurrentSubmitRequest}'
+      ) result;
+      commit;
+    `)
+    const [activationResult, submitResult] = await Promise.all([
+      activation.completion,
+      concurrentSubmit.completion,
+    ])
+    assert.equal(activationResult.status, 0, activationResult.stderr)
+    assert.match(activationResult.stdout, /F1_ACTIVATION_EXPECTED_BLOCK/)
+    assert.equal(submitResult.status, 0, `${submitResult.stdout}\n${submitResult.stderr}`)
+    assert.doesNotMatch(`${activationResult.stderr}\n${submitResult.stderr}`, /deadlock detected/i)
+    assert.equal(JSON.parse(submitResult.stdout.split(/\r?\n/).find(line => line.startsWith('{'))).lifecycle_status, 'pending_review')
+    proved.add('submit_concurrent_lock_order')
 
     expectFailure(asRole(db, 'authenticated', id.creator, `select public.submit_my_creator_premium_content_with_plans_v1(
       '${id.targetContent}',array[]::uuid[],'${uid()}'

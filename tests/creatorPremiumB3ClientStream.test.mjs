@@ -11,6 +11,7 @@ const premiumServicePath = path.join(root, 'services/creatorPremiumStreamService
 const contentId = '20000000-0000-4000-8000-000000000001';
 const teaserAssetId = '30000000-0000-4000-8000-000000000001';
 const videoAssetId = '40000000-0000-4000-8000-000000000001';
+const providerTusUrl = 'https://upload.videodelivery.net/tus/abcdef0123456789abcdef0123456789?tusv2=true';
 const signedStreamToken = 'eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3QifQ.eyJzdWIiOiJwcm92aWRlci11aWQiLCJleHAiOjE3OTAwMDAwMDB9.c2lnbmF0dXJl';
 
 function signedStreamGrant(overrides = {}) {
@@ -60,6 +61,7 @@ function loadStreamService(invoke, { UploadClass = class {
     FormData,
     Blob,
     Response,
+    URL,
     require(specifier) {
       if (specifier === 'expo-file-system') return { File: MockFile };
       if (specifier === 'expo/fetch') return { fetch: async () => ({ ok: true, status: 200 }) };
@@ -94,7 +96,7 @@ test('streamService creates exact Premium TUS context without changing Feed crea
     const premium = options.body.purpose === 'creator_premium_video';
     return { data: { success: true, data: {
       assetId: videoAssetId,
-      uploadUrl: 'https://upload.example.test/direct',
+      uploadUrl: providerTusUrl,
       protocol: premium ? 'tus' : 'multipart',
       method: premium ? 'PATCH' : 'POST',
       ...(premium ? {} : { formField: 'file' }),
@@ -119,6 +121,21 @@ test('streamService creates exact Premium TUS context without changing Feed crea
   });
 });
 
+test('streamService rejects a plausible HTTPS Premium TUS URL outside Cloudflare', async () => {
+  const service = loadStreamService(async () => ({ data: { success: true, data: {
+    assetId: videoAssetId,
+    uploadUrl: 'https://attacker.example/tus/abcdef0123456789abcdef0123456789?tusv2=true',
+    protocol: 'tus', method: 'PATCH', expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    maxDurationSeconds: 180, maxSizeBytes: 200_000_000,
+  } }, error: null }));
+  await assert.rejects(
+    () => service.createCreatorPremiumStreamUpload({
+      contentId, mimeType: 'video/mp4', sizeBytes: 1000, fileName: 'premium.mp4',
+    }),
+    /invalid_premium_stream_upload_contract/,
+  );
+});
+
 test('Premium TUS upload uses bounded retries, compliant chunks and observable progress', async () => {
   const captures = [];
   class MockTusUpload {
@@ -141,12 +158,12 @@ test('Premium TUS upload uses bounded retries, compliant chunks and observable p
     fileName: 'premium.mp4',
     mimeType: 'video/mp4',
     sizeBytes: 10_485_760,
-    uploadUrl: 'https://upload.example.test/tus',
+    uploadUrl: providerTusUrl,
     onProgress: (...values) => progress.push(values),
   });
   assert.equal(captures.length, 1);
   assert.equal(captures[0].file.uri, 'file:///premium.mp4');
-  assert.equal(captures[0].options.uploadUrl, 'https://upload.example.test/tus');
+  assert.equal(captures[0].options.uploadUrl, providerTusUrl);
   assert.equal(captures[0].options.uploadSize, 10_485_760);
   assert.equal(captures[0].options.chunkSize, 5 * 1024 * 1024);
   assert.deepEqual(Array.from(captures[0].options.retryDelays), [0, 1_000, 3_000, 5_000]);
