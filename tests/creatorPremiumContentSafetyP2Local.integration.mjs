@@ -213,8 +213,8 @@ test('P2 compiles and proves private evidence, bounded claims, candidate decisio
       assert.equal(psql(db, `select has_function_privilege('${role}','private.creator_premium_content_safety_candidate_p2_v1(uuid)','execute')`).stdout, 'f')
     }
     assert.equal(psql(db, `select has_function_privilege('service_role','public.claim_creator_premium_content_safety_context_v1(integer)','execute')`).stdout, 't')
-    assert.equal(psql(db, `select has_function_privilege('service_role','public.complete_creator_premium_content_safety_context_v1(uuid,text,jsonb)','execute')`).stdout, 't')
-    assert.equal(psql(db, `select has_function_privilege('service_role','public.fail_creator_premium_content_safety_context_v1(uuid,text,boolean,boolean)','execute')`).stdout, 't')
+    assert.equal(psql(db, `select has_function_privilege('service_role','public.complete_creator_premium_content_safety_context_v1(uuid,text,integer,jsonb)','execute')`).stdout, 't')
+    assert.equal(psql(db, `select has_function_privilege('service_role','public.fail_creator_premium_content_safety_context_v1(uuid,integer,text,boolean,boolean)','execute')`).stdout, 't')
     assert.equal(psql(db, `select has_function_privilege('authenticated','public.claim_creator_premium_content_safety_context_v1(integer)','execute')`).stdout, 'f')
     assert.equal(psql(db, `select private.creator_premium_content_safety_policy_p1_v1()#>>'{activation,enabled}'`).stdout, 'false')
     assert.equal(psql(db, `select count(*) from private.creator_premium_content_safety_context_evaluations`).stdout, '0')
@@ -236,7 +236,7 @@ test('P2 compiles and proves private evidence, bounded claims, candidate decisio
     assert.equal(Object.hasOwn(allowClaim[0], 'owner_user_id'), false)
     assert.equal(Object.hasOwn(allowClaim[0], 'media_url'), false)
     const allowJson = contextResult({ decision: 'allow', categories: ['education'], rationale: ['educational_context', 'quoted_or_negated_context'] })
-    const allowReceipt = JSON.parse(psql(db, `select public.complete_creator_premium_content_safety_context_v1('${allow.scan}','${allowClaim[0].content_fingerprint}','${allowJson}'::jsonb)`).stdout)
+    const allowReceipt = JSON.parse(psql(db, `select public.complete_creator_premium_content_safety_context_v1('${allow.scan}','${allowClaim[0].content_fingerprint}',${allowClaim[0].attempt_count},'${allowJson}'::jsonb)`).stdout)
     assert.equal(allowReceipt.context_status, 'completed')
     assert.equal(allowReceipt.decision, 'allow')
     assert.match(allowReceipt.evaluation_fingerprint, /^[0-9a-f]{64}$/)
@@ -245,7 +245,7 @@ test('P2 compiles and proves private evidence, bounded claims, candidate decisio
     psql(db, `update private.content_safety_visual_analyses set analysis_fingerprint='${'1'.repeat(64)}' where id='${allow.analysis}'`)
     assert.equal(JSON.parse(psql(db, `select private.creator_premium_content_safety_candidate_p2_v1('${allow.scan}')`).stdout).decision, 'technical_failure')
     psql(db, `update private.content_safety_visual_analyses set analysis_fingerprint='${'d'.repeat(64)}' where id='${allow.analysis}'`)
-    const replay = JSON.parse(psql(db, `select public.complete_creator_premium_content_safety_context_v1('${allow.scan}','${allowClaim[0].content_fingerprint}','${allowJson}'::jsonb)`).stdout)
+    const replay = JSON.parse(psql(db, `select public.complete_creator_premium_content_safety_context_v1('${allow.scan}','${allowClaim[0].content_fingerprint}',${allowClaim[0].attempt_count},'${allowJson}'::jsonb)`).stdout)
     assert.equal(replay.replayed, true)
     assert.equal(psql(db, `select provider_call_count from private.creator_premium_content_safety_context_evaluations where source_scan_id='${allow.scan}'`).stdout, '1')
     assert.notEqual(psql(db, `select public.claim_creator_premium_content_safety_context_v1(2)`, { allowFailure: true }).status, 0)
@@ -255,11 +255,11 @@ test('P2 compiles and proves private evidence, bounded claims, candidate decisio
     const reviewClaim = JSON.parse(psql(db, `select public.claim_creator_premium_content_safety_context_v1(1)`).stdout)[0]
     assert.equal(reviewClaim.scan_id, review.scan)
     const invalidReview = contextResult({ decision: 'review', categories: ['age_uncertain'], uncertainty: 'ambiguous', rationale: ['age_requires_review'] })
-    const invalidCompletion = psql(db, `select public.complete_creator_premium_content_safety_context_v1('${review.scan}','${reviewClaim.content_fingerprint}','${invalidReview}'::jsonb)`, { allowFailure: true })
+    const invalidCompletion = psql(db, `select public.complete_creator_premium_content_safety_context_v1('${review.scan}','${reviewClaim.content_fingerprint}',${reviewClaim.attempt_count},'${invalidReview}'::jsonb)`, { allowFailure: true })
     assert.notEqual(invalidCompletion.status, 0)
     assert.match(invalidCompletion.stderr, /creator_premium_context_schema_invalid/i)
     const reviewJson = contextResult({ decision: 'review', categories: ['age_uncertain'], uncertainty: 'ambiguous', age: 'present', rationale: ['age_requires_review'] })
-    psql(db, `select public.complete_creator_premium_content_safety_context_v1('${review.scan}','${reviewClaim.content_fingerprint}','${reviewJson}'::jsonb)`)
+    psql(db, `select public.complete_creator_premium_content_safety_context_v1('${review.scan}','${reviewClaim.content_fingerprint}',${reviewClaim.attempt_count},'${reviewJson}'::jsonb)`)
     assert.equal(JSON.parse(psql(db, `select private.creator_premium_content_safety_candidate_p2_v1('${review.scan}')`).stdout).decision, 'review')
 
     const blocked = { content: randomUUID(), scan: randomUUID(), analysis: randomUUID(), media: randomUUID() }
@@ -267,8 +267,22 @@ test('P2 compiles and proves private evidence, bounded claims, candidate decisio
     const blockClaim = JSON.parse(psql(db, `select public.claim_creator_premium_content_safety_context_v1(1)`).stdout)[0]
     assert.equal(blockClaim.scan_id, blocked.scan)
     const blockJson = contextResult({ decision: 'block', categories: ['non_consensual_intimate_content'], consent: 'present', rationale: ['severe_explicit_context'] })
-    psql(db, `select public.complete_creator_premium_content_safety_context_v1('${blocked.scan}','${blockClaim.content_fingerprint}','${blockJson}'::jsonb)`)
+    psql(db, `select public.complete_creator_premium_content_safety_context_v1('${blocked.scan}','${blockClaim.content_fingerprint}',${blockClaim.attempt_count},'${blockJson}'::jsonb)`)
     assert.equal(JSON.parse(psql(db, `select private.creator_premium_content_safety_candidate_p2_v1('${blocked.scan}')`).stdout).decision, 'block')
+
+    const fenced = { content: randomUUID(), scan: randomUUID(), analysis: randomUUID(), media: randomUUID() }
+    psql(db, imageFixtureSql({ actor, ...fenced, title: 'Generation fence fixture' }))
+    const firstFencedClaim = JSON.parse(psql(db, `select public.claim_creator_premium_content_safety_context_v1(1)`).stdout)[0]
+    assert.equal(firstFencedClaim.scan_id, fenced.scan)
+    psql(db, `update private.creator_premium_content_safety_context_evaluations set created_at=clock_timestamp()-interval '12 minutes',started_at=clock_timestamp()-interval '11 minutes' where source_scan_id='${fenced.scan}'`)
+    const secondFencedClaim = JSON.parse(psql(db, `select public.claim_creator_premium_content_safety_context_v1(1)`).stdout)[0]
+    assert.equal(secondFencedClaim.scan_id, fenced.scan)
+    assert.equal(secondFencedClaim.attempt_count, firstFencedClaim.attempt_count + 1)
+    const staleAttempt = psql(db, `select public.complete_creator_premium_content_safety_context_v1('${fenced.scan}','${firstFencedClaim.content_fingerprint}',${firstFencedClaim.attempt_count},'${allowJson}'::jsonb)`, { allowFailure: true })
+    assert.notEqual(staleAttempt.status, 0)
+    assert.match(staleAttempt.stderr, /creator_premium_context_attempt_stale/i)
+    psql(db, `select public.complete_creator_premium_content_safety_context_v1('${fenced.scan}','${secondFencedClaim.content_fingerprint}',${secondFencedClaim.attempt_count},'${allowJson}'::jsonb)`)
+    assert.equal(JSON.parse(psql(db, `select private.creator_premium_content_safety_candidate_p2_v1('${fenced.scan}')`).stdout).decision, 'allow')
 
     const retry = { content: randomUUID(), scan: randomUUID(), analysis: randomUUID(), media: randomUUID() }
     psql(db, imageFixtureSql({ actor, ...retry, title: 'Bounded retry fixture' }))
@@ -277,7 +291,7 @@ test('P2 compiles and proves private evidence, bounded claims, candidate decisio
       assert.equal(claim.length, 1)
       assert.equal(claim[0].scan_id, retry.scan)
       assert.equal(claim[0].attempt_count, attempt)
-      const receipt = JSON.parse(psql(db, `select public.fail_creator_premium_content_safety_context_v1('${retry.scan}','provider_timeout',true,true)`).stdout)
+      const receipt = JSON.parse(psql(db, `select public.fail_creator_premium_content_safety_context_v1('${retry.scan}',${claim[0].attempt_count},'provider_timeout',true,true)`).stdout)
       assert.equal(receipt.context_status, attempt < 5 ? 'pending' : 'failed')
       if (attempt < 5) psql(db, `update private.creator_premium_content_safety_context_evaluations set available_at=clock_timestamp() where source_scan_id='${retry.scan}'`)
     }
@@ -291,7 +305,7 @@ test('P2 compiles and proves private evidence, bounded claims, candidate decisio
     assert.equal(videoClaim.transcript_coverage, 'complete')
     assert.match(videoClaim.transcript_text, /condena la violencia/i)
     const videoAllow = contextResult({ decision: 'allow', categories: ['education'], transcript: 'complete', rationale: ['educational_context', 'quoted_or_negated_context'] })
-    psql(db, `select public.complete_creator_premium_content_safety_context_v1('${video.scan}','${videoClaim.content_fingerprint}','${videoAllow}'::jsonb)`)
+    psql(db, `select public.complete_creator_premium_content_safety_context_v1('${video.scan}','${videoClaim.content_fingerprint}',${videoClaim.attempt_count},'${videoAllow}'::jsonb)`)
     assert.equal(JSON.parse(psql(db, `select private.creator_premium_content_safety_candidate_p2_v1('${video.scan}')`).stdout).decision, 'allow')
     psql(db, `update private.content_safety_audio_transcripts set transcript_fingerprint='${'2'.repeat(64)}' where id='${video.transcript}'`)
     assert.equal(JSON.parse(psql(db, `select private.creator_premium_content_safety_candidate_p2_v1('${video.scan}')`).stdout).decision, 'technical_failure')
@@ -302,7 +316,7 @@ test('P2 compiles and proves private evidence, bounded claims, candidate decisio
     const staleClaim = JSON.parse(psql(db, `select public.claim_creator_premium_content_safety_context_v1(1)`).stdout)[0]
     assert.equal(staleClaim.scan_id, stale.scan)
     psql(db, `update private.creator_premium_contents set title='Stale binding fixture changed',updated_at=clock_timestamp() where id='${stale.content}'`)
-    const staleCompletion = psql(db, `select public.complete_creator_premium_content_safety_context_v1('${stale.scan}','${staleClaim.content_fingerprint}','${allowJson}'::jsonb)`, { allowFailure: true })
+    const staleCompletion = psql(db, `select public.complete_creator_premium_content_safety_context_v1('${stale.scan}','${staleClaim.content_fingerprint}',${staleClaim.attempt_count},'${allowJson}'::jsonb)`, { allowFailure: true })
     assert.notEqual(staleCompletion.status, 0)
     assert.match(staleCompletion.stderr, /creator_premium_context_binding_invalid/i)
     assert.equal(JSON.parse(psql(db, `select private.creator_premium_content_safety_candidate_p2_v1('${stale.scan}')`).stdout).decision, 'technical_failure')

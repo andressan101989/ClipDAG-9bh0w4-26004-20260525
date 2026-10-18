@@ -357,6 +357,7 @@ Deno.serve(async req => {
     try {
       if (!uuid(claim.scan_id) || typeof claim.content_fingerprint !== 'string' ||
           !/^[0-9a-f]{64}$/u.test(claim.content_fingerprint) || typeof claim.text !== 'string' ||
+          !Number.isInteger(claim.attempt_count) || Number(claim.attempt_count) < 1 || Number(claim.attempt_count) > 5 ||
           !['complete', 'no_speech', 'not_applicable'].includes(String(claim.transcript_coverage)) ||
           typeof claim.transcript_text !== 'string') {
         throw new PolicyContextError('creator_premium_context_claim_invalid', { status: 400 })
@@ -376,6 +377,7 @@ Deno.serve(async req => {
       const { error } = await admin.rpc('complete_creator_premium_content_safety_context_v1', {
         p_scan_id: claim.scan_id,
         p_content_fingerprint: claim.content_fingerprint,
+        p_attempt_count: claim.attempt_count,
         p_context_result: result,
       })
       if (error) throw new PolicyContextError('creator_premium_context_completion_failed', { retryable: true, providerCalled: true })
@@ -399,6 +401,7 @@ Deno.serve(async req => {
       if (uuid(claim.scan_id)) {
         const { data } = await admin.rpc('fail_creator_premium_content_safety_context_v1', {
           p_scan_id: claim.scan_id,
+          p_attempt_count: claim.attempt_count,
           p_error_code: issue.code,
           p_retryable: issue.retryable,
           p_provider_called: issue.providerCalled,
