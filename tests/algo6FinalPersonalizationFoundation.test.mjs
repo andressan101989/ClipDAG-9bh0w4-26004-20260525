@@ -14,6 +14,7 @@ const service = existsSync(serviceUrl) ? readFileSync(serviceUrl, 'utf8') : '';
 const onboarding = existsSync(onboardingUrl) ? readFileSync(onboardingUrl, 'utf8') : '';
 const gate = readFileSync(new URL('../components/feature/PersonalizationGate.tsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../app/_layout.tsx', import.meta.url), 'utf8');
+const rootRuntime = readFileSync(new URL('../components/feature/RootAppRuntime.tsx', import.meta.url), 'utf8');
 const login = readFileSync(new URL('../app/login.tsx', import.meta.url), 'utf8');
 const settings = readFileSync(new URL('../app/settings.tsx', import.meta.url), 'utf8');
 const semanticWorker = readFileSync(
@@ -109,7 +110,8 @@ test('client has one server-backed four-step onboarding and editable settings pa
   assert.match(onboarding, /contentRegion/i);
   assert.match(onboarding, /selectedParent|selectedInterest/i);
   assert.match(onboarding, /selectedCreator/i);
-  assert.match(layout, /PersonalizationGate|personalization/i);
+  assert.match(layout, /RootAppRuntime/);
+  assert.match(rootRuntime, /PersonalizationGate|personalization/i);
   assert.match(gate, /awaitingAuthenticatedCheck/);
   assert.match(gate, /router\.replace\('\/onboarding\/personalization'\)/);
   assert.match(gate, /Fail open/i);

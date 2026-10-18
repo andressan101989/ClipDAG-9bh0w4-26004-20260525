@@ -14,7 +14,7 @@ const profile = read('app/creator/[id].tsx');
 const offer = read('app/creator-premium-offer/[contentId].tsx');
 const subscriptions = read('app/my-subscriptions.tsx');
 const hub = read('app/creator-monetization.tsx');
-const layout = read('app/_layout.tsx');
+const layout = read('components/feature/RootAppRuntime.tsx');
 
 test('locked profile cards use only teaser metadata and navigate by contentId to the offer surface', () => {
   const start = profile.indexOf('{/* ── Exclusive content grid');
