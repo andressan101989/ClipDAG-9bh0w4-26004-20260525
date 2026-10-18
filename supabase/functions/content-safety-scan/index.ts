@@ -4,7 +4,7 @@ import { evaluateTextRules } from './ruleEngine.mjs'
 import { AudioPipelineError, WHISPER_MODEL, bytesToBase64, downloadStreamAudioBytes, makeProbeWav, normalizeWhisperResult, selectStreamAudioDownloadRoute, timecodeForMatch, validateStreamAudioTargetType } from './audioPipeline.mjs'
 import { VISUAL_AI_PROVIDER, VISUAL_MODEL, VisualProbeError, runVisualMultiImageProviderProbe, runVisualProviderProbe } from './visualProbe.mjs'
 import { MAX_PREMIUM_VISUAL_IMAGE_BYTES, MAX_VISUAL_IMAGE_BYTES, VisualPipelineError, analyzeVisualBytes, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps } from './visualPipeline.mjs'
-import { POLICY_CONTEXT_PROMPT_VERSION, PolicyContextError, policyContextErrorFrom, runPolicyContextAnalysis, runPolicyContextProviderProbe } from './policyContext.mjs'
+import { PolicyContextError, policyContextErrorFrom, runPolicyContextAnalysis, runPolicyContextProviderProbe } from './policyContext.mjs'
 import { streamAccountId, streamCustomerCode, streamFetch } from '../_shared/stream.ts'
 import { createPremiumStreamAudioDownloadGrant, createPremiumStreamPlaybackGrant } from '../_shared/premiumStreamSecurity.ts'
 import { getObjectBytes, isR2Transient } from '../_shared/r2.ts'
@@ -373,12 +373,10 @@ Deno.serve(async req => {
       }
       const result = await runPolicyContextAnalysis({ token: Deno.env.get('CLOUDFLARE_AI_TOKEN')?.trim(),
         accountId: streamAccountId(), input })
-      const fingerprint = await sha256(`${claim.scan_id}|${claim.content_fingerprint}|${VISUAL_AI_PROVIDER}|${VISUAL_MODEL}|${POLICY_CONTEXT_PROMPT_VERSION}|${JSON.stringify(result)}`)
       const { error } = await admin.rpc('complete_creator_premium_content_safety_context_v1', {
         p_scan_id: claim.scan_id,
         p_content_fingerprint: claim.content_fingerprint,
         p_context_result: result,
-        p_evaluation_fingerprint: fingerprint,
       })
       if (error) throw new PolicyContextError('creator_premium_context_completion_failed', { retryable: true, providerCalled: true })
       contextAnalyzed += 1

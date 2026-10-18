@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 
@@ -17,6 +17,14 @@ import {
 const root = process.cwd()
 const evidencePath = join(root, 'docs', 'creator-premium-content-safety-p2-evidence-v1.json')
 const workerPath = join(root, 'supabase', 'functions', 'content-safety-scan', 'index.ts')
+const migrationSuffix = '_creator_premium_content_safety_p2_evidence_runtime.sql'
+
+function loadP2Migration() {
+  const migrations = join(root, 'supabase', 'migrations')
+  const matches = readdirSync(migrations).filter(name => name.endsWith(migrationSuffix))
+  assert.equal(matches.length, 1, 'P2 must have exactly one forward-only evidence-runtime migration')
+  return readFileSync(join(migrations, matches[0]), 'utf8')
+}
 
 function evidence() {
   assert.equal(existsSync(evidencePath), true, 'P2 evidence contract must exist')
@@ -165,6 +173,8 @@ test('P2 validator routes uncertainty through review and never accepts appearanc
     { ...allowResult, decision: 'allow', uncertainty: 'ambiguous' },
     { ...allowResult, decision: 'allow', age_uncertainty: 'present' },
     { ...allowResult, decision: 'allow', categories: ['explicit_sexual_activity'] },
+    { ...allowResult, decision: 'review', categories: ['age_uncertain'], uncertainty: 'ambiguous' },
+    { ...allowResult, decision: 'review', categories: ['consent_uncertain'], uncertainty: 'ambiguous' },
     { ...allowResult, coverage: { ...allowResult.coverage, transcript: 'complete' } },
   ]) {
     assert.throws(
@@ -279,5 +289,42 @@ test('P2 extends the canonical worker with one bounded context claim and a servi
   assert.match(worker, /fail_creator_premium_content_safety_context_v1/)
   assert.match(worker, /premium_context:/)
   assert.doesNotMatch(worker, /p_limit:\s*[2-9][0-9]*[^\n]*creator_premium_content_safety_context/i)
+})
+
+test('P2 evidence runtime is private, bound, bounded, idempotent, and does not activate P1', () => {
+  const sql = loadP2Migration()
+  assert.match(sql, /create table private\.creator_premium_content_safety_context_evaluations/i)
+  assert.match(sql, /enable row level security/i)
+  assert.match(sql, /force row level security/i)
+  assert.match(sql, /unique\s*\(source_scan_id,source_content_fingerprint,policy_id,prompt_version\)/i)
+  assert.match(sql, /attempt_count\s+between\s+0\s+and\s+5/i)
+  assert.match(sql, /provider_call_count\s+between\s+0\s+and\s+5/i)
+  assert.match(sql, /for update of evaluation skip locked limit p_limit/i)
+  assert.match(sql, /claim_creator_premium_content_safety_context_v1\(\s*p_limit integer default 1\s*\)/i)
+  assert.match(sql, /complete_creator_premium_content_safety_context_v1\(/i)
+  assert.match(sql, /fail_creator_premium_content_safety_context_v1\(/i)
+  assert.match(sql, /creator_premium_content_safety_candidate_p2_v1\(\s*p_scan_id uuid\s*\)/i)
+  assert.match(sql, /grant execute on function\s+public\.claim_creator_premium_content_safety_context_v1\(integer\)\s+to service_role/i)
+  assert.match(sql, /revoke all privileges on table\s+private\.creator_premium_content_safety_context_evaluations[\s\S]*service_role/i)
+  assert.doesNotMatch(sql, /"enabled"\s*:\s*true|"auto_publish_enabled"\s*:\s*true/i)
+  assert.doesNotMatch(sql, /create or replace function private\.creator_premium_content_safety_policy_p1_v1/i)
+})
+
+test('P2 SQL completion validates the same discrete context contract as the worker', () => {
+  const sql = loadP2Migration()
+  for (const value of [
+    POLICY_CONTEXT_SCHEMA_VERSION,
+    POLICY_CONTEXT_PROMPT_VERSION,
+    'nelyon.creator_premium.general.p1.v1',
+    'discrete_contract',
+    'unambiguous',
+    'ambiguous',
+    'not_relevant',
+    'present',
+    'creator_premium_context_schema_invalid',
+  ]) assert.match(sql, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'))
+  assert.match(sql, /decision='allow'[\s\S]*age_uncertainty<>'not_relevant'[\s\S]*consent_uncertainty<>'not_relevant'/i)
+  assert.match(sql, /explicit_sexual_activity[\s\S]*explicit_promotion_of_severe_harm[\s\S]*v_decision='block'/i)
+  assert.match(sql, /age_uncertain[\s\S]*consent_uncertain[\s\S]*v_decision='review'/i)
 })
 
