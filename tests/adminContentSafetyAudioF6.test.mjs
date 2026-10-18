@@ -53,6 +53,7 @@ test("public audio claims preserve the canonical download without invoking the P
   assert.equal(route.access,"public");
   assert.equal(signerCalls,0);
   assert.equal(route.validateRedirect(deliveryUrl),deliveryUrl);
+  assert.equal(route.validateRedirect(providerUrl.replace("/downloads/","/dl/")),providerUrl.replace("/downloads/","/dl/"));
   assert.throws(()=>route.validateRedirect(`https://evil.example/${uid}/downloads/audio.m4a`),AudioPipelineError);
   const bytes=await downloadStreamAudioBytes({route,fetchImpl:async(url,init)=>{
     assert.equal(url,providerUrl);
@@ -100,6 +101,32 @@ test("Premium audio claims require the exact private signed route and never fall
     }),
     error=>error instanceof AudioPipelineError&&error.code==="stream_signing_configuration_missing",
   );
+  await assert.rejects(
+    selectStreamAudioDownloadRoute({
+      targetType:"creator_premium",uid,customerCode,providerUrl,
+      createPrivateGrant:async()=>({audioUrl:signedUrl.replace(`customer-${customerCode}.cloudflarestream.com`,"customer-other-code.cloudflarestream.com")}),
+    }),
+    error=>error instanceof AudioPipelineError&&error.code==="stream_audio_url_untrusted_host",
+  );
+});
+
+test("public Stream derivative identity remains bound across query-free and proof redirects",async()=>{
+  const uid="0123456789abcdef0123456789abcdef",derivative="abcdefabcdefabcdefabcdefabcdefab",customerCode="example-code";
+  const providerUrl=`https://customer-${customerCode}.cloudflarestream.com/${derivative}/downloads/audio.m4a`;
+  const queryFree=`https://customer-${customerCode}.cloudflarestream.com/${derivative}/dl/audio.m4a`;
+  const proofBound=`${queryFree}?p=${"A".repeat(64)}&s=${"b".repeat(66)}`;
+  const route=await selectStreamAudioDownloadRoute({targetType:"video",uid,customerCode,providerUrl});
+  assert.equal(route.validateRedirect(queryFree),queryFree);
+  assert.equal(route.validateRedirect(proofBound),proofBound);
+  let calls=0;
+  const bytes=await downloadStreamAudioBytes({route,fetchImpl:async url=>{
+    calls+=1;
+    if(calls===1){assert.equal(url,providerUrl);return new Response(null,{status:302,headers:{location:proofBound}});}
+    assert.equal(url,proofBound);
+    return new Response(new Uint8Array([10]),{status:200,headers:{"content-length":"1","content-type":"audio/mp4"}});
+  }});
+  assert.equal(calls,2);
+  assert.deepEqual([...bytes],[10]);
 });
 
 test("Stream audio delivery redirects are exact-origin exact-asset and proof-bound",async()=>{
@@ -126,7 +153,11 @@ test("Stream audio delivery redirects are exact-origin exact-asset and proof-bou
     canonical.replace(`?${proof}`,`?p=${"A".repeat(519)}&p=duplicate&s=${"b".repeat(66)}`),
     canonical.replace(`?${proof}`,`?p=invalid%2Fproof&s=${"b".repeat(66)}`),
     canonical.replace(`?${proof}`,`?p=${"A".repeat(4097)}&s=${"b".repeat(66)}`),
+    canonical.replace(`/${uid}/dl/`,`/${uid}//dl/`),
+    canonical.replace("/dl/audio.m4a","/DL/AUDIO.M4A"),
+    canonical.replace("?p=","?%70="),
     canonical.replace("https://", "https://user@example.com@"),
+    canonical.replace(".com/", ".com:443/"),
     canonical.replace(".com/", ".com:444/"),
     `${canonical}#fragment`,
   ]) assert.throws(()=>route.validateRedirect(candidate),AudioPipelineError,candidate);
@@ -159,6 +190,16 @@ test("bounded audio download rejects redirects and maps transient failures witho
   }});
   assert.equal(calls,2);
   assert.deepEqual([...bytes],[7,8,9]);
+  let redirectCalls=0;
+  await assert.rejects(
+    downloadStreamAudioBytes({route,fetchImpl:async(url,init)=>{
+      redirectCalls+=1;
+      assert.deepEqual(init,{redirect:"manual"});
+      return new Response(null,{status:302,headers:{location:deliveryUrl}});
+    }}),
+    error=>error instanceof AudioPipelineError&&error.code==="stream_audio_redirect_rejected",
+  );
+  assert.equal(redirectCalls,4);
 });
 
 test("unknown or absent server claim target types fail closed before signing",async()=>{
