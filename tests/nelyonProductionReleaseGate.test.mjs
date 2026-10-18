@@ -1957,13 +1957,13 @@ function baselineSnapshot(policy, overrides = {}) {
     source: 'owner-control-plane',
     observed_at: '2026-10-09T12:00:00.000Z',
     project_ref: PROJECT_REF,
-    candidate_sha: MAIN_SHA,
+    candidate_sha: policy.baseline.sha,
     workflow_runtime: false,
     reviewed_policy_sha256: 'f'.repeat(64),
     migrations: {
       complete: true,
-      items: Array.from({ length: 337 }, (_, index) => `2026${String(index).padStart(10, '0')}`),
-      latest: '20261010053524_creator_premium_b7_full_functional_commercial_completion',
+      items: Array.from({ length: policy.baseline.migration_count }, (_, index) => `2026${String(index).padStart(10, '0')}`),
+      latest: policy.baseline.latest_migration,
     },
     functions: {
       complete: true,
@@ -1999,7 +1999,7 @@ test('candidate to verified requires exact migrations functions config finance c
     evidence,
     expected: {
       projectRef: PROJECT_REF,
-      sha: MAIN_SHA,
+      sha: policy.baseline.sha,
       migrationCount: policy.baseline.migration_count,
       latestMigration: policy.baseline.latest_migration,
       managedFunctions: MANAGED_FUNCTIONS,
@@ -2031,7 +2031,7 @@ test('candidate baseline accepts canonical finance snapshot policy metadata', as
     evidence,
     expected: {
       projectRef: PROJECT_REF,
-      sha: MAIN_SHA,
+      sha: policy.baseline.sha,
       migrationCount: policy.baseline.migration_count,
       latestMigration: policy.baseline.latest_migration,
       managedFunctions: MANAGED_FUNCTIONS,
@@ -2084,7 +2084,7 @@ test('verified baseline requires owner reviewer and a separate policy commit', a
     evidence,
     expected: {
       projectRef: PROJECT_REF,
-      sha: MAIN_SHA,
+      sha: policy.baseline.sha,
       migrationCount: policy.baseline.migration_count,
       latestMigration: policy.baseline.latest_migration,
       managedFunctions: MANAGED_FUNCTIONS,
@@ -2117,7 +2117,7 @@ test('environment policy digest must match exact reviewed policy bytes', async (
     evidence,
     expected: {
       projectRef: PROJECT_REF,
-      sha: MAIN_SHA,
+      sha: policy.baseline.sha,
       migrationCount: policy.baseline.migration_count,
       latestMigration: policy.baseline.latest_migration,
       managedFunctions: MANAGED_FUNCTIONS,
@@ -2133,7 +2133,7 @@ test('environment policy digest must match exact reviewed policy bytes', async (
     evidence,
     expected: {
       projectRef: PROJECT_REF,
-      sha: MAIN_SHA,
+      sha: policy.baseline.sha,
       migrationCount: policy.baseline.migration_count,
       latestMigration: policy.baseline.latest_migration,
       managedFunctions: MANAGED_FUNCTIONS,
@@ -2162,7 +2162,7 @@ test('baseline advancement records prior release ID manifest and evidence digest
     evidence,
     expected: {
       projectRef: PROJECT_REF,
-      sha: MAIN_SHA,
+      sha: policy.baseline.sha,
       migrationCount: policy.baseline.migration_count,
       latestMigration: policy.baseline.latest_migration,
       managedFunctions: MANAGED_FUNCTIONS,
@@ -2185,7 +2185,7 @@ test('baseline promotion denies every independently reviewed section mismatch', 
   const original = gate.buildBaselineEvidence(baselineSnapshot(policy));
   const expected = {
     projectRef: PROJECT_REF,
-    sha: MAIN_SHA,
+    sha: policy.baseline.sha,
     migrationCount: policy.baseline.migration_count,
     latestMigration: policy.baseline.latest_migration,
     managedFunctions: MANAGED_FUNCTIONS,
