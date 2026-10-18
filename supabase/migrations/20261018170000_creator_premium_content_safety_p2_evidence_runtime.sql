@@ -416,6 +416,7 @@ $$;
 create function public.complete_creator_premium_content_safety_context_v1(
   p_scan_id uuid,
   p_content_fingerprint text,
+  p_attempt_count integer,
   p_context_result jsonb
 ) returns jsonb
 language plpgsql security definer
@@ -443,6 +444,11 @@ begin
   if not found then
     raise exception using errcode='P0002',
       message='creator_premium_context_evaluation_not_found';
+  end if;
+  if p_attempt_count is null
+     or p_attempt_count<>v_evaluation.attempt_count then
+    raise exception using errcode='55000',
+      message='creator_premium_context_attempt_stale';
   end if;
   if v_evaluation.status='completed' then
     if v_evaluation.context_result is not distinct from p_context_result then
@@ -543,6 +549,11 @@ begin
     v_evaluation.source_content_fingerprint||'|'||
     v_evaluation.policy_id||'|'||v_evaluation.provider||'|'||
     v_evaluation.model||'|'||v_evaluation.prompt_version||'|'||
+    v_evaluation.transcript_coverage||'|'||
+    coalesce(v_evaluation.transcript_id::text,'')||'|'||
+    coalesce(v_evaluation.transcript_fingerprint,'')||'|'||
+    v_evaluation.visual_analysis_id::text||'|'||
+    v_evaluation.visual_analysis_fingerprint||'|'||
     p_context_result::text
   );
   update private.creator_premium_content_safety_context_evaluations set
@@ -562,6 +573,7 @@ $$;
 
 create function public.fail_creator_premium_content_safety_context_v1(
   p_scan_id uuid,
+  p_attempt_count integer,
   p_error_code text,
   p_retryable boolean,
   p_provider_called boolean
@@ -586,6 +598,11 @@ begin
   if not found then
     raise exception using errcode='P0002',
       message='creator_premium_context_evaluation_not_found';
+  end if;
+  if p_attempt_count is null
+     or p_attempt_count<>v_evaluation.attempt_count then
+    raise exception using errcode='55000',
+      message='creator_premium_context_attempt_stale';
   end if;
   if v_evaluation.status='completed' then
     return pg_catalog.jsonb_build_object(
@@ -778,19 +795,19 @@ revoke all on function
   public.claim_creator_premium_content_safety_context_v1(integer)
   from public, anon, authenticated, service_role;
 revoke all on function
-  public.complete_creator_premium_content_safety_context_v1(uuid,text,jsonb)
+  public.complete_creator_premium_content_safety_context_v1(uuid,text,integer,jsonb)
   from public, anon, authenticated, service_role;
 revoke all on function
-  public.fail_creator_premium_content_safety_context_v1(uuid,text,boolean,boolean)
+  public.fail_creator_premium_content_safety_context_v1(uuid,integer,text,boolean,boolean)
   from public, anon, authenticated, service_role;
 grant execute on function
   public.claim_creator_premium_content_safety_context_v1(integer)
   to service_role;
 grant execute on function
-  public.complete_creator_premium_content_safety_context_v1(uuid,text,jsonb)
+  public.complete_creator_premium_content_safety_context_v1(uuid,text,integer,jsonb)
   to service_role;
 grant execute on function
-  public.fail_creator_premium_content_safety_context_v1(uuid,text,boolean,boolean)
+  public.fail_creator_premium_content_safety_context_v1(uuid,integer,text,boolean,boolean)
   to service_role;
 
 comment on table private.creator_premium_content_safety_context_evaluations is
