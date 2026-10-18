@@ -76,10 +76,21 @@ test('P1 is normatively approved but operationally fail-closed until every techn
 })
 
 test('P1 policy bytes have a stable digest suitable for SQL and release evidence', () => {
-  loadPolicy()
+  const policy = loadPolicy()
+  const sql = loadMigration()
   const digest = createHash('sha256').update(readFileSync(policyPath)).digest('hex')
   assert.match(digest, /^[0-9a-f]{64}$/)
   assert.notEqual(digest, '0'.repeat(64))
+  const embedded = sql.match(/\$policy\$\s*([\s\S]*?)\s*\$policy\$::jsonb/i)
+  assert.ok(embedded, 'migration must embed one canonical P1 policy object')
+  const sqlPolicy = JSON.parse(embedded[1])
+  assert.equal(sqlPolicy.artifact_sha256, digest)
+  assert.equal(sqlPolicy.policy_id, policy.policy_id)
+  assert.deepEqual(sqlPolicy.normative_approval, policy.normative_approval)
+  assert.deepEqual(sqlPolicy.scope, policy.scope)
+  assert.deepEqual(sqlPolicy.decision_matrix, policy.decision_matrix)
+  assert.deepEqual(sqlPolicy.activation, policy.activation)
+  assert.deepEqual(sqlPolicy.publication, policy.publication)
 })
 
 test('P1 migration embeds the immutable policy identity and artifact digest', () => {
@@ -100,7 +111,14 @@ test('P1 decision engine is private, fail-closed, and preserves contextual revie
   assert.match(sql, /evidence->>'policy_id'\s*=\s*v_policy_id/i)
   assert.match(sql, /evidence->>'policy_decision'\s*=\s*'block'/i)
   assert.match(sql, /'decision'\s*,\s*'block'/i)
-  assert.match(sql, /v_policy_decision->>'decision'<>'allow'/i)
+  assert.match(sql, /v_policy_decision->>'decision'\s+is distinct from\s+'allow'/i)
+  assert.match(sql, /jsonb_typeof\(v_policy#>'\{activation,blockers\}'\)\s*=\s*'array'/i)
+  assert.match(sql, /jsonb_array_length\(v_policy#>'\{activation,blockers\}'\)\s*=\s*0/i)
+  assert.match(sql, /v_content\.verification_scan_id\s+is distinct from\s+v_scan\.id/i)
+  assert.match(sql, /alert\.source_type\s*=\s*'visual_classifier'/i)
+  assert.match(sql, /alert\.severity\s+in\s*\('high','critical'\)/i)
+  assert.match(sql, /jsonb_typeof\(alert\.evidence->'coverage_complete'\)\s*=\s*'boolean'/i)
+  assert.match(sql, /analysis\.analysis_fingerprint\s*=\s*alert\.evidence->>'analysis_fingerprint'/i)
   for (const signature of [
     'private.creator_premium_content_safety_policy_p1_v1()',
     'private.creator_premium_content_safety_decision_p1_v1(uuid)',
@@ -120,5 +138,5 @@ test('P1 finalizer consumes the decision without weakening generation, fingerpri
   assert.match(sql, /v_policy_decision->>'decision'='awaiting_policy'[\s\S]*content_safety_policy_not_configured/i)
   assert.match(sql, /v_policy_decision->>'decision'='review'[\s\S]*creator_premium_safety_review_required/i)
   assert.match(sql, /v_policy_decision->>'decision'='block'[\s\S]*lifecycle_status='rejected'[\s\S]*verification_status='blocked'[\s\S]*creator_premium_safety_blocked/i)
-  assert.match(sql, /v_policy_decision->>'decision'<>'allow'[\s\S]*creator_premium_safety_decision_invalid/i)
+  assert.match(sql, /v_policy_decision->>'decision'\s+is distinct from\s+'allow'[\s\S]*creator_premium_safety_decision_invalid/i)
 })
