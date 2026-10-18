@@ -15,22 +15,27 @@ as $$
   {
     "schema_version":"nelyon.creator_premium_content_safety_policy.v1",
     "policy_id":"nelyon.creator_premium.general.p1.v1",
+    "title":"Creator Premium General Content Safety P1",
     "artifact_sha256":"43da0f9039abb930aa34e09d513220713264e46b0f4187f91a769c1f9a3af52b",
-    "normative_approval":{"status":"approved","source":"owner_prompt","owner_bound":true},
-    "scope":{"creator_premium_general":true,"explicit_adult_premium":false,"mobile_explicit_adult":false,"finance_effect":false},
+    "normative_approval":{"status":"approved","source":"owner_prompt","authorized_phase":"CREATOR-PREMIUM-CONTENT-SAFETY-P1","authorized_at":"2026-10-18","owner_bound":true},
+    "scope":{"creator_premium_general":true,"public_feed_surfaces":["preview","teaser","thumbnail","notification","discovery"],"explicit_adult_premium":false,"mobile_explicit_adult":false,"finance_effect":false},
     "decision_matrix":{
       "allow":["courses","tutorials","education","entertainment","dance","humor","sport","fashion","kissing_and_affection","swimwear","non_explicit_sensual_clothing","non_sexual_artistic_content"],
       "review":["contextual_artistic_or_medical_nudity","incidental_blood_or_informational_context","documentary_violence","age_uncertain","consent_uncertain","contradictory_signals","low_confidence","incomplete_multimodal_coverage"],
       "block":["explicit_sexual_activity","pornography","sexualized_explicit_genital_exposure","child_sexual_exploitation","non_consensual_intimate_content","sexual_violence","torture","mutilation","graphic_murder","graphic_serious_assault","explicit_promotion_of_severe_harm"]
     },
-    "context_contract":{"keywords_are_context_only":true,"educational_or_medical_text_is_not_blocked_by_words_alone":true,"missing_required_modality":"review"},
+    "context_contract":{"classify_content_and_context_together":true,"keywords_are_context_only":true,"educational_or_medical_text_is_not_blocked_by_words_alone":true,"skin_or_swimwear_is_not_automatic_rejection":true,"missing_required_modality":"review","uncertain_age_or_consent":"review"},
     "activation":{
       "status":"approved_activation_pending",
       "enabled":false,
       "auto_publish_enabled":false,
-      "blockers":["contextual_text_classification_unverified","contextual_transcript_classification_unverified","age_uncertainty_signal_unavailable","consent_uncertainty_signal_unavailable","model_confidence_signal_unavailable","account_quota_headroom_unverified","private_media_policy_e2e_unverified"]
+      "blockers":["contextual_text_classification_unverified","contextual_transcript_classification_unverified","age_uncertainty_signal_unavailable","consent_uncertainty_signal_unavailable","model_confidence_signal_unavailable","account_quota_headroom_unverified","private_media_policy_e2e_unverified"],
+      "disable_strategy":"forward_only_policy_revision",
+      "activation_strategy":"forward_only_policy_revision_after_all_blockers_are_verified"
     },
-    "publication":{"auto_publish_requires_all_modalities":true,"technical_failure":"fail_closed","ambiguous_or_incomplete":"human_review","http_200_is_evidence":false}
+    "publication":{"auto_publish_requires_all_modalities":true,"requires_current_generation":true,"requires_current_owner_and_permissions":true,"requires_provider_validity":true,"requires_active_approved_policy":true,"requires_unambiguous_allow":true,"technical_failure":"fail_closed","ambiguous_or_incomplete":"human_review","http_200_is_evidence":false},
+    "administrative_review":{"private_by_default":true,"authorized_reviewers_only":true,"audit_required":true,"manual_decision_is_not_fabricated":true,"child_exploitation_block_cannot_be_overridden_by_ordinary_review":true},
+    "finance":{"purchase_enabled":false,"subscription_enabled":false,"refunds_enabled":false,"platform_fee_bps":0}
   }
   $policy$::jsonb;
 $$;
@@ -48,13 +53,45 @@ declare
   v_policy jsonb := private.creator_premium_content_safety_policy_p1_v1();
   v_policy_id text;
   v_policy_enabled boolean;
+  v_snapshot jsonb;
+  v_current_fingerprint text;
   v_normalized_block boolean := false;
   v_normalized_review boolean := false;
   v_has_unresolved_signal boolean := false;
 begin
   v_policy_id := v_policy->>'policy_id';
-  v_policy_enabled := coalesce((v_policy#>>'{activation,enabled}')::boolean, false)
-    and coalesce((v_policy#>>'{activation,auto_publish_enabled}')::boolean, false);
+  v_policy_enabled := coalesce(
+    v_policy->>'schema_version' = 'nelyon.creator_premium_content_safety_policy.v1'
+    and v_policy_id = 'nelyon.creator_premium.general.p1.v1'
+    and v_policy->>'artifact_sha256' = '43da0f9039abb930aa34e09d513220713264e46b0f4187f91a769c1f9a3af52b'
+    and v_policy#>>'{normative_approval,status}' = 'approved'
+    and v_policy#>>'{normative_approval,source}' = 'owner_prompt'
+    and v_policy#>>'{normative_approval,authorized_phase}' = 'CREATOR-PREMIUM-CONTENT-SAFETY-P1'
+    and v_policy#>'{normative_approval,owner_bound}' = 'true'::jsonb
+    and v_policy#>'{scope,creator_premium_general}' = 'true'::jsonb
+    and v_policy#>'{scope,explicit_adult_premium}' = 'false'::jsonb
+    and v_policy#>'{scope,mobile_explicit_adult}' = 'false'::jsonb
+    and v_policy#>'{scope,finance_effect}' = 'false'::jsonb
+    and v_policy#>>'{activation,status}' = 'active'
+    and v_policy#>'{activation,enabled}' = 'true'::jsonb
+    and v_policy#>'{activation,auto_publish_enabled}' = 'true'::jsonb
+    and pg_catalog.jsonb_typeof(v_policy#>'{activation,blockers}') = 'array'
+    and pg_catalog.jsonb_array_length(v_policy#>'{activation,blockers}') = 0
+    and v_policy#>'{publication,auto_publish_requires_all_modalities}' = 'true'::jsonb
+    and v_policy#>'{publication,requires_current_generation}' = 'true'::jsonb
+    and v_policy#>'{publication,requires_current_owner_and_permissions}' = 'true'::jsonb
+    and v_policy#>'{publication,requires_provider_validity}' = 'true'::jsonb
+    and v_policy#>'{publication,requires_active_approved_policy}' = 'true'::jsonb
+    and v_policy#>'{publication,requires_unambiguous_allow}' = 'true'::jsonb
+    and v_policy#>>'{publication,technical_failure}' = 'fail_closed'
+    and v_policy#>>'{publication,ambiguous_or_incomplete}' = 'human_review'
+    and v_policy#>'{publication,http_200_is_evidence}' = 'false'::jsonb
+    and v_policy#>'{finance,purchase_enabled}' = 'false'::jsonb
+    and v_policy#>'{finance,subscription_enabled}' = 'false'::jsonb
+    and v_policy#>'{finance,refunds_enabled}' = 'false'::jsonb
+    and v_policy#>>'{finance,platform_fee_bps}' = '0',
+    false
+  );
 
   select scan.* into v_scan
   from private.content_safety_scans scan
@@ -65,6 +102,7 @@ begin
       'decision', 'technical_failure', 'reason', 'creator_premium_scan_missing'
     );
   end if;
+
   if v_scan.target_type <> 'creator_premium' then
     return pg_catalog.jsonb_build_object(
       'scan_id', v_scan.id, 'policy_id', v_policy_id,
@@ -81,6 +119,48 @@ begin
     );
   end if;
 
+  if v_content.lifecycle_status <> 'pending_review'
+     or v_scan.owner_user_id is distinct from v_content.creator_id
+     or v_content.verification_scan_id is distinct from v_scan.id
+     or v_content.verification_fingerprint is distinct from v_scan.content_fingerprint then
+    return pg_catalog.jsonb_build_object(
+      'scan_id', v_scan.id, 'content_id', v_content.id,
+      'policy_id', v_policy_id, 'decision', 'technical_failure',
+      'reason', 'creator_premium_scan_binding_invalid'
+    );
+  end if;
+  v_snapshot := private.content_safety_target_snapshot('creator_premium', v_content.id);
+  if v_snapshot is null then
+    return pg_catalog.jsonb_build_object(
+      'scan_id', v_scan.id, 'content_id', v_content.id,
+      'policy_id', v_policy_id, 'decision', 'technical_failure',
+      'reason', 'creator_premium_snapshot_unavailable'
+    );
+  end if;
+  v_current_fingerprint := private.content_safety_sha256(
+    'creator_premium|' || v_content.id::text || '|' || coalesce(v_snapshot->>'content_version', '')
+  );
+  if v_current_fingerprint is distinct from v_scan.content_fingerprint then
+    return pg_catalog.jsonb_build_object(
+      'scan_id', v_scan.id, 'content_id', v_content.id,
+      'policy_id', v_policy_id, 'decision', 'technical_failure',
+      'reason', 'creator_premium_stale_content_version'
+    );
+  end if;
+  if v_scan.status <> 'completed'
+     or v_scan.text_status <> 'analyzed'
+     or v_scan.reports_status <> 'analyzed'
+     or v_scan.visual_status <> 'analyzed'
+     or v_scan.visual_analysis_id is null
+     or (v_content.content_kind = 'image' and v_scan.audio_status <> 'not_applicable')
+     or (v_content.content_kind = 'video' and v_scan.audio_status <> 'analyzed') then
+    return pg_catalog.jsonb_build_object(
+      'scan_id', v_scan.id, 'content_id', v_content.id,
+      'policy_id', v_policy_id, 'decision', 'technical_failure',
+      'reason', 'creator_premium_analysis_incomplete'
+    );
+  end if;
+
   if not v_policy_enabled then
     return pg_catalog.jsonb_build_object(
       'scan_id', v_scan.id, 'content_id', v_content.id,
@@ -89,8 +169,60 @@ begin
     );
   end if;
 
+  -- A block is accepted only from a future canonical contextual classifier
+  -- that binds the exact P1 policy and proves complete coverage, sufficient
+  -- confidence, and resolved age/consent signals. Current C4/C5 triage output
+  -- has none of these fields and therefore cannot enter this branch.
+  select exists (
+    select 1
+    from private.content_safety_alerts alert
+    join private.content_safety_visual_analyses analysis
+      on analysis.id = v_scan.visual_analysis_id
+    where alert.scan_id = v_scan.id
+      and alert.target_type = v_scan.target_type
+      and alert.target_id = v_scan.target_id
+      and alert.owner_user_id is not distinct from v_scan.owner_user_id
+      and alert.source_type = 'visual_classifier'
+      and alert.severity in ('high','critical')
+      and alert.confidence is not null
+      and not (alert.status = 'dismissed' and alert.resolution = 'no_violation')
+      and alert.evidence->>'policy_id' = v_policy_id
+      and alert.evidence->>'policy_decision' = 'block'
+      and pg_catalog.jsonb_typeof(alert.evidence->'coverage_complete') = 'boolean'
+      and alert.evidence->'coverage_complete' = 'true'::jsonb
+      and pg_catalog.jsonb_typeof(alert.evidence->'confidence_sufficient') = 'boolean'
+      and alert.evidence->'confidence_sufficient' = 'true'::jsonb
+      and alert.evidence->>'age_assessment' = 'resolved'
+      and alert.evidence->>'consent_assessment' = 'resolved'
+      and alert.evidence->>'target_type' = v_scan.target_type
+      and alert.evidence->>'target_id' = v_scan.target_id::text
+      and alert.evidence->>'owner_user_id' = v_scan.owner_user_id::text
+      and alert.evidence->>'visual_analysis_id' = analysis.id::text
+      and alert.evidence->>'provider' = analysis.provider
+      and alert.evidence->>'model' = analysis.model
+      and alert.evidence->>'prompt_version' = analysis.prompt_version
+      and analysis.source_scan_id = v_scan.id
+      and analysis.source_content_fingerprint = v_scan.content_fingerprint
+      and analysis.analysis_fingerprint = alert.evidence->>'analysis_fingerprint'
+      and alert.evidence->>'policy_category' = any (
+        array[
+          'explicit_sexual_activity','pornography','sexualized_explicit_genital_exposure',
+          'child_sexual_exploitation','non_consensual_intimate_content','sexual_violence',
+          'torture','mutilation','graphic_murder','graphic_serious_assault',
+          'explicit_promotion_of_severe_harm'
+        ]::text[]
+      )
+  ) into v_normalized_block;
+  if v_normalized_block then
+    return pg_catalog.jsonb_build_object(
+      'scan_id', v_scan.id, 'content_id', v_content.id,
+      'policy_id', v_policy_id, 'decision', 'block',
+      'reason', 'creator_premium_policy_block'
+    );
+  end if;
+
   -- Phrase matches remain context signals. They can request human review but
-  -- can never become a context-free block or a publication PASS.
+  -- can never outrank a canonical severe block or become a context-free PASS.
   if exists (
     select 1
     from private.content_safety_alerts alert
@@ -115,38 +247,6 @@ begin
       'scan_id', v_scan.id, 'content_id', v_content.id,
       'policy_id', v_policy_id, 'decision', 'review',
       'reason', 'contextual_transcript_review_required'
-    );
-  end if;
-
-  -- A block is accepted only from a future canonical contextual classifier
-  -- that binds the exact P1 policy and proves complete coverage, sufficient
-  -- confidence, and resolved age/consent signals. Current C4/C5 triage output
-  -- has none of these fields and therefore cannot enter this branch.
-  select exists (
-    select 1
-    from private.content_safety_alerts alert
-    where alert.scan_id = v_scan.id
-      and not (alert.status = 'dismissed' and alert.resolution = 'no_violation')
-      and alert.evidence->>'policy_id' = v_policy_id
-      and alert.evidence->>'policy_decision' = 'block'
-      and alert.evidence->>'coverage_complete' = 'true'
-      and alert.evidence->>'confidence_sufficient' = 'true'
-      and alert.evidence->>'age_assessment' = 'resolved'
-      and alert.evidence->>'consent_assessment' = 'resolved'
-      and alert.evidence->>'policy_category' = any (
-        array[
-          'explicit_sexual_activity','pornography','sexualized_explicit_genital_exposure',
-          'child_sexual_exploitation','non_consensual_intimate_content','sexual_violence',
-          'torture','mutilation','graphic_murder','graphic_serious_assault',
-          'explicit_promotion_of_severe_harm'
-        ]::text[]
-      )
-  ) into v_normalized_block;
-  if v_normalized_block then
-    return pg_catalog.jsonb_build_object(
-      'scan_id', v_scan.id, 'content_id', v_content.id,
-      'policy_id', v_policy_id, 'decision', 'block',
-      'reason', 'creator_premium_policy_block'
     );
   end if;
 
@@ -343,7 +443,7 @@ begin
     return pg_catalog.jsonb_build_object('content_id',v_content.id,'outcome','blocked',
       'error','creator_premium_safety_blocked','published',false);
   end if;
-  if v_policy_decision->>'decision'<>'allow' then
+  if v_policy_decision->>'decision' is distinct from 'allow' then
     update private.creator_premium_contents set verification_status='failed',
       verification_error_code='creator_premium_safety_decision_invalid',verification_completed_at=v_now,
       updated_at=v_now where id=v_content.id;
