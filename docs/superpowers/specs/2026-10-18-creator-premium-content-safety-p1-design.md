@@ -92,4 +92,3 @@ PostgreSQL harness validates installation, fail-closed pending state, RLS/ACL,
 and Finance invariants. Existing Premium, Content Safety, Stream, release gate,
 and snapshot suites remain green. The canonical release deploys only the single
 new migration; no Edge Function is redeployed.
-
