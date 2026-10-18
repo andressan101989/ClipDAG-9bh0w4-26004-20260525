@@ -518,9 +518,9 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
     assert.match(exception.authorization.negative_test_evidence_sha256, /^[0-9a-f]{64}$/);
     if (F1_EXCEPTION_FINGERPRINTS.includes(exception.advisor_fingerprint)) {
       assert.equal(exception.origin.migration, '20261018211327_creator_premium_qa_final_f1');
-      assert.equal(exception.origin.migration_blob, '2283f1283ac801a3668c3ed189e5c11f769fc2e3');
-      assert.equal(exception.origin.source_sha, 'c62441f08f0ecd9aaa60117ab6fc49f0b2072cc8');
-      assert.equal(exception.authorization.negative_test_evidence_sha256, '3605ab40e6e5c5de5d3a11465eb858836a20d936aa26f144cf9a96fa80c10a52');
+      assert.equal(exception.origin.migration_blob, '9052d0abd6df3fec7d49eed80285bce19f21051b');
+      assert.equal(exception.origin.source_sha, 'ed51307f9fc02ec04ca84478d905f608120e2b0e');
+      assert.equal(exception.authorization.negative_test_evidence_sha256, '59a8ca88804abd43416d157b7580d180884b905d0596e6b63a7441e06e999f46');
     } else if (exception.object.name === 'cancel_my_creator_premium_submission_v1') {
       assert.equal(exception.origin.migration, '20261017193000_creator_premium_c1_submission_cancellation');
       assert.equal(exception.origin.migration_blob, '4605ac94221a52d47190b1575ab1a71e23c82fac');
