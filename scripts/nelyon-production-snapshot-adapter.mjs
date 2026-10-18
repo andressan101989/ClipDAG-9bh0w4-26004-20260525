@@ -696,6 +696,7 @@ export function verifyProductionPreSnapshot({ pre, policy, request, manifest, ad
 export function verifyProductionSnapshotPair({ pre, post, policy, request, manifest, adapterSourceSha256 }) {
   verifyProductionPreSnapshot({ pre, policy, request, manifest, adapterSourceSha256 });
   validateCapturedEvidence({ evidence: post, phase: 'post', policy, request, manifest, adapterSourceSha256 });
+  validatePremiumStateTransition(pre.premium_state, post.premium_state);
   if (Date.parse(post.observed_at) < Date.parse(pre.observed_at)
     || Date.parse(post.finance.database_time) < Date.parse(pre.finance.database_time)) {
     fail('INVALID_SNAPSHOT_ORDER', 'post-release evidence predates pre-release evidence');
@@ -1233,11 +1234,12 @@ export function validatePremiumPostcheckState(state, expectedRelations = null) {
   }
   exactKeys(state.content_safety, ['active_rule_count', 'approved_rule_count', 'fabricated_pass_count'], 'PREMIUM_POSTCHECK_FAILED');
   exactKeys(state.legacy, ['content_count', 'deleted_count', 'pending_review_count'], 'PREMIUM_POSTCHECK_FAILED');
+  const { content_count: contentCount, pending_review_count: pendingReviewCount, deleted_count: deletedCount } = state.legacy;
   if (canonicalJson(state.content_safety) !== canonicalJson({
     approved_rule_count: 0, active_rule_count: 0, fabricated_pass_count: 0,
-  }) || canonicalJson(state.legacy) !== canonicalJson({
-    content_count: 2, pending_review_count: 1, deleted_count: 1,
-  })) {
+  }) || ![contentCount, pendingReviewCount, deletedCount].every(Number.isInteger)
+    || contentCount < 2 || pendingReviewCount < 1 || deletedCount < 1
+    || pendingReviewCount + deletedCount > contentCount) {
     fail('PREMIUM_POSTCHECK_FAILED', 'Content Safety or legacy Premium state diverged');
   }
   exactKeys(state.relation_security, ['items', 'sha256'], 'PREMIUM_POSTCHECK_FAILED');
@@ -1249,6 +1251,16 @@ export function validatePremiumPostcheckState(state, expectedRelations = null) {
   }
   if (expectedRelations !== null && canonicalJson(normalized.items) !== canonicalJson(expectedRelations)) {
     fail('PREMIUM_POSTCHECK_FAILED', 'private Premium relation authority differs from the approved evidence');
+  }
+  return true;
+}
+
+export function validatePremiumStateTransition(preState, postState) {
+  validatePremiumPostcheckState(preState);
+  validatePremiumPostcheckState(postState);
+  if (canonicalJson(postState.legacy) !== canonicalJson(preState.legacy)
+    || canonicalJson(postState.relation_security) !== canonicalJson(preState.relation_security)) {
+    fail('PREMIUM_POSTCHECK_FAILED', 'Premium content counts or relation authority changed during release');
   }
   return true;
 }
