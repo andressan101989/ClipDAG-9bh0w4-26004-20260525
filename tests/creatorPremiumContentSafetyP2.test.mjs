@@ -329,4 +329,3 @@ test('P2 SQL completion validates the same discrete context contract as the work
   assert.match(sql, /explicit_sexual_activity[\s\S]*explicit_promotion_of_severe_harm[\s\S]*v_decision='block'/i)
   assert.match(sql, /age_uncertain[\s\S]*consent_uncertain[\s\S]*v_decision='review'/i)
 })
-
