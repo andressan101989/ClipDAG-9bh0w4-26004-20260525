@@ -78,7 +78,8 @@ test('P1 is normatively approved but operationally fail-closed until every techn
 test('P1 policy bytes have a stable digest suitable for SQL and release evidence', () => {
   const policy = loadPolicy()
   const sql = loadMigration()
-  const digest = createHash('sha256').update(readFileSync(policyPath)).digest('hex')
+  const gitBytes = readFileSync(policyPath, 'utf8').replaceAll('\r\n', '\n')
+  const digest = createHash('sha256').update(gitBytes, 'utf8').digest('hex')
   assert.match(digest, /^[0-9a-f]{64}$/)
   assert.notEqual(digest, '0'.repeat(64))
   const embedded = sql.match(/\$policy\$\s*([\s\S]*?)\s*\$policy\$::jsonb/i)
