@@ -2,13 +2,13 @@
   "baseline": {
     "authority_source": "owner-control-plane",
     "blocked_resources": [],
-    "evidence": "cb2be952ddb04c00d9ee0e4c0621101ef6e90672c3ddcf0ca9e6330a9888901e",
+    "evidence": "5e9643177950ab7434a4c7b09e9516cf04008d862b27786b55ff48f27f61929d",
     "evidence_digests": {
       "config_verify_jwt": "9f7f6b42cccd5086f862b1f40e659935d8a44f14943eeed80c8d7928e84f9fb9",
       "cron_security": "2dd76dccc8b348eb932fee5c8ada572f57243287f3ca96bf851a75a2e9244846",
       "finance": "94c297fb891f7c13beb92f2cfaec3145ba1ca3b23bbcd74ce39e084a8365b566",
-      "function_source_parity": "cb1713b4276416cfa9d792cd04084203f452b99907cd34fcb7121f1aed65a8af",
-      "managed_functions": "f16314e86f4caf1d0ae620a82247fe9d01f6ee2b73d6aa1e00e32ab22e3ad849",
+      "function_source_parity": "9777827b64eefc314609f95b255a802a345baaad1d76d02f3b7b43e4ef363006",
+      "managed_functions": "9a568d0d051e7c013abc8d135f232866ba936e35e52e4313953d80a222b7b042",
       "migrations": "8c8be16a84c0a04e8119c1a65a86e7ef1b4f6deabf7bf11f93daf2dfd6e7dbb9",
       "unmanaged_functions": "e56ae5b19eb2158499e33128470663eab37cf2c6be03b3732a7d09a4d80213aa"
     },
@@ -16,15 +16,15 @@
     "migration_count": 338,
     "prior_release": {
       "kind": "post-release",
-      "manifest_sha256": "3eb9d6d68e3440c148f778aab68e4ae412360f450d820677ea76fb06123f92f0",
-      "postcheck_evidence_sha256": "1bcced95677fe65a862ce5d957bcf2e8ed86e52e25a0c3c4f83cb2217338add8",
-      "release_id": "nelyon-c1-release2-20261018T000238Z"
+      "manifest_sha256": "e558213e06d24e782b0ed3174a53e0cbaa9c77cf53d894b28e50163be093e22f",
+      "postcheck_evidence_sha256": "f046e1c232cd745daf7f1546328830046d818d7a96a887c43b31df2c4bf378ae",
+      "release_id": "nelyon-c2-release-20261018T034127Z"
     },
     "requires_separate_policy_commit": true,
-    "reviewed_policy_sha256": "da3816eaf68a230fb4a4fa30d3758eb31c8bfe85468481487fcd11c9a64c115d",
-    "sha": "f68b41a022f8ef9235e2f48457bc6e525bc39a2d",
+    "reviewed_policy_sha256": "93b9976d1006e5393f82998e4152cefdab68599e8a6e24cdda88773894ea6af1",
+    "sha": "6d4b7666d37566a16fb32fadc57c400615541ca0",
     "state": "verified",
-    "verified_at": "2026-10-18T03:32:06.911Z",
+    "verified_at": "2026-10-18T04:56:46.823Z",
     "verified_by": "andressan101989"
   },
   "baseline_authority": {
