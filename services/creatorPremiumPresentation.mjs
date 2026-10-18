@@ -57,6 +57,32 @@ export function normalizeCreatorPremiumVideoPickerAsset(asset) {
   return { uri: asset.uri, mimeType, fileName: asset.fileName, sizeBytes: asset.sizeBytes };
 }
 
+export function prepareCreatorPremiumVideoPickerAsset(asset, options = {}) {
+  if (!asset) return null;
+  const fileName = asset.fileName ?? 'premium-video.mp4';
+  const extension = fileName.toLowerCase().split('.').pop();
+  const mimeType = asset.mimeType
+    ?? (extension === 'mov' ? 'video/quicktime' : extension === 'webm' ? 'video/webm' : 'video/mp4');
+  let sizeBytes = asset.sizeBytes ?? 0;
+  if (!sizeBytes) {
+    try {
+      sizeBytes = Number(options.sizeForUri?.(asset.uri) ?? 0);
+    } catch {
+      throw new Error('creator_premium_video_asset_unreadable');
+    }
+  }
+  if (!Number.isInteger(sizeBytes) || sizeBytes <= 0) {
+    throw new Error('creator_premium_video_asset_unreadable');
+  }
+  return normalizeCreatorPremiumVideoPickerAsset({
+    uri: asset.uri,
+    mimeType,
+    fileName,
+    sizeBytes,
+    durationMs: asset.durationMs,
+  });
+}
+
 const base = (state, label, copy, options = {}) => ({
   state,
   label,

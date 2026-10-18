@@ -40,6 +40,14 @@ export function formatCreatorPremiumBdag(
 export function normalizeCreatorPremiumVideoPickerAsset(
   asset: CreatorPremiumVideoPickerAsset | null | undefined,
 ): Readonly<{ uri: string; mimeType: string; fileName: string; sizeBytes: number }> | null;
+export function prepareCreatorPremiumVideoPickerAsset(
+  asset: (Omit<CreatorPremiumVideoPickerAsset, 'mimeType' | 'fileName' | 'sizeBytes'> & {
+    mimeType?: string | null;
+    fileName?: string | null;
+    sizeBytes?: number | null;
+  }) | null | undefined,
+  options?: { sizeForUri?: (uri: string) => number },
+): Readonly<{ uri: string; mimeType: string; fileName: string; sizeBytes: number }> | null;
 export function creatorPremiumLifecyclePresentation(input?: {
   lifecycle_status?: string | null;
   verification_status?: string | null;

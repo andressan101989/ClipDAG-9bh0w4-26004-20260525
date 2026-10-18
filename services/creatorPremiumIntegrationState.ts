@@ -43,7 +43,7 @@ export const CREATOR_PREMIUM_BLOCKER_COPY: Readonly<Record<string, string>> = Ob
   creator_premium_image_media_not_ready: 'Falta completar la vista previa y la imagen privada.',
   creator_premium_video_media_not_ready: 'Falta completar la vista previa o el video todavía se está procesando.',
   creator_premium_active_offer_required: 'Configura un precio de compra activo.',
-  creator_premium_active_plan_required: 'Seguridad aprobada. La activación de un plan asociado completará la publicación automática.',
+  creator_premium_active_plan_required: 'Necesitas asociar y activar por lo menos un plan antes de solicitar la publicación.',
   creator_premium_plan_mapping_required: 'Asocia el contenido a por lo menos un plan.',
   creator_premium_legacy_reverification_required: 'Este contenido pendiente necesita iniciar la verificación B7 una vez.',
   content_safety_policy_not_configured: 'La verificación de seguridad todavía no está disponible. Tu contenido sigue privado.',
@@ -73,6 +73,20 @@ export function creatorPremiumErrorMessage(error: unknown): string {
   }
 
   return message;
+}
+
+export function creatorPremiumSubmissionBlockerMessage(
+  blocker: string,
+  item?: { mapped_plan_count?: number | null; active_plan_count?: number | null } | null,
+): string {
+  if (blocker === 'creator_premium_active_plan_required') {
+    if ((item?.mapped_plan_count ?? 0) > 0 && (item?.active_plan_count ?? 0) === 0) {
+      return 'El plan asociado sigue en borrador o fue retirado. Ve a Planes y actívalo antes de solicitar la publicación.';
+    }
+    return 'Asocia el contenido a un plan y actívalo desde Planes antes de solicitar la publicación.';
+  }
+  return CREATOR_PREMIUM_BLOCKER_COPY[blocker]
+    ?? 'No pudimos confirmar los requisitos de publicación. Revisa el contenido e inténtalo de nuevo.';
 }
 
 export function creatorPremiumCommercialSummaryErrorMessage(error: unknown): string {

@@ -112,16 +112,17 @@ export function visualStructuredResponseValue(payload) {
   const message = firstChoice?.message && typeof firstChoice.message === 'object' ? firstChoice.message : null
   const candidate = result.response ?? message?.content ?? firstChoice?.text
   if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) return candidate
-  if (Array.isArray(candidate)) throw new VisualProbeError('visual_workers_ai_structured_output_content_parts')
-  if (candidate === undefined || candidate === null) throw new VisualProbeError('visual_workers_ai_structured_output_missing')
-  if (typeof candidate !== 'string') throw new VisualProbeError('visual_workers_ai_structured_output_type_invalid')
-  if (candidate.includes('```')) throw new VisualProbeError('visual_workers_ai_structured_output_fenced')
+  const structuredOutputError = code => new VisualProbeError(code, 502, { retryable: true, providerCalled: true })
+  if (Array.isArray(candidate)) throw structuredOutputError('visual_workers_ai_structured_output_content_parts')
+  if (candidate === undefined || candidate === null) throw structuredOutputError('visual_workers_ai_structured_output_missing')
+  if (typeof candidate !== 'string') throw structuredOutputError('visual_workers_ai_structured_output_type_invalid')
+  if (candidate.includes('```')) throw structuredOutputError('visual_workers_ai_structured_output_fenced')
   try {
     const parsed = JSON.parse(candidate)
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not_object')
     return parsed
   } catch {
-    throw new VisualProbeError('visual_workers_ai_structured_output_invalid_json')
+    throw structuredOutputError('visual_workers_ai_structured_output_invalid_json')
   }
 }
 

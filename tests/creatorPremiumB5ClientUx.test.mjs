@@ -125,8 +125,7 @@ test('editor supports truthful draft, media, commercial, and automatic verificat
   assert.doesNotMatch(editor, /Publicar ahora/i);
   assert.doesNotMatch(editor, /getCreatorPremiumVideoPlaybackGrant|getCreatorPremiumOriginalImageGrant/);
   assert.doesNotMatch(editor, /AsyncStorage|from\s+['"]expo-media-library['"]|MediaLibrary\.(?:save|createAsset)|\bShare\b|FileSystem\.download|downloadAsync/);
-  assert.match(editor, /copyToCacheDirectory\s*:\s*false/);
-  assert.doesNotMatch(editor, /copyToCacheDirectory\s*:\s*true/);
+  assert.match(editor, /copyToCacheDirectory\s*:\s*true/);
 });
 
 test('existing creator and upload entry points lead to the one Premium domain', () => {
