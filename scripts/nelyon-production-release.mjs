@@ -45,6 +45,90 @@ const B7_EDGE_ATTESTATIONS = [
   ['stream-webhook', 33, false, 'c123e8a35d729c9909bdd690dcf620d0259da5c4aac553aeeb1874fa60bf6475'],
   ['video-semantic-index', 10, true, '81a0d1119016d1e4c56958f4d9a51afc5bf99552a9cd56cf8079c9adfafcaae5'],
 ];
+const P2_RELATION_ADVISOR_EXCEPTION = {
+  advisor_fingerprint: 'f498338b96d43bbbf507b286d3503474889e67679b84b6dc3116d63d36c337c0',
+  advisor_type: 'table',
+  advisor_severity: 'INFO',
+  object: { schema: 'private', name: 'creator_premium_content_safety_context_evaluations' },
+  attestation: {
+    owner: 'postgres',
+    rls_enabled: true,
+    force_rls: true,
+    acl: ['DELETE', 'INSERT', 'MAINTAIN', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']
+      .map(privilege_type => ({ grantee: 'postgres', privilege_type, is_grantable: false })),
+  },
+  authorization: {
+    functional_reason: 'Stores private service-only P2 contextual evidence; the absence of permissive RLS policies is intentional fail-closed isolation.',
+    controls: ['force_rls', 'negative_authorization_tests', 'owner_only_acl', 'private_schema', 'service_rpc_only'],
+    negative_test_evidence_sha256: '3d84738f44200f1198ab7e61aff788e4fc847f7ced6139f5fa73632e993a1d0e',
+  },
+  origin: {
+    migration: '20261018170000_creator_premium_content_safety_p2_evidence_runtime',
+    migration_blob: '8cb2e43095a733c60c5753f7a80f4e1ed2e1c4cd',
+    source_sha: 'b2e20b64fad627fc732db66e6b3c3088f5371fbc',
+  },
+  technical_approval: 'verified',
+};
+const EXPECTED_RECOVERY_SOURCES = [{
+  run_id: '39066492485',
+  run_attempt: 1,
+  release_id: 'nelyon-b7-autonomous-20261017T202315Z',
+  source_sha: B7_SOURCE_SHA,
+  repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+  mutation_status: 'completed',
+  post_snapshot_status: 'success',
+  postcheck_status: 'failure',
+  gate_artifact: { id: '12113681896', name: 'nelyon-gate-evidence-39066492485-1', digest: 'sha256:6413dc245e07f96266501b784313c26d241868bcefe420ae13db9aad0b16960f' },
+  release_artifact: { id: '12113447451', name: 'nelyon-release-39066492485-1', digest: 'sha256:c468111c29831e708a6f9545e3276604bc84b879a0a2a01994f1178da3b87099' },
+  manifest_sha256: '95700e7ad2221bf113b58da0719f41feed40f76389caeba59e3457d603998045',
+  pre_snapshot_evidence_sha256: '5866d0a628eb390ed47b21b17c0910387274a213a0d70702fd8253cc143aee38',
+  post_snapshot_evidence_sha256: '0625cc7c5509b1c48b442fca8cab715bbbcd759ea1dc154044cc574a76cf6ad6',
+  expected_migrations: [{ blob: B7_MIGRATION_BLOB, name: B7_MIGRATION }],
+  expected_migration_count: 337,
+  expected_latest_migration: B7_MIGRATION,
+  edge_functions: B7_EDGE_ATTESTATIONS.map(([name, version, verify_jwt, source_sha256]) => ({
+    name, source_sha256, status: 'ACTIVE', verify_jwt, version,
+  })),
+  productive_resources: [
+    `migration:${B7_MIGRATION}`,
+    ...B7_EDGE_ATTESTATIONS.map(([name]) => `function:${name}`),
+  ],
+  premium_relation_security_sha256: 'c0a6af305569c7cafa7c2bd84d8c4a715ede9409a984be709ffdfd0ffe935b3c',
+  premium_legacy: { content_count: 2, pending_review_count: 1, deleted_count: 1 },
+}, {
+  run_id: '39157300357',
+  run_attempt: 1,
+  release_id: 'nelyon-p2-technical-release-20261018T190718Z',
+  source_sha: 'b2e20b64fad627fc732db66e6b3c3088f5371fbc',
+  repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+  mutation_status: 'completed',
+  post_snapshot_status: 'success',
+  postcheck_status: 'failure',
+  gate_artifact: { id: '12147615800', name: 'nelyon-gate-evidence-39157300357-1', digest: 'sha256:3a6369bcb8a3b69ef5a3b804a47dc245bd06ad9de2033b0f7afa84b9f48f0cfe' },
+  release_artifact: { id: '12147188981', name: 'nelyon-release-39157300357-1', digest: 'sha256:53caa1369fc09b3a5f1d81db25565f6e8bf1a8b99f457cea0ea709b7b39c5bbc' },
+  manifest_sha256: '11eb4044e5e0f4900b8e2f68be050b2eb95b8e59aac60f5cf82d2ccda64673b0',
+  pre_snapshot_evidence_sha256: '942690271875e7ab055138cafc9b2b087c61a9151c357354488169913ac9b589',
+  post_snapshot_evidence_sha256: '253b9eb6b2a8c42a3a2627b14da3f4a569cc8c3481658048fbc2df4e11a1a5bb',
+  expected_migrations: [{
+    blob: '8cb2e43095a733c60c5753f7a80f4e1ed2e1c4cd',
+    name: '20261018170000_creator_premium_content_safety_p2_evidence_runtime',
+  }],
+  expected_migration_count: 341,
+  expected_latest_migration: '20261018170000_creator_premium_content_safety_p2_evidence_runtime',
+  edge_functions: [{
+    name: 'content-safety-scan',
+    source_sha256: '74777e11d9df4b14c079131dc514233d2f3932424512cb740c15c497849d35ad',
+    status: 'ACTIVE',
+    verify_jwt: true,
+    version: 42,
+  }],
+  productive_resources: [
+    'migration:20261018170000_creator_premium_content_safety_p2_evidence_runtime',
+    'function:content-safety-scan',
+  ],
+  premium_relation_security_sha256: '055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6',
+  premium_legacy: { content_count: 4, pending_review_count: 2, deleted_count: 2 },
+}];
 const REQUIRED_FINANCE_RECONCILIATIONS = [
   'account_balance_ledger_mismatch',
   'completed_credit_account_mismatch',
@@ -108,10 +192,11 @@ export function validateSecurityAdvisorPolicy(securityAdvisor) {
     deny(code, 'historical Security Advisor baseline authority changed');
   }
   const exceptions = securityAdvisor.exceptions;
-  if (!Array.isArray(exceptions) || exceptions.length !== SECURITY_ADVISOR_RPC_EXCEPTIONS.length) {
+  if (!Array.isArray(exceptions) || exceptions.length !== SECURITY_ADVISOR_RPC_EXCEPTIONS.length + 1) {
     deny(code, 'the exact audited Security Advisor exception set is required');
   }
   const expectedByFingerprint = new Map(SECURITY_ADVISOR_RPC_EXCEPTIONS.map(item => [item[0], item]));
+  expectedByFingerprint.set(P2_RELATION_ADVISOR_EXCEPTION.advisor_fingerprint, P2_RELATION_ADVISOR_EXCEPTION);
   const fingerprints = new Set();
   const identities = new Set();
   for (const exception of exceptions) {
@@ -120,6 +205,12 @@ export function validateSecurityAdvisorPolicy(securityAdvisor) {
     const expected = expectedByFingerprint.get(exception.advisor_fingerprint);
     if (!expected || fingerprints.has(exception.advisor_fingerprint)) deny(code, 'unknown or duplicate advisor fingerprint');
     fingerprints.add(exception.advisor_fingerprint);
+    if (exception.advisor_fingerprint === P2_RELATION_ADVISOR_EXCEPTION.advisor_fingerprint) {
+      if (canonicalJson(exception) !== canonicalJson(P2_RELATION_ADVISOR_EXCEPTION)) {
+        deny(code, 'P2 relation exception does not match its exact audited evidence');
+      }
+      continue;
+    }
     if (exception.advisor_type !== 'authenticated_security_definer_function_executable'
       || exception.advisor_severity !== 'WARN'
       || exception.technical_approval !== 'verified') {
@@ -177,53 +268,16 @@ export function validateSecurityAdvisorPolicy(securityAdvisor) {
 
 export function validateRecoverySource(source) {
   const code = 'INVALID_RECOVERY_SOURCE';
-  assertExactKeys(source, ['run_id', 'run_attempt', 'release_id', 'source_sha', 'repository', 'mutation_status', 'post_snapshot_status', 'postcheck_status', 'gate_artifact', 'release_artifact', 'manifest_sha256', 'pre_snapshot_evidence_sha256', 'post_snapshot_evidence_sha256', 'expected_b7_migration', 'edge_functions', 'productive_resources'], code, 'recovery source');
-  if (source.run_id !== '39066492485'
-    || source.run_attempt !== 1
-    || source.release_id !== 'nelyon-b7-autonomous-20261017T202315Z'
-    || source.source_sha !== B7_SOURCE_SHA
-    || source.repository !== 'andressan101989/ClipDAG-9bh0w4-26004-20260525'
-    || source.mutation_status !== 'completed'
-    || source.post_snapshot_status !== 'success'
-    || source.postcheck_status !== 'failure') {
-    deny(code, 'recovery source identity or failed-postcheck shape is invalid');
-  }
-  for (const [artifact, expected] of [
-    [source.gate_artifact, { id: '12113681896', name: 'nelyon-gate-evidence-39066492485-1', digest: 'sha256:6413dc245e07f96266501b784313c26d241868bcefe420ae13db9aad0b16960f' }],
-    [source.release_artifact, { id: '12113447451', name: 'nelyon-release-39066492485-1', digest: 'sha256:c468111c29831e708a6f9545e3276604bc84b879a0a2a01994f1178da3b87099' }],
-  ]) {
-    assertExactKeys(artifact, ['id', 'name', 'digest'], code, 'source artifact');
-    if (canonicalJson(artifact) !== canonicalJson(expected)) deny(code, 'source artifact identity is invalid');
-  }
-  for (const [field, expected] of [
-    ['manifest_sha256', '95700e7ad2221bf113b58da0719f41feed40f76389caeba59e3457d603998045'],
-    ['pre_snapshot_evidence_sha256', '5866d0a628eb390ed47b21b17c0910387274a213a0d70702fd8253cc143aee38'],
-    ['post_snapshot_evidence_sha256', '0625cc7c5509b1c48b442fca8cab715bbbcd759ea1dc154044cc574a76cf6ad6'],
-  ]) {
-    assertSha256(source[field], code, field);
-    if (source[field] !== expected) deny(code, `${field} does not match the approved source`);
-  }
-  const expectedMigration = { blob: B7_MIGRATION_BLOB, name: B7_MIGRATION };
-  if (canonicalJson(source.expected_b7_migration) !== canonicalJson(expectedMigration)) {
-    deny(code, 'approved B7 migration identity changed');
-  }
-  const expectedEdges = B7_EDGE_ATTESTATIONS.map(([name, version, verifyJwt, sourceSha256]) => ({
-    name,
-    source_sha256: sourceSha256,
-    status: 'ACTIVE',
-    verify_jwt: verifyJwt,
-    version,
-  }));
-  if (canonicalJson(source.edge_functions) !== canonicalJson(expectedEdges)
-    || new Set(source.edge_functions?.map(item => item.name)).size !== expectedEdges.length) {
-    deny(code, 'approved source Edge attestations changed or expanded');
-  }
-  const expectedResources = [
-    `migration:${B7_MIGRATION}`,
-    ...B7_EDGE_ATTESTATIONS.map(([name]) => `function:${name}`),
-  ];
-  if (canonicalJson(source.productive_resources) !== canonicalJson(expectedResources)) {
-    deny(code, 'approved source productive resources changed or expanded');
+  assertExactKeys(source, [
+    'run_id', 'run_attempt', 'release_id', 'source_sha', 'repository', 'mutation_status',
+    'post_snapshot_status', 'postcheck_status', 'gate_artifact', 'release_artifact',
+    'manifest_sha256', 'pre_snapshot_evidence_sha256', 'post_snapshot_evidence_sha256',
+    'expected_migrations', 'expected_migration_count', 'expected_latest_migration',
+    'edge_functions', 'productive_resources', 'premium_relation_security_sha256', 'premium_legacy',
+  ], code, 'recovery source');
+  const expected = EXPECTED_RECOVERY_SOURCES.find(item => item.run_id === source.run_id);
+  if (!expected || canonicalJson(source) !== canonicalJson(expected)) {
+    deny(code, 'recovery source differs from the exact approved immutable authority');
   }
   return true;
 }
@@ -338,10 +392,14 @@ export function validatePolicy(policy) {
   validateSecurityAdvisorPolicy(policy.security_advisor);
   assertExactKeys(policy.postcheck_recovery, ['approved_sources'], 'INVALID_RECOVERY_POLICY', 'postcheck recovery policy');
   if (!Array.isArray(policy.postcheck_recovery.approved_sources)
-    || policy.postcheck_recovery.approved_sources.length !== 1) {
-    deny('INVALID_RECOVERY_POLICY', 'exactly one approved recovery source is required');
+    || policy.postcheck_recovery.approved_sources.length !== EXPECTED_RECOVERY_SOURCES.length) {
+    deny('INVALID_RECOVERY_POLICY', 'the exact approved recovery source set is required');
   }
-  validateRecoverySource(policy.postcheck_recovery.approved_sources[0]);
+  for (const source of policy.postcheck_recovery.approved_sources) validateRecoverySource(source);
+  if (canonicalJson(policy.postcheck_recovery.approved_sources.map(item => item.run_id))
+    !== canonicalJson(EXPECTED_RECOVERY_SOURCES.map(item => item.run_id))) {
+    deny('INVALID_RECOVERY_POLICY', 'approved recovery source ordering or identity changed');
+  }
   return true;
 }
 
@@ -396,6 +454,14 @@ export function validateRequest(request, policy) {
   }
   if (request.mode === 'release' && policy.cutover.state !== 'verified') {
     deny('CUTOVER_NOT_VERIFIED', 'production cutover is not verified');
+  }
+  if (request.mode === 'postcheck_recovery') {
+    const source = policy.postcheck_recovery.approved_sources.find(item => (
+      item.run_id === String(request.recoverySourceRunId ?? '')
+    ));
+    if (!source) deny('INVALID_RECOVERY_SOURCE', 'recovery source run is not an exact approved authority');
+  } else if (request.recoverySourceRunId !== undefined && request.recoverySourceRunId !== null) {
+    deny('INVALID_RECOVERY_SOURCE', 'recovery source run is valid only for postcheck recovery');
   }
   return Object.freeze({ ...request });
 }
@@ -1553,12 +1619,12 @@ export function verifyRecoveryArtifactProvenance({ source, run, artifacts, relea
     || manifest.identity?.mode !== 'release') {
     deny(code, 'source request or manifest identity does not match the approved release');
   }
-  const expectedMigrationNames = [source.expected_b7_migration.name];
+  const expectedMigrationNames = source.expected_migrations.map(item => item.name);
   const actualMigrationNames = (manifest.resources?.migrations ?? []).map(item => item?.path?.replace(/^.*\//, '').replace(/\.sql$/, ''));
   const expectedFunctions = source.edge_functions.map(item => item.name);
   if (canonicalJson(actualMigrationNames) !== canonicalJson(expectedMigrationNames)
     || canonicalJson(manifest.resources?.functions) !== canonicalJson(expectedFunctions)) {
-    deny(code, 'source manifest productive resources do not match the approved B7 release');
+    deny(code, 'source manifest productive resources do not match the approved failed release');
   }
   const expectedSteps = {
     pre_snapshot: 'success',
@@ -1650,14 +1716,13 @@ export function verifyPostcheckRecovery({
   });
 
   const migrations = currentEvidence.migrations;
-  const expectedVersion = source.expected_b7_migration.name.slice(0, 14);
-  const b7Rows = migrations.items.filter(item => (
-    item.version === expectedVersion
-    && `${item.version}_${item.name}` === source.expected_b7_migration.name
-  ));
-  if (migrations.count !== 337 || b7Rows.length !== 1
-    || `${migrations.latest?.version}_${migrations.latest?.name}` !== source.expected_b7_migration.name) {
-    deny(code, 'B7 migration is missing, duplicated, or not the exact latest migration');
+  const expectedMigrationRows = source.expected_migrations.map(expected => migrations.items.filter(item => (
+    item.version === expected.name.slice(0, 14) && `${item.version}_${item.name}` === expected.name
+  )));
+  if (migrations.count !== source.expected_migration_count
+    || expectedMigrationRows.some(rows => rows.length !== 1)
+    || `${migrations.latest?.version}_${migrations.latest?.name}` !== source.expected_latest_migration) {
+    deny(code, 'approved source migrations are missing, duplicated, or not the exact latest inventory');
   }
 
   if (currentEvidence.functions.count !== policy?.supabase?.expected_remote_function_count) {
@@ -1686,6 +1751,7 @@ export function verifyPostcheckRecovery({
 
   const advisorItems = currentEvidence.cron_security.advisors.items;
   const exceptionFingerprints = new Set(policy.security_advisor.exceptions.map(item => item.advisor_fingerprint));
+  const exceptionByFingerprint = new Map(policy.security_advisor.exceptions.map(item => [item.advisor_fingerprint, item]));
   const presentExceptions = advisorItems.filter(item => exceptionFingerprints.has(item.fingerprint));
   const baselineItems = advisorItems.filter(item => !exceptionFingerprints.has(item.fingerprint));
   const reconstructedBaseline = {
@@ -1695,11 +1761,18 @@ export function verifyPostcheckRecovery({
   };
   if (presentExceptions.length !== exceptionFingerprints.size
     || new Set(presentExceptions.map(item => item.fingerprint)).size !== exceptionFingerprints.size
-    || presentExceptions.some(item => item.level !== 'WARN'
-      || item.resource_kind !== 'authenticated_security_definer_function_executable')
+    || presentExceptions.some(item => {
+      const expected = exceptionByFingerprint.get(item.fingerprint);
+      return item.level !== expected?.advisor_severity || item.resource_kind !== expected?.advisor_type;
+    })
     || baselineItems.length !== policy.security_advisor.baseline.count
     || sha256Hex(canonicalJson(reconstructedBaseline)) !== policy.security_advisor.baseline.cron_security_sha256) {
     deny(code, 'current Security Advisor set is not the historical baseline plus the exact approved exceptions');
+  }
+
+  if (canonicalJson(currentEvidence.premium_state.legacy) !== canonicalJson(source.premium_legacy)
+    || currentEvidence.premium_state.relation_security.sha256 !== source.premium_relation_security_sha256) {
+    deny(code, 'current Premium legacy counts or relation authority differ from the exact approved source');
   }
 
   const finance = currentEvidence.finance;

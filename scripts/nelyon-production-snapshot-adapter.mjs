@@ -626,7 +626,8 @@ export function buildProductionBaselineDigests({ evidence, policy }) {
   };
   const attestedRpcIdentities = new Set((evidence.rpc_security?.items ?? []).map(rpcIdentity));
   const deployedExceptionFingerprints = new Set((policy?.security_advisor?.exceptions ?? [])
-    .filter(exception => attestedRpcIdentities.has(rpcIdentity(exception.object)))
+    .filter(exception => !Array.isArray(exception?.object?.argument_types)
+      || attestedRpcIdentities.has(rpcIdentity(exception.object)))
     .map(exception => exception.advisor_fingerprint));
   const historicalAdvisorItems = evidence.cron_security.advisors.items
     .filter(item => !deployedExceptionFingerprints.has(item.fingerprint));
@@ -696,7 +697,7 @@ export function verifyProductionPreSnapshot({ pre, policy, request, manifest, ad
 export function verifyProductionSnapshotPair({ pre, post, policy, request, manifest, adapterSourceSha256 }) {
   verifyProductionPreSnapshot({ pre, policy, request, manifest, adapterSourceSha256 });
   validateCapturedEvidence({ evidence: post, phase: 'post', policy, request, manifest, adapterSourceSha256 });
-  validatePremiumStateTransition(pre.premium_state, post.premium_state);
+  validatePremiumStateTransition(pre.premium_state, post.premium_state, manifest);
   if (Date.parse(post.observed_at) < Date.parse(pre.observed_at)
     || Date.parse(post.finance.database_time) < Date.parse(pre.finance.database_time)) {
     fail('INVALID_SNAPSHOT_ORDER', 'post-release evidence predates pre-release evidence');
@@ -1020,7 +1021,7 @@ export function advisorExceptionsForPhase(policy, manifest, phase) {
 }
 
 function rpcIdentitiesFromExceptions(exceptions) {
-  return exceptions.map(exception => ({
+  return exceptions.filter(exception => Array.isArray(exception?.object?.argument_types)).map(exception => ({
     schema: exception?.object?.schema,
     name: exception?.object?.name,
     argument_types: exception?.object?.argument_types,
@@ -1145,12 +1146,13 @@ function validateRpcIdentitySet(snapshot, exceptions) {
 }
 
 export function validateRpcSecurityAttestations(snapshot, exceptions) {
+  const rpcExceptions = (exceptions ?? []).filter(exception => Array.isArray(exception?.object?.argument_types));
   validateRpcSecuritySnapshot(snapshot);
-  validateRpcIdentitySet(snapshot, exceptions);
-  if (!Array.isArray(exceptions) || exceptions.length !== snapshot.items.length) {
+  validateRpcIdentitySet(snapshot, rpcExceptions);
+  if (!Array.isArray(exceptions) || rpcExceptions.length !== snapshot.items.length) {
     fail('RPC_SECURITY_ATTESTATION_FAILED', 'exception set does not match the RPC attestation set');
   }
-  const expectedItems = exceptions.map(exception => {
+  const expectedItems = rpcExceptions.map(exception => {
     if (!exception?.object || !exception?.attestation) {
       fail('RPC_SECURITY_ATTESTATION_FAILED', 'exception attestation is incomplete');
     }
@@ -1255,11 +1257,32 @@ export function validatePremiumPostcheckState(state, expectedRelations = null) {
   return true;
 }
 
-export function validatePremiumStateTransition(preState, postState) {
+export function validatePremiumStateTransition(preState, postState, manifest = null) {
   validatePremiumPostcheckState(preState);
   validatePremiumPostcheckState(postState);
-  if (canonicalJson(postState.legacy) !== canonicalJson(preState.legacy)
-    || canonicalJson(postState.relation_security) !== canonicalJson(preState.relation_security)) {
+  if (canonicalJson(postState.legacy) !== canonicalJson(preState.legacy)) {
+    fail('PREMIUM_POSTCHECK_FAILED', 'Premium content counts or relation authority changed during release');
+  }
+  const approvedRelationAdditions = new Map([
+    [
+      '20261018170000|supabase/migrations/20261018170000_creator_premium_content_safety_p2_evidence_runtime.sql',
+      ['private.creator_premium_content_safety_context_evaluations'],
+    ],
+  ]);
+  const manifestMigrationKeys = (manifest?.resources?.migrations ?? []).map(item => (
+    `${item?.version ?? ''}|${String(item?.path ?? '').replaceAll('\\', '/')}`
+  ));
+  const allowedAddedIdentities = manifestMigrationKeys
+    .flatMap(key => approvedRelationAdditions.get(key) ?? []).sort();
+  const before = new Map(preState.relation_security.items.map(item => [`${item.schema}.${item.name}`, item]));
+  const after = new Map(postState.relation_security.items.map(item => [`${item.schema}.${item.name}`, item]));
+  const removed = [...before.keys()].filter(identity => !after.has(identity)).sort();
+  const changed = [...before.entries()]
+    .filter(([identity, item]) => after.has(identity) && canonicalJson(after.get(identity)) !== canonicalJson(item))
+    .map(([identity]) => identity).sort();
+  const added = [...after.keys()].filter(identity => !before.has(identity)).sort();
+  if (removed.length !== 0 || changed.length !== 0
+    || canonicalJson(added) !== canonicalJson(allowedAddedIdentities)) {
     fail('PREMIUM_POSTCHECK_FAILED', 'Premium content counts or relation authority changed during release');
   }
   return true;

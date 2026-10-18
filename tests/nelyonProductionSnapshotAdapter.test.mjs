@@ -488,6 +488,53 @@ test('Premium postcheck state preserves historical minima while allowing owner-c
   ]) assert.throws(() => adapter.validatePremiumPostcheckState(state, expectedRelations), /PREMIUM_POSTCHECK_FAILED/);
 });
 
+test('Premium transition permits only the exact P2 relation addition bound to the exact manifest migration', async () => {
+  const adapter = await loadAdapter();
+  const originalRelation = premiumPostcheckSnapshot().relations[0];
+  const p2Relation = {
+    schema: 'private',
+    name: 'creator_premium_content_safety_context_evaluations',
+    owner: 'postgres',
+    rls_enabled: true,
+    force_rls: true,
+    acl: [{ grantee: 'postgres', privilege_type: 'SELECT', is_grantable: false }],
+  };
+  const pre = adapter.normalizePremiumPostcheckState(premiumPostcheckSnapshot());
+  const post = adapter.normalizePremiumPostcheckState(premiumPostcheckSnapshot({
+    relations: [p2Relation, originalRelation],
+  }));
+  const p2Manifest = {
+    resources: {
+      migrations: [{
+        path: 'supabase/migrations/20261018170000_creator_premium_content_safety_p2_evidence_runtime.sql',
+        version: '20261018170000',
+      }],
+    },
+  };
+
+  assert.equal(adapter.validatePremiumStateTransition(pre, post, p2Manifest), true);
+  for (const manifestCandidate of [
+    { resources: { migrations: [] } },
+    { resources: { migrations: [{ ...p2Manifest.resources.migrations[0], version: '20261018170001' }] } },
+    { resources: { migrations: [{ ...p2Manifest.resources.migrations[0], path: 'supabase/migrations/20261018170000_wrong.sql' }] } },
+  ]) {
+    assert.throws(() => adapter.validatePremiumStateTransition(pre, post, manifestCandidate), /PREMIUM_POSTCHECK_FAILED/);
+  }
+
+  const unexpected = adapter.normalizePremiumPostcheckState(premiumPostcheckSnapshot({
+    relations: [p2Relation, originalRelation, { ...p2Relation, name: 'creator_premium_unapproved_relation' }],
+  }));
+  assert.throws(() => adapter.validatePremiumStateTransition(pre, unexpected, p2Manifest), /PREMIUM_POSTCHECK_FAILED/);
+
+  const changedExisting = adapter.normalizePremiumPostcheckState(premiumPostcheckSnapshot({
+    relations: [
+      p2Relation,
+      { ...originalRelation, acl: [...originalRelation.acl, { grantee: 'postgres', privilege_type: 'UPDATE', is_grantable: false }] },
+    ],
+  }));
+  assert.throws(() => adapter.validatePremiumStateTransition(pre, changedExisting, p2Manifest), /PREMIUM_POSTCHECK_FAILED/);
+});
+
 test('fixed documented recovery capture uses four read-only SQL requests and redacts credentials', async () => {
   const adapter = await loadAdapter();
   const calls = [];
@@ -513,7 +560,9 @@ test('recovery snapshot verifies exact exception attestations and remains read o
     token: 'never-serialize-recovery-token', fetchImpl: successfulFetch([]),
     observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
   });
-  const items = policy.security_advisor.exceptions.map(exception => ({
+  const items = policy.security_advisor.exceptions
+    .filter(exception => Array.isArray(exception.object.argument_types))
+    .map(exception => ({
     schema: exception.object.schema,
     name: exception.object.name,
     identity_arguments: exception.object.identity_arguments,
@@ -524,7 +573,7 @@ test('recovery snapshot verifies exact exception attestations and remains read o
     acl: exception.attestation.acl,
     execute: exception.attestation.execute,
     definition_sha256: exception.attestation.definition_sha256,
-  })).sort((left, right) => `${left.schema}.${left.name}(${left.argument_types.join(',')})`.localeCompare(`${right.schema}.${right.name}(${right.argument_types.join(',')})`));
+    })).sort((left, right) => `${left.schema}.${left.name}(${left.argument_types.join(',')})`.localeCompare(`${right.schema}.${right.name}(${right.argument_types.join(',')})`));
   recovery.rpc_security = { complete: true, count: items.length, items, sha256: sha256(canonicalJson(items)) };
   const { evidence_sha256: ignored, ...unsigned } = recovery;
   recovery.evidence_sha256 = sha256(canonicalJson(unsigned));
@@ -1002,9 +1051,10 @@ test('phase-bound RPC attestations include a new protected RPC only after its ma
     path: 'supabase/migrations/20261017193000_creator_premium_c1_submission_cancellation.sql',
     version: '20261017193000',
   }];
-  assert.equal(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre').length, 11);
-  assert.equal(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post').length, 12);
-  assert.equal(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery').length, 12);
+  const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre')), 11);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post')), 12);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery')), 12);
 });
 
 test('postcheck advisor delta accepts only exact phase-approved fingerprints', async () => {
