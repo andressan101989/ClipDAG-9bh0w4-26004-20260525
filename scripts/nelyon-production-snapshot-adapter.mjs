@@ -1240,7 +1240,8 @@ export function validatePremiumPostcheckState(state, expectedRelations = null) {
   if (canonicalJson(state.content_safety) !== canonicalJson({
     approved_rule_count: 0, active_rule_count: 0, fabricated_pass_count: 0,
   }) || ![contentCount, pendingReviewCount, deletedCount].every(Number.isInteger)
-    || contentCount < 2 || pendingReviewCount < 1 || deletedCount < 1
+    || [contentCount, pendingReviewCount, deletedCount].some(value => value < 0)
+    || contentCount < 2 || deletedCount < 1
     || pendingReviewCount + deletedCount > contentCount) {
     fail('PREMIUM_POSTCHECK_FAILED', 'Content Safety or legacy Premium state diverged');
   }
