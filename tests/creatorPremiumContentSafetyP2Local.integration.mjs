@@ -214,7 +214,7 @@ test('P2 compiles and proves private evidence, bounded claims, candidate decisio
     }
     assert.equal(psql(db, `select has_function_privilege('service_role','public.claim_creator_premium_content_safety_context_v1(integer)','execute')`).stdout, 't')
     assert.equal(psql(db, `select has_function_privilege('service_role','public.complete_creator_premium_content_safety_context_v1(uuid,text,integer,jsonb)','execute')`).stdout, 't')
-    assert.equal(psql(db, `select has_function_privilege('service_role','public.fail_creator_premium_content_safety_context_v1(uuid,integer,text,boolean,boolean)','execute')`).stdout, 't')
+    assert.equal(psql(db, `select has_function_privilege('service_role','public.fail_creator_premium_content_safety_context_v1(uuid,text,integer,text,boolean,boolean)','execute')`).stdout, 't')
     assert.equal(psql(db, `select has_function_privilege('authenticated','public.claim_creator_premium_content_safety_context_v1(integer)','execute')`).stdout, 'f')
     assert.equal(psql(db, `select private.creator_premium_content_safety_policy_p1_v1()#>>'{activation,enabled}'`).stdout, 'false')
     assert.equal(psql(db, `select count(*) from private.creator_premium_content_safety_context_evaluations`).stdout, '0')
@@ -291,7 +291,12 @@ test('P2 compiles and proves private evidence, bounded claims, candidate decisio
       assert.equal(claim.length, 1)
       assert.equal(claim[0].scan_id, retry.scan)
       assert.equal(claim[0].attempt_count, attempt)
-      const receipt = JSON.parse(psql(db, `select public.fail_creator_premium_content_safety_context_v1('${retry.scan}',${claim[0].attempt_count},'provider_timeout',true,true)`).stdout)
+      if (attempt === 1) {
+        const wrongFingerprint = psql(db, `select public.fail_creator_premium_content_safety_context_v1('${retry.scan}','${'0'.repeat(64)}',${claim[0].attempt_count},'provider_timeout',true,true)`, { allowFailure: true })
+        assert.notEqual(wrongFingerprint.status, 0)
+        assert.match(wrongFingerprint.stderr, /creator_premium_context_evaluation_not_found/i)
+      }
+      const receipt = JSON.parse(psql(db, `select public.fail_creator_premium_content_safety_context_v1('${retry.scan}','${claim[0].content_fingerprint}',${claim[0].attempt_count},'provider_timeout',true,true)`).stdout)
       assert.equal(receipt.context_status, attempt < 5 ? 'pending' : 'failed')
       if (attempt < 5) psql(db, `update private.creator_premium_content_safety_context_evaluations set available_at=clock_timestamp() where source_scan_id='${retry.scan}'`)
     }

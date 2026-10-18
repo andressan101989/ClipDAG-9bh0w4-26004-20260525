@@ -401,6 +401,7 @@ Deno.serve(async req => {
       if (uuid(claim.scan_id)) {
         const { data } = await admin.rpc('fail_creator_premium_content_safety_context_v1', {
           p_scan_id: claim.scan_id,
+          p_content_fingerprint: claim.content_fingerprint,
           p_attempt_count: claim.attempt_count,
           p_error_code: issue.code,
           p_retryable: issue.retryable,

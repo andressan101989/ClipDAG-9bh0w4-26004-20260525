@@ -573,6 +573,7 @@ $$;
 
 create function public.fail_creator_premium_content_safety_context_v1(
   p_scan_id uuid,
+  p_content_fingerprint text,
   p_attempt_count integer,
   p_error_code text,
   p_retryable boolean,
@@ -592,6 +593,7 @@ begin
   select * into v_evaluation
   from private.creator_premium_content_safety_context_evaluations
   where source_scan_id=p_scan_id
+    and source_content_fingerprint=p_content_fingerprint
     and policy_id='nelyon.creator_premium.general.p1.v1'
     and prompt_version='creator-premium-context-p2-v1'
   for update;
@@ -798,7 +800,7 @@ revoke all on function
   public.complete_creator_premium_content_safety_context_v1(uuid,text,integer,jsonb)
   from public, anon, authenticated, service_role;
 revoke all on function
-  public.fail_creator_premium_content_safety_context_v1(uuid,integer,text,boolean,boolean)
+  public.fail_creator_premium_content_safety_context_v1(uuid,text,integer,text,boolean,boolean)
   from public, anon, authenticated, service_role;
 grant execute on function
   public.claim_creator_premium_content_safety_context_v1(integer)
@@ -807,7 +809,7 @@ grant execute on function
   public.complete_creator_premium_content_safety_context_v1(uuid,text,integer,jsonb)
   to service_role;
 grant execute on function
-  public.fail_creator_premium_content_safety_context_v1(uuid,integer,text,boolean,boolean)
+  public.fail_creator_premium_content_safety_context_v1(uuid,text,integer,text,boolean,boolean)
   to service_role;
 
 comment on table private.creator_premium_content_safety_context_evaluations is
