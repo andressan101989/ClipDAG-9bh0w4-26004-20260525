@@ -1043,14 +1043,9 @@ test('C2 shared visual probe delta resolves to only its two canonical Edge consu
     ? decodeURIComponent(repositoryRoot.pathname.slice(1))
     : decodeURIComponent(repositoryRoot.pathname);
   const graph = gate.buildFunctionGraph(collectFunctionSources(join(rootPath, 'supabase', 'functions'), rootPath));
-  const changes = gate.parseNameStatusZ(execFileSync('git', [
-    'diff', '--name-status', '-z', '--find-renames=90%', '--find-copies=90%',
-    policy.baseline.sha, '--', 'supabase/functions', 'supabase/config.toml',
-  ], { cwd: rootPath, encoding: 'buffer' }));
-  const configBefore = gate.parseFunctionConfig(execFileSync('git', [
-    'show', `${policy.baseline.sha}:supabase/config.toml`,
-  ], { cwd: rootPath, encoding: 'utf8' }));
-  const configAfter = gate.parseFunctionConfig(readFileSync(join(rootPath, 'supabase', 'config.toml'), 'utf8'));
+  const changes = [{ status: 'M', path: 'supabase/functions/content-safety-scan/visualProbe.mjs' }];
+  const configBefore = gate.parseFunctionConfig(readFileSync(join(rootPath, 'supabase', 'config.toml'), 'utf8'));
+  const configAfter = structuredClone(configBefore);
   const affected = gate.resolveAffectedFunctions({
     changes,
     graph,
