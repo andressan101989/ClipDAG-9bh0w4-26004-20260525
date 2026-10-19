@@ -2,10 +2,10 @@
   "baseline": {
     "authority_source": "owner-control-plane",
     "blocked_resources": [],
-    "evidence": "9b9ddee2cbced81e18728a09309aba2efde7659ed6da9701379c0cb2bf68576e",
+    "evidence": "27d0a3e6e31eaa77e3e2d9845dd911bf6bc5964aab91e78a67a822fb5235ae1d",
     "evidence_digests": {
       "config_verify_jwt": "9f7f6b42cccd5086f862b1f40e659935d8a44f14943eeed80c8d7928e84f9fb9",
-      "cron_security": "ce52a9e263bf2021361648f73389ba9f150ce57808f27c5f9789a16e5caea299",
+      "cron_security": "2dd76dccc8b348eb932fee5c8ada572f57243287f3ca96bf851a75a2e9244846",
       "finance": "94c297fb891f7c13beb92f2cfaec3145ba1ca3b23bbcd74ce39e084a8365b566",
       "function_source_parity": "0e85d5fb4e401914a22b4376f60a1a2ab9cfd5f8063771ed063e0dc8084da4e2",
       "managed_functions": "f5618c0f2fa33891813dd4a780c8c251cfc45649fc10decf7d39ec9162c369fd",
@@ -21,10 +21,10 @@
       "release_id": "nelyon-f1-c4-release-20261019T034232Z"
     },
     "requires_separate_policy_commit": true,
-    "reviewed_policy_sha256": "45a2bf41c5ec07f56a42a4a4c237796b30c927dbd3afd837269f098999af848c",
+    "reviewed_policy_sha256": "21ca82ef608594aa6c513275b32a3036d794c9b834eb3b6ec7112bed91f691a2",
     "sha": "6cde9b5566c0753b10a1588e8f58568030d37a61",
     "state": "verified",
-    "verified_at": "2026-10-19T03:53:01.180Z",
+    "verified_at": "2026-10-19T17:42:10.548Z",
     "verified_by": "andressan101989"
   },
   "baseline_authority": {
