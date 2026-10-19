@@ -21,6 +21,10 @@ const F1_NEGATIVE_TEST_EVIDENCE_SHA256 = '59a8ca88804abd43416d157b7580d180884b90
 const F1_MIGRATION = '20261018211327_creator_premium_qa_final_f1';
 const F1_MIGRATION_BLOB = '9052d0abd6df3fec7d49eed80285bce19f21051b';
 const F1_SOURCE_SHA = 'ed51307f9fc02ec04ca84478d905f608120e2b0e';
+const F1_C4_NEGATIVE_TEST_EVIDENCE_SHA256 = '88f4dd9874b57cc9235b2f86b391fa6b9a5884ebe722297d81fbffa289bdaf0f';
+const F1_C4_MIGRATION = '20261019023431_creator_premium_f1_c4_final_recovery';
+const F1_C4_MIGRATION_BLOB = '185fdfb7c0216776fa540fe5009afdee4f2b57bb';
+const F1_C4_SOURCE_SHA = '506f7b669d6d1dce42b273ae51e456b90ca2e6a5';
 const SECURITY_ADVISOR_RPC_EXCEPTIONS = [
   ['f9c25bdf8e5c7f7ff7385410370dac9fe2ded1a0468f76d8bd2d265186718f32', 'get_creator_premium_commerce_v1', ['uuid'], 'p_content_id uuid', '30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
   ['b5ca8be9cf9433a21ee7f19906d8a23340ef629d6cedd414c196b431ab5dfaf1', 'get_admin_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', '2a91f72e122beeee0f3d3c9f59ef99f13d2aefab9bcbc987594a5ac43c40a47e', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
@@ -36,7 +40,7 @@ const SECURITY_ADVISOR_RPC_EXCEPTIONS = [
   ['053c9a441c11dc657382c6448b017d8fcf73c16fb5a3e4baf6275e24e2216129', 'cancel_my_creator_premium_submission_v1', ['uuid'], 'p_content_id uuid', '5be58f4d190e19a04ed32c7de88d1ace55778ac68c5c39d21cac5ad979f27a57', C1_NEGATIVE_TEST_EVIDENCE_SHA256, C1_MIGRATION, C1_MIGRATION_BLOB, C1_SOURCE_SHA],
   ['1c20753b55dcdb2d0a8e6a3365fcf45453495a74a49d76b9b51af4e51d7b923f', 'submit_my_creator_premium_content_with_plans_v1', ['uuid', 'uuid[]', 'uuid'], 'p_content_id uuid, p_plan_ids uuid[], p_client_request_id uuid', '7e3e9f176c216fd35bd9dc4fe00b7d577558265afe2f884630d53747737f02ee', F1_NEGATIVE_TEST_EVIDENCE_SHA256, F1_MIGRATION, F1_MIGRATION_BLOB, F1_SOURCE_SHA],
   ['b0cdd5e8a440096ebc6bbd35fee9b785180d71ae6d06209ade7feaa6c0877c4d', 'retire_my_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', '10a91f4a47efeda414aa7ed7d1ceed81fff971f6eb5009e4f2bfc4f2acbb78d9', F1_NEGATIVE_TEST_EVIDENCE_SHA256, F1_MIGRATION, F1_MIGRATION_BLOB, F1_SOURCE_SHA],
-  ['5ceb93fa71004f64ba75a7bd251fadaf66d7ebdce81fb48904fd988ed9023fef', 'delete_my_creator_premium_plan_draft_v1', ['uuid', 'uuid'], 'p_plan_id uuid, p_client_request_id uuid', '40cbc02821cceb68cdd5a31cfd531d9ec8f537d36c47acb1fc7fcafd0df42ed3', F1_NEGATIVE_TEST_EVIDENCE_SHA256, F1_MIGRATION, F1_MIGRATION_BLOB, F1_SOURCE_SHA],
+  ['5ceb93fa71004f64ba75a7bd251fadaf66d7ebdce81fb48904fd988ed9023fef', 'delete_my_creator_premium_plan_draft_v1', ['uuid', 'uuid'], 'p_plan_id uuid, p_client_request_id uuid', 'a7bab775b77a5230658cea58c7bcb9f139b4b6102c89c1095a5e3f5d8548d520', F1_C4_NEGATIVE_TEST_EVIDENCE_SHA256, F1_C4_MIGRATION, F1_C4_MIGRATION_BLOB, F1_C4_SOURCE_SHA],
 ];
 const B7_EDGE_ATTESTATIONS = [
   ['ads-v2-delivery', 10, true, '4510ecc897a50a2f9e23d0b326f9bdfc630ce88e5f7bcea0c59e9476233d0536'],

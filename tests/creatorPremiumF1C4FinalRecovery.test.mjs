@@ -142,4 +142,3 @@ test('mobile uses the existing deletion RPCs and exposes delete after withdrawal
   assert.match(editor, />Eliminar contenido</);
   assert.doesNotMatch(editor, />Eliminar borrador</);
 });
-
