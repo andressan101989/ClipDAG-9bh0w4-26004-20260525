@@ -69,22 +69,33 @@ function quoteSql(value) {
   return String(value).replaceAll("'", "''")
 }
 
-function imageFixtureSql({ actor, content, scan, analysis, original, teaser, title, findings }) {
+function imageFixtureSql({
+  actor, content, scan, analysis, original, teaser, title, findings,
+  promptVersion = 'creator-premium-visual-safety-p3-v1',
+  weaponDisposition = findings.some(finding => finding.category === 'weapons')
+    ? 'visible_non_threatening'
+    : 'none',
+}) {
   const analysisResult = JSON.stringify({
-    schema_version: 'visual-safety-v1',
+    schema_version: promptVersion,
+    ...(promptVersion === 'creator-premium-visual-safety-p3-v1'
+      ? { weapon_disposition: weaponDisposition }
+      : {}),
     review_required: findings.length > 0,
-    findings,
+    findings: findings.map(finding => ({ ...finding, frame_index: null })),
     summary: 'Synthetic non-sensitive P3 fixture.',
   })
   return `
     set session_replication_role=replica;
     insert into private.content_safety_scans(
       id,target_type,target_id,owner_user_id,content_fingerprint,status,requested_reason,
-      text_status,audio_status,visual_status,reports_status,completed_at,created_at,updated_at
+      text_status,audio_status,visual_status,reports_status,completed_at,created_at,updated_at,
+      visual_provider,visual_model,visual_prompt_version,visual_source_kind
     ) values(
       '${scan}','creator_premium','${content}','${actor}','${'a'.repeat(64)}',
       'completed','retry','analyzed','not_applicable','analyzed','analyzed',clock_timestamp(),
-      clock_timestamp()-interval '1 second',clock_timestamp()
+      clock_timestamp()-interval '1 second',clock_timestamp(),
+      'cloudflare_workers_ai','@cf/google/gemma-4-26b-a4b-it','${promptVersion}','eligible_image'
     );
     insert into private.creator_premium_contents(
       id,creator_id,title,description,content_kind,access_mode,lifecycle_status,
@@ -113,7 +124,7 @@ function imageFixtureSql({ actor, content, scan, analysis, original, teaser, tit
       analysis_fingerprint,provider_call_count
     ) values(
       '${analysis}','${scan}','${original}','${'a'.repeat(64)}','cloudflare_workers_ai',
-      '@cf/google/gemma-4-26b-a4b-it','visual-safety-v1','single_image_v1',1,
+      '@cf/google/gemma-4-26b-a4b-it','${promptVersion}','single_image_v1',1,
       '{}'::integer[],'${quoteSql(analysisResult)}'::jsonb,'${'d'.repeat(64)}',1
     );
     update private.content_safety_scans set
@@ -205,7 +216,30 @@ function claimP3(db) {
     db, 'service_role',
     'select public.claim_creator_premium_content_safety_context_v1(1)',
   ).stdout)
-  assert.equal(claims.length, 1, JSON.stringify(claims))
+  const diagnostics = claims.length === 1 ? '' : psql(db, `
+    select pg_catalog.jsonb_build_object(
+      'scan_id',scan.id,'status',scan.status,'text',scan.text_status,
+      'reports',scan.reports_status,'visual',scan.visual_status,
+      'visual_prompt',scan.visual_prompt_version,
+      'source_kind',scan.visual_source_kind,
+      'analysis_prompt',analysis.prompt_version,
+      'analysis_schema',analysis.analysis_result->>'schema_version',
+      'analysis_result',analysis.analysis_result,
+      'analysis_valid',private.content_safety_visual_result_valid_for_prompt(
+        analysis.analysis_result,analysis.prompt_version,
+        scan.visual_source_kind,null,analysis.frame_count
+      ),
+      'lifecycle',content.lifecycle_status,
+      'scan_binding',content.verification_scan_id=scan.id,
+      'fingerprint_binding',content.verification_fingerprint=scan.content_fingerprint
+    )
+    from private.content_safety_scans scan
+    join private.creator_premium_contents content on content.id=scan.target_id
+    join private.content_safety_visual_analyses analysis on analysis.id=scan.visual_analysis_id
+    where scan.target_type='creator_premium'
+    order by scan.created_at desc limit 1
+  `).stdout
+  assert.equal(claims.length, 1, `${JSON.stringify(claims)} ${diagnostics}`)
   assert.equal(claims[0].policy_id, 'nelyon.creator_premium.general.p1.v2')
   assert.equal(claims[0].schema_version, 'creator-premium-context-p3-v1')
   assert.equal(claims[0].prompt_version, 'creator-premium-context-p3-v1')
@@ -349,6 +383,8 @@ test('P3 disposable runtime preserves version identity, publishes contextual sca
       )
     `).stdout, 'f')
     for (const signature of [
+      'private.content_safety_visual_analysis_id_for_asset(uuid,uuid,text)',
+      'private.content_safety_visual_producer_scan_id(uuid,uuid,text)',
       'private.creator_premium_content_safety_visual_allow_compatible_p3_v1(jsonb,jsonb)',
       'private.creator_premium_content_safety_historical_p2_allow_valid_p3_v1(uuid)',
     ]) {
@@ -502,6 +538,22 @@ test('P3 disposable runtime preserves version identity, publishes contextual sca
         description: 'Holstered service weapon during a peaceful operation.',
       }],
     }))
+    assert.equal(psql(db, `
+      select
+        (private.content_safety_visual_analysis_id_for_asset(
+          null,'${allowed.original}','creator-premium-visual-safety-p3-v1'
+        )='${allowed.analysis}')::text||'|'||
+        (private.content_safety_visual_analysis_id_for_asset(
+          null,'${allowed.original}','visual-safety-v1'
+        ) is null)::text||'|'||
+        (private.content_safety_visual_producer_scan_id(
+          null,'${allowed.original}','creator-premium-visual-safety-p3-v1'
+        )='${allowed.scan}')::text||'|'||
+        (private.content_safety_visual_producer_scan_id(
+          null,'${allowed.original}','visual-safety-v1'
+        ) is null)::text
+    `).stdout, 'true|true|true|true',
+    'P3 visual analysis and producer dedup must be exact-version bounded')
     addActiveOffer(db, actor, allowed)
     addAlert(db, actor, allowed, {
       sourceType: 'visual_classifier',
@@ -621,12 +673,29 @@ test('P3 disposable runtime preserves version identity, publishes contextual sca
       actor,
       ...historicalP2,
       title: 'Historical exact P2 allow fixture',
+      promptVersion: 'visual-safety-v1',
       findings: [{
         category: 'weapons',
         triage_level: 'medium',
         description: 'Synthetic historical visual signal.',
       }],
     }))
+    assert.equal(psql(db, `
+      select
+        (private.content_safety_visual_analysis_id_for_asset(
+          null,'${historicalP2.original}','visual-safety-v1'
+        )='${historicalP2.analysis}')::text||'|'||
+        (private.content_safety_visual_analysis_id_for_asset(
+          null,'${historicalP2.original}','creator-premium-visual-safety-p3-v1'
+        ) is null)::text||'|'||
+        (private.content_safety_visual_producer_scan_id(
+          null,'${historicalP2.original}','visual-safety-v1'
+        )='${historicalP2.scan}')::text||'|'||
+        (private.content_safety_visual_producer_scan_id(
+          null,'${historicalP2.original}','creator-premium-visual-safety-p3-v1'
+        ) is null)::text
+    `).stdout, 'true|true|true|true',
+    'historical P2 visual evidence must remain readable only through its exact v1 contract')
     addActiveOffer(db, actor, historicalP2)
     insertContextEvaluation(db, historicalP2, {
       policyId: 'nelyon.creator_premium.general.p1.v1',
@@ -771,6 +840,7 @@ test('P3 disposable runtime preserves version identity, publishes contextual sca
       actor,
       ...p2Only,
       title: 'Historical P2 evidence fixture',
+      promptVersion: 'visual-safety-v1',
       findings: [],
     }))
     addActiveOffer(db, actor, p2Only)

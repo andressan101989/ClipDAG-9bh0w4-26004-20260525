@@ -102,6 +102,12 @@ const COVERAGE_VALUES = Object.freeze({
 const DECISIONS = Object.freeze(['allow', 'review', 'block'])
 const UNCERTAINTY = Object.freeze(['unambiguous', 'ambiguous'])
 const BOUNDED_UNCERTAINTY = Object.freeze(['not_relevant', 'present'])
+const VISUAL_WEAPON_DISPOSITIONS = Object.freeze([
+  'none',
+  'visible_non_threatening',
+  'threatening_or_used',
+  'ambiguous',
+])
 const WEAPON_STATES = Object.freeze([
   'not_observed',
   'visible_non_threatening',
@@ -148,9 +154,11 @@ export function normalizePolicyContextInput(input) {
       input.text.length > 8_000 || !object(input.transcript) || !exactKeys(input.transcript, ['coverage', 'text']) ||
       !COVERAGE_VALUES.transcript.includes(input.transcript.coverage) || typeof input.transcript.text !== 'string' ||
       input.transcript.text.length > 20_000 || !object(input.visual) ||
-      !exactKeys(input.visual, ['coverage', 'review_required', 'findings', 'summary']) || input.visual.coverage !== 'complete' ||
+      !exactKeys(input.visual, ['coverage', 'review_required', 'findings', 'summary', 'weapon_disposition']) ||
+      input.visual.coverage !== 'complete' ||
       typeof input.visual.review_required !== 'boolean' || !Array.isArray(input.visual.findings) || input.visual.findings.length > 10 ||
-      typeof input.visual.summary !== 'string' || input.visual.summary.length > 500) invalidInput()
+      typeof input.visual.summary !== 'string' || input.visual.summary.length > 500 ||
+      !VISUAL_WEAPON_DISPOSITIONS.includes(input.visual.weapon_disposition)) invalidInput()
   if (input.transcript.coverage !== 'complete' && input.transcript.text !== '') invalidInput()
   const findings = input.visual.findings.map(finding => {
     if (!object(finding) || !exactKeys(finding, ['category', 'triage_level', 'description']) ||
@@ -164,6 +172,10 @@ export function normalizePolicyContextInput(input) {
     }
   })
   if (input.visual.review_required !== (findings.length > 0)) invalidInput()
+  const weaponFindings = findings.filter(finding => finding.category === 'weapons')
+  if ((input.visual.weapon_disposition === 'none') !== (weaponFindings.length === 0) ||
+      (input.visual.weapon_disposition === 'visible_non_threatening' &&
+       weaponFindings.some(finding => !['low', 'medium'].includes(finding.triage_level)))) invalidInput()
   return {
     text: input.text,
     transcript: { coverage: input.transcript.coverage, text: input.transcript.text },
@@ -172,6 +184,7 @@ export function normalizePolicyContextInput(input) {
       review_required: input.visual.review_required,
       findings,
       summary: input.visual.summary,
+      weapon_disposition: input.visual.weapon_disposition,
     },
   }
 }
@@ -226,6 +239,7 @@ Never infer or assert age, adulthood, minority, identity, or protected traits fr
 Appearance cannot prove consent. Use consent_uncertainty present when intimate context makes consent materially unresolved.
 There is no calibrated probability in this contract. Use only unambiguous or ambiguous. Ambiguous, contradictory, or incomplete evidence must be review, never allow.
 Always report the three discrete observable context signals. weapon_state distinguishes no weapon, visible but unequivocally non-threatening, pointed/brandished/fired/threatening use, and uncertainty. law_enforcement_state distinguishes no police context, routine peaceful procedure, force/confrontation, and uncertainty. violence_state distinguishes none observed, real non-graphic violence/incidental injury, graphic or severe violence, and uncertainty. These structured signals must agree with the decision and categories; never hide a threatening weapon behind a peaceful category.
+The visual.weapon_disposition field is canonical evidence produced directly from the sampled frames, not a client assertion. It cannot be ignored or downgraded: none means no visual weapon finding; visible_non_threatening means a weapon is visible but the frames show no threat or use; threatening_or_used means the frames show it pointed, brandished, fired, used, or otherwise threatening; ambiguous means the visual evidence cannot safely distinguish those states. Only none and visible_non_threatening can participate in an allow decision, and the corresponding weapon_state must match exactly.
 Allow swimwear, ordinary affection, non-explicit sensual clothing, education, courses, tutorials, entertainment, dance, humor, sport, fashion, and non-sexual art when every modality is complete and no severe or uncertain signal exists. Swimwear is not sexual by itself.
 Allow an ordinary, peaceful, non-graphic law-enforcement operation when police, uniforms, vehicles, or routine procedures appear without a pointed, brandished, or fired weapon, credible threat, force, aggression, blood, injury, or immediate danger. Also allow a visible, carried, or holstered weapon in any otherwise peaceful context only when it is unequivocally not pointed, brandished, fired, threatened with, or used. The isolated presence of police or a weapon never decides the outcome by itself; classify the whole multimodal context.
 Review a pointed, brandished, or fired weapon, credible threat, confrontation, use of force, real non-graphic violence, non-graphic injury, incidental blood, documentary violence, or any ambiguous weapon or law-enforcement context.
@@ -263,8 +277,14 @@ function validVisualAllow(value, input) {
 
   const findings = input.visual.findings
   const hasWeaponFinding = findings.some(finding => finding.category === 'weapons')
+  const expectedWeaponState = input.visual.weapon_disposition === 'none'
+    ? 'not_observed'
+    : input.visual.weapon_disposition === 'visible_non_threatening'
+      ? 'visible_non_threatening'
+      : null
   if (lawEnforcement !== (value.law_enforcement_state === 'routine_peaceful') ||
-      weaponPresence !== (value.weapon_state === 'visible_non_threatening') ||
+      expectedWeaponState === null || value.weapon_state !== expectedWeaponState ||
+      weaponPresence !== (input.visual.weapon_disposition === 'visible_non_threatening') ||
       hasWeaponFinding !== (value.weapon_state === 'visible_non_threatening') ||
       value.violence_state !== 'none_observed') return false
   const permitsWeapon = lawEnforcement || weaponPresence

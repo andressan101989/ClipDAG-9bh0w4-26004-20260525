@@ -2,11 +2,24 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import * as visualPipeline from '../supabase/functions/content-safety-scan/visualPipeline.mjs'
 import { MAX_PREMIUM_VISUAL_IMAGE_BYTES, MAX_VISUAL_FRAME_BYTES, MAX_VISUAL_IMAGE_BYTES, VISUAL_CATEGORIES, VISUAL_PROMPT_VERSION, VISUAL_SYSTEM_PROMPT, VisualPipelineError, analyzeVisualBytes, buildSignedStreamFrameUrl, buildStreamFrameUrl, buildVisualSafetyRequest, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps, validateSignedStreamFrameUrl, validateStreamFrameUrl, validateVisualSafetyResult } from '../supabase/functions/content-safety-scan/visualPipeline.mjs'
 import { VISUAL_TOOL_NAME } from '../supabase/functions/content-safety-scan/visualProbe.mjs'
 
 const safe = { schema_version: VISUAL_PROMPT_VERSION, review_required: false, findings: [], summary: 'No review signal.' }
 const finding = index => ({ schema_version: VISUAL_PROMPT_VERSION, review_required: true, findings: [{ category: 'weapons', triage_level: 'high', description: 'Observable weapon-like object.', frame_index: index }], summary: 'Human review suggested.' })
+
+const premiumVisual = ({
+  frameIndex = null,
+  weaponDisposition = 'none',
+  findings = [],
+} = {}) => ({
+  schema_version: 'creator-premium-visual-safety-p3-v1',
+  weapon_disposition: weaponDisposition,
+  review_required: findings.length > 0,
+  findings: findings.map(item => ({ ...item, frame_index: frameIndex })),
+  summary: findings.length > 0 ? 'Bounded observable signal.' : 'No review signal.',
+})
 
 test('13.6 second and 60 second sampling is deterministic, bounded, clamped, and deduplicated', () => {
   assert.deepEqual(sampleVideoFrameTimestamps(13.6), [680, 3400, 6800, 10200, 12920])
@@ -66,6 +79,119 @@ test('frame results merge without confidence or enforcement output', () => {
   const merged = mergeVisualFrameResults([{ result: finding(0) }, { result: finding(1) }])
   assert.equal(merged.review_required, true); assert.equal(merged.findings.length, 2)
   assert.ok(merged.findings.every(item => !Object.hasOwn(item, 'confidence'))); assert.doesNotMatch(JSON.stringify(merged), /warn|suspend|hide|delete|restore/i)
+})
+
+test('Creator Premium P3 visual contract binds an exact structured weapon disposition to each frame', () => {
+  assert.equal(
+    visualPipeline.CREATOR_PREMIUM_VISUAL_PROMPT_VERSION,
+    'creator-premium-visual-safety-p3-v1',
+  )
+  const request = buildVisualSafetyRequest('data:image/jpeg;base64,/9j/', {
+    sourceKind: 'eligible_stream_video',
+    frameIndex: 2,
+    promptVersion: 'creator-premium-visual-safety-p3-v1',
+  })
+  const parameters = request.tools[0].function.parameters
+  assert.deepEqual(parameters.properties.weapon_disposition, {
+    type: 'string',
+    enum: ['none', 'visible_non_threatening', 'threatening_or_used', 'ambiguous'],
+  })
+  assert.ok(parameters.required.includes('weapon_disposition'))
+  assert.match(request.messages[0].content, /weapon_disposition/i)
+
+  const visible = premiumVisual({
+    frameIndex: 2,
+    weaponDisposition: 'visible_non_threatening',
+    findings: [{
+      category: 'weapons',
+      triage_level: 'medium',
+      description: 'A holstered service weapon is directly visible.',
+    }],
+  })
+  assert.deepEqual(validateVisualSafetyResult(visible, {
+    sourceKind: 'eligible_stream_video',
+    frameIndex: 2,
+    promptVersion: 'creator-premium-visual-safety-p3-v1',
+  }), visible)
+
+  for (const invalid of [
+    premiumVisual({ frameIndex: 2, weaponDisposition: 'visible_non_threatening' }),
+    premiumVisual({
+      frameIndex: 2,
+      weaponDisposition: 'none',
+      findings: [{
+        category: 'weapons',
+        triage_level: 'medium',
+        description: 'A weapon is directly visible.',
+      }],
+    }),
+    premiumVisual({
+      frameIndex: 2,
+      weaponDisposition: 'uncertain',
+      findings: [{
+        category: 'weapons',
+        triage_level: 'medium',
+        description: 'The use is unclear.',
+      }],
+    }),
+  ]) {
+    assert.throws(() => validateVisualSafetyResult(invalid, {
+      sourceKind: 'eligible_stream_video',
+      frameIndex: 2,
+      promptVersion: 'creator-premium-visual-safety-p3-v1',
+    }), VisualPipelineError)
+  }
+})
+
+test('Creator Premium P3 video merge uses a fail-closed weapon-disposition lattice and forbids mixed contracts', () => {
+  const frame = (frameIndex, weaponDisposition) => ({
+    frame_index: frameIndex,
+    result: premiumVisual({
+      frameIndex,
+      weaponDisposition,
+      findings: weaponDisposition === 'none' ? [] : [{
+        category: 'weapons',
+        triage_level: weaponDisposition === 'threatening_or_used' ? 'high' : 'medium',
+        description: `Synthetic ${weaponDisposition} weapon signal.`,
+      }],
+    }),
+  })
+  assert.equal(mergeVisualFrameResults([
+    frame(0, 'none'),
+    frame(1, 'visible_non_threatening'),
+  ]).weapon_disposition, 'visible_non_threatening')
+  assert.equal(mergeVisualFrameResults([
+    frame(0, 'visible_non_threatening'),
+    frame(1, 'ambiguous'),
+  ]).weapon_disposition, 'ambiguous')
+  assert.equal(mergeVisualFrameResults([
+    frame(0, 'ambiguous'),
+    frame(1, 'threatening_or_used'),
+  ]).weapon_disposition, 'threatening_or_used')
+  const saturated = mergeVisualFrameResults([
+    {
+      frame_index: 0,
+      result: premiumVisual({
+        frameIndex: 0,
+        findings: Array.from({ length: 10 }, (_, index) => ({
+          category: 'violence',
+          triage_level: 'critical',
+          description: `Synthetic critical non-weapon signal ${index}.`,
+        })),
+      }),
+    },
+    frame(1, 'threatening_or_used'),
+  ])
+  assert.equal(saturated.weapon_disposition, 'threatening_or_used')
+  assert.equal(saturated.findings.length, 10)
+  assert.ok(
+    saturated.findings.some(finding => finding.category === 'weapons'),
+    'a non-none disposition must retain a corresponding weapon finding after truncation',
+  )
+  assert.throws(() => mergeVisualFrameResults([
+    frame(0, 'visible_non_threatening'),
+    { frame_index: 1, result: finding(1) },
+  ]), VisualPipelineError)
 })
 
 test('structured provider request maps transient failure and never returns token', async () => {
