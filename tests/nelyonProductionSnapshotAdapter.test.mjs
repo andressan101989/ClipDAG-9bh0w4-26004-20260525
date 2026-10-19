@@ -1059,7 +1059,7 @@ test('phase-bound RPC attestations include F1 protected RPCs only after the mani
     version: '20261018211327',
   }];
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
-  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre')), 13);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre')), 14);
   assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post')), 15);
   assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery')), 15);
 });
@@ -1079,6 +1079,23 @@ test('phase-bound RPC attestations activate the revised plan deletion definition
   assert.equal(rpcCount(post), 15);
   assert.equal(pre.some(item => item.object.name === 'delete_my_creator_premium_plan_draft_v1'), false);
   assert.equal(post.some(item => item.object.name === 'delete_my_creator_premium_plan_draft_v1'), true);
+});
+
+test('phase-bound RPC attestations activate the repaired submit definition only after C6', async () => {
+  const adapter = await loadAdapter();
+  const controlledPolicy = structuredClone(policy);
+  const controlledManifest = manifest();
+  controlledManifest.resources.migrations = [{
+    path: 'supabase/migrations/20261019170853_creator_premium_f1_c6_submit_unavailable_mapping_recovery.sql',
+    version: '20261019170853',
+  }];
+  const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
+  const pre = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre');
+  const post = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post');
+  assert.equal(rpcCount(pre), 14);
+  assert.equal(rpcCount(post), 15);
+  assert.equal(pre.some(item => item.object.name === 'submit_my_creator_premium_content_with_plans_v1'), false);
+  assert.equal(post.some(item => item.object.name === 'submit_my_creator_premium_content_with_plans_v1'), true);
 });
 
 test('postcheck advisor delta accepts only exact phase-approved fingerprints', async () => {

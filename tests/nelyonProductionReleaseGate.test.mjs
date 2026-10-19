@@ -520,7 +520,12 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
     assert.ok(exception.authorization.functional_reason.length > 0);
     assert.deepEqual([...exception.authorization.controls].sort(), exception.authorization.controls);
     assert.match(exception.authorization.negative_test_evidence_sha256, /^[0-9a-f]{64}$/);
-    if (F1_C4_EXCEPTION_FINGERPRINTS.includes(exception.advisor_fingerprint)) {
+    if (exception.object.name === 'submit_my_creator_premium_content_with_plans_v1') {
+      assert.equal(exception.origin.migration, '20261019170853_creator_premium_f1_c6_submit_unavailable_mapping_recovery');
+      assert.equal(exception.origin.migration_blob, 'af810d8dc1940f08907408305e2373a838d4db60');
+      assert.equal(exception.origin.source_sha, '01bd67f914b151129d9d3659e1ec79581ea76227');
+      assert.equal(exception.authorization.negative_test_evidence_sha256, '805d91901ca2a82715fa9e647705fef78a00b30e505aa624fdb3ac568f4c29df');
+    } else if (F1_C4_EXCEPTION_FINGERPRINTS.includes(exception.advisor_fingerprint)) {
       assert.equal(exception.origin.migration, '20261019023431_creator_premium_f1_c4_final_recovery');
       assert.equal(exception.origin.migration_blob, '185fdfb7c0216776fa540fe5009afdee4f2b57bb');
       assert.equal(exception.origin.source_sha, '506f7b669d6d1dce42b273ae51e456b90ca2e6a5');
