@@ -138,7 +138,8 @@ export function isCanonicalCloudflareTusUploadUrl(value:unknown):value is string
   if(typeof value!=='string') return false;
   try {
     const url=new URL(value);
-    return url.protocol==='https:'&&url.hostname==='upload.videodelivery.net'&&!url.port
+    return url.protocol==='https:'
+      &&(url.hostname==='upload.cloudflarestream.com'||url.hostname==='upload.videodelivery.net')&&!url.port
       &&!url.username&&!url.password&&!url.hash
       &&/^\/tus\/[A-Za-z0-9_-]{20,128}$/.test(url.pathname)
       &&(url.search===''||url.search==='?tusv2=true');

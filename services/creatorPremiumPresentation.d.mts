@@ -50,6 +50,12 @@ export function formatCreatorPremiumBdag(
   value: string | null | undefined,
   options?: { empty?: string },
 ): string;
+export function formatCreatorPremiumPriceInput(value: string | null | undefined): string;
+export function resolveCreatorPremiumPriceSubmission(input: {
+  displayValue: string;
+  originalCanonical: string | null;
+  edited: boolean;
+}): string;
 export function normalizeCreatorPremiumVideoPickerAsset(
   asset: CreatorPremiumVideoPickerAsset | null | undefined,
 ): Readonly<{ uri: string; mimeType: string; fileName: string; sizeBytes: number }> | null;

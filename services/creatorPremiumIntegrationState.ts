@@ -53,6 +53,11 @@ export const CREATOR_PREMIUM_BLOCKER_COPY: Readonly<Record<string, string>> = Ob
   content_safety_audio_policy_not_configured: 'La verificación de audio todavía no está disponible. Tu video sigue privado.',
   creator_premium_safety_provider_failed: 'La verificación tuvo un error temporal. Puedes reintentar sin volver a subir el contenido.',
   creator_premium_visual_proof_invalid: 'No pudimos validar el original privado. Reintenta la verificación.',
+  stream_provider_temporarily_unavailable: 'El servicio de video no respondió a tiempo. Inténtalo de nuevo en unos minutos.',
+  stream_provider_credentials_rejected: 'No pudimos autorizar la carga con el servicio de video. El contenido sigue privado; inténtalo más tarde.',
+  stream_provider_size_rejected: 'El servicio de video rechazó el tamaño del archivo. Elige un video de hasta 200 MB.',
+  stream_provider_invalid_response: 'No pudimos obtener un enlace de carga válido. No se inició la subida; inténtalo de nuevo.',
+  stream_provider_rejected: 'El servicio de video rechazó la solicitud. El contenido sigue privado; inténtalo más tarde.',
 });
 
 function errorField(error: unknown, field: 'code' | 'message'): string | null {
