@@ -132,6 +132,9 @@ const allowResult = Object.freeze({
   uncertainty: 'unambiguous',
   age_uncertainty: 'not_relevant',
   consent_uncertainty: 'not_relevant',
+  weapon_state: 'not_observed',
+  law_enforcement_state: 'not_observed',
+  violence_state: 'none_observed',
   certainty_basis: 'discrete_contract',
   rationale_codes: ['educational_context'],
 })
@@ -170,6 +173,12 @@ test('P2 production request uses the existing single forced tool and carries no 
   assert.equal(request.tools[0].function.name, 'report_visual_safety')
   assert.equal(request.tools[0].function.parameters.properties.confidence, undefined)
   assert.equal(request.tools[0].function.parameters.properties.confidence_score, undefined)
+  assert.deepEqual(request.tools[0].function.parameters.properties.weapon_state.enum, [
+    'not_observed', 'visible_non_threatening',
+    'pointed_brandished_fired_or_threatening', 'uncertain',
+  ])
+  assert.ok(request.tools[0].function.parameters.required.includes('law_enforcement_state'))
+  assert.ok(request.tools[0].function.parameters.required.includes('violence_state'))
   assert.match(request.messages[0].content, /never infer or assert age/i)
   assert.match(request.messages[0].content, /appearance cannot prove consent/i)
   assert.match(request.messages[0].content, /negation, quotation, education/i)
@@ -181,6 +190,7 @@ test('P3 policy contract has a new schema prompt and owner-approved policy ident
   assert.equal(POLICY_CONTEXT_PROMPT_VERSION, 'creator-premium-context-p3-v1')
   assert.equal(POLICY_CONTEXT_POLICY_ID, 'nelyon.creator_premium.general.p1.v2')
   assert.ok(POLICY_ALLOW_CATEGORIES.includes('non_graphic_law_enforcement_operation'))
+  assert.ok(POLICY_ALLOW_CATEGORIES.includes('non_threatening_weapon_presence'))
   assert.ok(POLICY_REVIEW_CATEGORIES.includes('ambiguous_weapon_or_law_enforcement_context'))
 })
 
@@ -191,8 +201,10 @@ test('P3 validator accepts an unambiguous contextual allow bound to actual modal
 test('P3 allows a non-graphic police operation with a visible service weapon and no threat or injury', () => {
   const expected = contextualResult({
     decision: 'allow',
-    categories: ['non_graphic_law_enforcement_operation'],
-    rationale_codes: ['non_graphic_law_enforcement_context'],
+    categories: ['non_graphic_law_enforcement_operation', 'non_threatening_weapon_presence'],
+    weapon_state: 'visible_non_threatening',
+    law_enforcement_state: 'routine_peaceful',
+    rationale_codes: ['non_graphic_law_enforcement_context', 'non_threatening_weapon_context'],
   })
   assert.deepEqual(validatePolicyContextResult(expected, nonGraphicPoliceInput), expected)
 })
@@ -201,6 +213,7 @@ test('P3 police-operation allow also accepts a peaceful scene without weapons fi
   const expected = contextualResult({
     decision: 'allow',
     categories: ['non_graphic_law_enforcement_operation'],
+    law_enforcement_state: 'routine_peaceful',
     rationale_codes: ['non_graphic_law_enforcement_context'],
   })
   const input = {
@@ -215,11 +228,37 @@ test('P3 police-operation allow also accepts a peaceful scene without weapons fi
   assert.deepEqual(validatePolicyContextResult(expected, input), expected)
 })
 
+test('P3 allows a visible carried or holstered weapon without police only when its context is unequivocally non-threatening', () => {
+  const input = {
+    ...completeImageInput,
+    text: 'Exhibicion deportiva segura con un arma descargada y enfundada; nadie la apunta, blande o usa.',
+    visual: {
+      coverage: 'complete',
+      review_required: true,
+      findings: [{
+        category: 'weapons',
+        triage_level: 'medium',
+        description: 'A visible holstered weapon is not being handled, pointed, brandished, or used.',
+      }],
+      summary: 'A visible holstered weapon in a peaceful setting with no threat, force, injury, or violence.',
+    },
+  }
+  const expected = contextualResult({
+    decision: 'allow',
+    categories: ['non_threatening_weapon_presence'],
+    weapon_state: 'visible_non_threatening',
+    rationale_codes: ['non_threatening_weapon_context'],
+  })
+  assert.deepEqual(validatePolicyContextResult(expected, input), expected)
+})
+
 test('P3 police-operation allow accepts only bounded low or medium weapons and optional low other findings', () => {
   const expected = contextualResult({
     decision: 'allow',
-    categories: ['non_graphic_law_enforcement_operation'],
-    rationale_codes: ['non_graphic_law_enforcement_context'],
+    categories: ['non_graphic_law_enforcement_operation', 'non_threatening_weapon_presence'],
+    weapon_state: 'visible_non_threatening',
+    law_enforcement_state: 'routine_peaceful',
+    rationale_codes: ['non_graphic_law_enforcement_context', 'non_threatening_weapon_context'],
   })
   const allowed = {
     ...nonGraphicPoliceInput,
@@ -296,9 +335,81 @@ test('P3 police-operation allow requires its dedicated rationale and rejects gen
   assert.throws(
     () => validatePolicyContextResult(contextualResult({
       decision: 'allow',
-      categories: ['non_graphic_law_enforcement_operation'],
-      rationale_codes: ['benign_context'],
+      categories: ['non_graphic_law_enforcement_operation', 'non_threatening_weapon_presence'],
+      weapon_state: 'visible_non_threatening',
+      law_enforcement_state: 'routine_peaceful',
+      rationale_codes: ['benign_context', 'non_threatening_weapon_context'],
     }), nonGraphicPoliceInput),
+    error => error instanceof PolicyContextError && error.code === 'creator_premium_context_schema_invalid',
+  )
+})
+
+test('P3 rejects every ALLOW that tries to hide incompatible visual safety findings under another benign category', () => {
+  const invalidFindings = [
+    { category: 'threat', triage_level: 'critical', description: 'A credible immediate threat.' },
+    { category: 'violence', triage_level: 'medium', description: 'Observable real violence.' },
+    { category: 'weapons', triage_level: 'medium', description: 'A visible weapon without the required contextual category.' },
+    { category: 'other', triage_level: 'low', description: 'A low unresolved visual signal without a bounded P3 context.' },
+    { category: 'other', triage_level: 'high', description: 'A high-severity unresolved visual signal.' },
+  ]
+  for (const finding of invalidFindings) {
+    const input = {
+      ...completeImageInput,
+      visual: {
+        ...completeImageInput.visual,
+        review_required: true,
+        findings: [finding],
+      },
+    }
+    assert.throws(
+      () => validatePolicyContextResult(allowResult, input),
+      error => error instanceof PolicyContextError && error.code === 'creator_premium_context_schema_invalid',
+      `${finding.category}:${finding.triage_level}`,
+    )
+  }
+})
+
+test('P3 preserves the existing contextual swimwear allowance for bounded low sexual triage only', () => {
+  const input = {
+    ...completeImageInput,
+    text: 'Catalogo de trajes de bano sin actividad sexual.',
+    visual: {
+      coverage: 'complete',
+      review_required: true,
+      findings: [{
+        category: 'sexual',
+        triage_level: 'low',
+        description: 'Non-explicit swimwear with no sexual activity.',
+      }],
+      summary: 'Non-explicit swimwear catalog.',
+    },
+  }
+  const expected = contextualResult({
+    categories: ['swimwear'],
+    rationale_codes: ['swimwear_or_non_explicit_context'],
+  })
+  assert.deepEqual(validatePolicyContextResult(expected, input), expected)
+})
+
+test('P3 cannot use a non-sexual-art label to bypass an actual sexual visual finding', () => {
+  const input = {
+    ...completeImageInput,
+    visual: {
+      coverage: 'complete',
+      review_required: true,
+      findings: [{
+        category: 'sexual',
+        triage_level: 'low',
+        description: 'A sexual signal that requires an explicitly bounded P2 allowance or review.',
+      }],
+      summary: 'A sexual visual signal is present.',
+    },
+  }
+  assert.throws(
+    () => validatePolicyContextResult(contextualResult({
+      categories: ['non_sexual_artistic_content'],
+      rationale_codes: ['benign_context'],
+    }), input),
     error => error instanceof PolicyContextError && error.code === 'creator_premium_context_schema_invalid',
   )
 })
@@ -314,8 +425,14 @@ test('P3 does not turn swimwear in a non-graphic police scene into sexual conten
   }
   const expected = contextualResult({
     decision: 'allow',
-    categories: ['swimwear', 'non_graphic_law_enforcement_operation'],
-    rationale_codes: ['swimwear_or_non_explicit_context', 'non_graphic_law_enforcement_context'],
+    categories: ['swimwear', 'non_graphic_law_enforcement_operation', 'non_threatening_weapon_presence'],
+    weapon_state: 'visible_non_threatening',
+    law_enforcement_state: 'routine_peaceful',
+    rationale_codes: [
+      'swimwear_or_non_explicit_context',
+      'non_graphic_law_enforcement_context',
+      'non_threatening_weapon_context',
+    ],
   })
   assert.deepEqual(validatePolicyContextResult(expected, input), expected)
   assert.equal(expected.categories.includes('explicit_sexual_activity'), false)
@@ -329,6 +446,8 @@ test('P3 routes weapon threats real non-graphic violence and ambiguous law-enfor
       categories: ['ambiguous_weapon_or_law_enforcement_context'],
       rationale_codes: ['violent_threat_context'],
       uncertainty: 'unambiguous',
+      weapon_state: 'pointed_brandished_fired_or_threatening',
+      law_enforcement_state: 'force_or_confrontation',
     },
     {
       description: 'Officers physically restrain a person; the extent and necessity of force are unclear.',
@@ -336,6 +455,9 @@ test('P3 routes weapon threats real non-graphic violence and ambiguous law-enfor
       categories: ['documentary_violence'],
       rationale_codes: ['visual_review_signal'],
       uncertainty: 'unambiguous',
+      weapon_state: 'not_observed',
+      law_enforcement_state: 'force_or_confrontation',
+      violence_state: 'real_non_graphic_or_incidental_injury',
     },
     {
       description: 'A weapon-like object appears during a police scene, but its use and surrounding events are unclear.',
@@ -343,6 +465,9 @@ test('P3 routes weapon threats real non-graphic violence and ambiguous law-enfor
       categories: ['ambiguous_weapon_or_law_enforcement_context'],
       rationale_codes: ['ambiguous_context'],
       uncertainty: 'ambiguous',
+      weapon_state: 'uncertain',
+      law_enforcement_state: 'uncertain',
+      violence_state: 'uncertain',
     },
   ]
   for (const item of cases) {
@@ -356,9 +481,107 @@ test('P3 routes weapon threats real non-graphic violence and ambiguous law-enfor
     }
     const expected = contextualResult({
       decision: 'review', categories: item.categories, uncertainty: item.uncertainty,
+      weapon_state: item.weapon_state,
+      law_enforcement_state: item.law_enforcement_state,
+      violence_state: item.violence_state ?? 'none_observed',
       rationale_codes: item.rationale_codes,
     })
     assert.deepEqual(validatePolicyContextResult(expected, input), expected, item.summary)
+  }
+})
+
+test('P3 rejects an ALLOW when the structured weapon signal says pointed brandished fired or threatening', () => {
+  const input = {
+    ...nonGraphicPoliceInput,
+    visual: {
+      ...nonGraphicPoliceInput.visual,
+      findings: [{
+        category: 'weapons',
+        triage_level: 'medium',
+        description: 'An officer points a firearm toward a person in a credible threat.',
+      }],
+      summary: 'A pointed weapon creates a credible non-graphic threat.',
+    },
+  }
+  const contradictoryAllow = contextualResult({
+    decision: 'allow',
+    categories: ['non_graphic_law_enforcement_operation'],
+    weapon_state: 'pointed_brandished_fired_or_threatening',
+    law_enforcement_state: 'force_or_confrontation',
+    violence_state: 'none_observed',
+    rationale_codes: ['non_graphic_law_enforcement_context'],
+  })
+  assert.throws(
+    () => validatePolicyContextResult(contradictoryAllow, input),
+    error => error instanceof PolicyContextError && error.code === 'creator_premium_context_schema_invalid',
+  )
+})
+
+test('P3 rejects decision rationale and violence-signal contradictions fail closed', () => {
+  const invalid = [
+    contextualResult({
+      decision: 'allow',
+      categories: ['education'],
+      rationale_codes: ['violent_threat_context'],
+    }),
+    contextualResult({
+      decision: 'allow',
+      categories: ['education'],
+      rationale_codes: ['contradictory_signals'],
+    }),
+    contextualResult({
+      decision: 'review',
+      categories: ['documentary_violence'],
+      uncertainty: 'ambiguous',
+      violence_state: 'graphic_or_severe',
+      rationale_codes: ['visual_review_signal'],
+    }),
+    contextualResult({
+      decision: 'block',
+      categories: ['graphic_serious_assault'],
+      violence_state: 'graphic_or_severe',
+      rationale_codes: ['benign_context'],
+    }),
+  ]
+  for (const result of invalid) {
+    assert.throws(
+      () => validatePolicyContextResult(result, completeImageInput),
+      error => error instanceof PolicyContextError && error.code === 'creator_premium_context_schema_invalid',
+      JSON.stringify(result),
+    )
+  }
+})
+
+test('P3 routes an ordinary non-graphic fight and documentary violence to REVIEW explicitly', () => {
+  for (const fixture of [
+    {
+      text: 'Dos adultos participan en una pelea real sin sangre ni lesiones gráficas.',
+      description: 'Two adults exchange non-graphic blows; no blood, gore, or severe injury is visible.',
+      summary: 'A real non-graphic fight is visible.',
+    },
+    {
+      text: 'Reportaje documental de un enfrentamiento real sin imágenes gráficas.',
+      description: 'Documentary footage shows real non-graphic violence without blood or severe injury.',
+      summary: 'Non-graphic documentary violence is visible.',
+    },
+  ]) {
+    const input = {
+      ...completeImageInput,
+      text: fixture.text,
+      visual: {
+        coverage: 'complete',
+        review_required: true,
+        findings: [{ category: 'violence', triage_level: 'medium', description: fixture.description }],
+        summary: fixture.summary,
+      },
+    }
+    const expected = contextualResult({
+      decision: 'review',
+      categories: ['documentary_violence'],
+      violence_state: 'real_non_graphic_or_incidental_injury',
+      rationale_codes: ['visual_review_signal'],
+    })
+    assert.deepEqual(validatePolicyContextResult(expected, input), expected, fixture.summary)
   }
 })
 
@@ -377,6 +600,7 @@ test('P3 keeps incidental blood or non-graphic injury in review', () => {
   const expected = contextualResult({
     decision: 'review',
     categories: ['incidental_blood_or_informational_context'],
+    violence_state: 'real_non_graphic_or_incidental_injury',
     rationale_codes: ['visual_review_signal'],
   })
   assert.deepEqual(validatePolicyContextResult(expected, input), expected)
@@ -390,6 +614,7 @@ test('P3 preserves hard blocks for torture mutilation graphic assault murder sex
     assert.ok(POLICY_BLOCK_CATEGORIES.includes(category), category)
     const expected = contextualResult({
       decision: 'block', categories: [category],
+      violence_state: 'graphic_or_severe',
       age_uncertainty: category === 'child_sexual_exploitation' ? 'present' : 'not_relevant',
       consent_uncertainty: category === 'sexual_violence' ? 'present' : 'not_relevant',
       rationale_codes: ['severe_explicit_context'],
@@ -401,7 +626,7 @@ test('P3 preserves hard blocks for torture mutilation graphic assault murder sex
 test('P3 prompt distinguishes visible service weapons from threats review and graphic blocks', () => {
   const prompt = buildPolicyContextRequest(nonGraphicPoliceInput).messages[0].content
   assert.match(prompt, /visible|carried|holstered/i)
-  assert.match(prompt, /service weapon/i)
+  assert.match(prompt, /weapon[^.]*peaceful context|peaceful context[^.]*weapon/i)
   assert.match(prompt, /pointed|brandished|fired/i)
   assert.match(prompt, /threat[^.]*review|review[^.]*threat/i)
   assert.match(prompt, /blood|injury/i)
@@ -516,6 +741,7 @@ test('P3 fixed synthetic probe covers the approved police weapon injury swimwear
     ['explicit_non_consent', 'block'],
     ['explicit_sexual_activity', 'block'],
     ['non_graphic_police_operation', 'allow'],
+    ['non_threatening_visible_weapon', 'allow'],
     ['brandished_weapon_threat', 'review'],
     ['ambiguous_police_scene', 'review'],
     ['incidental_blood_injury', 'review'],
