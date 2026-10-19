@@ -4,8 +4,12 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import {
+  POLICY_ALLOW_CATEGORIES,
+  POLICY_BLOCK_CATEGORIES,
   POLICY_CONTEXT_PROMPT_VERSION,
+  POLICY_CONTEXT_POLICY_ID,
   POLICY_CONTEXT_SCHEMA_VERSION,
+  POLICY_REVIEW_CATEGORIES,
   PolicyContextError,
   buildPolicyContextProbeRequest,
   buildPolicyContextRequest,
@@ -120,8 +124,8 @@ const completeImageInput = Object.freeze({
 })
 
 const allowResult = Object.freeze({
-  schema_version: 'creator-premium-context-p2-v1',
-  policy_id: 'nelyon.creator_premium.general.p1.v1',
+  schema_version: POLICY_CONTEXT_SCHEMA_VERSION,
+  policy_id: POLICY_CONTEXT_POLICY_ID,
   decision: 'allow',
   categories: ['education'],
   coverage: { text: 'complete', transcript: 'not_applicable', visual: 'complete' },
@@ -131,6 +135,30 @@ const allowResult = Object.freeze({
   certainty_basis: 'discrete_contract',
   rationale_codes: ['educational_context'],
 })
+
+const nonGraphicPoliceInput = Object.freeze({
+  text: 'Operativo policial preventivo en una zona publica. No hubo disparos, amenazas, agresiones, sangre ni personas heridas.',
+  transcript: { coverage: 'not_applicable', text: '' },
+  visual: {
+    coverage: 'complete',
+    review_required: true,
+    findings: [{
+      category: 'weapons',
+      triage_level: 'medium',
+      description: 'A uniformed officer carries a visible service weapon; nobody points, brandishes, fires, threatens, or assaults.',
+    }],
+    summary: 'Routine police operation with a visible service weapon and no observable violence, blood, injury, or threat.',
+  },
+})
+
+function contextualResult(overrides = {}) {
+  return {
+    ...allowResult,
+    ...overrides,
+    coverage: overrides.coverage ?? allowResult.coverage,
+    rationale_codes: overrides.rationale_codes ?? allowResult.rationale_codes,
+  }
+}
 
 test('P2 production request uses the existing single forced tool and carries no numeric confidence field', () => {
   const request = buildPolicyContextRequest(completeImageInput)
@@ -148,10 +176,255 @@ test('P2 production request uses the existing single forced tool and carries no 
   assert.doesNotMatch(JSON.stringify(request), /user_id|owner_user_id|signed_url|access_token/i)
 })
 
-test('P2 validator accepts an unambiguous contextual allow bound to actual modality coverage', () => {
-  assert.equal(POLICY_CONTEXT_SCHEMA_VERSION, 'creator-premium-context-p2-v1')
-  assert.equal(POLICY_CONTEXT_PROMPT_VERSION, 'creator-premium-context-p2-v1')
+test('P3 policy contract has a new schema prompt and owner-approved policy identity', () => {
+  assert.equal(POLICY_CONTEXT_SCHEMA_VERSION, 'creator-premium-context-p3-v1')
+  assert.equal(POLICY_CONTEXT_PROMPT_VERSION, 'creator-premium-context-p3-v1')
+  assert.equal(POLICY_CONTEXT_POLICY_ID, 'nelyon.creator_premium.general.p1.v2')
+  assert.ok(POLICY_ALLOW_CATEGORIES.includes('non_graphic_law_enforcement_operation'))
+  assert.ok(POLICY_REVIEW_CATEGORIES.includes('ambiguous_weapon_or_law_enforcement_context'))
+})
+
+test('P3 validator accepts an unambiguous contextual allow bound to actual modality coverage', () => {
   assert.deepEqual(validatePolicyContextResult(allowResult, completeImageInput), allowResult)
+})
+
+test('P3 allows a non-graphic police operation with a visible service weapon and no threat or injury', () => {
+  const expected = contextualResult({
+    decision: 'allow',
+    categories: ['non_graphic_law_enforcement_operation'],
+    rationale_codes: ['non_graphic_law_enforcement_context'],
+  })
+  assert.deepEqual(validatePolicyContextResult(expected, nonGraphicPoliceInput), expected)
+})
+
+test('P3 police-operation allow also accepts a peaceful scene without weapons findings', () => {
+  const expected = contextualResult({
+    decision: 'allow',
+    categories: ['non_graphic_law_enforcement_operation'],
+    rationale_codes: ['non_graphic_law_enforcement_context'],
+  })
+  const input = {
+    ...nonGraphicPoliceInput,
+    visual: {
+      ...nonGraphicPoliceInput.visual,
+      review_required: false,
+      findings: [],
+      summary: 'Routine peaceful patrol with no weapon, threat, injury, blood, or violence visible.',
+    },
+  }
+  assert.deepEqual(validatePolicyContextResult(expected, input), expected)
+})
+
+test('P3 police-operation allow accepts only bounded low or medium weapons and optional low other findings', () => {
+  const expected = contextualResult({
+    decision: 'allow',
+    categories: ['non_graphic_law_enforcement_operation'],
+    rationale_codes: ['non_graphic_law_enforcement_context'],
+  })
+  const allowed = {
+    ...nonGraphicPoliceInput,
+    visual: {
+      ...nonGraphicPoliceInput.visual,
+      findings: [
+        ...nonGraphicPoliceInput.visual.findings,
+        {
+          category: 'other',
+          triage_level: 'low',
+          description: 'A routine crowd-control barrier with no safety event.',
+        },
+      ],
+    },
+  }
+  assert.deepEqual(validatePolicyContextResult(expected, allowed), expected)
+
+  const invalidInputs = [
+    ...['high', 'critical'].map(triage_level => ({
+      ...nonGraphicPoliceInput,
+      visual: {
+        ...nonGraphicPoliceInput.visual,
+        findings: [{
+          category: 'weapons',
+          triage_level,
+          description: 'A weapon finding whose elevated severity cannot be downgraded by contextual text.',
+        }],
+      },
+    })),
+    ...['threat', 'violence'].map(category => ({
+      ...nonGraphicPoliceInput,
+      visual: {
+        ...nonGraphicPoliceInput.visual,
+        findings: [{
+          category,
+          triage_level: 'medium',
+          description: 'A direct safety finding that requires review and cannot use the bounded police-operation allow.',
+        }],
+      },
+    })),
+    {
+      ...nonGraphicPoliceInput,
+      visual: {
+        ...nonGraphicPoliceInput.visual,
+        findings: [{
+          category: 'other',
+          triage_level: 'medium',
+          description: 'A non-allowlisted medium finding cannot be ignored by the bounded exception.',
+        }],
+      },
+    },
+    {
+      ...nonGraphicPoliceInput,
+      visual: {
+        ...nonGraphicPoliceInput.visual,
+        findings: [{
+          category: 'nudity',
+          triage_level: 'low',
+          description: 'An unrelated finding category requires its own policy evaluation.',
+        }],
+      },
+    },
+  ]
+  for (const input of invalidInputs) {
+    assert.throws(
+      () => validatePolicyContextResult(expected, input),
+      error => error instanceof PolicyContextError && error.code === 'creator_premium_context_schema_invalid',
+      `${input.visual.findings[0].category}:${input.visual.findings[0].triage_level}`,
+    )
+  }
+})
+
+test('P3 police-operation allow requires its dedicated rationale and rejects generic benign context', () => {
+  assert.throws(
+    () => validatePolicyContextResult(contextualResult({
+      decision: 'allow',
+      categories: ['non_graphic_law_enforcement_operation'],
+      rationale_codes: ['benign_context'],
+    }), nonGraphicPoliceInput),
+    error => error instanceof PolicyContextError && error.code === 'creator_premium_context_schema_invalid',
+  )
+})
+
+test('P3 does not turn swimwear in a non-graphic police scene into sexual content or a restriction', () => {
+  const input = {
+    ...nonGraphicPoliceInput,
+    text: 'Una persona adulta usa traje de bano durante un operativo policial preventivo sin violencia ni amenazas.',
+    visual: {
+      ...nonGraphicPoliceInput.visual,
+      summary: 'An adult in swimwear near a routine police operation; no sexual activity, threat, injury, blood, or violence is visible.',
+    },
+  }
+  const expected = contextualResult({
+    decision: 'allow',
+    categories: ['swimwear', 'non_graphic_law_enforcement_operation'],
+    rationale_codes: ['swimwear_or_non_explicit_context', 'non_graphic_law_enforcement_context'],
+  })
+  assert.deepEqual(validatePolicyContextResult(expected, input), expected)
+  assert.equal(expected.categories.includes('explicit_sexual_activity'), false)
+})
+
+test('P3 routes weapon threats real non-graphic violence and ambiguous law-enforcement context to review', () => {
+  const cases = [
+    {
+      description: 'An officer points a firearm toward a person; no shot, blood, or injury is visible.',
+      summary: 'Visible weapon brandishing creates a credible threat without graphic injury.',
+      categories: ['ambiguous_weapon_or_law_enforcement_context'],
+      rationale_codes: ['violent_threat_context'],
+      uncertainty: 'unambiguous',
+    },
+    {
+      description: 'Officers physically restrain a person; the extent and necessity of force are unclear.',
+      summary: 'Real non-graphic force is visible and requires contextual review.',
+      categories: ['documentary_violence'],
+      rationale_codes: ['visual_review_signal'],
+      uncertainty: 'unambiguous',
+    },
+    {
+      description: 'A weapon-like object appears during a police scene, but its use and surrounding events are unclear.',
+      summary: 'The law-enforcement context is ambiguous.',
+      categories: ['ambiguous_weapon_or_law_enforcement_context'],
+      rationale_codes: ['ambiguous_context'],
+      uncertainty: 'ambiguous',
+    },
+  ]
+  for (const item of cases) {
+    const input = {
+      ...nonGraphicPoliceInput,
+      visual: {
+        ...nonGraphicPoliceInput.visual,
+        findings: [{ category: 'weapons', triage_level: 'medium', description: item.description }],
+        summary: item.summary,
+      },
+    }
+    const expected = contextualResult({
+      decision: 'review', categories: item.categories, uncertainty: item.uncertainty,
+      rationale_codes: item.rationale_codes,
+    })
+    assert.deepEqual(validatePolicyContextResult(expected, input), expected, item.summary)
+  }
+})
+
+test('P3 keeps incidental blood or non-graphic injury in review', () => {
+  const input = {
+    ...nonGraphicPoliceInput,
+    visual: {
+      ...nonGraphicPoliceInput.visual,
+      findings: [{
+        category: 'violence', triage_level: 'medium',
+        description: 'A person has a small visible injury with incidental blood; no gore or graphic assault is shown.',
+      }],
+      summary: 'A non-graphic injury with incidental blood is visible.',
+    },
+  }
+  const expected = contextualResult({
+    decision: 'review',
+    categories: ['incidental_blood_or_informational_context'],
+    rationale_codes: ['visual_review_signal'],
+  })
+  assert.deepEqual(validatePolicyContextResult(expected, input), expected)
+})
+
+test('P3 preserves hard blocks for torture mutilation graphic assault murder sexual violence and CSE', () => {
+  for (const category of [
+    'torture', 'mutilation', 'graphic_serious_assault', 'graphic_murder',
+    'sexual_violence', 'child_sexual_exploitation',
+  ]) {
+    assert.ok(POLICY_BLOCK_CATEGORIES.includes(category), category)
+    const expected = contextualResult({
+      decision: 'block', categories: [category],
+      age_uncertainty: category === 'child_sexual_exploitation' ? 'present' : 'not_relevant',
+      consent_uncertainty: category === 'sexual_violence' ? 'present' : 'not_relevant',
+      rationale_codes: ['severe_explicit_context'],
+    })
+    assert.deepEqual(validatePolicyContextResult(expected, completeImageInput), expected, category)
+  }
+})
+
+test('P3 prompt distinguishes visible service weapons from threats review and graphic blocks', () => {
+  const prompt = buildPolicyContextRequest(nonGraphicPoliceInput).messages[0].content
+  assert.match(prompt, /visible|carried|holstered/i)
+  assert.match(prompt, /service weapon/i)
+  assert.match(prompt, /pointed|brandished|fired/i)
+  assert.match(prompt, /threat[^.]*review|review[^.]*threat/i)
+  assert.match(prompt, /blood|injury/i)
+  assert.match(prompt, /torture|mutilation/i)
+  assert.match(prompt, /graphic (?:assault|murder)/i)
+  assert.match(prompt, /swimwear[^.]*not[^.]*sexual|not[^.]*sexual[^.]*swimwear/i)
+})
+
+test('P3 remains fail-closed for incomplete evidence and provider failure', async () => {
+  assert.throws(
+    () => buildPolicyContextRequest({
+      ...nonGraphicPoliceInput,
+      visual: { ...nonGraphicPoliceInput.visual, coverage: 'incomplete' },
+    }),
+    error => error instanceof PolicyContextError && error.code === 'creator_premium_context_input_invalid',
+  )
+  await assert.rejects(
+    () => runPolicyContextAnalysis({
+      token: 'dedicated-ai-token', accountId: 'account-id', input: nonGraphicPoliceInput,
+      fetchImpl: async () => new Response('{}', { status: 503, headers: { 'content-type': 'application/json' } }),
+    }),
+    error => error.code === 'visual_workers_ai_temporarily_unavailable' && error.retryable === true && error.providerCalled === true,
+  )
 })
 
 test('P2 validator routes uncertainty through review and never accepts appearance as age or consent proof', () => {
@@ -229,12 +502,11 @@ test('P2 transcript coverage distinguishes complete, no speech, and not applicab
   )
 })
 
-test('P2 fixed synthetic probe covers negation, quotation, education, ambiguity, age, consent, and severe block', () => {
+test('P3 fixed synthetic probe covers the approved police weapon injury swimwear and graphic-harm matrix', () => {
   const request = buildPolicyContextProbeRequest()
   assert.equal(request.tools.length, 1)
   assert.equal(request.tools[0].function.name, 'report_visual_safety')
   assert.equal(request.tools[0].function.strict, true)
-  assert.equal(request.tools[0].function.parameters.properties.cases.maxItems, 7)
   const expected = [
     ['educational_quote', 'allow'],
     ['negated_threat', 'allow'],
@@ -243,7 +515,16 @@ test('P2 fixed synthetic probe covers negation, quotation, education, ambiguity,
     ['uncertain_consent', 'review'],
     ['explicit_non_consent', 'block'],
     ['explicit_sexual_activity', 'block'],
+    ['non_graphic_police_operation', 'allow'],
+    ['brandished_weapon_threat', 'review'],
+    ['ambiguous_police_scene', 'review'],
+    ['incidental_blood_injury', 'review'],
+    ['graphic_torture', 'block'],
+    ['graphic_mutilation', 'block'],
+    ['graphic_murder', 'block'],
+    ['swimwear_police_no_threat', 'allow'],
   ]
+  assert.equal(request.tools[0].function.parameters.properties.cases.maxItems, expected.length)
   const value = { cases: expected.map(([id, decision]) => ({ id, decision })) }
   assert.deepEqual(validatePolicyContextProbeResult(value), value)
   assert.throws(
@@ -316,8 +597,8 @@ test('P2 evidence runtime is private, bound, bounded, idempotent, and does not a
 test('P2 SQL completion validates the same discrete context contract as the worker', () => {
   const sql = loadP2Migration()
   for (const value of [
-    POLICY_CONTEXT_SCHEMA_VERSION,
-    POLICY_CONTEXT_PROMPT_VERSION,
+    'creator-premium-context-p2-v1',
+    'creator-premium-context-p2-v1',
     'nelyon.creator_premium.general.p1.v1',
     'discrete_contract',
     'unambiguous',
