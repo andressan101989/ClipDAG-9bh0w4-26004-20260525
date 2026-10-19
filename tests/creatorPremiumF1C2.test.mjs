@@ -90,9 +90,10 @@ test('creator Hub never renders deleted content while preserving non-deleted lif
 
 test('plan deletion remains the dependency-safe canonical RPC followed by a server refresh', () => {
   const action = hub.slice(hub.indexOf('const runPlanAction'), hub.indexOf('const confirmPlanAction'));
-  assert.match(action, /deleteMyCreatorPremiumPlanDraft/);
+  assert.match(action, /deleteMyCreatorPremiumPlan/);
   assert.match(action, /await\s+load\(true\)/);
   assert.doesNotMatch(action, /setPlans\([^\n]*filter/);
   assert.match(hub, /plan\.status\s*===\s*['"]active['"][\s\S]*Retirar/);
-  assert.match(hub, /plan\.status\s*===\s*['"]draft['"][\s\S]*Eliminar borrador/);
+  assert.match(hub, /plan\.status\s*===\s*['"]draft['"][\s\S]*Eliminar plan/);
+  assert.match(hub, /plan\.status\s*===\s*['"]retired['"][\s\S]*confirmPlanAction\(plan, 'delete'\)/);
 });

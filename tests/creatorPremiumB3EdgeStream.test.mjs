@@ -8,6 +8,7 @@ import ts from 'typescript';
 
 import {
   canonicalCloudflareTusLocation,
+  cloudflareTusProvisionRetryDelayMs,
   classifyCloudflareTusFailure,
 } from '../supabase/functions/create-stream-upload/premiumTusContract.mjs';
 
@@ -142,6 +143,7 @@ function loadCreateStreamUpload({
     },
     './premiumTusContract.mjs': {
       canonicalCloudflareTusLocation,
+      cloudflareTusProvisionRetryDelayMs,
       classifyCloudflareTusFailure,
     },
     '../_shared/stream.ts': {
@@ -199,6 +201,7 @@ function loadCreateStreamUpload({
       });
     },
     console: { log() {}, warn() {}, error: (...args) => logs.push(args) },
+    setTimeout: callback => { callback(); return 0; },
     Deno: {
       env: { get: name => name === 'DENO_DEPLOYMENT_ID' ? 'deployment' : undefined },
       serve(fn) { handler = fn; },
@@ -303,9 +306,13 @@ test('Premium TUS provisioning maps provider and timeout failures to stable safe
     assert.equal(result.response.status, expectedStatus);
     assert.equal(result.json.error, expectedCode);
     assert.equal(harness.updates.at(-1).status, 'failed');
-    assert.equal(harness.logs.length, 1);
-    assert.equal(harness.logs[0][1].code, expectedCode);
-    assert.equal(harness.logs[0][1].provider_error_code, String(10000 + status));
+    const expectedAttempts = status === 429 ? 4 : 1;
+    assert.equal(harness.logs.length, expectedAttempts);
+    assert.equal(harness.providerCalls.filter(call => call.kind === 'tus').length, expectedAttempts);
+    for (const log of harness.logs) {
+      assert.equal(log[1].code, expectedCode);
+      assert.equal(log[1].provider_error_code, String(10000 + status));
+    }
     assert.equal(JSON.stringify(harness.logs).includes('redacted test provider failure'), false);
   }
 

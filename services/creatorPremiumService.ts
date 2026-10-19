@@ -389,7 +389,9 @@ export async function fetchMyCreatorPremiumContent(contentId: string): Promise<C
   });
   if (error) throw error;
   const item = firstRow(data) as CreatorPremiumOwnerItem | undefined;
-  if (!item) throw new Error('creator_premium_content_not_found');
+  if (!item || item.lifecycle_status === 'deleted') {
+    throw new Error('creator_premium_content_not_found');
+  }
   return item;
 }
 
@@ -506,7 +508,7 @@ export async function retireMyCreatorPremiumPlan(planId: string) {
   } | undefined;
 }
 
-export async function deleteMyCreatorPremiumPlanDraft(
+export async function deleteMyCreatorPremiumPlan(
   planId: string,
   clientRequestId: string,
 ) {
@@ -526,6 +528,14 @@ export async function deleteMyCreatorPremiumPlanDraft(
     throw new Error('creator_premium_plan_delete_not_confirmed');
   }
   return result;
+}
+
+/** @deprecated Use deleteMyCreatorPremiumPlan; the canonical RPC now also tombstones retired plans. */
+export async function deleteMyCreatorPremiumPlanDraft(
+  planId: string,
+  clientRequestId: string,
+) {
+  return deleteMyCreatorPremiumPlan(planId, clientRequestId);
 }
 
 export async function fetchMyCreatorPremiumPlans(
@@ -610,18 +620,28 @@ export async function cancelMyCreatorPremiumSubmission(contentId: string) {
   return result;
 }
 
-export async function deleteMyCreatorPremiumDraft(contentId: string) {
+export async function deleteMyCreatorPremiumContent(contentId: string) {
+  if (!contentId) throw new Error('creator_premium_invalid_content');
   const { data, error } = await db().rpc('delete_my_creator_premium_draft_v1', {
     p_content_id: contentId,
   });
   if (error) throw error;
-  return firstRow(data) as {
+  const result = firstRow(data) as {
     content_id: string;
     lifecycle_status: 'deleted';
     r2_assets_scheduled: number;
     video_assets_scheduled: number;
     cleanup_scheduled: boolean;
   } | undefined;
+  if (!result || result.content_id !== contentId || result.lifecycle_status !== 'deleted') {
+    throw new Error('creator_premium_content_delete_not_confirmed');
+  }
+  return result;
+}
+
+/** @deprecated Use deleteMyCreatorPremiumContent; deletion is no longer limited to drafts. */
+export async function deleteMyCreatorPremiumDraft(contentId: string) {
+  return deleteMyCreatorPremiumContent(contentId);
 }
 
 export async function retireMyCreatorPremiumContent(contentId: string) {
@@ -723,7 +743,12 @@ export async function fetchMyCreatorPremiumCommercialSummary(
   if (error) throw error;
   const result = firstRow(data) as CreatorPremiumCommercialSummary | undefined;
   if (!result) throw new Error('creator_premium_summary_unavailable');
-  return result;
+  return {
+    ...result,
+    content_performance: result.content_performance.filter(
+      item => item.lifecycle_status !== 'deleted',
+    ),
+  };
 }
 
 export async function reportCreatorPremiumContent(input: {

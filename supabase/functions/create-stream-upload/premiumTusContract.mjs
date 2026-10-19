@@ -50,3 +50,17 @@ export function classifyCloudflareTusFailure(status) {
     transient: false,
   };
 }
+
+const PROVISION_RETRY_DELAYS_MS = Object.freeze([5_000, 10_000, 20_000]);
+
+export function cloudflareTusProvisionRetryDelayMs(status, retryAfter, failedAttempt) {
+  if (status !== 429 || !Number.isInteger(failedAttempt) || failedAttempt < 1 || failedAttempt > 3) {
+    return null;
+  }
+  if (retryAfter !== null && retryAfter !== undefined && String(retryAfter).trim() !== '') {
+    const seconds = Number(String(retryAfter).trim());
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 20) return null;
+    return seconds * 1_000;
+  }
+  return PROVISION_RETRY_DELAYS_MS[failedAttempt - 1] ?? null;
+}

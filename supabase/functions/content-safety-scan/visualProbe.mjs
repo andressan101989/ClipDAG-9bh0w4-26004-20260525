@@ -148,7 +148,7 @@ export function visualStructuredResponseValue(payload) {
   if (calls === undefined) throw toolError('visual_workers_ai_tool_call_missing')
   if (!Array.isArray(calls)) throw toolError('visual_workers_ai_tool_call_invalid')
   if (calls.length !== 1) throw toolError(calls.length === 0 ? 'visual_workers_ai_tool_call_missing' : 'visual_workers_ai_tool_call_ambiguous')
-  if (messageCalls !== undefined && finishReason !== 'tool_calls') throw toolError('visual_workers_ai_tool_finish_reason_invalid')
+  if (messageCalls !== undefined && !['tool_calls', 'stop'].includes(finishReason)) throw toolError('visual_workers_ai_tool_finish_reason_invalid')
 
   const call = calls[0]
   let name

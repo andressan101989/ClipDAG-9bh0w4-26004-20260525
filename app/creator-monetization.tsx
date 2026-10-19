@@ -36,7 +36,7 @@ import {
   activateMyCreatorPremiumPlan,
   cloneMyCreatorPremiumPlanVersion,
   createMyCreatorPremiumPlanDraft,
-  deleteMyCreatorPremiumPlanDraft,
+  deleteMyCreatorPremiumPlan,
   fetchMyCreatorPremiumCommercialSummary,
   fetchMyCreatorPremiumContents,
   fetchMyCreatorPremiumPlans,
@@ -367,7 +367,7 @@ function CreatorPremiumHubContent() {
       if (action === 'delete') {
         const clientRequestId = planDeleteAttempts.current.get(plan.id) ?? randomUUID();
         planDeleteAttempts.current.set(plan.id, clientRequestId);
-        await deleteMyCreatorPremiumPlanDraft(plan.id, clientRequestId);
+        await deleteMyCreatorPremiumPlan(plan.id, clientRequestId);
       }
       const refreshed = await load(true);
       if (!refreshed) throw new Error('creator_premium_plan_refresh_failed');
@@ -384,11 +384,13 @@ function CreatorPremiumHubContent() {
     const activate = action === 'activate';
     const deleting = action === 'delete';
     Alert.alert(
-      activate ? 'Activar plan' : deleting ? 'Eliminar borrador' : 'Retirar plan',
+      activate ? 'Activar plan' : deleting ? 'Eliminar plan' : 'Retirar plan',
       activate
         ? 'El plan quedará listo para uso futuro. Las suscripciones siguen deshabilitadas.'
         : deleting
-          ? 'Solo se eliminará si no tiene contenido, suscripciones ni historial asociado. Esta acción no se puede deshacer.'
+          ? plan.status === 'draft'
+            ? 'El borrador desaparecerá de tu panel si no tiene dependencias. Esta acción no se puede deshacer.'
+            : 'El plan retirado desaparecerá de tu panel. Se conservarán versiones, derechos e historial asociados.'
         : 'El plan dejará de aceptar futuras suscripciones cuando finanzas se habiliten.',
       [
         { text: 'Cancelar', style: 'cancel' },
@@ -594,7 +596,7 @@ function CreatorPremiumHubContent() {
                               <Text style={styles.smallButtonText}>Activar</Text>
                             </Pressable>
                             <Pressable style={styles.dangerButton} onPress={() => confirmPlanAction(plan, 'delete')} disabled={busyId === plan.id}>
-                              <Text style={styles.dangerButtonText}>Eliminar borrador</Text>
+                              <Text style={styles.dangerButtonText}>Eliminar plan</Text>
                             </Pressable>
                           </>
                         ) : (
@@ -605,6 +607,11 @@ function CreatorPremiumHubContent() {
                         {plan.status === 'active' ? (
                           <Pressable style={styles.dangerButton} onPress={() => confirmPlanAction(plan, 'retire')} disabled={busyId === plan.id}>
                             <Text style={styles.dangerButtonText}>Retirar</Text>
+                          </Pressable>
+                        ) : null}
+                        {plan.status === 'retired' ? (
+                          <Pressable style={styles.dangerButton} onPress={() => confirmPlanAction(plan, 'delete')} disabled={busyId === plan.id}>
+                            <Text style={styles.dangerButtonText}>Eliminar plan</Text>
                           </Pressable>
                         ) : null}
                         {busyId === plan.id ? <ActivityIndicator size="small" color={PREMIUM} /> : null}

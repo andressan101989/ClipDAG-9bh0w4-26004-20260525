@@ -114,7 +114,7 @@ test('editor supports truthful draft, media, commercial, and automatic verificat
   for (const label of [
     'Detalles', 'Tipo', 'Acceso', 'Vista previa pública', 'Contenido privado',
     'Precio', 'Planes', 'Estado', 'Guardar borrador', 'Subir/Reemplazar medios',
-    'Publicar contenido Premium', 'Eliminar borrador',
+    'Publicar contenido Premium', 'Eliminar contenido',
   ]) assert.match(editor, new RegExp(label.replace('/', '\\/'), 'i'));
   assert.match(editor, /uploadCreatorPremiumImagePair/);
   assert.match(editor, /uploadCreatorPremiumVideoMedia/);
