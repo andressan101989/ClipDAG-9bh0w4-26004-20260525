@@ -4,7 +4,7 @@ import { evaluateTextRules } from './ruleEngine.mjs'
 import { AudioPipelineError, WHISPER_MODEL, bytesToBase64, downloadStreamAudioBytes, loadStreamAudioDescriptor, makeProbeWav, normalizeWhisperResult, selectStreamAudioDownloadRoute, timecodeForMatch, validateStreamAudioTargetType } from './audioPipeline.mjs'
 import { VISUAL_AI_PROVIDER, VISUAL_MODEL, VisualProbeError, runVisualMultiImageProviderProbe, runVisualProviderProbe } from './visualProbe.mjs'
 import { MAX_PREMIUM_VISUAL_IMAGE_BYTES, MAX_VISUAL_IMAGE_BYTES, VisualPipelineError, analyzeVisualBytes, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps } from './visualPipeline.mjs'
-import { PolicyContextError, policyContextErrorFrom, runPolicyContextAnalysis, runPolicyContextProviderProbe } from './policyContext.mjs'
+import { POLICY_CONTEXT_POLICY_ID, POLICY_CONTEXT_PROMPT_VERSION, POLICY_CONTEXT_SCHEMA_VERSION, PolicyContextError, policyContextErrorFrom, runPolicyContextAnalysis, runPolicyContextProviderProbe } from './policyContext.mjs'
 import { streamAccountId, streamCustomerCode, streamFetch } from '../_shared/stream.ts'
 import { createPremiumStreamAudioDownloadGrant, createPremiumStreamPlaybackGrant } from '../_shared/premiumStreamSecurity.ts'
 import { getObjectBytes, isR2Transient } from '../_shared/r2.ts'
@@ -356,6 +356,9 @@ Deno.serve(async req => {
     try {
       if (!uuid(claim.scan_id) || typeof claim.content_fingerprint !== 'string' ||
           !/^[0-9a-f]{64}$/u.test(claim.content_fingerprint) || typeof claim.text !== 'string' ||
+          claim.policy_id !== POLICY_CONTEXT_POLICY_ID ||
+          claim.schema_version !== POLICY_CONTEXT_SCHEMA_VERSION ||
+          claim.prompt_version !== POLICY_CONTEXT_PROMPT_VERSION ||
           !Number.isInteger(claim.attempt_count) || Number(claim.attempt_count) < 1 || Number(claim.attempt_count) > 5 ||
           !['complete', 'no_speech', 'not_applicable'].includes(String(claim.transcript_coverage)) ||
           typeof claim.transcript_text !== 'string') {

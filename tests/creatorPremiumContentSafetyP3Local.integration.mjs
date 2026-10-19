@@ -22,6 +22,9 @@ const suffixes = [
   '_creator_premium_content_safety_p1_policy_gate.sql',
   '_creator_premium_content_safety_p2_evidence_runtime.sql',
   '_creator_premium_content_safety_p2_activation.sql',
+  '_creator_premium_qa_final_f1.sql',
+  '_creator_premium_f1_c4_final_recovery.sql',
+  '_creator_premium_f1_c6_submit_unavailable_mapping_recovery.sql',
   '_creator_premium_content_safety_p3_contextual_violence_policy_v2.sql',
 ]
 const chain = suffixes.map(suffix => {
@@ -163,13 +166,22 @@ function p3ContextResult() {
     schema_version: 'creator-premium-context-p3-v1',
     policy_id: 'nelyon.creator_premium.general.p1.v2',
     decision: 'allow',
-    categories: ['non_graphic_law_enforcement_operation'],
+    categories: [
+      'non_graphic_law_enforcement_operation',
+      'non_threatening_weapon_presence',
+    ],
     coverage: { text: 'complete', transcript: 'not_applicable', visual: 'complete' },
     uncertainty: 'unambiguous',
     age_uncertainty: 'not_relevant',
     consent_uncertainty: 'not_relevant',
+    weapon_state: 'visible_non_threatening',
+    law_enforcement_state: 'routine_peaceful',
+    violence_state: 'none_observed',
     certainty_basis: 'discrete_contract',
-    rationale_codes: ['non_graphic_law_enforcement_context'],
+    rationale_codes: [
+      'non_graphic_law_enforcement_context',
+      'non_threatening_weapon_context',
+    ],
   })
 }
 
@@ -238,17 +250,38 @@ function insertContextEvaluation(db, fixture, {
     join private.content_safety_visual_analyses analysis on analysis.id=scan.visual_analysis_id
     where scan.id='${fixture.scan}'
   `)
+  if (terminal && policyId === 'nelyon.creator_premium.general.p1.v1') {
+    psql(db, `
+      update private.creator_premium_content_safety_context_evaluations evaluation set
+        evaluation_fingerprint=private.content_safety_sha256(
+          evaluation.source_scan_id::text||'|'||
+          evaluation.source_content_fingerprint||'|'||
+          evaluation.policy_id||'|'||evaluation.provider||'|'||
+          evaluation.model||'|'||evaluation.prompt_version||'|'||
+          evaluation.transcript_coverage||'|'||
+          coalesce(evaluation.transcript_id::text,'')||'|'||
+          coalesce(evaluation.transcript_fingerprint,'')||'|'||
+          evaluation.visual_analysis_id::text||'|'||
+          evaluation.visual_analysis_fingerprint||'|'||
+          evaluation.context_result::text
+        )
+      where evaluation.source_scan_id='${fixture.scan}'
+        and evaluation.policy_id='nelyon.creator_premium.general.p1.v1'
+    `)
+  }
 }
 
-function addAlert(db, actor, fixture, { sourceType, category, fingerprint }) {
+function addAlert(db, actor, fixture, { sourceType, category, fingerprint, ruleId = null }) {
   psql(db, `
     insert into private.content_safety_alerts(
-      scan_id,target_type,target_id,owner_user_id,source_type,category,severity,
+      scan_id,target_type,target_id,owner_user_id,source_type,rule_id,category,severity,
       confidence,priority_score,alert_fingerprint,evidence
     ) values(
       '${fixture.scan}','creator_premium','${fixture.content}','${actor}',
-      '${sourceType}','${category}','medium',0.85,60,'${fingerprint}',
-      '{"fixture":"synthetic_p3"}'::jsonb
+      '${sourceType}',${ruleId ? `'${ruleId}'` : 'null'},'${category}','medium',0.85,60,'${fingerprint}',
+      '${sourceType === 'audio_transcript_rule'
+        ? `{"fixture":"synthetic_p3","transcript_id":"${randomUUID()}"}`
+        : '{"fixture":"synthetic_p3"}'}'::jsonb
     )
   `)
 }
@@ -261,12 +294,13 @@ test('P3 disposable harness binds one forward-only contextual violence migration
   )
 })
 
-test('P3 disposable runtime preserves version identity, publishes contextual visual allow, and fails closed on nonvisual or P2-only evidence', {
+test('P3 disposable runtime preserves version identity, publishes contextual scanner allow, and fails closed on external or P2-only evidence', {
   skip: !enabled,
   timeout: 900_000,
 }, () => {
   const db = `premium_p3_${randomUUID().replaceAll('-', '').slice(0, 8)}`
   const actor = randomUUID()
+    const contextualRule = randomUUID()
   try {
     docker(`createdb -U supabase_admin -T ${template} ${db}`)
     psql(db, `
@@ -314,6 +348,88 @@ test('P3 disposable runtime preserves version identity, publishes contextual vis
         'authenticated','public.claim_creator_premium_content_safety_context_v1(integer)','execute'
       )
     `).stdout, 'f')
+    for (const signature of [
+      'private.creator_premium_content_safety_visual_allow_compatible_p3_v1(jsonb,jsonb)',
+      'private.creator_premium_content_safety_historical_p2_allow_valid_p3_v1(uuid)',
+    ]) {
+      for (const role of ['public', 'anon', 'authenticated', 'service_role']) {
+        assert.equal(psql(db, `
+          select has_function_privilege('${role}','${signature}','execute')
+        `).stdout, 'f', `${role}:${signature}`)
+      }
+    }
+
+    for (const path of [
+      ['schema_version'], ['policy_id'], ['decision'], ['uncertainty'],
+      ['age_uncertainty'], ['consent_uncertainty'], ['certainty_basis'],
+      ['weapon_state'], ['law_enforcement_state'], ['violence_state'],
+      ['coverage', 'text'], ['coverage', 'transcript'], ['coverage', 'visual'],
+    ]) {
+      const invalid = JSON.parse(p3ContextResult())
+      if (path.length === 1) invalid[path[0]] = null
+      else invalid[path[0]][path[1]] = null
+      assert.equal(psql(db, `
+        select private.creator_premium_content_safety_context_result_valid_p3_v1(
+          '${quoteSql(JSON.stringify(invalid))}'::jsonb,'not_applicable'
+        )
+      `).stdout, 'f', `JSON null must fail at ${path.join('.')}`)
+    }
+    assert.equal(psql(db, `
+      select private.creator_premium_content_safety_visual_allow_compatible_p3_v1(
+        '${quoteSql(p3ContextResult())}'::jsonb,
+        '{"findings":[{"category":null,"triage_level":null}]}'::jsonb
+      )
+    `).stdout, 'f', 'JSON-null visual finding fields must fail closed')
+    const threateningAllow = JSON.parse(p3ContextResult())
+    threateningAllow.weapon_state = 'pointed_brandished_fired_or_threatening'
+    threateningAllow.law_enforcement_state = 'force_or_confrontation'
+    assert.equal(psql(db, `
+      select private.creator_premium_content_safety_context_result_valid_p3_v1(
+        '${quoteSql(JSON.stringify(threateningAllow))}'::jsonb,'not_applicable'
+      )
+    `).stdout, 'f', 'a threatening weapon signal can never validate as ALLOW')
+    const contradictoryResults = [
+      {
+        ...JSON.parse(p3ContextResult()),
+        categories: ['education'],
+        weapon_state: 'not_observed',
+        law_enforcement_state: 'not_observed',
+        rationale_codes: ['violent_threat_context'],
+      },
+      {
+        ...JSON.parse(p3ContextResult()),
+        categories: ['education'],
+        weapon_state: 'not_observed',
+        law_enforcement_state: 'not_observed',
+        rationale_codes: ['contradictory_signals'],
+      },
+      {
+        ...JSON.parse(p3ContextResult()),
+        decision: 'review',
+        categories: ['documentary_violence'],
+        uncertainty: 'ambiguous',
+        weapon_state: 'not_observed',
+        law_enforcement_state: 'not_observed',
+        violence_state: 'graphic_or_severe',
+        rationale_codes: ['visual_review_signal'],
+      },
+      {
+        ...JSON.parse(p3ContextResult()),
+        decision: 'block',
+        categories: ['graphic_serious_assault'],
+        weapon_state: 'not_observed',
+        law_enforcement_state: 'not_observed',
+        violence_state: 'graphic_or_severe',
+        rationale_codes: ['benign_context'],
+      },
+    ]
+    for (const invalid of contradictoryResults) {
+      assert.equal(psql(db, `
+        select private.creator_premium_content_safety_context_result_valid_p3_v1(
+          '${quoteSql(JSON.stringify(invalid))}'::jsonb,'not_applicable'
+        )
+      `).stdout, 'f', `contradictory provider output must fail closed: ${JSON.stringify(invalid)}`)
+    }
 
     assert.equal(
       psql(db, `
@@ -358,6 +474,18 @@ test('P3 disposable runtime preserves version identity, publishes contextual vis
              clock_timestamp(),'signup_metadata','age_18_plus',current_date-interval '30 years'
       from private.age_eligibility_policy policy where policy.singleton=true;
       set session_replication_role=origin;
+      insert into private.content_safety_rules(
+        id,code,label,category,detector_type,pattern,severity,scopes,enabled,
+        created_by,updated_by,policy_source,policy_reference,policy_version,locale,
+        rationale,approval_state,approved_by,approved_at
+      ) values(
+        '${contextualRule}','p3_contextual_fixture','P3 contextual fixture','weapons',
+        'phrase','synthetic contextual evidence','medium',
+        array['creator_premium_text','transcript'],true,'${actor}','${actor}',
+        'owner_manual','owner-policy-2026-10-p3','p3','und',
+        'Synthetic disposable proof for contextual scanner alert handling.',
+        'approved','${actor}',clock_timestamp()
+      );
     `)
 
     const allowed = {
@@ -379,6 +507,18 @@ test('P3 disposable runtime preserves version identity, publishes contextual vis
       sourceType: 'visual_classifier',
       category: 'weapons',
       fingerprint: 'b'.repeat(64),
+    })
+    addAlert(db, actor, allowed, {
+      sourceType: 'text_rule',
+      category: 'weapons',
+      fingerprint: '1'.repeat(64),
+      ruleId: contextualRule,
+    })
+    addAlert(db, actor, allowed, {
+      sourceType: 'audio_transcript_rule',
+      category: 'weapons',
+      fingerprint: '2'.repeat(64),
+      ruleId: contextualRule,
     })
 
     const p3Claim = claimP3(db)
@@ -441,9 +581,13 @@ test('P3 disposable runtime preserves version identity, publishes contextual vis
       from private.creator_premium_contents where id='${allowed.content}'
     `).stdout, 'published|passed')
     assert.equal(psql(db, `
-      select status from private.content_safety_alerts
-      where scan_id='${allowed.scan}' and source_type='visual_classifier'
-    `).stdout, 'open', 'P3 must preserve the contextualized visual alert as audit evidence')
+      select pg_catalog.string_agg(source_type||'|'||status, E'\n' order by source_type)
+      from private.content_safety_alerts where scan_id='${allowed.scan}'
+    `).stdout, [
+      'audio_transcript_rule|open',
+      'text_rule|open',
+      'visual_classifier|open',
+    ].join('\n'), 'P3 must preserve contextualized scanner alerts as audit evidence')
 
     const secondReconcile = JSON.parse(asRole(
       db, 'service_role', 'select public.reconcile_creator_premium_publications_v1(25)',
@@ -467,6 +611,156 @@ test('P3 disposable runtime preserves version identity, publishes contextual vis
     assert.equal(psql(db, `
       select lifecycle_status||'|'||verification_status
       from private.creator_premium_contents where id='${allowed.content}'
+    `).stdout, 'quarantined|restricted')
+
+    const historicalP2 = {
+      content: randomUUID(), scan: randomUUID(), analysis: randomUUID(),
+      original: randomUUID(), teaser: randomUUID(), offer: randomUUID(),
+    }
+    psql(db, imageFixtureSql({
+      actor,
+      ...historicalP2,
+      title: 'Historical exact P2 allow fixture',
+      findings: [{
+        category: 'weapons',
+        triage_level: 'medium',
+        description: 'Synthetic historical visual signal.',
+      }],
+    }))
+    addActiveOffer(db, actor, historicalP2)
+    insertContextEvaluation(db, historicalP2, {
+      policyId: 'nelyon.creator_premium.general.p1.v1',
+      schemaVersion: 'creator-premium-context-p2-v1',
+      promptVersion: 'creator-premium-context-p2-v1',
+      status: 'completed',
+      result: p2ContextResult(),
+    })
+    addAlert(db, actor, historicalP2, {
+      sourceType: 'visual_classifier',
+      category: 'weapons',
+      fingerprint: 'f'.repeat(64),
+    })
+    addAlert(db, actor, historicalP2, {
+      sourceType: 'text_rule',
+      category: 'weapons',
+      fingerprint: '3'.repeat(64),
+      ruleId: contextualRule,
+    })
+    addAlert(db, actor, historicalP2, {
+      sourceType: 'audio_transcript_rule',
+      category: 'weapons',
+      fingerprint: '4'.repeat(64),
+      ruleId: contextualRule,
+    })
+    psql(db, `
+      update private.creator_premium_contents set
+        lifecycle_status='published',verification_status='passed',
+        published_at=clock_timestamp(),verification_completed_at=clock_timestamp()
+      where id='${historicalP2.content}'
+    `)
+    assert.equal(psql(db, `
+      select private.creator_premium_content_safety_historical_p2_allow_valid_p3_v1(
+        '${historicalP2.scan}'
+      )
+    `).stdout, 't')
+    const historicalProducerScan = randomUUID()
+    psql(db, `
+      insert into private.content_safety_scans(
+        id,target_type,target_id,owner_user_id,content_fingerprint,status,
+        requested_reason,text_status,audio_status,visual_status,reports_status,
+        completed_at,created_at,updated_at,visual_source_kind,
+        visual_media_asset_id,visual_analysis_id
+      )
+      select
+        '${historicalProducerScan}',target_type,target_id,owner_user_id,
+        '${'e'.repeat(64)}','completed',requested_reason,text_status,audio_status,
+        'analyzed',reports_status,completed_at,
+        created_at-interval '1 second',updated_at-interval '1 second',
+        visual_source_kind,visual_media_asset_id,null
+      from private.content_safety_scans where id='${historicalP2.scan}';
+      update private.content_safety_visual_analyses set
+        source_scan_id='${historicalProducerScan}',
+        source_content_fingerprint='${'e'.repeat(64)}'
+      where id='${historicalP2.analysis}'
+    `)
+    assert.equal(psql(db, `
+      select private.creator_premium_content_safety_historical_p2_allow_valid_p3_v1(
+        '${historicalP2.scan}'
+      )
+    `).stdout, 't', 'a canonical visual proof reused from another producer scan must remain valid')
+    psql(db, `
+      update private.creator_premium_content_safety_context_evaluations set
+        target_id='${allowed.content}'
+      where source_scan_id='${historicalP2.scan}'
+        and policy_id='nelyon.creator_premium.general.p1.v1'
+    `)
+    assert.equal(psql(db, `
+      select private.creator_premium_content_safety_historical_p2_allow_valid_p3_v1(
+        '${historicalP2.scan}'
+      )
+    `).stdout, 'f', 'a P2 evaluation bound to another content cannot grandfather publication')
+    psql(db, `
+      update private.creator_premium_content_safety_context_evaluations set
+        target_id='${historicalP2.content}'
+      where source_scan_id='${historicalP2.scan}'
+        and policy_id='nelyon.creator_premium.general.p1.v1'
+    `)
+    assert.equal(psql(db, `
+      select private.creator_premium_content_safety_historical_p2_allow_valid_p3_v1(
+        '${historicalP2.scan}'
+      )
+    `).stdout, 't')
+    const historicalDirect = JSON.parse(psql(db, `
+      select private.finalize_creator_premium_safety_scan_v1('${historicalP2.scan}')
+    `).stdout)
+    assert.equal(historicalDirect.outcome, 'published_unchanged_historical_policy')
+    const historicalReconcile = JSON.parse(asRole(
+      db, 'service_role', 'select public.reconcile_creator_premium_publications_v1(25)',
+    ).stdout)
+    assert.equal(historicalReconcile.processed, 0)
+    assert.equal(psql(db, `
+      select lifecycle_status||'|'||verification_status
+      from private.creator_premium_contents where id='${historicalP2.content}'
+    `).stdout, 'published|passed')
+    assert.equal(psql(db, `
+      select status from private.content_safety_alerts
+      where scan_id='${historicalP2.scan}' and source_type='visual_classifier'
+    `).stdout, 'open')
+
+    const unsupportedPublished = {
+      content: randomUUID(), scan: randomUUID(), analysis: randomUUID(),
+      original: randomUUID(), teaser: randomUUID(), offer: randomUUID(),
+    }
+    psql(db, imageFixtureSql({
+      actor,
+      ...unsupportedPublished,
+      title: 'Published alert without policy authority fixture',
+      findings: [{
+        category: 'violence',
+        triage_level: 'high',
+        description: 'Synthetic high-severity signal without contextual authority.',
+      }],
+    }))
+    addActiveOffer(db, actor, unsupportedPublished)
+    addAlert(db, actor, unsupportedPublished, {
+      sourceType: 'visual_classifier',
+      category: 'violence',
+      fingerprint: '9'.repeat(64),
+    })
+    psql(db, `
+      update private.creator_premium_contents set
+        lifecycle_status='published',verification_status='passed',
+        published_at=clock_timestamp(),verification_completed_at=clock_timestamp()
+      where id='${unsupportedPublished.content}'
+    `)
+    const unsupportedReconcile = JSON.parse(asRole(
+      db, 'service_role', 'select public.reconcile_creator_premium_publications_v1(25)',
+    ).stdout)
+    assert.equal(unsupportedReconcile.processed, 1)
+    assert.equal(unsupportedReconcile.results[0].outcome, 'restricted')
+    assert.equal(psql(db, `
+      select lifecycle_status||'|'||verification_status
+      from private.creator_premium_contents where id='${unsupportedPublished.content}'
     `).stdout, 'quarantined|restricted')
 
     const p2Only = {

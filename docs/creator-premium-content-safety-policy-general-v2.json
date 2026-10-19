@@ -1,0 +1,138 @@
+{
+  "schema_version": "nelyon.creator_premium_content_safety_policy.v2",
+  "policy_id": "nelyon.creator_premium.general.p1.v2",
+  "predecessor_policy_id": "nelyon.creator_premium.general.p1.v1",
+  "title": "Creator Premium General Content Safety P3",
+  "normative_approval": {
+    "status": "approved",
+    "source": "owner_prompt",
+    "authorized_phase": "CONTENT-SAFETY-P3",
+    "authorized_at": "2026-10-19",
+    "owner_bound": true
+  },
+  "scope": {
+    "creator_premium_general": true,
+    "public_feed_policy_changed": false,
+    "explicit_adult_premium": false,
+    "mobile_explicit_adult": false,
+    "finance_effect": false
+  },
+  "decision_matrix": {
+    "allow": [
+      "courses",
+      "tutorials",
+      "education",
+      "entertainment",
+      "dance",
+      "humor",
+      "sport",
+      "fashion",
+      "kissing_and_affection",
+      "swimwear",
+      "non_explicit_sensual_clothing",
+      "non_sexual_artistic_content",
+      "non_graphic_law_enforcement_operation",
+      "non_threatening_weapon_presence"
+    ],
+    "review": [
+      "contextual_artistic_or_medical_nudity",
+      "incidental_blood_or_informational_context",
+      "documentary_violence",
+      "age_uncertain",
+      "consent_uncertain",
+      "contradictory_signals",
+      "low_confidence",
+      "incomplete_multimodal_coverage",
+      "ambiguous_weapon_or_law_enforcement_context"
+    ],
+    "block": [
+      "explicit_sexual_activity",
+      "pornography",
+      "sexualized_explicit_genital_exposure",
+      "child_sexual_exploitation",
+      "non_consensual_intimate_content",
+      "sexual_violence",
+      "torture",
+      "mutilation",
+      "graphic_murder",
+      "graphic_serious_assault",
+      "explicit_promotion_of_severe_harm"
+    ]
+  },
+  "context_contract": {
+    "classify_content_and_context_together": true,
+    "keywords_are_context_only": true,
+    "isolated_police_or_weapon_presence_decides_outcome": false,
+    "peaceful_non_graphic_police_operation": "allow",
+    "visible_carried_or_holstered_weapon_without_threat": "allow",
+    "non_threatening_weapon_presence_requires_visual_binding": true,
+    "structured_signals": {
+      "weapon_state": [
+        "not_observed",
+        "visible_non_threatening",
+        "pointed_brandished_fired_or_threatening",
+        "uncertain"
+      ],
+      "law_enforcement_state": [
+        "not_observed",
+        "routine_peaceful",
+        "force_or_confrontation",
+        "uncertain"
+      ],
+      "violence_state": [
+        "none_observed",
+        "real_non_graphic_or_incidental_injury",
+        "graphic_or_severe",
+        "uncertain"
+      ],
+      "allow_requires_non_threatening_weapon_state": true,
+      "allow_requires_routine_or_absent_law_enforcement_state": true,
+      "allow_requires_no_observed_violence": true
+    },
+    "pointed_brandished_or_fired_weapon": "review",
+    "credible_threat_confrontation_or_force": "review",
+    "non_graphic_real_violence_or_injury": "review",
+    "incidental_blood_or_documentary_violence": "review",
+    "ambiguous_or_incomplete": "review",
+    "graphic_severe_harm": "block",
+    "missing_required_modality": "review",
+    "uncertain_age_or_consent": "review"
+  },
+  "activation": {
+    "status": "active",
+    "enabled": true,
+    "auto_publish_enabled": true,
+    "blockers": [],
+    "authorized_phase": "CONTENT-SAFETY-P3",
+    "authorized_at": "2026-10-19",
+    "owner_bound": true,
+    "p2_evidence_preserved": true,
+    "disable_strategy": "forward_only_policy_revision"
+  },
+  "publication": {
+    "auto_publish_requires_all_modalities": true,
+    "requires_current_generation": true,
+    "requires_current_owner_and_permissions": true,
+    "requires_provider_validity": true,
+    "requires_active_approved_policy": true,
+    "requires_unambiguous_allow": true,
+    "historical_decisions_are_not_reclassified_automatically": true,
+    "technical_failure": "fail_closed",
+    "ambiguous_or_incomplete": "human_review",
+    "http_200_is_evidence": false
+  },
+  "administrative_review": {
+    "private_by_default": true,
+    "authorized_reviewers_only": true,
+    "audit_required": true,
+    "existing_alerts_are_not_auto_dismissed": true,
+    "historical_restricted_content_is_not_auto_restored": true,
+    "child_exploitation_block_cannot_be_overridden_by_ordinary_review": true
+  },
+  "finance": {
+    "purchase_enabled": false,
+    "subscription_enabled": false,
+    "refunds_enabled": false,
+    "platform_fee_bps": 0
+  }
+}

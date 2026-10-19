@@ -4,9 +4,9 @@ import {
   runVisualStructuredRequest,
 } from './visualProbe.mjs'
 
-export const POLICY_CONTEXT_SCHEMA_VERSION = 'creator-premium-context-p2-v1'
-export const POLICY_CONTEXT_PROMPT_VERSION = 'creator-premium-context-p2-v1'
-export const POLICY_CONTEXT_POLICY_ID = 'nelyon.creator_premium.general.p1.v1'
+export const POLICY_CONTEXT_SCHEMA_VERSION = 'creator-premium-context-p3-v1'
+export const POLICY_CONTEXT_PROMPT_VERSION = 'creator-premium-context-p3-v1'
+export const POLICY_CONTEXT_POLICY_ID = 'nelyon.creator_premium.general.p1.v2'
 
 export const POLICY_ALLOW_CATEGORIES = Object.freeze([
   'courses',
@@ -21,6 +21,8 @@ export const POLICY_ALLOW_CATEGORIES = Object.freeze([
   'swimwear',
   'non_explicit_sensual_clothing',
   'non_sexual_artistic_content',
+  'non_graphic_law_enforcement_operation',
+  'non_threatening_weapon_presence',
 ])
 
 export const POLICY_REVIEW_CATEGORIES = Object.freeze([
@@ -32,6 +34,7 @@ export const POLICY_REVIEW_CATEGORIES = Object.freeze([
   'contradictory_signals',
   'low_confidence',
   'incomplete_multimodal_coverage',
+  'ambiguous_weapon_or_law_enforcement_context',
 ])
 
 export const POLICY_BLOCK_CATEGORIES = Object.freeze([
@@ -67,6 +70,27 @@ const RATIONALE_CODES = Object.freeze([
   'contradictory_signals',
   'visual_review_signal',
   'no_speech',
+  'non_graphic_law_enforcement_context',
+  'non_threatening_weapon_context',
+])
+
+const ALLOW_RATIONALE_CODES = Object.freeze([
+  'benign_context',
+  'educational_context',
+  'quoted_or_negated_context',
+  'swimwear_or_non_explicit_context',
+  'no_speech',
+  'non_graphic_law_enforcement_context',
+  'non_threatening_weapon_context',
+])
+
+const REVIEW_RATIONALE_CODES = Object.freeze([
+  'ambiguous_context',
+  'age_requires_review',
+  'consent_requires_review',
+  'violent_threat_context',
+  'contradictory_signals',
+  'visual_review_signal',
 ])
 
 const COVERAGE_VALUES = Object.freeze({
@@ -78,6 +102,24 @@ const COVERAGE_VALUES = Object.freeze({
 const DECISIONS = Object.freeze(['allow', 'review', 'block'])
 const UNCERTAINTY = Object.freeze(['unambiguous', 'ambiguous'])
 const BOUNDED_UNCERTAINTY = Object.freeze(['not_relevant', 'present'])
+const WEAPON_STATES = Object.freeze([
+  'not_observed',
+  'visible_non_threatening',
+  'pointed_brandished_fired_or_threatening',
+  'uncertain',
+])
+const LAW_ENFORCEMENT_STATES = Object.freeze([
+  'not_observed',
+  'routine_peaceful',
+  'force_or_confrontation',
+  'uncertain',
+])
+const VIOLENCE_STATES = Object.freeze([
+  'none_observed',
+  'real_non_graphic_or_incidental_injury',
+  'graphic_or_severe',
+  'uncertain',
+])
 
 export class PolicyContextError extends Error {
   constructor(code, { status = 502, retryable = false, providerCalled = false, providerTelemetry = null } = {}) {
@@ -158,6 +200,9 @@ function policyContextSchema(transcriptCoverage) {
       uncertainty: { type: 'string', enum: UNCERTAINTY },
       age_uncertainty: { type: 'string', enum: BOUNDED_UNCERTAINTY },
       consent_uncertainty: { type: 'string', enum: BOUNDED_UNCERTAINTY },
+      weapon_state: { type: 'string', enum: WEAPON_STATES },
+      law_enforcement_state: { type: 'string', enum: LAW_ENFORCEMENT_STATES },
+      violence_state: { type: 'string', enum: VIOLENCE_STATES },
       certainty_basis: { type: 'string', enum: ['discrete_contract'] },
       rationale_codes: {
         type: 'array', minItems: 1, maxItems: 8, uniqueItems: true,
@@ -167,6 +212,7 @@ function policyContextSchema(transcriptCoverage) {
     required: [
       'schema_version', 'policy_id', 'decision', 'categories', 'coverage',
       'uncertainty', 'age_uncertainty', 'consent_uncertainty',
+      'weapon_state', 'law_enforcement_state', 'violence_state',
       'certainty_basis', 'rationale_codes',
     ],
     additionalProperties: false,
@@ -179,8 +225,11 @@ Classify content and context together. Isolated words never prove allow or block
 Never infer or assert age, adulthood, minority, identity, or protected traits from appearance. Use age_uncertainty present when sexual or exploitative context makes age materially unresolved.
 Appearance cannot prove consent. Use consent_uncertainty present when intimate context makes consent materially unresolved.
 There is no calibrated probability in this contract. Use only unambiguous or ambiguous. Ambiguous, contradictory, or incomplete evidence must be review, never allow.
-Allow swimwear, ordinary affection, non-explicit sensual clothing, education, courses, tutorials, entertainment, dance, humor, sport, fashion, and non-sexual art when every modality is complete and no severe or uncertain signal exists.
-Block only explicit contextual evidence for the enumerated severe categories. Never block education or medicine merely because it quotes a severe phrase.`
+Always report the three discrete observable context signals. weapon_state distinguishes no weapon, visible but unequivocally non-threatening, pointed/brandished/fired/threatening use, and uncertainty. law_enforcement_state distinguishes no police context, routine peaceful procedure, force/confrontation, and uncertainty. violence_state distinguishes none observed, real non-graphic violence/incidental injury, graphic or severe violence, and uncertainty. These structured signals must agree with the decision and categories; never hide a threatening weapon behind a peaceful category.
+Allow swimwear, ordinary affection, non-explicit sensual clothing, education, courses, tutorials, entertainment, dance, humor, sport, fashion, and non-sexual art when every modality is complete and no severe or uncertain signal exists. Swimwear is not sexual by itself.
+Allow an ordinary, peaceful, non-graphic law-enforcement operation when police, uniforms, vehicles, or routine procedures appear without a pointed, brandished, or fired weapon, credible threat, force, aggression, blood, injury, or immediate danger. Also allow a visible, carried, or holstered weapon in any otherwise peaceful context only when it is unequivocally not pointed, brandished, fired, threatened with, or used. The isolated presence of police or a weapon never decides the outcome by itself; classify the whole multimodal context.
+Review a pointed, brandished, or fired weapon, credible threat, confrontation, use of force, real non-graphic violence, non-graphic injury, incidental blood, documentary violence, or any ambiguous weapon or law-enforcement context.
+Block only explicit contextual evidence for the enumerated severe categories, including torture, mutilation, graphic assault, and graphic murder. Never block education or medicine merely because it quotes a severe phrase.`
 
 export function buildPolicyContextRequest(input) {
   const normalized = normalizePolicyContextInput(input)
@@ -203,11 +252,42 @@ function schemaInvalid() {
   throw new PolicyContextError('creator_premium_context_schema_invalid', { providerCalled: true })
 }
 
+function validVisualAllow(value, input) {
+  const categories = new Set(value.categories)
+  const rationales = new Set(value.rationale_codes)
+  const lawEnforcement = categories.has('non_graphic_law_enforcement_operation')
+  const lawRationale = rationales.has('non_graphic_law_enforcement_context')
+  const weaponPresence = categories.has('non_threatening_weapon_presence')
+  const weaponRationale = rationales.has('non_threatening_weapon_context')
+  if (lawEnforcement !== lawRationale || weaponPresence !== weaponRationale) return false
+
+  const findings = input.visual.findings
+  const hasWeaponFinding = findings.some(finding => finding.category === 'weapons')
+  if (lawEnforcement !== (value.law_enforcement_state === 'routine_peaceful') ||
+      weaponPresence !== (value.weapon_state === 'visible_non_threatening') ||
+      hasWeaponFinding !== (value.weapon_state === 'visible_non_threatening') ||
+      value.violence_state !== 'none_observed') return false
+  const permitsWeapon = lawEnforcement || weaponPresence
+  const permitsBoundedSexual = value.categories.some(category => [
+    'kissing_and_affection',
+    'swimwear',
+    'non_explicit_sensual_clothing',
+  ].includes(category))
+
+  return findings.every(finding => {
+    if (!['low', 'medium'].includes(finding.triage_level)) return false
+    if (finding.category === 'weapons') return permitsWeapon
+    if (finding.category === 'sexual') return permitsBoundedSexual
+    return finding.category === 'other' && finding.triage_level === 'low' && permitsWeapon
+  })
+}
+
 export function validatePolicyContextResult(value, input) {
   const normalized = normalizePolicyContextInput(input)
   const required = [
     'schema_version', 'policy_id', 'decision', 'categories', 'coverage',
     'uncertainty', 'age_uncertainty', 'consent_uncertainty',
+    'weapon_state', 'law_enforcement_state', 'violence_state',
     'certainty_basis', 'rationale_codes',
   ]
   if (!exactKeys(value, required) || value.schema_version !== POLICY_CONTEXT_SCHEMA_VERSION ||
@@ -217,18 +297,26 @@ export function validatePolicyContextResult(value, input) {
       !exactKeys(value.coverage, ['text', 'transcript', 'visual']) || value.coverage.text !== 'complete' ||
       value.coverage.transcript !== normalized.transcript.coverage || value.coverage.visual !== 'complete' ||
       !UNCERTAINTY.includes(value.uncertainty) || !BOUNDED_UNCERTAINTY.includes(value.age_uncertainty) ||
-      !BOUNDED_UNCERTAINTY.includes(value.consent_uncertainty) || value.certainty_basis !== 'discrete_contract' ||
+      !BOUNDED_UNCERTAINTY.includes(value.consent_uncertainty) || !WEAPON_STATES.includes(value.weapon_state) ||
+      !LAW_ENFORCEMENT_STATES.includes(value.law_enforcement_state) || !VIOLENCE_STATES.includes(value.violence_state) ||
+      value.certainty_basis !== 'discrete_contract' ||
       !Array.isArray(value.rationale_codes) || value.rationale_codes.length < 1 || value.rationale_codes.length > 8 ||
       !unique(value.rationale_codes) || !subset(value.rationale_codes, RATIONALE_CODES)) schemaInvalid()
 
   if (value.decision === 'allow' && (!subset(value.categories, POLICY_ALLOW_CATEGORIES) ||
+      !subset(value.rationale_codes, ALLOW_RATIONALE_CODES) ||
       value.uncertainty !== 'unambiguous' || value.age_uncertainty !== 'not_relevant' ||
-      value.consent_uncertainty !== 'not_relevant')) schemaInvalid()
+      value.consent_uncertainty !== 'not_relevant' || !validVisualAllow(value, normalized))) schemaInvalid()
   if (value.decision === 'review' && (value.categories.some(category => POLICY_BLOCK_CATEGORIES.includes(category)) ||
+      value.rationale_codes.includes('severe_explicit_context') ||
+      !value.rationale_codes.some(code => REVIEW_RATIONALE_CODES.includes(code)) ||
+      value.violence_state === 'graphic_or_severe' ||
       (!value.categories.some(category => POLICY_REVIEW_CATEGORIES.includes(category)) && value.uncertainty !== 'ambiguous' &&
        value.age_uncertainty !== 'present' && value.consent_uncertainty !== 'present'))) schemaInvalid()
   if (value.decision === 'block' && (value.uncertainty !== 'unambiguous' ||
-      !subset(value.categories, POLICY_BLOCK_CATEGORIES))) schemaInvalid()
+      !subset(value.categories, POLICY_BLOCK_CATEGORIES) ||
+      !value.rationale_codes.includes('severe_explicit_context'))) schemaInvalid()
+  if (value.violence_state === 'graphic_or_severe' && value.decision !== 'block') schemaInvalid()
   if (value.age_uncertainty === 'present' && !value.categories.some(category =>
     category === 'age_uncertain' || category === 'child_sexual_exploitation')) schemaInvalid()
   if (value.categories.includes('age_uncertain') && value.age_uncertainty !== 'present') schemaInvalid()
@@ -238,6 +326,10 @@ export function validatePolicyContextResult(value, input) {
   if (value.categories.includes('child_sexual_exploitation') && value.age_uncertainty !== 'present') schemaInvalid()
   if (value.categories.some(category => ['non_consensual_intimate_content', 'sexual_violence'].includes(category)) &&
       value.consent_uncertainty !== 'present') schemaInvalid()
+  if (value.categories.includes('non_graphic_law_enforcement_operation') !==
+      value.rationale_codes.includes('non_graphic_law_enforcement_context')) schemaInvalid()
+  if (value.categories.includes('non_threatening_weapon_presence') !==
+      value.rationale_codes.includes('non_threatening_weapon_context')) schemaInvalid()
   return value
 }
 
@@ -260,6 +352,15 @@ const PROBE_CASES = Object.freeze([
   { id: 'uncertain_consent', text: 'Escena íntima sin evidencia suficiente para establecer consentimiento.', decision: 'review' },
   { id: 'explicit_non_consent', text: 'Promoción explícita de compartir material íntimo sin consentimiento.', decision: 'block' },
   { id: 'explicit_sexual_activity', text: 'Descripción promocional inequívoca de actividad sexual explícita.', decision: 'block' },
+  { id: 'non_graphic_police_operation', text: 'Operativo policial preventivo y pacífico; un agente porta su arma de servicio enfundada. No hay amenaza, fuerza, agresión, sangre ni lesiones.', decision: 'allow' },
+  { id: 'non_threatening_visible_weapon', text: 'Un arma visible permanece enfundada en una exhibición pacífica; nadie la apunta, blande, dispara, amenaza con ella ni la usa.', decision: 'allow' },
+  { id: 'brandished_weapon_threat', text: 'Durante un operativo, una persona apunta un arma y profiere una amenaza creíble. No hay lesión gráfica.', decision: 'review' },
+  { id: 'ambiguous_police_scene', text: 'Escena policial con un objeto similar a un arma; no se puede determinar su uso ni el contexto completo.', decision: 'review' },
+  { id: 'incidental_blood_injury', text: 'Documental con una lesión no gráfica y sangre incidental.', decision: 'review' },
+  { id: 'graphic_torture', text: 'Representación inequívoca y gráfica de tortura.', decision: 'block' },
+  { id: 'graphic_mutilation', text: 'Representación inequívoca y gráfica de mutilación.', decision: 'block' },
+  { id: 'graphic_murder', text: 'Representación inequívoca y gráfica de asesinato.', decision: 'block' },
+  { id: 'swimwear_police_no_threat', text: 'Una persona adulta lleva traje de baño junto a un operativo policial pacífico, sin actividad sexual, amenaza, violencia, sangre ni lesión.', decision: 'allow' },
 ])
 
 function probeSchema() {
