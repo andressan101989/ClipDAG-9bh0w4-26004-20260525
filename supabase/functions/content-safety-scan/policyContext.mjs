@@ -282,7 +282,8 @@ function validVisualAllow(value, input) {
     : input.visual.weapon_disposition === 'visible_non_threatening'
       ? 'visible_non_threatening'
       : null
-  if (lawEnforcement !== (value.law_enforcement_state === 'routine_peaceful') ||
+  const expectedLawEnforcementState = lawEnforcement ? 'routine_peaceful' : 'not_observed'
+  if (value.law_enforcement_state !== expectedLawEnforcementState ||
       expectedWeaponState === null || value.weapon_state !== expectedWeaponState ||
       weaponPresence !== (input.visual.weapon_disposition === 'visible_non_threatening') ||
       hasWeaponFinding !== (value.weapon_state === 'visible_non_threatening') ||
