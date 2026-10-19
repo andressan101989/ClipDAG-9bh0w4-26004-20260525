@@ -1087,6 +1087,11 @@ test('postcheck advisor delta accepts only exact phase-approved fingerprints', a
   const allowed = { advisor_fingerprint: '2'.repeat(64) };
   const post = [...pre, { fingerprint: allowed.advisor_fingerprint, level: 'WARN', resource_kind: 'new' }];
   assert.equal(adapter.validateSecurityAdvisorDelta(pre, post, [allowed]), true);
+  const preexistingApproved = [
+    ...pre,
+    { fingerprint: allowed.advisor_fingerprint, level: 'WARN', resource_kind: 'existing-protected-rpc' },
+  ];
+  assert.equal(adapter.validateSecurityAdvisorDelta(preexistingApproved, preexistingApproved, [allowed]), true);
   assert.throws(
     () => adapter.validateSecurityAdvisorDelta(pre, [...post, { fingerprint: '3'.repeat(64), level: 'WARN', resource_kind: 'unknown' }], [allowed]),
     /REMOTE_POSTCHECK_FAILED/,
