@@ -25,6 +25,38 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function resignEvidence(evidence) {
+  const { evidence_sha256: ignored, ...unsigned } = evidence;
+  evidence.evidence_sha256 = sha256(canonicalJson(unsigned));
+  return evidence;
+}
+
+function bindRpcSecurityEvidence(evidence, exceptions) {
+  const items = exceptions
+    .filter(exception => Array.isArray(exception?.object?.argument_types))
+    .map(exception => ({
+      schema: exception.object.schema,
+      name: exception.object.name,
+      identity_arguments: exception.object.identity_arguments,
+      argument_types: exception.object.argument_types,
+      security_definer: exception.attestation.security_definer,
+      owner: exception.attestation.owner,
+      search_path: exception.attestation.search_path,
+      acl: exception.attestation.acl,
+      execute: exception.attestation.execute,
+      definition_sha256: exception.attestation.definition_sha256,
+    }))
+    .sort((left, right) => `${left.schema}.${left.name}(${left.argument_types.join(',')})`
+      .localeCompare(`${right.schema}.${right.name}(${right.argument_types.join(',')})`));
+  evidence.rpc_security = {
+    complete: true,
+    count: items.length,
+    items,
+    sha256: sha256(canonicalJson(items)),
+  };
+  return resignEvidence(evidence);
+}
+
 function request() {
   return {
     approvedSha: 'a'.repeat(40),
@@ -715,6 +747,7 @@ test('snapshot pair binds immutable evidence and permits only manifest-listed re
     observedAt: '2026-10-12T12:00:01.000Z',
     adapterSourceSha256: '6'.repeat(64),
   });
+  bindRpcSecurityEvidence(pre, adapter.advisorExceptionsForPhase(controlledPolicy, manifest(), 'pre'));
   const baselineDigests = adapter.buildProductionBaselineDigests({ evidence: pre, policy: controlledPolicy });
   controlledPolicy.baseline = {
     ...controlledPolicy.baseline,
@@ -738,6 +771,7 @@ test('snapshot pair binds immutable evidence and permits only manifest-listed re
     observedAt: '2026-10-12T12:01:01.000Z',
     adapterSourceSha256: '6'.repeat(64),
   });
+  bindRpcSecurityEvidence(post, adapter.advisorExceptionsForPhase(controlledPolicy, manifest(), 'post'));
   const verified = adapter.verifyProductionSnapshotPair({
     pre,
     post,
@@ -757,6 +791,21 @@ test('snapshot pair binds immutable evidence and permits only manifest-listed re
     verify_jwt: true,
   }]);
   assert.deepEqual(verified.applied_migrations, []);
+
+  for (const phase of ['pre', 'post']) {
+    const candidate = {
+      pre: structuredClone(pre),
+      post: structuredClone(post),
+      policy: structuredClone(controlledPolicy),
+      request: request(),
+      manifest: manifest(),
+      adapterSourceSha256: '6'.repeat(64),
+    };
+    candidate[phase].rpc_security.items[0].definition_sha256 = '0'.repeat(64);
+    candidate[phase].rpc_security.sha256 = sha256(canonicalJson(candidate[phase].rpc_security.items));
+    resignEvidence(candidate[phase]);
+    assert.throws(() => adapter.verifyProductionSnapshotPair(candidate), /RPC_SECURITY_ATTESTATION_FAILED/);
+  }
 
   for (const mutate of [
     candidate => { candidate.pre.evidence_sha256 = '0'.repeat(64); },
@@ -790,6 +839,7 @@ test('postcheck binds deployed function config and source identity to each manif
     token: 'private-read-token', fetchImpl: successfulFetchWithFunctionVersion([], 35),
     observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
   });
+  bindRpcSecurityEvidence(pre, adapter.advisorExceptionsForPhase(controlledPolicy, manifest(), 'pre'));
   controlledPolicy.baseline = {
     ...controlledPolicy.baseline,
     state: 'verified', evidence: '7'.repeat(64),
@@ -816,6 +866,7 @@ test('postcheck binds deployed function config and source identity to each manif
       token: 'private-read-token', fetchImpl,
       observedAt: '2026-10-12T12:01:01.000Z', adapterSourceSha256: '6'.repeat(64),
     });
+    bindRpcSecurityEvidence(post, adapter.advisorExceptionsForPhase(controlledPolicy, postManifest, 'post'));
     assert.throws(() => adapter.verifyProductionSnapshotPair({
       pre, post, policy: controlledPolicy, request: request(), manifest: postManifest,
       adapterSourceSha256: '6'.repeat(64),
@@ -835,6 +886,7 @@ test('postcheck preserves every pre-existing ledger account identity while allow
     token: 'private-read-token', fetchImpl: successfulFetchWithFunctionVersion([], 35),
     observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
   });
+  bindRpcSecurityEvidence(pre, adapter.advisorExceptionsForPhase(controlledPolicy, manifest(), 'pre'));
   controlledPolicy.baseline = {
     ...controlledPolicy.baseline,
     state: 'verified', evidence: '7'.repeat(64),
@@ -857,6 +909,7 @@ test('postcheck preserves every pre-existing ledger account identity while allow
     }),
     observedAt: '2026-10-12T12:01:01.000Z', adapterSourceSha256: '6'.repeat(64),
   });
+  bindRpcSecurityEvidence(validPost, adapter.advisorExceptionsForPhase(controlledPolicy, manifest(), 'post'));
   assert.equal(adapter.verifyProductionSnapshotPair({
     pre, post: validPost, policy: controlledPolicy, request: request(), manifest: manifest(),
     adapterSourceSha256: '6'.repeat(64),
@@ -874,6 +927,7 @@ test('postcheck preserves every pre-existing ledger account identity while allow
       }),
       observedAt: '2026-10-12T12:01:01.000Z', adapterSourceSha256: '6'.repeat(64),
     });
+    bindRpcSecurityEvidence(invalidPost, adapter.advisorExceptionsForPhase(controlledPolicy, manifest(), 'post'));
     assert.throws(() => adapter.verifyProductionSnapshotPair({
       pre, post: invalidPost, policy: controlledPolicy, request: request(), manifest: manifest(),
       adapterSourceSha256: '6'.repeat(64),
@@ -896,6 +950,7 @@ test('pre-snapshot must match every owner-reviewed baseline digest before mutati
     observedAt: '2026-10-12T12:00:01.000Z',
     adapterSourceSha256: '6'.repeat(64),
   });
+  bindRpcSecurityEvidence(pre, adapter.advisorExceptionsForPhase(controlledPolicy, manifest(), 'pre'));
   const digests = adapter.buildProductionBaselineDigests({ evidence: pre, policy: controlledPolicy });
   controlledPolicy.baseline = {
     ...controlledPolicy.baseline,
@@ -943,6 +998,7 @@ test('pre-snapshot baseline binds finance schema Premium bindings and zero recon
     token: 'private-read-token', fetchImpl: successfulFetchWithFunctionVersion([], 35),
     observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
   });
+  bindRpcSecurityEvidence(baselinePre, adapter.advisorExceptionsForPhase(controlledPolicy, manifest(), 'pre'));
   const baseline = {
     ...controlledPolicy.baseline,
     state: 'verified', evidence: '7'.repeat(64),
@@ -964,6 +1020,7 @@ test('pre-snapshot baseline binds finance schema Premium bindings and zero recon
       token: 'private-read-token', fetchImpl: successfulFetchWithFunctionVersion([], 35, { finance }),
       observedAt: '2026-10-12T12:00:02.000Z', adapterSourceSha256: '6'.repeat(64),
     });
+    bindRpcSecurityEvidence(drift, adapter.advisorExceptionsForPhase(controlledPolicy, manifest(), 'pre'));
     assert.throws(() => adapter.verifyProductionPreSnapshot({
       pre: drift, policy: controlledPolicy, request: request(), manifest: manifest(),
       adapterSourceSha256: '6'.repeat(64),
@@ -978,6 +1035,7 @@ test('pre-snapshot baseline binds finance schema Premium bindings and zero recon
     }),
     observedAt: '2026-10-12T12:00:03.000Z', adapterSourceSha256: '6'.repeat(64),
   });
+  bindRpcSecurityEvidence(inconsistent, adapter.advisorExceptionsForPhase(controlledPolicy, manifest(), 'pre'));
   const inconsistentPolicy = structuredClone(controlledPolicy);
   inconsistentPolicy.baseline.evidence_digests = adapter.buildProductionBaselineDigests({
     evidence: inconsistent,
@@ -1075,10 +1133,12 @@ test('phase-bound RPC attestations activate the revised plan deletion definition
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
   const pre = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre');
   const post = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post');
-  assert.equal(rpcCount(pre), 14);
+  assert.equal(rpcCount(pre), 15);
   assert.equal(rpcCount(post), 15);
-  assert.equal(pre.some(item => item.object.name === 'delete_my_creator_premium_plan_draft_v1'), false);
-  assert.equal(post.some(item => item.object.name === 'delete_my_creator_premium_plan_draft_v1'), true);
+  const preDeletePlan = pre.find(item => item.object.name === 'delete_my_creator_premium_plan_draft_v1');
+  const postDeletePlan = post.find(item => item.object.name === 'delete_my_creator_premium_plan_draft_v1');
+  assert.equal(preDeletePlan.attestation.definition_sha256, '40cbc02821cceb68cdd5a31cfd531d9ec8f537d36c47acb1fc7fcafd0df42ed3');
+  assert.equal(postDeletePlan.attestation.definition_sha256, 'a7bab775b77a5230658cea58c7bcb9f139b4b6102c89c1095a5e3f5d8548d520');
 });
 
 test('phase-bound RPC attestations activate the repaired submit definition only after C6', async () => {
@@ -1092,10 +1152,12 @@ test('phase-bound RPC attestations activate the repaired submit definition only 
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
   const pre = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre');
   const post = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post');
-  assert.equal(rpcCount(pre), 14);
+  assert.equal(rpcCount(pre), 15);
   assert.equal(rpcCount(post), 15);
-  assert.equal(pre.some(item => item.object.name === 'submit_my_creator_premium_content_with_plans_v1'), false);
-  assert.equal(post.some(item => item.object.name === 'submit_my_creator_premium_content_with_plans_v1'), true);
+  const preSubmit = pre.find(item => item.object.name === 'submit_my_creator_premium_content_with_plans_v1');
+  const postSubmit = post.find(item => item.object.name === 'submit_my_creator_premium_content_with_plans_v1');
+  assert.equal(preSubmit.attestation.definition_sha256, '7e3e9f176c216fd35bd9dc4fe00b7d577558265afe2f884630d53747737f02ee');
+  assert.equal(postSubmit.attestation.definition_sha256, '00e9195a045185a65ca260a9abacc6916b289f7b1a2cf094cdaf9d4d86f55eff');
 });
 
 test('postcheck advisor delta accepts only exact phase-approved fingerprints', async () => {
