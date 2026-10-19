@@ -338,7 +338,9 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     'creator_premium_plan_contents', 'creator_premium_plans', 'creator_premium_purchase_receipts',
     'creator_premium_subscription_periods', 'creator_premium_subscriptions',
   ];
-  if (source.run_id === '39157300357') relationNames.unshift('creator_premium_content_safety_context_evaluations');
+  if (['39157300357', '39195966131'].includes(source.run_id)) {
+    relationNames.unshift('creator_premium_content_safety_context_evaluations');
+  }
   const fetchImpl = async (url, options = {}) => {
     const pathname = new URL(url).pathname;
     const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -587,7 +589,7 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
 
 test('recovery source is exact immutable failed-postcheck authority', async () => {
   const { gate, policy } = await loadGateAndPolicy();
-  assert.equal(policy.postcheck_recovery.approved_sources.length, 2);
+  assert.equal(policy.postcheck_recovery.approved_sources.length, 3);
   for (const source of policy.postcheck_recovery.approved_sources) {
     assert.equal(gate.validateRecoverySource(source), true);
     assert.ok(source.expected_migrations.length >= 1);
@@ -603,6 +605,17 @@ test('recovery source is exact immutable failed-postcheck authority', async () =
   assert.equal(source.postcheck_status, 'failure');
   assert.equal(source.edge_functions.length, 12);
   assert.equal(new Set(source.edge_functions.map(item => item.name)).size, 12);
+  const c4Source = policy.postcheck_recovery.approved_sources.find(item => item.run_id === '39195966131');
+  assert.ok(c4Source);
+  assert.equal(c4Source.release_id, 'nelyon-f1-c4-release-20261019T034232Z');
+  assert.equal(c4Source.source_sha, '6cde9b5566c0753b10a1588e8f58568030d37a61');
+  assert.equal(c4Source.expected_migration_count, 344);
+  assert.equal(c4Source.edge_functions.length, 3);
+  assert.deepEqual(c4Source.edge_functions.map(item => item.name), [
+    'content-safety-scan',
+    'create-stream-upload',
+    'video-semantic-index',
+  ]);
   for (const mutate of [
     candidate => { candidate.run_id = '39066492486'; },
     candidate => { candidate.postcheck_status = 'success'; },
@@ -1540,6 +1553,31 @@ test('postcheck recovery verifies the exact P2 migration Edge version and Premiu
   assert.deepEqual(result.functions.items.map(item => item.name), ['content-safety-scan']);
   assert.equal(result.functions.items[0].version, 42);
   assert.deepEqual(result.premium_state.legacy, { content_count: 4, pending_review_count: 2, deleted_count: 2 });
+  assert.equal(result.premium_state.relation_security.sha256, '055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6');
+});
+
+test('postcheck recovery verifies the exact C4 migration and three deployed Edge versions', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = await recoveryStateFixture(t, gate, policy, 2);
+  const result = gate.verifyPostcheckRecovery({
+    policy: fixture.controlledPolicy,
+    recoveryRequest: fixture.recoveryRequest,
+    recoveryManifest: fixture.recoveryManifest,
+    sourceManifest: fixture.sourceManifest,
+    sourceObservation: fixture.sourceObservation,
+    currentEvidence: fixture.currentEvidence,
+    adapterSourceSha256: fixture.adapterSourceSha256,
+  });
+  assert.equal(result.result, 'POSTCHECK_RECOVERY_SUCCESS');
+  assert.equal(result.source_run_id, '39195966131');
+  assert.equal(result.migrations.count, 344);
+  assert.equal(`${result.migrations.latest.version}_${result.migrations.latest.name}`, '20261019023431_creator_premium_f1_c4_final_recovery');
+  assert.deepEqual(result.functions.items.map(item => [item.name, item.version]), [
+    ['content-safety-scan', 44],
+    ['create-stream-upload', 38],
+    ['video-semantic-index', 15],
+  ]);
+  assert.deepEqual(result.premium_state.legacy, { content_count: 7, pending_review_count: 1, deleted_count: 2 });
   assert.equal(result.premium_state.relation_security.sha256, '055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6');
 });
 
