@@ -132,13 +132,14 @@ test('active-plan snapshot includes a mapping beyond the first 100 rows before s
   );
 });
 
-test('owner lifecycle exposes safe published withdrawal and dependency-free draft plan deletion', () => {
+test('owner lifecycle exposes safe published withdrawal and canonical content/plan deletion', () => {
   assert.equal(creatorPremiumLifecycleActions({ lifecycle_status: 'published' }).canRetire, true);
   assert.equal(creatorPremiumLifecycleActions({ lifecycle_status: 'deleted' }).canRetire, false);
   assert.match(service, /retireMyCreatorPremiumContent/);
-  assert.match(service, /deleteMyCreatorPremiumPlanDraft/);
+  assert.match(service, /deleteMyCreatorPremiumPlan/);
   assert.match(editor, /Retirar publicación/);
-  assert.match(hub, /Eliminar borrador/);
+  assert.match(editor, /Eliminar contenido/);
+  assert.match(hub, /Eliminar plan/);
   assert.match(migration, /create function public\.retire_my_creator_premium_content_v1/i);
   assert.match(migration, /creator_premium_content_has_financial_history/i);
   assert.match(migration, /lifecycle_status\s*=\s*'removed'/i);

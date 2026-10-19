@@ -3,6 +3,7 @@ import { authenticatedClient,authenticatedUser,admin,corsHeaders,json } from '..
 import { CREATOR_PREMIUM_STREAM_PURPOSE } from '../_shared/premiumStreamSecurity.ts';
 import {
   canonicalCloudflareTusLocation,
+  cloudflareTusProvisionRetryDelayMs,
   classifyCloudflareTusFailure,
 } from './premiumTusContract.mjs';
 import {
@@ -67,41 +68,52 @@ async function createPremiumTusUpload(input:{
     premium_content_id:input.premiumContentId,
     environment:input.environment,
   };
-  let response:Response;
-  try {
-    response=await fetch(`${streamApiBase()}?direct_user=true`,{
-      method:'POST',
-      headers:{
-        Authorization:`Bearer ${streamToken()}`,
-        'Tus-Resumable':'1.0.0',
-        'Upload-Length':String(input.sizeBytes),
-        'Upload-Creator':input.ownerId,
-        'Upload-Metadata':tusMetadataHeader(metadata),
-      },
-      signal:AbortSignal.timeout(15_000),
-    });
-  } catch {
-    console.error('[create-stream-upload] premium_stream_tus_provision_failed',{
-      code:'stream_provider_temporarily_unavailable',
-      provider_status:null,
-      provider_error_code:null,
-      provider_request_id:null,
-    });
-    throw new StreamProviderError('stream_provider_temporarily_unavailable',503,true);
-  }
-  if(!response.ok) {
+  let response:Response|null=null;
+  for(let attempt=1;attempt<=4;attempt+=1) {
+    try {
+      response=await fetch(`${streamApiBase()}?direct_user=true`,{
+        method:'POST',
+        headers:{
+          Authorization:`Bearer ${streamToken()}`,
+          'Tus-Resumable':'1.0.0',
+          'Upload-Length':String(input.sizeBytes),
+          'Upload-Creator':input.ownerId,
+          'Upload-Metadata':tusMetadataHeader(metadata),
+        },
+        signal:AbortSignal.timeout(15_000),
+      });
+    } catch {
+      console.error('[create-stream-upload] premium_stream_tus_provision_failed',{
+        code:'stream_provider_temporarily_unavailable',
+        provider_status:null,
+        provider_error_code:null,
+        provider_request_id:null,
+        attempt,
+      });
+      throw new StreamProviderError('stream_provider_temporarily_unavailable',503,true);
+    }
+    if(response.ok) break;
     const failure=classifyCloudflareTusFailure(response.status);
+    const retryDelayMs=cloudflareTusProvisionRetryDelayMs(
+      response.status,
+      response.headers.get('retry-after'),
+      attempt,
+    );
     console.error('[create-stream-upload] premium_stream_tus_provision_failed',{
       code:failure.code,
       provider_status:response.status,
       provider_error_code:await safeProviderErrorCode(response),
       provider_request_id:safeProviderHeader(response.headers.get('cf-ray')),
+      attempt,
+      retry_scheduled:retryDelayMs!==null,
     });
-    throw new StreamProviderError(
-      failure.code,
-      failure.httpStatus,
-      failure.transient,
-    );
+    if(retryDelayMs===null) {
+      throw new StreamProviderError(failure.code,failure.httpStatus,failure.transient);
+    }
+    await new Promise(resolve=>setTimeout(resolve,retryDelayMs));
+  }
+  if(!response||!response.ok) {
+    throw new StreamProviderError('stream_provider_temporarily_unavailable',503,true);
   }
   const uid=response.headers.get('stream-media-id')?.trim()??'';
   const rawUploadUrl=response.headers.get('location')?.trim()??'';

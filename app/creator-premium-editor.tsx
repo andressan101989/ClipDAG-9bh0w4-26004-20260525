@@ -35,7 +35,7 @@ import {
 import {
   cancelMyCreatorPremiumSubmission,
   createMyCreatorPremiumDraft,
-  deleteMyCreatorPremiumDraft,
+  deleteMyCreatorPremiumContent,
   fetchMyCreatorPremiumContent,
   fetchMyCreatorPremiumPlans,
   publishMyCreatorPremiumContent,
@@ -569,14 +569,14 @@ export default function CreatorPremiumEditor() {
   const confirmDelete = useCallback(() => {
     if (!contentId || busy || !lifecycleActions.canDelete) return;
     Alert.alert(
-      'Eliminar borrador',
-      'Se desvincularán los medios y se programará su eliminación segura. Esta acción no se puede deshacer.',
+      'Eliminar contenido',
+      'Desaparecerá de tu panel y no se podrá restaurar. Se conservará únicamente el historial exigido por seguridad y derechos.',
       [
         { text: 'Cancelar', style: 'cancel' },
         {
           text: 'Eliminar', style: 'destructive', onPress: () => {
             setDeleting(true);
-            void deleteMyCreatorPremiumDraft(contentId)
+            void deleteMyCreatorPremiumContent(contentId)
               .then(() => router.replace('/creator-monetization'))
               .catch(reason => setError(messageFor(reason)))
               .finally(() => setDeleting(false));
@@ -801,7 +801,7 @@ export default function CreatorPremiumEditor() {
             </Pressable> : null}
             {contentId && lifecycleActions.canDelete ? (
               <Pressable style={styles.deleteButton} onPress={confirmDelete} disabled={busy}>
-                {deleting ? <ActivityIndicator color={Colors.error} /> : <><MaterialCommunityIcons name="trash-can-outline" size={20} color={Colors.error} /><Text style={styles.deleteText}>Eliminar borrador</Text></>}
+                {deleting ? <ActivityIndicator color={Colors.error} /> : <><MaterialCommunityIcons name="trash-can-outline" size={20} color={Colors.error} /><Text style={styles.deleteText}>Eliminar contenido</Text></>}
               </Pressable>
             ) : null}
             {contentId && lifecycleActions.canRetire ? (

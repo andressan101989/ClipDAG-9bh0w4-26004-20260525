@@ -25,6 +25,7 @@ const suffixes = [
   '_creator_premium_content_safety_p2_evidence_runtime.sql',
   '_creator_premium_content_safety_p2_activation.sql',
   '_creator_premium_qa_final_f1.sql',
+  '_creator_premium_f1_c4_final_recovery.sql',
 ]
 const chain = suffixes.map(suffix => {
   const found = readdirSync(migrations).filter(name => name.endsWith(suffix))
@@ -66,6 +67,31 @@ const F1_RPC_SECURITY_CASES = [
       'plan_delete_draft_only', 'plan_delete_dependencies_blocked',
       'plan_delete_dependency_free', 'plan_delete_idempotent_replay',
       'plan_delete_finance_no_side_effect',
+    ],
+  },
+]
+
+const C4_RPC_SECURITY_CASES = [
+  {
+    signature: 'public.delete_my_creator_premium_draft_v1(uuid)',
+    advisorFingerprint: 'baseline-preexisting',
+    caseIds: [
+      'content_delete_anon_acl', 'content_delete_service_role_acl',
+      'content_delete_cross_owner', 'content_delete_retire_first',
+      'content_delete_removed', 'content_delete_idempotent_replay',
+      'content_delete_hidden', 'content_delete_private_history_preserved',
+      'content_delete_finance_no_side_effect',
+    ],
+  },
+  {
+    signature: 'public.delete_my_creator_premium_plan_draft_v1(uuid,uuid)',
+    advisorFingerprint: '5ceb93fa71004f64ba75a7bd251fadaf66d7ebdce81fb48904fd988ed9023fef',
+    caseIds: [
+      'plan_hide_anon_acl', 'plan_hide_service_role_acl',
+      'plan_hide_active_retire_first', 'plan_hide_retired',
+      'plan_hide_idempotent_replay', 'plan_hide_hidden',
+      'plan_hide_clone_blocked', 'plan_hide_dependencies_preserved',
+      'plan_hide_entitlements_preserved', 'plan_hide_finance_no_side_effect',
     ],
   },
 ]
@@ -204,11 +230,13 @@ function publishedFixture({ owner, content, scan, teaser, original, title }) {
   `
 }
 
-test('F1 disposable harness binds one forward migration after the activated P2 chain', () => {
+test('F1-C4 disposable harness binds the canonical F1 baseline and one forward recovery migration', () => {
   for (const item of chain) assert.equal(item.found.length, 1, item.suffix)
-  assert.match(chain.at(-1).found[0], /^\d{14}_creator_premium_qa_final_f1\.sql$/)
-  assert.match(chain.at(-1).sql, /submit_my_creator_premium_content_with_plans_v1/)
-  assert.match(chain.at(-1).sql, /max_duration_seconds between 1 and 180/)
+  assert.match(chain.at(-2).found[0], /^\d{14}_creator_premium_qa_final_f1\.sql$/)
+  assert.match(chain.at(-2).sql, /submit_my_creator_premium_content_with_plans_v1/)
+  assert.match(chain.at(-2).sql, /max_duration_seconds between 1 and 180/)
+  assert.match(chain.at(-1).found[0], /^\d{14}_creator_premium_f1_c4_final_recovery\.sql$/)
+  assert.match(chain.at(-1).sql, /creator_deleted_at/)
 })
 
 test('F1 disposable database proves 180s isolation, plan versioning, owner lifecycle, ACL, and finance invariants', {
@@ -224,7 +252,8 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
     concurrentContent: uid(), concurrentTeaser: uid(), concurrentOriginal: uid(),
     concurrentPlanRequest: uid(), concurrentCloneRequest: uid(), concurrentSubmitRequest: uid(),
     safetyVideoRequest: uid(),
-    draftDeleteRequest: uid(), dependentDeleteRequest: uid(),
+    draftDeleteRequest: uid(), dependentDeleteRequest: uid(), c4PlanDeleteRequest: uid(),
+    c4FinancialPlanDeleteRequest: uid(),
     published: uid(), publishedScan: uid(), publishedTeaser: uid(), publishedOriginal: uid(),
     financial: uid(), financialScan: uid(), financialTeaser: uid(), financialOriginal: uid(),
     financialPlan: uid(), subscription: uid(),
@@ -249,7 +278,7 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
         ('MODERATOR','content.items.moderate')
       on conflict(role_code,capability_code) do nothing;
     `)
-    for (const item of chain) psql(db, item.sql)
+    for (const item of chain.slice(0, -1)) psql(db, item.sql)
 
     psql(db, `
       set session_replication_role=replica;
@@ -554,7 +583,7 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
 
     const expectedCaseIds = F1_RPC_SECURITY_CASES.flatMap(item => item.caseIds).sort()
     assert.deepEqual([...proved].sort(), expectedCaseIds)
-    const migrationSql = chain.at(-1).sql
+    const migrationSql = chain.find(item => item.suffix === '_creator_premium_qa_final_f1.sql').sql
     const migrationBlob = gitBlobSha1(migrationSql)
     const evidence = {
       schema_version: 1,
@@ -579,6 +608,103 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
       const definition = Buffer.from(encoded, 'base64').toString('utf8').replace(/\r\n?/g, '\n')
       const definitionSha256 = createHash('sha256').update(definition).digest('hex')
       t.diagnostic(`F1_RPC_DEFINITION_SHA256 ${item.signature} ${definitionSha256}`)
+    }
+
+    // Install the one forward C4 correction after proving the immutable F1
+    // baseline. C4 then extends the same RPCs without changing financial data,
+    // acquired rights, or the private historical rows.
+    psql(db, chain.at(-1).sql)
+    const c4Proved = new Set()
+    for (const signature of [
+      'public.delete_my_creator_premium_draft_v1(uuid)',
+      'public.delete_my_creator_premium_plan_draft_v1(uuid,uuid)',
+    ]) {
+      assert.equal(psql(db, `select has_function_privilege('authenticated','${signature}','execute')`).stdout, 't')
+      assert.equal(psql(db, `select has_function_privilege('anon','${signature}','execute')`).stdout, 'f')
+      assert.equal(psql(db, `select has_function_privilege('service_role','${signature}','execute')`).stdout, 'f')
+      assert.equal(psql(db, `select proconfig @> array['search_path=""'] from pg_proc where oid='${signature}'::regprocedure`).stdout, 't')
+      assert.equal(psql(db, `select pg_get_userbyid(proowner) from pg_proc where oid='${signature}'::regprocedure`).stdout, 'postgres')
+      const prefix = signature.includes('_plan_') ? 'plan_hide' : 'content_delete'
+      c4Proved.add(`${prefix}_anon_acl`)
+      c4Proved.add(`${prefix}_service_role_acl`)
+    }
+
+    expectFailure(asRole(db, 'authenticated', id.other, `select public.delete_my_creator_premium_draft_v1('${id.published}')`, { allowFailure: true }), 'creator_premium_content_not_found')
+    c4Proved.add('content_delete_cross_owner')
+    const c4DeletedContent = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.delete_my_creator_premium_draft_v1('${id.published}') result`))
+    assert.equal(c4DeletedContent.lifecycle_status, 'deleted')
+    c4Proved.add('content_delete_removed')
+    assert.equal(psql(db, `select lifecycle_status from private.creator_premium_contents where id='${id.published}'`).stdout, 'deleted')
+    assert.equal(psql(db, `select count(*) from private.content_safety_scans where id='${id.publishedScan}'`).stdout, '1')
+    c4Proved.add('content_delete_private_history_preserved')
+    assert.equal(psql(db, `select count(*) from public.media_asset_links where entity_type='creator_premium_content' and entity_id='${id.published}'`).stdout, '0')
+    assert.equal(asRole(db, 'authenticated', id.creator, `select count(*) from public.get_my_creator_premium_contents_v1(100,null,null) where id='${id.published}'`).stdout, '0')
+    c4Proved.add('content_delete_hidden')
+    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.delete_my_creator_premium_draft_v1('${id.published}') result`)).lifecycle_status, 'deleted')
+    c4Proved.add('content_delete_idempotent_replay')
+
+    expectFailure(asRole(db, 'authenticated', id.creator, `select public.delete_my_creator_premium_draft_v1('${id.financial}')`, { allowFailure: true }), 'creator_premium_content_retire_first')
+    c4Proved.add('content_delete_retire_first')
+    assert.equal(psql(db, `select lifecycle_status from private.creator_premium_contents where id='${id.financial}'`).stdout, 'published')
+
+    expectFailure(asRole(db, 'authenticated', id.creator, `select public.delete_my_creator_premium_plan_draft_v1('${submitted.active_plan_ids[0]}','${uid()}')`, { allowFailure: true }), 'creator_premium_plan_retire_first')
+    c4Proved.add('plan_hide_active_retire_first')
+    const c4HiddenPlan = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.delete_my_creator_premium_plan_draft_v1('${activePlan.id}','${id.c4PlanDeleteRequest}') result`))
+    assert.equal(c4HiddenPlan.deleted, true)
+    assert.equal(c4HiddenPlan.replayed, false)
+    c4Proved.add('plan_hide_retired')
+    assert.equal(psql(db, `select status||'|'||(creator_deleted_at is not null) from private.creator_premium_plans where id='${activePlan.id}'`).stdout, 'retired|true')
+    assert.equal(psql(db, `select count(*) from private.creator_premium_plan_contents where plan_id='${activePlan.id}'`).stdout, '1')
+    c4Proved.add('plan_hide_dependencies_preserved')
+    assert.equal(asRole(db, 'authenticated', id.creator, `select count(*) from public.get_my_creator_premium_plans_v1(100,null,null) where id='${activePlan.id}'`).stdout, '0')
+    c4Proved.add('plan_hide_hidden')
+    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.delete_my_creator_premium_plan_draft_v1('${activePlan.id}','${id.c4PlanDeleteRequest}') result`)).replayed, true)
+    c4Proved.add('plan_hide_idempotent_replay')
+    expectFailure(asRole(db, 'authenticated', id.creator, `select public.clone_my_creator_premium_plan_version_v1('${activePlan.id}','${uid()}')`, { allowFailure: true }), 'creator_premium_plan_not_found')
+    c4Proved.add('plan_hide_clone_blocked')
+
+    expectFailure(asRole(db, 'authenticated', id.creator, `select public.delete_my_creator_premium_plan_draft_v1('${id.financialPlan}','${uid()}')`, { allowFailure: true }), 'creator_premium_plan_retire_first')
+    asRole(db, 'authenticated', id.creator, `select public.retire_my_creator_premium_plan_v1('${id.financialPlan}')`)
+    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.delete_my_creator_premium_plan_draft_v1('${id.financialPlan}','${id.c4FinancialPlanDeleteRequest}') result`)).deleted, true)
+    assert.equal(psql(db, `select status from private.creator_premium_subscriptions where id='${id.subscription}'`).stdout, 'active')
+    assert.equal(psql(db, `select count(*) from private.creator_premium_plan_contents where plan_id='${id.financialPlan}' and content_id='${id.financial}'`).stdout, '1')
+    c4Proved.add('plan_hide_entitlements_preserved')
+
+    assert.equal(psql(db, `select purchase_enabled||'|'||subscription_enabled||'|'||refunds_enabled||'|'||platform_fee_bps from private.creator_premium_finance_policy where singleton`).stdout, 'false|false|false|0')
+    assert.equal(psql(db, `
+      select (select count(*) from public.financial_transactions)||'|'||
+             (select count(*) from public.ledger_entries)||'|'||
+             (select count(*) from public.ledger_accounts)
+    `).stdout, financeBefore)
+    c4Proved.add('content_delete_finance_no_side_effect')
+    c4Proved.add('plan_hide_finance_no_side_effect')
+
+    const c4ExpectedCaseIds = C4_RPC_SECURITY_CASES.flatMap(item => item.caseIds).sort()
+    assert.deepEqual([...c4Proved].sort(), c4ExpectedCaseIds)
+    const c4MigrationBlob = gitBlobSha1(chain.at(-1).sql)
+    const c4Evidence = {
+      schema_version: 1,
+      migration_blob: c4MigrationBlob,
+      rpcs: C4_RPC_SECURITY_CASES.map(item => ({
+        signature: item.signature,
+        fingerprint: item.advisorFingerprint,
+        case_ids: [...item.caseIds],
+        result: 'SAFE',
+      })),
+      result: 'PASS',
+    }
+    const c4EvidenceSha256 = createHash('sha256')
+      .update(`${canonicalJson(c4Evidence)}\n`, 'utf8').digest('hex')
+    t.diagnostic(`F1_C4_RPC_SECURITY_EVIDENCE_SHA256 ${c4EvidenceSha256}`)
+    t.diagnostic(`F1_C4_MIGRATION_BLOB ${c4MigrationBlob}`)
+    for (const item of C4_RPC_SECURITY_CASES) {
+      const encoded = psql(db, `select pg_catalog.translate(
+        pg_catalog.encode(pg_catalog.convert_to(pg_catalog.pg_get_functiondef('${item.signature}'::regprocedure),'UTF8'),'base64'),
+        E'\\n\\r',''
+      )`).stdout
+      const definition = Buffer.from(encoded, 'base64').toString('utf8').replace(/\r\n?/g, '\n')
+      const definitionSha256 = createHash('sha256').update(definition).digest('hex')
+      t.diagnostic(`F1_C4_RPC_DEFINITION_SHA256 ${item.signature} ${definitionSha256}`)
     }
   } finally {
     docker(`dropdb -U supabase_admin --if-exists ${db}`, { allowFailure: true })

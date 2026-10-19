@@ -115,6 +115,62 @@ export function validateStreamAudioTargetType(value) {
   return value
 }
 
+function streamAudioProviderError(error) {
+  const issue = error && typeof error === 'object' ? error : {}
+  const code = typeof issue.code === 'string' ? issue.code : ''
+  const status = Number(issue.httpStatus ?? issue.status ?? 502)
+  if (code === 'stream_provider_temporarily_unavailable') {
+    return new AudioPipelineError('stream_audio_temporarily_unavailable', {
+      status: Number.isFinite(status) ? status : 503,
+      retryable: true,
+      providerCalled: true,
+    })
+  }
+  if (code === 'stream_configuration_missing') {
+    return new AudioPipelineError('stream_audio_configuration_missing', { status: 503 })
+  }
+  return new AudioPipelineError('stream_audio_provider_rejected', {
+    status: Number.isFinite(status) ? status : 502,
+    retryable: false,
+    providerCalled: true,
+  })
+}
+
+export async function loadStreamAudioDescriptor({ uid, streamFetchImpl }) {
+  if (typeof uid !== 'string' || !uid || typeof streamFetchImpl !== 'function') {
+    throw new AudioPipelineError('stream_audio_download_configuration_invalid', { status: 503 })
+  }
+  let downloads
+  try {
+    downloads = await streamFetchImpl(`/${uid}/downloads`, { method: 'GET' })
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'stream_not_found') downloads = { result: {} }
+    else throw streamAudioProviderError(error)
+  }
+  let audio = downloads?.result && typeof downloads.result === 'object' && downloads.result.audio && typeof downloads.result.audio === 'object'
+    ? downloads.result.audio
+    : {}
+  if (!audio.status) {
+    let created
+    try {
+      created = await streamFetchImpl(`/${uid}/downloads/audio`, { method: 'POST' })
+    } catch (error) {
+      throw streamAudioProviderError(error)
+    }
+    audio = created?.result && typeof created.result === 'object' && created.result.audio && typeof created.result.audio === 'object'
+      ? created.result.audio
+      : {}
+  }
+  const status = String(audio.status ?? '')
+  if (status === 'inprogress') {
+    throw new AudioPipelineError('stream_audio_inprogress', { status: 425, retryable: true, providerCalled: true })
+  }
+  if (status !== 'ready' || typeof audio.url !== 'string') {
+    throw new AudioPipelineError('stream_audio_generation_failed', { providerCalled: true })
+  }
+  return audio
+}
+
 export async function selectStreamAudioDownloadRoute({ targetType, uid, customerCode, providerUrl, createPrivateGrant }) {
   const canonicalTargetType = validateStreamAudioTargetType(targetType)
   const canonicalProviderUrl = validateStreamAudioUrl(providerUrl, uid, customerCode)

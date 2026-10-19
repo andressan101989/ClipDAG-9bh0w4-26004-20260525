@@ -1,7 +1,7 @@
 /* eslint-disable import/no-unresolved */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.106.1'
 import { evaluateTextRules } from './ruleEngine.mjs'
-import { AudioPipelineError, WHISPER_MODEL, bytesToBase64, downloadStreamAudioBytes, makeProbeWav, normalizeWhisperResult, selectStreamAudioDownloadRoute, timecodeForMatch, validateStreamAudioTargetType } from './audioPipeline.mjs'
+import { AudioPipelineError, WHISPER_MODEL, bytesToBase64, downloadStreamAudioBytes, loadStreamAudioDescriptor, makeProbeWav, normalizeWhisperResult, selectStreamAudioDownloadRoute, timecodeForMatch, validateStreamAudioTargetType } from './audioPipeline.mjs'
 import { VISUAL_AI_PROVIDER, VISUAL_MODEL, VisualProbeError, runVisualMultiImageProviderProbe, runVisualProviderProbe } from './visualProbe.mjs'
 import { MAX_PREMIUM_VISUAL_IMAGE_BYTES, MAX_VISUAL_IMAGE_BYTES, VisualPipelineError, analyzeVisualBytes, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps } from './visualPipeline.mjs'
 import { PolicyContextError, policyContextErrorFrom, runPolicyContextAnalysis, runPolicyContextProviderProbe } from './policyContext.mjs'
@@ -67,15 +67,7 @@ async function workersAi(audio: Uint8Array) {
 
 async function streamAudioDownload(uid: string, targetType: unknown) {
   const canonicalTargetType = validateStreamAudioTargetType(targetType)
-  let downloads = object((await streamFetch(`/${uid}/downloads`, { method: 'GET' })).result)
-  let audio = object(downloads.audio)
-  if (!audio.status) {
-    downloads = object((await streamFetch(`/${uid}/downloads/audio`, { method: 'POST' })).result)
-    audio = object(downloads.audio)
-  }
-  const status = String(audio.status ?? '')
-  if (status === 'inprogress') throw new AudioPipelineError('stream_audio_inprogress', { status: 425, retryable: true })
-  if (status !== 'ready' || typeof audio.url !== 'string') throw new AudioPipelineError('stream_audio_generation_failed')
+  const audio = await loadStreamAudioDescriptor({ uid, streamFetchImpl: streamFetch })
   const route = await selectStreamAudioDownloadRoute({
     targetType: canonicalTargetType,
     uid,
@@ -225,6 +217,13 @@ Deno.serve(async req => {
       audioAnalyzed += 1
     } catch (error) {
       const issue = error instanceof AudioPipelineError ? error : new AudioPipelineError(`${stage}_unexpected`, { retryable: true })
+      console.error('audio_processing_failed', {
+        code: issue.code,
+        retryable: issue.retryable,
+        provider_called: issue.providerCalled,
+        stage,
+        attempt_count: Number(scan.attempt_count ?? 0),
+      })
       const { data } = await admin.rpc('fail_content_safety_audio_scan', { p_scan_id: scan.scan_id, p_error_code: issue.code, p_retryable: issue.retryable, p_provider_called: issue.providerCalled })
       if (object(data).audio_status === 'pending') audioRetried += 1
       else audioFailed += 1

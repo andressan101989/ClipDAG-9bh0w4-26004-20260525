@@ -176,7 +176,7 @@ test('lifecycle actions expose only server-supported commands for each state', (
     canCancel: false, canRetry: false, canReopen: false, canRetire: false,
   });
   assert.deepEqual(actions({ lifecycle_status: 'pending_review', verification_status: 'pending' }), {
-    editable: false, canSubmit: false, canDelete: false,
+    editable: false, canSubmit: false, canDelete: true,
     canCancel: true, canRetry: false, canReopen: false, canRetire: false,
   });
   assert.equal(actions({
@@ -188,11 +188,13 @@ test('lifecycle actions expose only server-supported commands for each state', (
     verification_error_code: 'content_safety_policy_not_configured',
   }).canRetry, false);
   assert.equal(actions({ lifecycle_status: 'rejected', verification_status: 'blocked' }).canReopen, true);
+  assert.equal(actions({ lifecycle_status: 'rejected', verification_status: 'blocked' }).canDelete, true);
   assert.deepEqual(actions({ lifecycle_status: 'published' }), {
     editable: false, canSubmit: false, canDelete: false,
     canCancel: false, canRetry: false, canReopen: false, canRetire: true,
   });
-  for (const lifecycle_status of ['quarantined', 'removed', 'deleted']) {
+  assert.equal(actions({ lifecycle_status: 'removed' }).canDelete, true);
+  for (const lifecycle_status of ['quarantined', 'deleted']) {
     assert.deepEqual(actions({ lifecycle_status }), {
       editable: false, canSubmit: false, canDelete: false,
       canCancel: false, canRetry: false, canReopen: false, canRetire: false,

@@ -129,13 +129,23 @@ export function creatorPremiumLifecyclePresentation(input = {}) {
     return base('published', 'Publicado', 'El servidor confirmó la publicación después de todos los controles.', { tone: 'green' });
   }
   if (lifecycle === 'rejected' || verification === 'blocked') {
-    return base('rejected', 'No aprobado', input.review_reason || 'La verificación bloqueó la publicación. Corrige el borrador antes de reenviarlo.');
+    return base(
+      'rejected',
+      'No aprobado',
+      input.review_reason || 'La verificación bloqueó la publicación. Puedes corregirla o eliminarla.',
+      { canDelete: true },
+    );
   }
   if (lifecycle === 'quarantined' || verification === 'restricted') {
     return base('restricted', 'Restringido', input.review_reason || 'El contenido permanece privado mientras se revisa la restricción.');
   }
   if (lifecycle === 'removed') {
-    return base('removed', 'Retirado', input.removal_reason || 'El contenido fue retirado y permanece en el historial.');
+    return base(
+      'removed',
+      'Retirado',
+      input.removal_reason || 'Ya no está publicado. Puedes conservarlo para gestionarlo o eliminarlo de tu panel.',
+      { canDelete: true },
+    );
   }
   if (lifecycle !== 'pending_review') {
     return base('not_requested', 'Sin verificación', 'La verificación todavía no se ha solicitado.');
@@ -155,7 +165,7 @@ export function creatorPremiumLifecyclePresentation(input = {}) {
       'processing',
       'Verificación pendiente',
       'Los controles automáticos están procesando el contenido; el original sigue privado.',
-      { polling: true, canCancel: true, tone: 'amber' },
+      { polling: true, canCancel: true, canDelete: true, tone: 'amber' },
     );
   }
   if (verification === 'commercial_pending' || verification === 'passed') {
@@ -165,7 +175,7 @@ export function creatorPremiumLifecyclePresentation(input = {}) {
       verification === 'commercial_pending'
         ? 'Seguridad aprobada; falta un plan activo antes de publicar.'
         : 'La verificación fue aprobada y el servidor está finalizando el estado.',
-      { canCancel: true, tone: 'green' },
+      { canCancel: true, canDelete: true, tone: 'green' },
     );
   }
   if (verification === 'failed' && POLICY_ERROR_CODES.has(errorCode)) {
@@ -173,7 +183,7 @@ export function creatorPremiumLifecyclePresentation(input = {}) {
       'awaiting_policy',
       'Política de seguridad pendiente',
       'El contenido seguirá privado hasta que exista una política aprobada. No es necesario reintentar ahora.',
-      { canCancel: true, tone: 'amber' },
+      { canCancel: true, canDelete: true, tone: 'amber' },
     );
   }
   if (verification === 'failed') {
@@ -183,10 +193,15 @@ export function creatorPremiumLifecyclePresentation(input = {}) {
       errorCode === 'creator_premium_safety_provider_failed'
         ? 'El proveedor no devolvió una respuesta válida. Puedes reintentar sin volver a subir el contenido.'
         : 'La verificación no terminó. Puedes reintentar de forma segura.',
-      { canRetry: true, canCancel: true, tone: 'amber' },
+      { canRetry: true, canCancel: true, canDelete: true, tone: 'amber' },
     );
   }
-  return base('not_requested', 'Verificación no iniciada', 'La verificación todavía no está en ejecución.', { canCancel: true });
+  return base(
+    'not_requested',
+    'Verificación no iniciada',
+    'La verificación todavía no está en ejecución.',
+    { canCancel: true, canDelete: true },
+  );
 }
 
 export function creatorPremiumPolicyBlocksRetry(errorCode) {
@@ -200,7 +215,7 @@ export function creatorPremiumLifecycleActions(input = {}) {
   return Object.freeze({
     editable,
     canSubmit: editable,
-    canDelete: lifecycle === 'draft',
+    canDelete: ['draft', 'pending_review', 'rejected', 'removed'].includes(lifecycle),
     canCancel: presentation.canCancel,
     canRetry: presentation.canRetry,
     canReopen: lifecycle === 'rejected',

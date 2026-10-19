@@ -120,6 +120,20 @@ test('strict parser accepts the documented OpenAI-compatible and traditional too
   assert.deepEqual(validateVisualSemanticResult(traditional), safeSemanticResult)
 })
 
+test('strict parser accepts the live Gemma stop finish reason only with one validated tool call', () => {
+  const liveCarrier = openAiToolEnvelope(safeVisualResult)
+  liveCarrier.result.choices[0].finish_reason = 'stop'
+  const parsed = visualStructuredResponseValue(liveCarrier)
+  assert.deepEqual(validateVisualSafetyResult(parsed, { sourceKind: 'eligible_stream_video' }), safeVisualResult)
+
+  const invalidFinish = openAiToolEnvelope(safeVisualResult)
+  invalidFinish.result.choices[0].finish_reason = 'unknown'
+  assert.throws(
+    () => visualStructuredResponseValue(invalidFinish),
+    error => error.code === 'visual_workers_ai_tool_finish_reason_invalid',
+  )
+})
+
 test('strict parser rejects legacy text, ambiguity, unauthorized tools, and malformed arguments', () => {
   const validCall = openAiToolEnvelope(safeVisualResult).result.choices[0].message.tool_calls[0]
   const cases = [
