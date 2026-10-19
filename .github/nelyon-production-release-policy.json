@@ -2,29 +2,29 @@
   "baseline": {
     "authority_source": "owner-control-plane",
     "blocked_resources": [],
-    "evidence": "9a0da5a1274662611958681489369f49e814371cb0e50ec969b55d54c8d50382",
+    "evidence": "10f19ce746436451809769295701c560fec5fb6ae1f32ab8bffe3958d0a78952",
     "evidence_digests": {
       "config_verify_jwt": "9f7f6b42cccd5086f862b1f40e659935d8a44f14943eeed80c8d7928e84f9fb9",
       "cron_security": "2dd76dccc8b348eb932fee5c8ada572f57243287f3ca96bf851a75a2e9244846",
       "finance": "94c297fb891f7c13beb92f2cfaec3145ba1ca3b23bbcd74ce39e084a8365b566",
-      "function_source_parity": "0e85d5fb4e401914a22b4376f60a1a2ab9cfd5f8063771ed063e0dc8084da4e2",
-      "managed_functions": "f5618c0f2fa33891813dd4a780c8c251cfc45649fc10decf7d39ec9162c369fd",
-      "migrations": "582628604fabc9fb9df2c03a9415975a3d125d9d57376123269abe27c8fd55bc",
+      "function_source_parity": "4b928a44b0d2647ae37fef4c2aee3feacd583455ad86eeab2b0781c5d3746ddf",
+      "managed_functions": "13422d709de31606f2ffd5cfbacfe87816439be144276d49eca60b13af4c626d",
+      "migrations": "a273c95ca4d03b4e50de1e686b7e2fdc95bc385feeee8f3e0dea0e22925808a5",
       "unmanaged_functions": "e56ae5b19eb2158499e33128470663eab37cf2c6be03b3732a7d09a4d80213aa"
     },
-    "latest_migration": "20261019170853_creator_premium_f1_c6_submit_unavailable_mapping_recovery",
-    "migration_count": 345,
+    "latest_migration": "20261019201914_creator_premium_content_safety_p3_contextual_violence_policy_v2",
+    "migration_count": 346,
     "prior_release": {
       "kind": "post-release",
-      "manifest_sha256": "27b1b974a0d5f5c598a8acccd4308459a042e5712fcf8b9b2139b1d80661d368",
-      "postcheck_evidence_sha256": "448b4ee64c3ae0e06c4e1649a8b89bc1a71f1ed3d21c91f8d461c56e4445b900",
-      "release_id": "nelyon-f1-c6-release2-20261019T175327Z"
+      "manifest_sha256": "854834c114c234dff0d039d0bad699a19827a17bf4b1bdd2c33abce3918c1566",
+      "postcheck_evidence_sha256": "3563b80da7397e6139f33cd91306144044ecb2b0cda462cf83b5f6bef883aa72",
+      "release_id": "nelyon-p3-release2-20261019T214904Z"
     },
     "requires_separate_policy_commit": true,
-    "reviewed_policy_sha256": "b523f86d08813d527a2b1c35097230816ba6db66d5b2bf6a474334b647fb5869",
-    "sha": "64df9aad8cf08bc82dbd67ba613abf901cbfb2c3",
+    "reviewed_policy_sha256": "5461db1ee1faf0aeab1c13a9ef93c1fb3859aa0912d2a800c50f93804bb8f0d4",
+    "sha": "deffa83fbd684598e1f9194cfdab6566ba828a9b",
     "state": "verified",
-    "verified_at": "2026-10-19T20:20:28.723Z",
+    "verified_at": "2026-10-19T22:06:14.072Z",
     "verified_by": "andressan101989"
   },
   "baseline_authority": {
