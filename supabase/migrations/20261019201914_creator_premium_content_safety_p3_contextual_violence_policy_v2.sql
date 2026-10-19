@@ -134,11 +134,119 @@ revoke all on function private.content_safety_visual_analysis_id_for_asset(uuid,
   from public,anon,authenticated,service_role;
 revoke all on function private.content_safety_visual_producer_scan_id(uuid,uuid,text)
   from public,anon,authenticated,service_role;
+grant execute on function private.content_safety_visual_analysis_id_for_asset(uuid,uuid,text)
+  to postgres,supabase_admin;
+grant execute on function private.content_safety_visual_producer_scan_id(uuid,uuid,text)
+  to postgres,supabase_admin;
 
 comment on function private.content_safety_visual_analysis_id_for_asset(uuid,uuid,text) is
   'Returns one immutable visual analysis only for the exact provider/model/prompt/asset contract. P2 and P3 shapes cannot be reused across versions.';
 comment on function private.content_safety_visual_producer_scan_id(uuid,uuid,text) is
   'Returns the canonical pending-or-historical producer only for the exact visual prompt version, preventing cross-version producer fencing.';
+
+create or replace function public.fail_content_safety_visual_scan(
+  p_scan_id uuid,p_error_code text,p_retryable boolean default true,
+  p_provider_called boolean default false
+) returns jsonb language plpgsql security definer set search_path=''
+as $$
+declare
+  v_scan private.content_safety_scans;v_producer_id uuid;v_calls integer;
+  v_retry boolean;v_error text;v_frames_remaining integer;v_next timestamptz;
+begin
+  if auth.role()<>'service_role' then
+    raise exception using errcode='42501',message='content_safety_service_role_required';
+  end if;
+  select * into v_scan from private.content_safety_scans where id=p_scan_id for update;
+  if not found then
+    raise exception using errcode='P0002',message='content_safety_visual_scan_not_found';
+  end if;
+  if v_scan.visual_analysis_id is not null then
+    perform private.content_safety_attach_visual_analysis(v_scan.visual_analysis_id);
+    return pg_catalog.jsonb_build_object(
+      'scan_id',v_scan.id,'visual_status','analyzed','reused',true,
+      'provider_call_count',v_scan.visual_provider_call_count
+    );
+  end if;
+  v_producer_id:=private.content_safety_visual_producer_scan_id(
+    v_scan.visual_video_asset_id,
+    v_scan.visual_media_asset_id,
+    v_scan.visual_prompt_version
+  );
+  if v_scan.id is distinct from v_producer_id then
+    raise exception using errcode='55000',message='content_safety_visual_not_canonical_producer';
+  end if;
+  v_calls:=v_scan.visual_provider_call_count+
+    case when coalesce(p_provider_called,false) then 1 else 0 end;
+  v_frames_remaining:=case
+    when v_scan.visual_source_kind='eligible_stream_video'
+      then 5-v_scan.visual_frame_cursor
+    else 1
+  end;
+  v_retry:=coalesce(p_retryable,false)
+    and v_scan.visual_attempt_count<5
+    and v_calls<5
+    and (v_scan.visual_source_kind='eligible_image'
+      or v_calls+v_frames_remaining<=5);
+  v_error:=left(pg_catalog.lower(pg_catalog.regexp_replace(
+    coalesce(nullif(pg_catalog.btrim(p_error_code),''),'visual_processing_error'),
+    '[^a-z0-9_]+','_','g'
+  )),100);
+  v_next:=case when v_retry then pg_catalog.clock_timestamp()
+    +least(30,pg_catalog.power(2,greatest(v_scan.visual_attempt_count,1)))::integer*
+      interval '1 minute'
+    else v_scan.visual_available_at end;
+
+  update private.content_safety_scans scan set
+    visual_status=case when v_retry then 'pending' else 'failed' end,
+    visual_provider_call_count=case
+      when scan.id=v_scan.id then v_calls else scan.visual_provider_call_count end,
+    visual_available_at=v_next,
+    visual_started_at=null,
+    visual_completed_at=case when v_retry then null else pg_catalog.clock_timestamp() end,
+    visual_last_error_code=v_error,
+    updated_at=pg_catalog.clock_timestamp()
+  where scan.target_type in('video','creator_premium')
+    and scan.visual_prompt_version=v_scan.visual_prompt_version
+    and (
+      (v_scan.visual_media_asset_id is not null
+        and scan.visual_media_asset_id=v_scan.visual_media_asset_id
+        and scan.visual_source_kind='eligible_image')
+      or
+      (v_scan.visual_video_asset_id is not null
+        and scan.visual_video_asset_id=v_scan.visual_video_asset_id
+        and scan.visual_source_kind='eligible_stream_video')
+    );
+  update private.content_safety_scans story set
+    visual_status=case when v_retry then 'pending' else 'failed' end,
+    visual_started_at=null,
+    visual_completed_at=case when v_retry then null else pg_catalog.clock_timestamp() end,
+    visual_last_error_code=v_error,
+    updated_at=pg_catalog.clock_timestamp()
+  where story.target_type='story'
+    and story.visual_prompt_version=v_scan.visual_prompt_version
+    and exists(
+      select 1
+      from private.content_safety_scans source_scan
+      where source_scan.id=story.media_source_scan_id
+        and source_scan.visual_prompt_version=v_scan.visual_prompt_version
+        and (
+          (v_scan.visual_media_asset_id is not null
+            and source_scan.visual_media_asset_id=v_scan.visual_media_asset_id)
+          or
+          (v_scan.visual_video_asset_id is not null
+            and source_scan.visual_video_asset_id=v_scan.visual_video_asset_id)
+        )
+    );
+  return pg_catalog.jsonb_build_object(
+    'scan_id',v_scan.id,
+    'visual_status',case when v_retry then 'pending' else 'failed' end,
+    'retryable',v_retry,
+    'provider_call_count',v_calls,
+    'canonical_producer',true,
+    'visual_prompt_version',v_scan.visual_prompt_version
+  );
+end;
+$$;
 
 create or replace function private.enqueue_content_safety_scan(
   p_target_type text,
@@ -905,9 +1013,13 @@ $$;
 revoke all on function private.content_safety_visual_result_valid_for_prompt(
   jsonb,text,text,integer,integer
 ) from public,anon,authenticated,service_role;
+grant execute on function private.content_safety_visual_result_valid_for_prompt(
+  jsonb,text,text,integer,integer
+) to postgres,supabase_admin;
 
-create or replace function public.claim_content_safety_visual_scans(
-  p_limit integer default 1
+create or replace function private.claim_content_safety_visual_scans_for_prompts(
+  p_limit integer,
+  p_prompt_versions text[]
 )
 returns jsonb
 language plpgsql
@@ -921,6 +1033,18 @@ begin
   if p_limit < 1 or p_limit > 1 then
     raise exception using
       errcode = '22023', message = 'invalid_visual_claim_limit';
+  end if;
+  if p_prompt_versions is null
+     or pg_catalog.cardinality(p_prompt_versions)<1
+     or pg_catalog.cardinality(p_prompt_versions)>2
+     or exists(
+       select 1 from pg_catalog.unnest(p_prompt_versions) prompt_version
+       where prompt_version not in (
+         'visual-safety-v1','creator-premium-visual-safety-p3-v1'
+       )
+     ) then
+    raise exception using
+      errcode = '22023', message = 'invalid_visual_worker_prompt_contract';
   end if;
   for v_row in
     select
@@ -939,12 +1063,11 @@ begin
     where scan.target_type in ('video','creator_premium')
       and (
         (scan.target_type = 'video'
-          and scan.visual_prompt_version = 'visual-safety-v1')
+          and scan.visual_prompt_version = 'visual-safety-v1'
+          and scan.visual_prompt_version=any(p_prompt_versions))
         or
         (scan.target_type = 'creator_premium'
-          and scan.visual_prompt_version in (
-            'visual-safety-v1','creator-premium-visual-safety-p3-v1'
-          ))
+          and scan.visual_prompt_version=any(p_prompt_versions))
       )
       and scan.visual_status = 'pending'
       and scan.visual_analysis_id is null
@@ -1051,6 +1174,46 @@ begin
     );
   end loop;
   return v_result;
+end;
+$$;
+
+revoke all on function private.claim_content_safety_visual_scans_for_prompts(integer,text[])
+  from public,anon,authenticated,service_role;
+grant execute on function private.claim_content_safety_visual_scans_for_prompts(integer,text[])
+  to postgres,supabase_admin;
+
+create or replace function public.claim_content_safety_visual_scans(
+  p_limit integer default 1
+) returns jsonb
+language plpgsql security definer set search_path=''
+as $$
+begin
+  if auth.role()<>'service_role' then
+    raise exception using errcode='42501',message='content_safety_service_role_required';
+  end if;
+  return private.claim_content_safety_visual_scans_for_prompts(
+    p_limit,array['visual-safety-v1']::text[]
+  );
+end;
+$$;
+
+create or replace function public.claim_content_safety_visual_scans(
+  p_limit integer,
+  p_worker_contract text
+) returns jsonb
+language plpgsql security definer set search_path=''
+as $$
+begin
+  if auth.role()<>'service_role' then
+    raise exception using errcode='42501',message='content_safety_service_role_required';
+  end if;
+  if p_worker_contract<>'content-safety-scan-p3-v1' then
+    raise exception using errcode='22023',message='unsupported_content_safety_worker_contract';
+  end if;
+  return private.claim_content_safety_visual_scans_for_prompts(
+    p_limit,
+    array['visual-safety-v1','creator-premium-visual-safety-p3-v1']::text[]
+  );
 end;
 $$;
 
@@ -2250,7 +2413,7 @@ begin
 end;
 $$;
 
-create or replace function public.complete_creator_premium_content_safety_context_v1(
+create or replace function private.complete_creator_premium_content_safety_context_p3_v1(
   p_scan_id uuid,
   p_content_fingerprint text,
   p_attempt_count integer,
@@ -2425,7 +2588,7 @@ begin
 end;
 $$;
 
-create or replace function public.fail_creator_premium_content_safety_context_v1(
+create or replace function private.fail_creator_premium_content_safety_context_p3_v1(
   p_scan_id uuid,
   p_content_fingerprint text,
   p_attempt_count integer,
@@ -2505,8 +2668,68 @@ begin
 end;
 $$;
 
-create or replace function public.claim_creator_premium_content_safety_context_v1(
-  p_limit integer default 1
+revoke all on function
+  private.complete_creator_premium_content_safety_context_p3_v1(uuid,text,integer,jsonb)
+  from public,anon,authenticated,service_role;
+revoke all on function
+  private.fail_creator_premium_content_safety_context_p3_v1(uuid,text,integer,text,boolean,boolean)
+  from public,anon,authenticated,service_role;
+grant execute on function
+  private.complete_creator_premium_content_safety_context_p3_v1(uuid,text,integer,jsonb)
+  to postgres,supabase_admin;
+grant execute on function
+  private.fail_creator_premium_content_safety_context_p3_v1(uuid,text,integer,text,boolean,boolean)
+  to postgres,supabase_admin;
+
+create or replace function public.complete_creator_premium_content_safety_context_v1(
+  p_scan_id uuid,
+  p_content_fingerprint text,
+  p_attempt_count integer,
+  p_context_result jsonb,
+  p_worker_contract text
+) returns jsonb
+language plpgsql security definer set search_path=''
+as $$
+begin
+  if auth.role()<>'service_role' then
+    raise exception using errcode='42501',message='creator_premium_service_role_required';
+  end if;
+  if p_worker_contract<>'content-safety-scan-p3-v1' then
+    raise exception using errcode='22023',message='unsupported_content_safety_worker_contract';
+  end if;
+  return private.complete_creator_premium_content_safety_context_p3_v1(
+    p_scan_id,p_content_fingerprint,p_attempt_count,p_context_result
+  );
+end;
+$$;
+
+create or replace function public.fail_creator_premium_content_safety_context_v1(
+  p_scan_id uuid,
+  p_content_fingerprint text,
+  p_attempt_count integer,
+  p_error_code text,
+  p_retryable boolean,
+  p_provider_called boolean,
+  p_worker_contract text
+) returns jsonb
+language plpgsql security definer set search_path=''
+as $$
+begin
+  if auth.role()<>'service_role' then
+    raise exception using errcode='42501',message='creator_premium_service_role_required';
+  end if;
+  if p_worker_contract<>'content-safety-scan-p3-v1' then
+    raise exception using errcode='22023',message='unsupported_content_safety_worker_contract';
+  end if;
+  return private.fail_creator_premium_content_safety_context_p3_v1(
+    p_scan_id,p_content_fingerprint,p_attempt_count,p_error_code,
+    p_retryable,p_provider_called
+  );
+end;
+$$;
+
+create or replace function private.claim_creator_premium_content_safety_context_p3_v1(
+  p_limit integer
 ) returns jsonb
 language plpgsql security definer
 set search_path = ''
@@ -2685,6 +2908,47 @@ begin
 end;
 $$;
 
+revoke all on function
+  private.claim_creator_premium_content_safety_context_p3_v1(integer)
+  from public,anon,authenticated,service_role;
+grant execute on function
+  private.claim_creator_premium_content_safety_context_p3_v1(integer)
+  to postgres,supabase_admin;
+
+create or replace function public.claim_creator_premium_content_safety_context_v1(
+  p_limit integer default 1
+) returns jsonb
+language plpgsql security definer set search_path=''
+as $$
+begin
+  if auth.role()<>'service_role' then
+    raise exception using errcode='42501',message='creator_premium_service_role_required';
+  end if;
+  if p_limit<1 or p_limit>1 then
+    raise exception using errcode='22023',
+      message='invalid_creator_premium_context_claim_limit';
+  end if;
+  return '[]'::jsonb;
+end;
+$$;
+
+create or replace function public.claim_creator_premium_content_safety_context_v1(
+  p_limit integer,
+  p_worker_contract text
+) returns jsonb
+language plpgsql security definer set search_path=''
+as $$
+begin
+  if auth.role()<>'service_role' then
+    raise exception using errcode='42501',message='creator_premium_service_role_required';
+  end if;
+  if p_worker_contract<>'content-safety-scan-p3-v1' then
+    raise exception using errcode='22023',message='unsupported_content_safety_worker_contract';
+  end if;
+  return private.claim_creator_premium_content_safety_context_p3_v1(p_limit);
+end;
+$$;
+
 create or replace function public.reconcile_creator_premium_publications_v1(
   p_limit integer default 25
 ) returns jsonb
@@ -2714,6 +2978,17 @@ begin
         content.lifecycle_status='pending_review'
         and content.verification_scan_id=scan.id
         and content.verification_fingerprint=scan.content_fingerprint
+        and scan.visual_prompt_version='creator-premium-visual-safety-p3-v1'
+        and exists(
+          select 1
+          from private.creator_premium_content_safety_context_evaluations evaluation
+          where evaluation.source_scan_id=scan.id
+            and evaluation.source_content_fingerprint=scan.content_fingerprint
+            and evaluation.policy_id='nelyon.creator_premium.general.p1.v2'
+            and evaluation.schema_version='creator-premium-context-p3-v1'
+            and evaluation.prompt_version='creator-premium-context-p3-v1'
+            and evaluation.status in ('completed','failed')
+        )
         and (
           content.verification_status='pending'
           or (
@@ -2866,10 +3141,28 @@ revoke all on function
   public.claim_creator_premium_content_safety_context_v1(integer)
   from public, anon, authenticated, service_role;
 revoke all on function
+  public.claim_creator_premium_content_safety_context_v1(integer,text)
+  from public, anon, authenticated, service_role;
+revoke all on function
+  public.claim_content_safety_visual_scans(integer)
+  from public, anon, authenticated, service_role;
+revoke all on function
+  public.claim_content_safety_visual_scans(integer,text)
+  from public, anon, authenticated, service_role;
+revoke all on function
+  public.fail_content_safety_visual_scan(uuid,text,boolean,boolean)
+  from public, anon, authenticated, service_role;
+revoke all on function
   public.complete_creator_premium_content_safety_context_v1(uuid,text,integer,jsonb)
   from public, anon, authenticated, service_role;
 revoke all on function
+  public.complete_creator_premium_content_safety_context_v1(uuid,text,integer,jsonb,text)
+  from public, anon, authenticated, service_role;
+revoke all on function
   public.fail_creator_premium_content_safety_context_v1(uuid,text,integer,text,boolean,boolean)
+  from public, anon, authenticated, service_role;
+revoke all on function
+  public.fail_creator_premium_content_safety_context_v1(uuid,text,integer,text,boolean,boolean,text)
   from public, anon, authenticated, service_role;
 revoke all on function
   public.reconcile_creator_premium_publications_v1(integer)
@@ -2879,10 +3172,28 @@ grant execute on function
   public.claim_creator_premium_content_safety_context_v1(integer)
   to service_role;
 grant execute on function
+  public.claim_creator_premium_content_safety_context_v1(integer,text)
+  to service_role;
+grant execute on function
+  public.claim_content_safety_visual_scans(integer)
+  to service_role;
+grant execute on function
+  public.claim_content_safety_visual_scans(integer,text)
+  to service_role;
+grant execute on function
+  public.fail_content_safety_visual_scan(uuid,text,boolean,boolean)
+  to service_role;
+grant execute on function
   public.complete_creator_premium_content_safety_context_v1(uuid,text,integer,jsonb)
   to service_role;
 grant execute on function
+  public.complete_creator_premium_content_safety_context_v1(uuid,text,integer,jsonb,text)
+  to service_role;
+grant execute on function
   public.fail_creator_premium_content_safety_context_v1(uuid,text,integer,text,boolean,boolean)
+  to service_role;
+grant execute on function
+  public.fail_creator_premium_content_safety_context_v1(uuid,text,integer,text,boolean,boolean,text)
   to service_role;
 grant execute on function
   public.reconcile_creator_premium_publications_v1(integer)

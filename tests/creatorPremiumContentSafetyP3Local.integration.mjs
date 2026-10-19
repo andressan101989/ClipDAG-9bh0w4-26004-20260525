@@ -214,7 +214,9 @@ function p2ContextResult() {
 function claimP3(db) {
   const claims = JSON.parse(asRole(
     db, 'service_role',
-    'select public.claim_creator_premium_content_safety_context_v1(1)',
+    `select public.claim_creator_premium_content_safety_context_v1(
+      1,'content-safety-scan-p3-v1'
+    )`,
   ).stdout)
   const diagnostics = claims.length === 1 ? '' : psql(db, `
     select pg_catalog.jsonb_build_object(
@@ -250,7 +252,7 @@ function completeP3(db, claim, result) {
   return JSON.parse(asRole(db, 'service_role', `
     select public.complete_creator_premium_content_safety_context_v1(
       '${claim.scan_id}','${claim.content_fingerprint}',${claim.attempt_count},
-      '${quoteSql(result)}'::jsonb
+      '${quoteSql(result)}'::jsonb,'content-safety-scan-p3-v1'
     )
   `).stdout)
 }
@@ -382,6 +384,19 @@ test('P3 disposable runtime preserves version identity, publishes contextual sca
         'authenticated','public.claim_creator_premium_content_safety_context_v1(integer)','execute'
       )
     `).stdout, 'f')
+    for (const signature of [
+      'public.claim_content_safety_visual_scans(integer,text)',
+      'public.claim_creator_premium_content_safety_context_v1(integer,text)',
+      'public.complete_creator_premium_content_safety_context_v1(uuid,text,integer,jsonb,text)',
+      'public.fail_creator_premium_content_safety_context_v1(uuid,text,integer,text,boolean,boolean,text)',
+    ]) {
+      assert.equal(psql(db, `
+        select has_function_privilege('service_role','${signature}','execute')
+      `).stdout, 't', `service_role:${signature}`)
+      assert.equal(psql(db, `
+        select has_function_privilege('authenticated','${signature}','execute')
+      `).stdout, 'f', `authenticated:${signature}`)
+    }
     for (const signature of [
       'private.content_safety_visual_analysis_id_for_asset(uuid,uuid,text)',
       'private.content_safety_visual_producer_scan_id(uuid,uuid,text)',
@@ -524,6 +539,176 @@ test('P3 disposable runtime preserves version identity, publishes contextual sca
       );
     `)
 
+    const visualFailure = {
+      content: randomUUID(), scan: randomUUID(), analysis: randomUUID(),
+      original: randomUUID(), teaser: randomUUID(), offer: randomUUID(),
+      legacyScan: randomUUID(),
+    }
+    psql(db, imageFixtureSql({
+      actor,
+      ...visualFailure,
+      title: 'P3 exact-version visual failure fixture',
+      findings: [],
+    }))
+    psql(db, `
+      update private.content_safety_scans set
+        status='processing',visual_status='pending',visual_analysis_id=null,
+        visual_attempt_count=0,visual_provider_call_count=0,
+        visual_started_at=null,visual_completed_at=null,
+        visual_frame_cursor=0,visual_partial_result=null,
+        visual_available_at=clock_timestamp(),visual_last_error_code=null
+      where id='${visualFailure.scan}';
+      delete from private.content_safety_visual_analyses
+      where id='${visualFailure.analysis}';
+    `)
+    assert.equal(psql(db, `
+      select private.content_safety_visual_producer_scan_id(
+        null,'${visualFailure.original}','creator-premium-visual-safety-p3-v1'
+      )='${visualFailure.scan}'
+    `).stdout, 't')
+    assert.deepEqual(JSON.parse(asRole(
+      db, 'service_role',
+      'select public.claim_content_safety_visual_scans(1)',
+    ).stdout), [], 'the legacy worker must not claim P3 visual work during migration-first rollout')
+    const p3VisualClaims = JSON.parse(asRole(db, 'service_role', `
+      select public.claim_content_safety_visual_scans(
+        1,'content-safety-scan-p3-v1'
+      )
+    `).stdout)
+    assert.equal(p3VisualClaims.length, 1)
+    assert.equal(p3VisualClaims[0].scan_id, visualFailure.scan)
+    assert.equal(
+      p3VisualClaims[0].visual_prompt_version,
+      'creator-premium-visual-safety-p3-v1',
+    )
+    const retryFailure = JSON.parse(asRole(db, 'service_role', `
+      select public.fail_content_safety_visual_scan(
+        '${visualFailure.scan}','visual_provider_timeout',true,true
+      )
+    `).stdout)
+    assert.equal(retryFailure.visual_status, 'pending')
+    assert.equal(retryFailure.retryable, true)
+    assert.equal(retryFailure.provider_call_count, 1)
+    assert.equal(psql(db, `
+      select visual_status||'|'||visual_provider_call_count::text||'|'||visual_last_error_code
+      from private.content_safety_scans where id='${visualFailure.scan}'
+    `).stdout, 'pending|1|visual_provider_timeout')
+
+    psql(db, `
+      insert into private.content_safety_scans(
+        id,target_type,target_id,owner_user_id,content_fingerprint,status,requested_reason,
+        text_status,audio_status,visual_status,reports_status,created_at,updated_at,
+        visual_provider,visual_model,visual_prompt_version,visual_source_kind,
+        visual_media_asset_id,visual_attempt_count,visual_provider_call_count,
+        visual_frame_cursor,visual_available_at
+      )
+      select
+        '${visualFailure.legacyScan}',target_type,target_id,owner_user_id,
+        '${'d'.repeat(64)}','processing','retry',text_status,audio_status,'pending',
+        reports_status,clock_timestamp()-interval '1 second',clock_timestamp(),
+        visual_provider,visual_model,'visual-safety-v1',visual_source_kind,
+        visual_media_asset_id,1,0,0,clock_timestamp()
+      from private.content_safety_scans where id='${visualFailure.scan}';
+      update private.content_safety_scans set
+        visual_status='pending',visual_attempt_count=5,
+        visual_started_at=clock_timestamp(),visual_completed_at=null
+      where id='${visualFailure.scan}'
+    `)
+    const terminalFailure = JSON.parse(asRole(db, 'service_role', `
+      select public.fail_content_safety_visual_scan(
+        '${visualFailure.scan}','visual_provider_exhausted',true,true
+      )
+    `).stdout)
+    assert.equal(terminalFailure.visual_status, 'failed')
+    assert.equal(terminalFailure.retryable, false)
+    assert.equal(terminalFailure.provider_call_count, 2)
+    assert.equal(psql(db, `
+      select visual_status||'|'||visual_provider_call_count::text||'|'||visual_last_error_code
+      from private.content_safety_scans where id='${visualFailure.scan}'
+    `).stdout, 'failed|2|visual_provider_exhausted')
+    assert.equal(psql(db, `
+      select visual_status||'|'||visual_provider_call_count::text||'|'||
+        coalesce(visual_last_error_code,'none')
+      from private.content_safety_scans where id='${visualFailure.legacyScan}'
+    `).stdout, 'pending|0|none', 'P3 failure must not contaminate a v1 sibling')
+
+    const p2InFlight = {
+      content: randomUUID(), scan: randomUUID(), analysis: randomUUID(),
+      original: randomUUID(), teaser: randomUUID(), offer: randomUUID(),
+    }
+    psql(db, imageFixtureSql({
+      actor,
+      ...p2InFlight,
+      title: 'P2 in-flight rollout completion fixture',
+      findings: [],
+      promptVersion: 'visual-safety-v1',
+    }))
+    insertContextEvaluation(db, p2InFlight, {
+      policyId: 'nelyon.creator_premium.general.p1.v1',
+      schemaVersion: 'creator-premium-context-p2-v1',
+      promptVersion: 'creator-premium-context-p2-v1',
+    })
+    psql(db, `
+      update private.creator_premium_content_safety_context_evaluations set
+        status='processing',attempt_count=1,started_at=clock_timestamp()
+      where source_scan_id='${p2InFlight.scan}'
+        and policy_id='nelyon.creator_premium.general.p1.v1'
+    `)
+    const p2InFlightFingerprint = psql(db, `
+      select content_fingerprint from private.content_safety_scans
+      where id='${p2InFlight.scan}'
+    `).stdout
+    const completedP2InFlight = JSON.parse(asRole(db, 'service_role', `
+      select public.complete_creator_premium_content_safety_context_v1(
+        '${p2InFlight.scan}','${p2InFlightFingerprint}',1,
+        '${quoteSql(p2ContextResult())}'::jsonb
+      )
+    `).stdout)
+    assert.equal(completedP2InFlight.context_status, 'completed')
+    assert.equal(psql(db, `
+      select lifecycle_status||'|'||verification_status
+      from private.creator_premium_contents where id='${p2InFlight.content}'
+    `).stdout, 'pending_review|pending',
+    'finishing in-flight P2 evidence after migration must not publish or reclassify it')
+
+    const p2FailedInFlight = {
+      content: randomUUID(), scan: randomUUID(), analysis: randomUUID(),
+      original: randomUUID(), teaser: randomUUID(), offer: randomUUID(),
+    }
+    psql(db, imageFixtureSql({
+      actor,
+      ...p2FailedInFlight,
+      title: 'P2 in-flight rollout failure fixture',
+      findings: [],
+      promptVersion: 'visual-safety-v1',
+    }))
+    insertContextEvaluation(db, p2FailedInFlight, {
+      policyId: 'nelyon.creator_premium.general.p1.v1',
+      schemaVersion: 'creator-premium-context-p2-v1',
+      promptVersion: 'creator-premium-context-p2-v1',
+    })
+    psql(db, `
+      update private.creator_premium_content_safety_context_evaluations set
+        status='processing',attempt_count=1,started_at=clock_timestamp()
+      where source_scan_id='${p2FailedInFlight.scan}'
+        and policy_id='nelyon.creator_premium.general.p1.v1'
+    `)
+    const p2FailedInFlightFingerprint = psql(db, `
+      select content_fingerprint from private.content_safety_scans
+      where id='${p2FailedInFlight.scan}'
+    `).stdout
+    const failedP2InFlight = JSON.parse(asRole(db, 'service_role', `
+      select public.fail_creator_premium_content_safety_context_v1(
+        '${p2FailedInFlight.scan}','${p2FailedInFlightFingerprint}',1,
+        'rollout_provider_failure',false,true
+      )
+    `).stdout)
+    assert.equal(failedP2InFlight.context_status, 'failed')
+    assert.equal(psql(db, `
+      select lifecycle_status||'|'||verification_status
+      from private.creator_premium_contents where id='${p2FailedInFlight.content}'
+    `).stdout, 'pending_review|pending')
+
     const allowed = {
       content: randomUUID(), scan: randomUUID(), analysis: randomUUID(),
       original: randomUUID(), teaser: randomUUID(), offer: randomUUID(),
@@ -573,6 +758,20 @@ test('P3 disposable runtime preserves version identity, publishes contextual sca
       ruleId: contextualRule,
     })
 
+    assert.deepEqual(JSON.parse(asRole(
+      db, 'service_role',
+      'select public.claim_creator_premium_content_safety_context_v1(1)',
+    ).stdout), [], 'the legacy worker must not claim P3 context work during migration-first rollout')
+    const badWorkerContract = asRole(db, 'service_role', `
+      select public.claim_creator_premium_content_safety_context_v1(
+        1,'content-safety-scan-unknown'
+      )
+    `, { allowFailure: true })
+    assert.notEqual(badWorkerContract.status, 0)
+    assert.match(
+      `${badWorkerContract.stdout}\n${badWorkerContract.stderr}`,
+      /unsupported_content_safety_worker_contract/i,
+    )
     const p3Claim = claimP3(db)
     assert.equal(p3Claim.scan_id, allowed.scan)
     insertContextEvaluation(db, allowed, {
@@ -861,12 +1060,30 @@ test('P3 disposable runtime preserves version identity, publishes contextual sca
     const p2OnlyReconcile = JSON.parse(asRole(
       db, 'service_role', 'select public.reconcile_creator_premium_publications_v1(25)',
     ).stdout)
-    assert.equal(p2OnlyReconcile.processed, 1)
-    assert.equal(p2OnlyReconcile.results[0].outcome, 'failed')
+    assert.equal(p2OnlyReconcile.processed, 0)
     assert.equal(psql(db, `
       select lifecycle_status||'|'||verification_status
       from private.creator_premium_contents where id='${p2Only.content}'
-    `).stdout, 'pending_review|failed')
+    `).stdout, 'pending_review|pending',
+    'a historical P2-only decision must not be reclassified automatically by P3')
+    assert.equal(psql(db, `
+      select content.lifecycle_status||'|'||content.verification_status||'|'||evaluation.status
+      from private.creator_premium_contents content
+      join private.creator_premium_content_safety_context_evaluations evaluation
+        on evaluation.target_id=content.id
+       and evaluation.policy_id='nelyon.creator_premium.general.p1.v1'
+      where content.id='${p2InFlight.content}'
+    `).stdout, 'pending_review|pending|completed',
+    'completed in-flight P2 work must remain historical after repeated P3 reconciliation')
+    assert.equal(psql(db, `
+      select content.lifecycle_status||'|'||content.verification_status||'|'||evaluation.status
+      from private.creator_premium_contents content
+      join private.creator_premium_content_safety_context_evaluations evaluation
+        on evaluation.target_id=content.id
+       and evaluation.policy_id='nelyon.creator_premium.general.p1.v1'
+      where content.id='${p2FailedInFlight.content}'
+    `).stdout, 'pending_review|pending|failed',
+    'failed in-flight P2 work must remain historical after repeated P3 reconciliation')
 
     assert.equal(psql(db, `
       select purchase_enabled::text||'|'||subscription_enabled::text||'|'||
