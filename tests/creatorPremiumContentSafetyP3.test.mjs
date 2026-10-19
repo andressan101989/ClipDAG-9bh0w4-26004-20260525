@@ -107,7 +107,7 @@ test('P3 contextualizes only scanner text audio and visual alerts while external
 test('P3 validates visual compatibility for every ALLOW instead of trusting the model category label', () => {
   const compatibility = functionBody('private.creator_premium_content_safety_visual_allow_compatible_p3_v1')
   const candidate = functionBody('private.creator_premium_content_safety_candidate_p3_v1')
-  const completion = functionBody('public.complete_creator_premium_content_safety_context_v1')
+  const completion = functionBody('private.complete_creator_premium_content_safety_context_p3_v1')
   assert.notEqual(compatibility, '')
   assert.match(compatibility, /finding->>'category'\s*=\s*'weapons'/i)
   assert.match(compatibility, /finding->>'category'\s*=\s*'sexual'/i)
@@ -124,7 +124,7 @@ test('P3 validates visual compatibility for every ALLOW instead of trusting the 
 
 test('P3 versions only new Creator Premium visual scans while retaining bounded v1 compatibility', () => {
   const enqueue = functionBody('private.enqueue_content_safety_scan')
-  const claim = functionBody('public.claim_content_safety_visual_scans')
+  const claim = functionBody('private.claim_content_safety_visual_scans_for_prompts')
   const complete = functionBody('public.complete_content_safety_visual_analysis')
   const attach = functionBody('private.content_safety_attach_visual_analysis')
   assert.match(sql, /creator-premium-visual-safety-p3-v1/i)
@@ -146,6 +146,49 @@ test('P3 versions only new Creator Premium visual scans while retaining bounded 
   assert.match(worker, /scan\.visual_prompt_version[^]*JSON\.stringify\(result\)/i)
 })
 
+test('P3 rollout fences new work behind an explicit worker capability contract', () => {
+  const legacyVisualClaim = functionBody('public.claim_content_safety_visual_scans')
+  const visualClaimAuthority = functionBody('private.claim_content_safety_visual_scans_for_prompts')
+  const legacyContextClaim = functionBody('public.claim_creator_premium_content_safety_context_v1')
+  const p3ContextClaimAuthority = functionBody('private.claim_creator_premium_content_safety_context_p3_v1')
+  const worker = readFileSync(
+    new URL('../supabase/functions/content-safety-scan/index.ts', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(sql, /claim_content_safety_visual_scans\s*\(\s*p_limit integer\s*,\s*p_worker_contract text\s*\)/i)
+  assert.match(sql, /claim_creator_premium_content_safety_context_v1\s*\(\s*p_limit integer\s*,\s*p_worker_contract text\s*\)/i)
+  assert.match(sql, /complete_creator_premium_content_safety_context_v1\s*\([^)]*p_context_result jsonb\s*,\s*p_worker_contract text\s*\)/i)
+  assert.match(sql, /fail_creator_premium_content_safety_context_v1\s*\([^)]*p_provider_called boolean\s*,\s*p_worker_contract text\s*\)/i)
+  assert.match(sql, /p_worker_contract\s*<>\s*'content-safety-scan-p3-v1'/i)
+  assert.match(legacyVisualClaim, /array\s*\[\s*'visual-safety-v1'\s*\]/i)
+  assert.doesNotMatch(legacyVisualClaim, /creator-premium-visual-safety-p3-v1/i)
+  assert.match(visualClaimAuthority, /scan\.visual_prompt_version\s*=\s*any\s*\(p_prompt_versions\)/i)
+  assert.match(legacyContextClaim, /return\s+'\[\]'::jsonb/i)
+  assert.doesNotMatch(legacyContextClaim, /claim_creator_premium_content_safety_context_p3_v1/i)
+  assert.match(p3ContextClaimAuthority, /nelyon\.creator_premium\.general\.p1\.v2/i)
+  assert.match(worker, /const WORKER_CONTRACT\s*=\s*'content-safety-scan-p3-v1'/i)
+  assert.match(worker, /claim_content_safety_visual_scans[^]*p_worker_contract:\s*WORKER_CONTRACT/i)
+  assert.match(worker, /claim_creator_premium_content_safety_context_v1[^]*p_worker_contract:\s*WORKER_CONTRACT/i)
+  assert.match(worker, /complete_creator_premium_content_safety_context_v1[^]*p_worker_contract:\s*WORKER_CONTRACT/i)
+  assert.match(worker, /fail_creator_premium_content_safety_context_v1[^]*p_worker_contract:\s*WORKER_CONTRACT/i)
+})
+
+test('P3 visual failure authority fences retries and propagation to the exact prompt version', () => {
+  const failure = functionBody('public.fail_content_safety_visual_scan')
+  assert.notEqual(failure, '', 'P3 must replace the canonical visual failure authority')
+  assert.match(
+    failure,
+    /content_safety_visual_producer_scan_id\s*\(\s*v_scan\.visual_video_asset_id\s*,\s*v_scan\.visual_media_asset_id\s*,\s*v_scan\.visual_prompt_version\s*\)/i,
+  )
+  assert.match(failure, /scan\.visual_prompt_version\s*=\s*v_scan\.visual_prompt_version/i)
+  assert.match(
+    failure,
+    /source_scan\.visual_prompt_version\s*=\s*v_scan\.visual_prompt_version/i,
+    'shared-story propagation must never cross visual prompt versions',
+  )
+})
+
 test('P3 double reconciliation leaves contextual scanner alerts stable and still processes external alerts', () => {
   const reconciler = functionBody('public.reconcile_creator_premium_publications_v1')
   assert.notEqual(reconciler, '', 'P3 must replace the canonical reconciler, not add a parallel job')
@@ -160,6 +203,11 @@ test('P3 double reconciliation leaves contextual scanner alerts stable and still
     'an unresolved external alert must remain eligible for fail-closed reconciliation',
   )
   assert.match(reconciler, /for\s+update\s+of\s+scan\s+skip\s+locked/i)
+  assert.match(
+    reconciler,
+    /content\.lifecycle_status\s*=\s*'pending_review'[\s\S]*scan\.visual_prompt_version\s*=\s*'creator-premium-visual-safety-p3-v1'[\s\S]*evaluation\.status\s+in\s*\(\s*'completed'\s*,\s*'failed'\s*\)/i,
+    'rollout-time P2 evidence and non-terminal P3 retries must remain pending and fail closed',
+  )
   assert.doesNotMatch(reconciler, /creator_premium_content_safety_candidate_p2_v1/i)
 })
 

@@ -11,6 +11,7 @@ import { getObjectBytes, isR2Transient } from '../_shared/r2.ts'
 
 const BATCH_LIMIT = 25
 const TRANSCRIPT_BATCH_LIMIT = 10
+const WORKER_CONTRACT = 'content-safety-scan-p3-v1'
 const json = (body: Record<string, unknown>, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { 'Content-Type': 'application/json' },
@@ -248,7 +249,10 @@ Deno.serve(async req => {
 
   let visualClaimed = 0, visualAnalyzed = 0, visualAdvanced = 0, visualRetried = 0, visualFailed = 0, visualAlerts = 0
   const visualErrors: { scan_id: string; code: string; retryable: boolean; provider_called: boolean }[] = []
-  const { data: visualData, error: visualClaimError } = await admin.rpc('claim_content_safety_visual_scans', { p_limit: 1 })
+  const { data: visualData, error: visualClaimError } = await admin.rpc('claim_content_safety_visual_scans', {
+    p_limit: 1,
+    p_worker_contract: WORKER_CONTRACT,
+  })
   if (!visualClaimError) for (const value of Array.isArray(visualData) ? visualData : []) {
     const scan = object(value); visualClaimed += 1
     const promptVersion = String(scan.visual_prompt_version ?? '')
@@ -344,7 +348,7 @@ Deno.serve(async req => {
   const contextErrors: { scan_id: string; code: string; retryable: boolean; provider_called: boolean }[] = []
   const { data: contextData, error: contextClaimError } = await admin.rpc(
     'claim_creator_premium_content_safety_context_v1',
-    { p_limit: 1 },
+    { p_limit: 1, p_worker_contract: WORKER_CONTRACT },
   )
   if (!contextClaimError) for (const value of Array.isArray(contextData) ? contextData : []) {
     const claim = object(value); contextClaimed += 1
@@ -390,6 +394,7 @@ Deno.serve(async req => {
         p_content_fingerprint: claim.content_fingerprint,
         p_attempt_count: claim.attempt_count,
         p_context_result: result,
+        p_worker_contract: WORKER_CONTRACT,
       })
       if (error) throw new PolicyContextError('creator_premium_context_completion_failed', { retryable: true, providerCalled: true })
       contextAnalyzed += 1
@@ -417,6 +422,7 @@ Deno.serve(async req => {
           p_error_code: issue.code,
           p_retryable: issue.retryable,
           p_provider_called: issue.providerCalled,
+          p_worker_contract: WORKER_CONTRACT,
         })
         if (object(data).context_status === 'pending') contextRetried += 1
         else contextFailed += 1

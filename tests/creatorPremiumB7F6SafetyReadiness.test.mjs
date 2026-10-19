@@ -88,7 +88,10 @@ test('canonical publication remains fail-closed and uses one Content Safety auth
   assert.match(worker, /const BATCH_LIMIT = 25/)
   assert.match(worker, /const TRANSCRIPT_BATCH_LIMIT = 10/)
   assert.match(worker, /claim_content_safety_audio_scans', \{ p_limit: 1 \}/)
-  assert.match(worker, /claim_content_safety_visual_scans', \{ p_limit: 1 \}/)
+  assert.match(
+    worker,
+    /claim_content_safety_visual_scans'[\s\S]{0,160}p_limit:\s*1[\s\S]{0,160}p_worker_contract:\s*WORKER_CONTRACT/,
+  )
   assert.match(worker, /reconcile_creator_premium_publications_v1/)
   assert.doesNotMatch(worker, /createClient\([^\n]+(?:ledger|wallet|escrow)/i)
 })
