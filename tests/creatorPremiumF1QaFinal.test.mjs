@@ -21,6 +21,7 @@ const service = read('services/creatorPremiumService.ts');
 const stream = read('services/streamService.ts');
 const premiumStream = read('services/creatorPremiumStreamService.ts');
 const createStream = read('supabase/functions/create-stream-upload/index.ts');
+const premiumTusContract = read('supabase/functions/create-stream-upload/premiumTusContract.mjs');
 const migrationName = readdirSync(new URL('../supabase/migrations/', import.meta.url))
   .find(name => name.endsWith('_creator_premium_qa_final_f1.sql'));
 const migration = migrationName ? read(`supabase/migrations/${migrationName}`) : '';
@@ -55,8 +56,9 @@ test('Premium Stream uses one resumable TUS contract while Feed keeps basic POST
   assert.match(createStream, /stream-media-id/i);
   assert.match(createStream, /protocol:\s*'tus'/);
   assert.match(createStream, /maxDurationSeconds:\s*CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS/);
-  assert.match(createStream, /upload\.videodelivery\.net/);
-  assert.match(createStream, /\/tus\//);
+  assert.match(premiumTusContract, /upload\.cloudflarestream\.com/);
+  assert.match(premiumTusContract, /upload\.videodelivery\.net/);
+  assert.match(premiumTusContract, /\/tus\//);
   assert.doesNotMatch(createStream, /uploadUrl\.startsWith\('https:\/\/'\)/);
   assert.match(createStream, /\/direct_upload/);
   assert.match(stream, /uploadCreatorPremiumVideoWithTus/);

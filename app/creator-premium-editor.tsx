@@ -28,7 +28,9 @@ import {
   collectCreatorPremiumPlanPages,
   creatorPremiumLifecycleActions,
   creatorPremiumLifecyclePresentation,
+  formatCreatorPremiumPriceInput,
   prepareCreatorPremiumVideoPickerAsset,
+  resolveCreatorPremiumPriceSubmission,
 } from '@/services/creatorPremiumPresentation.mjs';
 import {
   cancelMyCreatorPremiumSubmission,
@@ -36,7 +38,6 @@ import {
   deleteMyCreatorPremiumDraft,
   fetchMyCreatorPremiumContent,
   fetchMyCreatorPremiumPlans,
-  normalizeCreatorPremiumPriceBdag,
   publishMyCreatorPremiumContent,
   publishMyCreatorPremiumContentWithPlans,
   reopenMyCreatorPremiumRejected,
@@ -158,6 +159,8 @@ export default function CreatorPremiumEditor() {
   const requestId = useRef(randomUUID());
   const offerAttempt = useRef<{ signature: string; key: string } | null>(null);
   const submissionAttempt = useRef<{ signature: string; key: string } | null>(null);
+  const priceOriginalCanonical = useRef<string | null>(null);
+  const priceEdited = useRef(false);
   const uploadAbort = useRef<AbortController | null>(null);
   const ownedVideoCache = useRef<string | null>(null);
   const [contentId, setContentId] = useState(routeContentId ?? '');
@@ -221,7 +224,10 @@ export default function CreatorPremiumEditor() {
       setDescription(found.description);
       setKind(found.content_kind);
       setAccessMode(found.access_mode);
-      setPrice(found.price_bdag === null ? '' : String(found.price_bdag));
+      const canonicalPrice = found.price_bdag === null ? null : String(found.price_bdag);
+      priceOriginalCanonical.current = canonicalPrice;
+      priceEdited.current = false;
+      setPrice(canonicalPrice === null ? '' : formatCreatorPremiumPriceInput(canonicalPrice));
       setSelectedPlanIds(planPage
         .filter(plan => plan.status === 'active' && plan.mapped_content_ids.includes(found.id))
         .map(plan => plan.id));
@@ -242,6 +248,25 @@ export default function CreatorPremiumEditor() {
       cleanupOwnedVideoCache();
     };
   }, [cleanupOwnedVideoCache, load, routeContentId]);
+
+  const changePrice = useCallback((value: string) => {
+    priceEdited.current = true;
+    setPrice(value);
+  }, []);
+
+  const formatPriceAfterEditing = useCallback(() => {
+    if (!price.trim()) return;
+    try {
+      const canonical = resolveCreatorPremiumPriceSubmission({
+        displayValue: price,
+        originalCanonical: priceOriginalCanonical.current,
+        edited: true,
+      });
+      setPrice(formatCreatorPremiumPriceInput(canonical));
+    } catch {
+      // Validation remains authoritative in saveDraft so the user can correct the field.
+    }
+  }, [price]);
 
   useEffect(() => {
     if (!contentId || !lifecyclePresentation.polling) return;
@@ -275,7 +300,11 @@ export default function CreatorPremiumEditor() {
     }
 
     if (purchaseModes.has(accessMode) && price.trim()) {
-      const amount = normalizeCreatorPremiumPriceBdag(price);
+      const amount = resolveCreatorPremiumPriceSubmission({
+        displayValue: price,
+        originalCanonical: priceOriginalCanonical.current,
+        edited: priceEdited.current,
+      });
       const signature = `${targetId}:${amount}`;
       if (offerAttempt.current?.signature !== signature) offerAttempt.current = { signature, key: randomUUID() };
       await setMyCreatorPremiumOffer({
@@ -283,6 +312,9 @@ export default function CreatorPremiumEditor() {
         priceBdag: amount,
         clientRequestId: offerAttempt.current.key,
       });
+      priceOriginalCanonical.current = amount;
+      priceEdited.current = false;
+      setPrice(formatCreatorPremiumPriceInput(amount));
     }
     return targetId;
   }, [accessMode, contentId, description, kind, price, title]);
@@ -709,7 +741,7 @@ export default function CreatorPremiumEditor() {
 
         {purchaseModes.has(accessMode) ? (
           <Section title="Precio">
-            <TextInput value={price} onChangeText={setPrice} keyboardType="decimal-pad" editable={!busy && !readOnly} style={styles.input} placeholder="BDAG" placeholderTextColor={Colors.textSubtle} />
+            <TextInput value={price} onChangeText={changePrice} onBlur={formatPriceAfterEditing} keyboardType="decimal-pad" editable={!busy && !readOnly} style={styles.input} placeholder="BDAG" placeholderTextColor={Colors.textSubtle} />
             <Text style={styles.helper}>El precio crea una versión inmutable de oferta. Las ventas siguen deshabilitadas.</Text>
           </Section>
         ) : null}

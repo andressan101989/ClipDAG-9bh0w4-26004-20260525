@@ -6,6 +6,11 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
+import {
+  canonicalCloudflareTusLocation,
+  classifyCloudflareTusFailure,
+} from '../supabase/functions/create-stream-upload/premiumTusContract.mjs';
+
 const root = path.resolve(import.meta.dirname, '..');
 const read = relative => readFileSync(path.join(root, relative), 'utf8');
 
@@ -33,6 +38,8 @@ function executeModule(source, filename, modules = {}, globals = {}) {
     console,
     TextEncoder,
     TextDecoder,
+    AbortController,
+    AbortSignal,
     atob,
     btoa,
     setTimeout,
@@ -79,19 +86,23 @@ const contentId = '20000000-0000-4000-8000-000000000001';
 const assetId = '30000000-0000-4000-8000-000000000001';
 const secondAssetId = '30000000-0000-4000-8000-000000000002';
 const providerUid = 'abcdef0123456789abcdef0123456789';
-const providerTusUrl = `https://upload.videodelivery.net/tus/${providerUid}?tusv2=true`;
+const providerTusUrl = `https://upload.cloudflarestream.com/tus/${providerUid}?tusv2=true`;
 
 function loadCreateStreamUpload({
   authorized = true,
   businessAllowed = true,
   user = { id: userId },
   tusLocation = providerTusUrl,
+  tusStatus = 201,
+  tusProviderErrorCode = null,
+  tusFetchError = null,
 } = {}) {
   let handler;
   const providerCalls = [];
   const rpcCalls = [];
   const callerRpcCalls = [];
   const updates = [];
+  const logs = [];
   const db = {
     async rpc(name, args) {
       rpcCalls.push({ name, args: structuredClone(args) });
@@ -129,6 +140,10 @@ function loadCreateStreamUpload({
     '../_shared/premiumStreamSecurity.ts': {
       CREATOR_PREMIUM_STREAM_PURPOSE: 'creator_premium_video',
     },
+    './premiumTusContract.mjs': {
+      canonicalCloudflareTusLocation,
+      classifyCloudflareTusFailure,
+    },
     '../_shared/stream.ts': {
       CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS: 180,
       STREAM_MAX_DURATION_SECONDS: 60,
@@ -149,7 +164,12 @@ function loadCreateStreamUpload({
       }),
       streamApiBase: () => 'https://api.cloudflare.test/accounts/account/stream',
       async streamFetch(pathname, init) {
-        providerCalls.push({ kind: 'direct', pathname, body: JSON.parse(String(init.body)) });
+        providerCalls.push({
+          kind: 'direct',
+          pathname,
+          method: init.method,
+          body: init.body === undefined ? null : JSON.parse(String(init.body)),
+        });
         return { success: true, result: { uid: 'provider-uid', uploadURL: 'https://upload.example.test/direct' } };
       },
       streamToken: () => 'test-token',
@@ -164,20 +184,27 @@ function loadCreateStreamUpload({
         method: init.method,
         headers: Object.fromEntries(new Headers(init.headers).entries()),
       });
-      return new Response(null, {
-        status: 201,
+      if (tusFetchError) throw tusFetchError;
+      return new Response(tusProviderErrorCode === null ? null : JSON.stringify({
+        success: false,
+        errors: [{ code: tusProviderErrorCode, message: 'redacted test provider failure' }],
+      }), {
+        status: tusStatus,
         headers: {
           Location: tusLocation,
           'stream-media-id': providerUid,
+          'Content-Type': 'application/json',
+          'cf-ray': 'abc123-MIA',
         },
       });
     },
+    console: { log() {}, warn() {}, error: (...args) => logs.push(args) },
     Deno: {
       env: { get: name => name === 'DENO_DEPLOYMENT_ID' ? 'deployment' : undefined },
       serve(fn) { handler = fn; },
     },
   });
-  return { handler, providerCalls, rpcCalls, callerRpcCalls, updates };
+  return { handler, providerCalls, rpcCalls, callerRpcCalls, updates, logs };
 }
 
 const upload = {
@@ -254,7 +281,39 @@ test('Premium TUS upload rejects a provider Location outside the canonical Cloud
   const { response, json: payload } = await post(harness.handler, upload);
   assert.equal(response.status, 502);
   assert.equal(payload.error, 'stream_provider_invalid_response');
-  assert.equal(harness.updates.some(update => update.status === 'failed'), true);
+  assert.deepEqual(harness.providerCalls.find(call => call.kind === 'direct'), {
+    kind: 'direct', pathname: `/${providerUid}`, method: 'DELETE', body: null,
+  });
+  assert.equal(harness.updates.some(update => (
+    update.status === 'failed' && update.cloudflare_uid === providerUid
+  )), true);
+});
+
+test('Premium TUS provisioning maps provider and timeout failures to stable safe domains', async () => {
+  for (const [status, expectedStatus, expectedCode] of [
+    [401, 502, 'stream_provider_credentials_rejected'],
+    [403, 502, 'stream_provider_credentials_rejected'],
+    [413, 400, 'stream_provider_size_rejected'],
+    [429, 503, 'stream_provider_temporarily_unavailable'],
+    [500, 503, 'stream_provider_temporarily_unavailable'],
+    [502, 503, 'stream_provider_temporarily_unavailable'],
+  ]) {
+    const harness = loadCreateStreamUpload({ tusStatus: status, tusProviderErrorCode: 10000 + status });
+    const result = await post(harness.handler, upload);
+    assert.equal(result.response.status, expectedStatus);
+    assert.equal(result.json.error, expectedCode);
+    assert.equal(harness.updates.at(-1).status, 'failed');
+    assert.equal(harness.logs.length, 1);
+    assert.equal(harness.logs[0][1].code, expectedCode);
+    assert.equal(harness.logs[0][1].provider_error_code, String(10000 + status));
+    assert.equal(JSON.stringify(harness.logs).includes('redacted test provider failure'), false);
+  }
+
+  const timeout = loadCreateStreamUpload({ tusFetchError: Object.assign(new Error('timeout'), { name: 'AbortError' }) });
+  const result = await post(timeout.handler, upload);
+  assert.equal(result.response.status, 503);
+  assert.equal(result.json.error, 'stream_provider_temporarily_unavailable');
+  assert.equal(timeout.updates.at(-1).status, 'failed');
 });
 
 test('Feed and Business keep unsigned direct uploads and never receive Premium metadata', async () => {

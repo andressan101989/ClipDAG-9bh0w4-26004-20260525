@@ -51,7 +51,9 @@ test('commercial price input remains an exact canonical decimal string through P
   assert.doesNotMatch(hub, /const\s+price\s*=\s*Number\(planPrice/);
   assert.doesNotMatch(editor, /const\s+amount\s*=\s*Number\(price/);
   assert.match(hub, /normalizeCreatorPremiumPriceBdag\(planPrice\)/);
-  assert.match(editor, /normalizeCreatorPremiumPriceBdag\(price\)/);
+  assert.match(editor, /resolveCreatorPremiumPriceSubmission\(/);
+  assert.match(editor, /priceOriginalCanonical\.current/);
+  assert.match(editor, /priceEdited\.current/);
 });
 
 test('video upload result stays safe while B5 replacement remains server-authoritative', () => {

@@ -12,6 +12,7 @@ import {
   getCreatorPremiumContentKindHint,
   rememberCreatorPremiumContentKind,
 } from '../services/creatorPremiumViewerRuntime.mjs';
+import { normalizeCreatorPremiumPriceBdag } from '../services/creatorPremiumMoney.mjs';
 
 const USER_A = '10000000-0000-4000-8000-000000000001';
 const USER_B = '10000000-0000-4000-8000-000000000002';
@@ -102,6 +103,9 @@ function loadPremiumMetadataService(getUser) {
           auth: { getUser },
           rpc: async () => ({ data: [], error: null }),
         }),
+      };
+      if (specifier === '@/services/creatorPremiumMoney.mjs') return {
+        normalizeCreatorPremiumPriceBdag,
       };
       throw new Error(`Unexpected metadata module: ${specifier}`);
     },

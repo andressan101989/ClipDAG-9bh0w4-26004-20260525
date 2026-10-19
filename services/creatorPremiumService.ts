@@ -5,6 +5,9 @@
  * RPCs and never reads private tables or requests Premium media/finance data.
  */
 import { getSupabaseClient } from '@/template';
+import { normalizeCreatorPremiumPriceBdag } from '@/services/creatorPremiumMoney.mjs';
+
+export { normalizeCreatorPremiumPriceBdag } from '@/services/creatorPremiumMoney.mjs';
 
 export const CREATOR_PREMIUM_FINANCE_AVAILABLE: boolean = false;
 export const CREATOR_PREMIUM_MEDIA_AVAILABLE: boolean = false;
@@ -166,21 +169,6 @@ function page<T extends { id: string }>(
     items: rows,
     nextCursor: last ? { timestamp: timestamp(last), id: last.id } : null,
   };
-}
-
-const CREATOR_PREMIUM_PRICE_PATTERN = /^(?:0|[1-9]\d{0,11})(?:\.\d{1,8})?$/;
-
-export function normalizeCreatorPremiumPriceBdag(input: string): string {
-  const normalized = input.trim().replace(',', '.');
-  if (!CREATOR_PREMIUM_PRICE_PATTERN.test(normalized)) {
-    throw new Error('creator_premium_price_invalid');
-  }
-  const [whole, fraction = ''] = normalized.split('.');
-  const significantFraction = fraction.replace(/0+$/, '');
-  if (whole === '0' && !significantFraction) {
-    throw new Error('creator_premium_price_invalid');
-  }
-  return significantFraction ? `${whole}.${significantFraction}` : whole;
 }
 
 function firstRow<T>(data: T[] | T | null | undefined): T | undefined {

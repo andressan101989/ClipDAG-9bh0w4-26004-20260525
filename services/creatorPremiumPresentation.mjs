@@ -1,3 +1,9 @@
+export {
+  formatCreatorPremiumBdag,
+  formatCreatorPremiumPriceInput,
+  resolveCreatorPremiumPriceSubmission,
+} from './creatorPremiumMoney.mjs';
+
 export const CREATOR_PREMIUM_VIDEO_MIME_TYPES = Object.freeze([
   'video/mp4',
   'video/quicktime',
@@ -47,29 +53,6 @@ export async function collectCreatorPremiumPlanPages(fetchPage, options = {}) {
     cursor = page.nextCursor;
   }
   throw new Error('creator_premium_plan_snapshot_too_large');
-}
-
-function groupedWhole(value) {
-  return value.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-}
-
-export function formatCreatorPremiumBdag(value, options = {}) {
-  const empty = typeof options.empty === 'string' ? options.empty : 'Sin precio';
-  if (value === null || value === undefined) return empty;
-  if (typeof value !== 'string') return '— BDAG';
-  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(value.trim());
-  if (!match) return '— BDAG';
-
-  const negative = match[1] === '-';
-  const whole = match[2].replace(/^0+(?=\d)/, '');
-  const fraction = match[3] ?? '';
-  let minorUnits = BigInt(whole) * 100n + BigInt((fraction + '00').slice(0, 2));
-  if ((fraction[2] ?? '0') >= '5') minorUnits += 1n;
-
-  const displayWhole = (minorUnits / 100n).toString();
-  const displayFraction = (minorUnits % 100n).toString().padStart(2, '0');
-  const sign = negative && minorUnits !== 0n ? '-' : '';
-  return `${sign}${groupedWhole(displayWhole)},${displayFraction} BDAG`;
 }
 
 export function normalizeCreatorPremiumVideoPickerAsset(asset) {
