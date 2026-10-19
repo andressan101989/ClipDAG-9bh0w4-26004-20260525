@@ -45,6 +45,8 @@ export const CREATOR_PREMIUM_BLOCKER_COPY: Readonly<Record<string, string>> = Ob
   creator_premium_active_offer_required: 'Configura un precio de compra activo.',
   creator_premium_active_plan_required: 'Necesitas asociar y activar por lo menos un plan antes de solicitar la publicación.',
   creator_premium_plan_mapping_required: 'Asocia el contenido a por lo menos un plan.',
+  creator_premium_plan_content_unavailable: 'El plan contiene una publicación que ya no está disponible. Actualiza los planes y vuelve a intentarlo.',
+  creator_premium_plan_selection_stale: 'La selección de planes cambió mientras publicabas. Actualiza los planes y vuelve a intentarlo.',
   creator_premium_content_has_financial_history: 'Este contenido tiene compras o suscripciones. No puede retirarse automáticamente sin definir cómo se conservará el acceso adquirido.',
   creator_premium_content_retire_first: 'Retira primero esta publicación. Después podrás eliminarla de tu panel sin afectar derechos adquiridos.',
   creator_premium_plan_has_dependencies: 'Quita primero el contenido asociado a este borrador. Los planes con dependencias no se eliminan.',

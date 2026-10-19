@@ -26,6 +26,7 @@ const suffixes = [
   '_creator_premium_content_safety_p2_activation.sql',
   '_creator_premium_qa_final_f1.sql',
   '_creator_premium_f1_c4_final_recovery.sql',
+  '_creator_premium_f1_c6_submit_unavailable_mapping_recovery.sql',
 ]
 const chain = suffixes.map(suffix => {
   const found = readdirSync(migrations).filter(name => name.endsWith(suffix))
@@ -37,6 +38,8 @@ const chain = suffixes.map(suffix => {
       : '',
   }
 })
+const c4Migration = chain.find(item => item.suffix === '_creator_premium_f1_c4_final_recovery.sql')
+const c6Migration = chain.find(item => item.suffix === '_creator_premium_f1_c6_submit_unavailable_mapping_recovery.sql')
 
 const F1_RPC_SECURITY_CASES = [
   {
@@ -95,6 +98,18 @@ const C4_RPC_SECURITY_CASES = [
     ],
   },
 ]
+
+const C6_RPC_SECURITY_CASES = [{
+  signature: 'public.submit_my_creator_premium_content_with_plans_v1(uuid,uuid[],uuid)',
+  advisorFingerprint: '1c20753b55dcdb2d0a8e6a3365fcf45453495a74a49d76b9b51af4e51d7b923f',
+  caseIds: [
+    'submit_anon_acl', 'submit_service_role_acl', 'submit_cross_owner',
+    'submit_active_plan_required', 'submit_idempotent_replay',
+    'submit_unavailable_history_filtered', 'submit_retired_history_preserved',
+    'submit_active_membership_current_only', 'submit_scan_enqueued',
+    'submit_finance_no_side_effect',
+  ],
+}]
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
@@ -230,13 +245,15 @@ function publishedFixture({ owner, content, scan, teaser, original, title }) {
   `
 }
 
-test('F1-C4 disposable harness binds the canonical F1 baseline and one forward recovery migration', () => {
+test('F1-C6 disposable harness binds the canonical F1 baseline and forward recovery migrations', () => {
   for (const item of chain) assert.equal(item.found.length, 1, item.suffix)
-  assert.match(chain.at(-2).found[0], /^\d{14}_creator_premium_qa_final_f1\.sql$/)
-  assert.match(chain.at(-2).sql, /submit_my_creator_premium_content_with_plans_v1/)
-  assert.match(chain.at(-2).sql, /max_duration_seconds between 1 and 180/)
-  assert.match(chain.at(-1).found[0], /^\d{14}_creator_premium_f1_c4_final_recovery\.sql$/)
-  assert.match(chain.at(-1).sql, /creator_deleted_at/)
+  assert.match(chain.at(-3).found[0], /^\d{14}_creator_premium_qa_final_f1\.sql$/)
+  assert.match(chain.at(-3).sql, /submit_my_creator_premium_content_with_plans_v1/)
+  assert.match(chain.at(-3).sql, /max_duration_seconds between 1 and 180/)
+  assert.match(c4Migration.found[0], /^\d{14}_creator_premium_f1_c4_final_recovery\.sql$/)
+  assert.match(c4Migration.sql, /creator_deleted_at/)
+  assert.match(c6Migration.found[0], /^\d{14}_creator_premium_f1_c6_submit_unavailable_mapping_recovery\.sql$/)
+  assert.match(c6Migration.sql, /content\.lifecycle_status not in \('quarantined','removed','deleted'\)/)
 })
 
 test('F1 disposable database proves 180s isolation, plan versioning, owner lifecycle, ACL, and finance invariants', {
@@ -254,6 +271,8 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
     safetyVideoRequest: uid(),
     draftDeleteRequest: uid(), dependentDeleteRequest: uid(), c4PlanDeleteRequest: uid(),
     c4FinancialPlanDeleteRequest: uid(),
+    c6PlanRequest: uid(), c6ContentRequest: uid(), c6SubmitRequest: uid(),
+    c6Teaser: uid(), c6Original: uid(),
     published: uid(), publishedScan: uid(), publishedTeaser: uid(), publishedOriginal: uid(),
     financial: uid(), financialScan: uid(), financialTeaser: uid(), financialOriginal: uid(),
     financialPlan: uid(), subscription: uid(),
@@ -278,7 +297,7 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
         ('MODERATOR','content.items.moderate')
       on conflict(role_code,capability_code) do nothing;
     `)
-    for (const item of chain.slice(0, -1)) psql(db, item.sql)
+    for (const item of chain.slice(0, chain.indexOf(c4Migration))) psql(db, item.sql)
 
     psql(db, `
       set session_replication_role=replica;
@@ -613,7 +632,7 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
     // Install the one forward C4 correction after proving the immutable F1
     // baseline. C4 then extends the same RPCs without changing financial data,
     // acquired rights, or the private historical rows.
-    psql(db, chain.at(-1).sql)
+    psql(db, c4Migration.sql)
     const c4Proved = new Set()
     for (const signature of [
       'public.delete_my_creator_premium_draft_v1(uuid)',
@@ -642,6 +661,65 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
     c4Proved.add('content_delete_hidden')
     assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.delete_my_creator_premium_draft_v1('${id.published}') result`)).lifecycle_status, 'deleted')
     c4Proved.add('content_delete_idempotent_replay')
+
+    psql(db, c6Migration.sql)
+    const c6Proved = new Set()
+    const c6Signature = C6_RPC_SECURITY_CASES[0].signature
+    assert.equal(psql(db, `select has_function_privilege('authenticated','${c6Signature}','execute')`).stdout, 't')
+    assert.equal(psql(db, `select has_function_privilege('anon','${c6Signature}','execute')`).stdout, 'f')
+    assert.equal(psql(db, `select has_function_privilege('service_role','${c6Signature}','execute')`).stdout, 'f')
+    assert.equal(psql(db, `select proconfig @> array['search_path=""'] from pg_proc where oid='${c6Signature}'::regprocedure`).stdout, 't')
+    assert.equal(psql(db, `select pg_get_userbyid(proowner) from pg_proc where oid='${c6Signature}'::regprocedure`).stdout, 'postgres')
+    c6Proved.add('submit_anon_acl')
+    c6Proved.add('submit_service_role_acl')
+
+    // Regression: a prior active plan version may legitimately retain the
+    // historical mapping for a creator-deleted content tombstone. Adding a new
+    // READY draft must version that family without copying the unavailable
+    // member into the new active version. The retired version keeps history.
+    const c6Plan = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.create_my_creator_premium_plan_draft_v1(
+      'C6 historical family','Deleted membership regression',75.00000000,30,'${id.c6PlanRequest}'
+    ) result`))
+    asRole(db, 'authenticated', id.creator, `select public.set_my_creator_premium_plan_contents_v1(
+      '${c6Plan.id}',array['${id.targetContent}']::uuid[]
+    )`)
+    asRole(db, 'authenticated', id.creator, `select public.activate_my_creator_premium_plan_v1('${c6Plan.id}')`)
+    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.delete_my_creator_premium_draft_v1('${id.targetContent}') result`)).lifecycle_status, 'deleted')
+    assert.equal(psql(db, `select count(*) from private.creator_premium_plan_contents where plan_id='${c6Plan.id}' and content_id='${id.targetContent}'`).stdout, '1')
+
+    const c6Content = createDraft('C6 READY subscription content', 'subscription', id.c6ContentRequest)
+    psql(db, mediaFixture({
+      owner: id.creator, content: c6Content.id, teaser: id.c6Teaser, original: id.c6Original,
+    }))
+    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_image_media_v1(
+      '${c6Content.id}','${id.c6Teaser}','${id.c6Original}'
+    ) result`)).media_ready, true)
+    expectFailure(asRole(db, 'authenticated', id.other, `select public.submit_my_creator_premium_content_with_plans_v1(
+      '${c6Content.id}',array['${c6Plan.id}']::uuid[],'${uid()}'
+    )`, { allowFailure: true }), 'creator_premium_content_not_found')
+    c6Proved.add('submit_cross_owner')
+    expectFailure(asRole(db, 'authenticated', id.creator, `select public.submit_my_creator_premium_content_with_plans_v1(
+      '${c6Content.id}',array[]::uuid[],'${uid()}'
+    )`, { allowFailure: true }), 'creator_premium_active_plan_required')
+    c6Proved.add('submit_active_plan_required')
+    const c6Submitted = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.submit_my_creator_premium_content_with_plans_v1(
+      '${c6Content.id}',array['${c6Plan.id}']::uuid[],'${id.c6SubmitRequest}'
+    ) result`))
+    assert.equal(c6Submitted.lifecycle_status, 'pending_review')
+    assert.equal(c6Submitted.active_plan_ids.length, 1)
+    assert.notEqual(c6Submitted.active_plan_ids[0], c6Plan.id)
+    assert.equal(psql(db, `select count(*) from private.creator_premium_plan_contents where plan_id='${c6Plan.id}' and content_id='${id.targetContent}'`).stdout, '1')
+    c6Proved.add('submit_retired_history_preserved')
+    assert.equal(psql(db, `select count(*) from private.creator_premium_plan_contents where plan_id='${c6Submitted.active_plan_ids[0]}' and content_id='${id.targetContent}'`).stdout, '0')
+    c6Proved.add('submit_unavailable_history_filtered')
+    assert.equal(psql(db, `select count(*) from private.creator_premium_plan_contents where plan_id='${c6Submitted.active_plan_ids[0]}' and content_id='${c6Content.id}'`).stdout, '1')
+    c6Proved.add('submit_active_membership_current_only')
+    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.submit_my_creator_premium_content_with_plans_v1(
+      '${c6Content.id}',array['${c6Plan.id}']::uuid[],'${id.c6SubmitRequest}'
+    ) result`)).replayed, true)
+    c6Proved.add('submit_idempotent_replay')
+    assert.equal(psql(db, `select count(*) from private.content_safety_scans where target_type='creator_premium' and target_id='${c6Content.id}'`).stdout, '1')
+    c6Proved.add('submit_scan_enqueued')
 
     expectFailure(asRole(db, 'authenticated', id.creator, `select public.delete_my_creator_premium_draft_v1('${id.financial}')`, { allowFailure: true }), 'creator_premium_content_retire_first')
     c4Proved.add('content_delete_retire_first')
@@ -678,10 +756,11 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
     `).stdout, financeBefore)
     c4Proved.add('content_delete_finance_no_side_effect')
     c4Proved.add('plan_hide_finance_no_side_effect')
+    c6Proved.add('submit_finance_no_side_effect')
 
     const c4ExpectedCaseIds = C4_RPC_SECURITY_CASES.flatMap(item => item.caseIds).sort()
     assert.deepEqual([...c4Proved].sort(), c4ExpectedCaseIds)
-    const c4MigrationBlob = gitBlobSha1(chain.at(-1).sql)
+    const c4MigrationBlob = gitBlobSha1(c4Migration.sql)
     const c4Evidence = {
       schema_version: 1,
       migration_blob: c4MigrationBlob,
@@ -706,6 +785,32 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
       const definitionSha256 = createHash('sha256').update(definition).digest('hex')
       t.diagnostic(`F1_C4_RPC_DEFINITION_SHA256 ${item.signature} ${definitionSha256}`)
     }
+
+    const c6ExpectedCaseIds = C6_RPC_SECURITY_CASES.flatMap(item => item.caseIds).sort()
+    assert.deepEqual([...c6Proved].sort(), c6ExpectedCaseIds)
+    const c6MigrationBlob = gitBlobSha1(c6Migration.sql)
+    const c6Evidence = {
+      schema_version: 1,
+      migration_blob: c6MigrationBlob,
+      rpcs: C6_RPC_SECURITY_CASES.map(item => ({
+        signature: item.signature,
+        fingerprint: item.advisorFingerprint,
+        case_ids: [...item.caseIds],
+        result: 'SAFE',
+      })),
+      result: 'PASS',
+    }
+    const c6EvidenceSha256 = createHash('sha256')
+      .update(`${canonicalJson(c6Evidence)}\n`, 'utf8').digest('hex')
+    t.diagnostic(`F1_C6_RPC_SECURITY_EVIDENCE_SHA256 ${c6EvidenceSha256}`)
+    t.diagnostic(`F1_C6_MIGRATION_BLOB ${c6MigrationBlob}`)
+    const c6DefinitionEncoded = psql(db, `select pg_catalog.translate(
+      pg_catalog.encode(pg_catalog.convert_to(pg_catalog.pg_get_functiondef('${c6Signature}'::regprocedure),'UTF8'),'base64'),
+      E'\\n\\r',''
+    )`).stdout
+    const c6Definition = Buffer.from(c6DefinitionEncoded, 'base64').toString('utf8').replace(/\r\n?/g, '\n')
+    const c6DefinitionSha256 = createHash('sha256').update(c6Definition).digest('hex')
+    t.diagnostic(`F1_C6_RPC_DEFINITION_SHA256 ${c6Signature} ${c6DefinitionSha256}`)
   } finally {
     docker(`dropdb -U supabase_admin --if-exists ${db}`, { allowFailure: true })
   }
