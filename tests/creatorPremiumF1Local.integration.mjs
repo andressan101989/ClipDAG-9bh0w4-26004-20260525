@@ -272,7 +272,7 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
     draftDeleteRequest: uid(), dependentDeleteRequest: uid(), c4PlanDeleteRequest: uid(),
     c4FinancialPlanDeleteRequest: uid(),
     c6PlanRequest: uid(), c6ContentRequest: uid(), c6SubmitRequest: uid(),
-    c6Teaser: uid(), c6Original: uid(),
+    c6Teaser: uid(), c6Video: uid(),
     published: uid(), publishedScan: uid(), publishedTeaser: uid(), publishedOriginal: uid(),
     financial: uid(), financialScan: uid(), financialTeaser: uid(), financialOriginal: uid(),
     financialPlan: uid(), subscription: uid(),
@@ -382,9 +382,9 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
     assert.equal(visualClaim.scan_id, safetyScan)
     assert.equal(visualClaim.duration_seconds, 180)
 
-    const createDraft = (title, access, request) => {
+    const createDraft = (title, access, request, kind = 'image') => {
       const created = json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.create_my_creator_premium_draft_v1(
-        '${title}','F1 disposable proof','image','${access}','${request}'
+        '${title}','F1 disposable proof','${kind}','${access}','${request}'
       ) result`))
       return created
     }
@@ -687,13 +687,29 @@ test('F1 disposable database proves 180s isolation, plan versioning, owner lifec
     assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.delete_my_creator_premium_draft_v1('${id.targetContent}') result`)).lifecycle_status, 'deleted')
     assert.equal(psql(db, `select count(*) from private.creator_premium_plan_contents where plan_id='${c6Plan.id}' and content_id='${id.targetContent}'`).stdout, '1')
 
-    const c6Content = createDraft('C6 READY subscription content', 'subscription', id.c6ContentRequest)
-    psql(db, mediaFixture({
-      owner: id.creator, content: c6Content.id, teaser: id.c6Teaser, original: id.c6Original,
-    }))
-    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_image_media_v1(
-      '${c6Content.id}','${id.c6Teaser}','${id.c6Original}'
+    const c6Content = createDraft('C6 READY subscription content', 'subscription', id.c6ContentRequest, 'video')
+    psql(db, `
+      insert into public.media_assets(
+        id,owner_id,provider,media_kind,purpose,visibility,bucket_name,object_key,
+        mime_type,size_bytes,status,ready_at,public_url
+      ) values(
+        '${id.c6Teaser}','${id.creator}','r2','image','creator_premium_teaser_image','public',
+        'public-bucket','premium/${id.c6Teaser}.jpg','image/jpeg',1000,'ready',clock_timestamp(),
+        'https://cdn.test/${id.c6Teaser}.jpg'
+      );
+      insert into public.video_assets(
+        id,owner_id,provider,purpose,visibility,status,cloudflare_uid,mime_type,size_bytes,
+        max_duration_seconds,duration_seconds,ready_at,provider_metadata,hls_url,dash_url,thumbnail_url
+      ) values(
+        '${id.c6Video}','${id.creator}','cloudflare_stream','creator_premium_video','private','ready',
+        'c6-ready-${id.c6Video}','video/mp4',2000,180,90,clock_timestamp(),
+        '{"require_signed_urls":true}'::jsonb,null,null,null
+      );
+    `)
+    assert.equal(json(asRole(db, 'authenticated', id.creator, `select to_jsonb(result) from public.set_my_creator_premium_video_media_v1(
+      '${c6Content.id}','${id.c6Teaser}','${id.c6Video}'
     ) result`)).media_ready, true)
+    assert.equal(psql(db, `select private.creator_premium_video_is_ready_v1('${c6Content.id}')`).stdout, 't')
     expectFailure(asRole(db, 'authenticated', id.other, `select public.submit_my_creator_premium_content_with_plans_v1(
       '${c6Content.id}',array['${c6Plan.id}']::uuid[],'${uid()}'
     )`, { allowFailure: true }), 'creator_premium_content_not_found')

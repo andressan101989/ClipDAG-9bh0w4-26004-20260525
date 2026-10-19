@@ -659,6 +659,7 @@ export function buildProductionBaselineDigests({ evidence, policy }) {
 
 export function verifyProductionPreSnapshot({ pre, policy, request, manifest, adapterSourceSha256 }) {
   validateCapturedEvidence({ evidence: pre, phase: 'pre', policy, request, manifest, adapterSourceSha256 });
+  validateRpcSecurityAttestations(pre.rpc_security, advisorExceptionsForPhase(policy, manifest, 'pre'));
   const baseline = policy?.baseline;
   if (baseline?.state !== 'verified'
     || !HASH_PATTERN.test(baseline.evidence ?? '')
@@ -697,6 +698,7 @@ export function verifyProductionPreSnapshot({ pre, policy, request, manifest, ad
 export function verifyProductionSnapshotPair({ pre, post, policy, request, manifest, adapterSourceSha256 }) {
   verifyProductionPreSnapshot({ pre, policy, request, manifest, adapterSourceSha256 });
   validateCapturedEvidence({ evidence: post, phase: 'post', policy, request, manifest, adapterSourceSha256 });
+  validateRpcSecurityAttestations(post.rpc_security, advisorExceptionsForPhase(policy, manifest, 'post'));
   validatePremiumStateTransition(pre.premium_state, post.premium_state, manifest);
   if (Date.parse(post.observed_at) < Date.parse(pre.observed_at)
     || Date.parse(post.finance.database_time) < Date.parse(pre.finance.database_time)) {
@@ -1011,13 +1013,50 @@ function migrationIdentity(item) {
   return null;
 }
 
+const RPC_REPLACEMENT_PREDECESSOR_ATTESTATIONS = new Map([
+  [
+    '20261019023431_creator_premium_f1_c4_final_recovery|5ceb93fa71004f64ba75a7bd251fadaf66d7ebdce81fb48904fd988ed9023fef',
+    {
+      security_definer: true,
+      owner: 'postgres',
+      search_path: ['search_path=""'],
+      acl: [
+        { grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false },
+        { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+      ],
+      execute: { anon: false, authenticated: true, public: false, service_role: false },
+      definition_sha256: '40cbc02821cceb68cdd5a31cfd531d9ec8f537d36c47acb1fc7fcafd0df42ed3',
+    },
+  ],
+  [
+    '20261019170853_creator_premium_f1_c6_submit_unavailable_mapping_recovery|1c20753b55dcdb2d0a8e6a3365fcf45453495a74a49d76b9b51af4e51d7b923f',
+    {
+      security_definer: true,
+      owner: 'postgres',
+      search_path: ['search_path=""'],
+      acl: [
+        { grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false },
+        { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+      ],
+      execute: { anon: false, authenticated: true, public: false, service_role: false },
+      definition_sha256: '7e3e9f176c216fd35bd9dc4fe00b7d577558265afe2f884630d53747737f02ee',
+    },
+  ],
+]);
+
 export function advisorExceptionsForPhase(policy, manifest, phase) {
   if (!['pre', 'post', 'recovery'].includes(phase)) fail('INVALID_SNAPSHOT_IDENTITY', 'phase must be pre, post, or recovery');
   const exceptions = policy?.security_advisor?.exceptions;
   if (!Array.isArray(exceptions)) fail('RPC_SECURITY_ATTESTATION_FAILED', 'Security Advisor exceptions are unavailable');
   if (phase !== 'pre') return [...exceptions];
   const pendingMigrations = new Set((manifest?.resources?.migrations ?? []).map(migrationIdentity).filter(Boolean));
-  return exceptions.filter(exception => !pendingMigrations.has(exception?.origin?.migration));
+  return exceptions.flatMap(exception => {
+    if (!pendingMigrations.has(exception?.origin?.migration)) return [exception];
+    const predecessor = RPC_REPLACEMENT_PREDECESSOR_ATTESTATIONS.get(
+      `${exception.origin.migration}|${exception.advisor_fingerprint}`,
+    );
+    return predecessor ? [{ ...exception, attestation: predecessor }] : [];
+  });
 }
 
 function rpcIdentitiesFromExceptions(exceptions) {
