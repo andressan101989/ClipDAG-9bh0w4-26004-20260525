@@ -549,6 +549,18 @@ test('P3 rejects decision rationale and violence-signal contradictions fail clos
       rationale_codes: ['contradictory_signals'],
     }),
     contextualResult({
+      decision: 'allow',
+      categories: ['education'],
+      law_enforcement_state: 'force_or_confrontation',
+      rationale_codes: ['benign_context'],
+    }),
+    contextualResult({
+      decision: 'allow',
+      categories: ['education'],
+      law_enforcement_state: 'uncertain',
+      rationale_codes: ['benign_context'],
+    }),
+    contextualResult({
       decision: 'review',
       categories: ['documentary_violence'],
       uncertainty: 'ambiguous',
