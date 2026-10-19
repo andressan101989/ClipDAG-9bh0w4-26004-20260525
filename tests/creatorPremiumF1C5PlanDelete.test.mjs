@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import * as presentation from '../services/creatorPremiumPresentation.mjs';
+import { creatorPremiumErrorMessage } from '../services/creatorPremiumIntegrationState.ts';
 
 const plans = Object.freeze([
   Object.freeze({ id: 'course-v1', status: 'active', mapped_content_ids: ['content-1'] }),
@@ -70,5 +71,22 @@ test('published content exposes retirement but never direct deletion', () => {
       showDelete: false,
       showRetire: true,
     },
+  );
+});
+
+test('submit plan-version conflicts use actionable copy without exposing SQL diagnostics', () => {
+  assert.equal(
+    creatorPremiumErrorMessage({
+      code: '55000',
+      message: 'creator_premium_plan_content_unavailable',
+    }),
+    'El plan contiene una publicación que ya no está disponible. Actualiza los planes y vuelve a intentarlo.',
+  );
+  assert.equal(
+    creatorPremiumErrorMessage({
+      code: '40001',
+      message: 'creator_premium_plan_selection_stale',
+    }),
+    'La selección de planes cambió mientras publicabas. Actualiza los planes y vuelve a intentarlo.',
   );
 });
