@@ -1036,7 +1036,9 @@ export function validateSecurityAdvisorDelta(preItems, postItems, allowedIntrodu
   }
   const introduced = [...after].filter(fingerprint => !before.has(fingerprint)).sort();
   const allowed = [...(allowedIntroducedExceptions ?? [])]
-    .map(exception => exception?.advisor_fingerprint).sort();
+    .map(exception => exception?.advisor_fingerprint)
+    .filter(fingerprint => !before.has(fingerprint))
+    .sort();
   if (canonicalJson(introduced) !== canonicalJson(allowed)) {
     fail('REMOTE_POSTCHECK_FAILED', 'release Security Advisor delta differs from the exact approved exception set');
   }
