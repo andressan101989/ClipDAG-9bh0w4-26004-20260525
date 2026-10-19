@@ -55,6 +55,35 @@ export async function collectCreatorPremiumPlanPages(fetchPage, options = {}) {
   throw new Error('creator_premium_plan_snapshot_too_large');
 }
 
+export function resolveCreatorPremiumPlanSelection({
+  plans,
+  contentId,
+  selectedPlanIds = [],
+  preserveSelection = false,
+} = {}) {
+  if (!Array.isArray(plans)) return [];
+  const activePlanIds = new Set(
+    plans
+      .filter(plan => plan?.status === 'active' && typeof plan.id === 'string' && plan.id)
+      .map(plan => plan.id),
+  );
+  const resolved = new Set();
+  if (preserveSelection && Array.isArray(selectedPlanIds)) {
+    for (const planId of selectedPlanIds) {
+      if (activePlanIds.has(planId)) resolved.add(planId);
+    }
+  } else {
+    for (const plan of plans) {
+      if (activePlanIds.has(plan?.id)
+          && Array.isArray(plan.mapped_content_ids)
+          && plan.mapped_content_ids.includes(contentId)) {
+        resolved.add(plan.id);
+      }
+    }
+  }
+  return [...resolved].sort();
+}
+
 export function normalizeCreatorPremiumVideoPickerAsset(asset) {
   if (!asset) return null;
   const mimeType = asset.mimeType ?? '';
@@ -220,6 +249,23 @@ export function creatorPremiumLifecycleActions(input = {}) {
     canRetry: presentation.canRetry,
     canReopen: lifecycle === 'rejected',
     canRetire: lifecycle === 'published',
+  });
+}
+
+export function creatorPremiumEditorActionVisibility(actions = {}, { hasContentId = false } = {}) {
+  const showDelete = Boolean(hasContentId && actions.canDelete);
+  const showRetire = Boolean(hasContentId && actions.canRetire);
+  return Object.freeze({
+    showActionBar: Boolean(
+      actions.editable
+        || actions.canRetry
+        || actions.canCancel
+        || actions.canReopen
+        || showDelete
+        || showRetire
+    ),
+    showDelete,
+    showRetire,
   });
 }
 

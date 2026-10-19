@@ -26,10 +26,12 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import {
   CREATOR_PREMIUM_VIDEO_MAX_DURATION_MS,
   collectCreatorPremiumPlanPages,
+  creatorPremiumEditorActionVisibility,
   creatorPremiumLifecycleActions,
   creatorPremiumLifecyclePresentation,
   formatCreatorPremiumPriceInput,
   prepareCreatorPremiumVideoPickerAsset,
+  resolveCreatorPremiumPlanSelection,
   resolveCreatorPremiumPriceSubmission,
 } from '@/services/creatorPremiumPresentation.mjs';
 import {
@@ -69,6 +71,10 @@ type LocalFile = {
   fileName: string;
   sizeBytes: number;
   ownedCacheUri?: string;
+};
+
+type EditorLoadResult = CreatorPremiumOwnerItem & {
+  selectedPlanIds: string[];
 };
 
 const PREMIUM = Colors.purple;
@@ -188,6 +194,9 @@ export default function CreatorPremiumEditor() {
 
   const lifecyclePresentation = creatorPremiumLifecyclePresentation(item ?? {});
   const lifecycleActions = creatorPremiumLifecycleActions(item ?? {});
+  const actionVisibility = creatorPremiumEditorActionVisibility(lifecycleActions, {
+    hasContentId: Boolean(contentId),
+  });
   const verificationRetryable = lifecycleActions.canRetry;
   const readOnly = Boolean(item && !lifecycleActions.editable);
   const busy = saving || uploading || submitting || deleting || cancelling || reopening || retiring;
@@ -208,7 +217,12 @@ export default function CreatorPremiumEditor() {
     setPrivateFile(next);
   }, []);
 
-  const load = useCallback(async (targetId: string, silent = false, throwOnError = false) => {
+  const load = useCallback(async (
+    targetId: string,
+    silent = false,
+    throwOnError = false,
+    planSelectionToPreserve?: string[],
+  ): Promise<EditorLoadResult | null> => {
     if (!silent) setLoading(true);
     setError(null);
     try {
@@ -228,10 +242,14 @@ export default function CreatorPremiumEditor() {
       priceOriginalCanonical.current = canonicalPrice;
       priceEdited.current = false;
       setPrice(canonicalPrice === null ? '' : formatCreatorPremiumPriceInput(canonicalPrice));
-      setSelectedPlanIds(planPage
-        .filter(plan => plan.status === 'active' && plan.mapped_content_ids.includes(found.id))
-        .map(plan => plan.id));
-      return found;
+      const resolvedPlanIds = resolveCreatorPremiumPlanSelection({
+        plans: planPage,
+        contentId: found.id,
+        selectedPlanIds: planSelectionToPreserve,
+        preserveSelection: planSelectionToPreserve !== undefined,
+      });
+      setSelectedPlanIds(resolvedPlanIds);
+      return { ...found, selectedPlanIds: resolvedPlanIds };
     } catch (reason) {
       if (throwOnError) throw reason;
       setError(messageFor(reason));
@@ -325,14 +343,14 @@ export default function CreatorPremiumEditor() {
     setError(null);
     try {
       const id = await saveDraft();
-      await load(id);
+      await load(id, false, false, selectedPlanIds);
       Alert.alert('Borrador guardado', 'Tus cambios quedaron guardados.');
     } catch (reason) {
       setError(messageFor(reason));
     } finally {
       setSaving(false);
     }
-  }, [busy, load, readOnly, saveDraft]);
+  }, [busy, load, readOnly, saveDraft, selectedPlanIds]);
 
   const pickImage = useCallback(async (role: 'teaser' | 'private') => {
     if (busy || readOnly) return;
@@ -499,7 +517,7 @@ export default function CreatorPremiumEditor() {
       cleanupOwnedVideoCache();
       setTeaser(null);
       setPrivateFile(null);
-      await load(id);
+      await load(id, false, false, selectedPlanIds);
       Alert.alert('Medios listos', 'La vista previa pública y el contenido privado quedaron vinculados.');
     } catch (reason) {
       if (!controller.signal.aborted) setError(messageFor(reason));
@@ -508,7 +526,7 @@ export default function CreatorPremiumEditor() {
       if (uploadAbort.current === controller) uploadAbort.current = null;
       setUploading(false);
     }
-  }, [busy, cleanupOwnedVideoCache, kind, load, privateFile, readOnly, saveDraft, teaser]);
+  }, [busy, cleanupOwnedVideoCache, kind, load, privateFile, readOnly, saveDraft, selectedPlanIds, teaser]);
 
   const submit = useCallback(async () => {
     if (busy || (!lifecycleActions.canSubmit && !lifecycleActions.canRetry)) return;
@@ -527,16 +545,16 @@ export default function CreatorPremiumEditor() {
     setError(null);
     try {
       const id = verificationRetryable && contentId ? contentId : await saveDraft();
-      const planIds = subscriptionModes.has(accessMode)
-        ? [...new Set(selectedPlanIds)].sort()
-        : [];
-      if (!verificationRetryable && subscriptionModes.has(accessMode) && planIds.length === 0) {
-        setError('Selecciona por lo menos un plan activo para publicar este contenido.');
-        return;
-      }
+      let planIds: string[] = [];
       if (!verificationRetryable) {
-        const preflight = await load(id, true, true);
+        const preflight = await load(id, true, true, selectedPlanIds);
         if (!preflight) throw new Error('creator_premium_submission_not_confirmed');
+        planIds = preflight.selectedPlanIds;
+        if (!subscriptionModes.has(accessMode)) planIds = [];
+        if (subscriptionModes.has(accessMode) && planIds.length === 0) {
+          setError('Selecciona por lo menos un plan activo para publicar este contenido.');
+          return;
+        }
         if (preflight.submission_blocker
             && !(preflight.submission_blocker === 'creator_premium_plan_mapping_required'
               && planIds.length > 0)) {
@@ -782,7 +800,7 @@ export default function CreatorPremiumEditor() {
           </View>
         </Section>
 
-        {lifecycleActions.editable || lifecycleActions.canRetry || lifecycleActions.canCancel || lifecycleActions.canReopen || lifecycleActions.canRetire ? (
+        {actionVisibility.showActionBar ? (
           <View style={styles.actions}>
             {lifecycleActions.editable ? <Pressable style={styles.secondaryButton} onPress={() => void handleSave()} disabled={busy}>
               {saving ? <ActivityIndicator color={PREMIUM} /> : <><MaterialCommunityIcons name="content-save-outline" size={20} color={PREMIUM} /><Text style={styles.secondaryText}>Guardar borrador</Text></>}
@@ -799,12 +817,12 @@ export default function CreatorPremiumEditor() {
             {lifecycleActions.canReopen ? <Pressable style={styles.secondaryButton} onPress={() => void reopenRejected()} disabled={busy}>
               {reopening ? <ActivityIndicator color={PREMIUM} /> : <><MaterialCommunityIcons name="pencil-outline" size={20} color={PREMIUM} /><Text style={styles.secondaryText}>Corregir y reenviar</Text></>}
             </Pressable> : null}
-            {contentId && lifecycleActions.canDelete ? (
+            {actionVisibility.showDelete ? (
               <Pressable style={styles.deleteButton} onPress={confirmDelete} disabled={busy}>
                 {deleting ? <ActivityIndicator color={Colors.error} /> : <><MaterialCommunityIcons name="trash-can-outline" size={20} color={Colors.error} /><Text style={styles.deleteText}>Eliminar contenido</Text></>}
               </Pressable>
             ) : null}
-            {contentId && lifecycleActions.canRetire ? (
+            {actionVisibility.showRetire ? (
               <Pressable style={styles.deleteButton} onPress={confirmRetire} disabled={busy}>
                 {retiring ? <ActivityIndicator color={Colors.error} /> : <><MaterialCommunityIcons name="archive-arrow-down-outline" size={20} color={Colors.error} /><Text style={styles.deleteText}>Retirar publicación</Text></>}
               </Pressable>
