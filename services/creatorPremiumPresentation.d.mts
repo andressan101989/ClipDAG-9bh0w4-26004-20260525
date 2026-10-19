@@ -23,6 +23,12 @@ export type CreatorPremiumLifecycleActions = Readonly<{
   canRetire: boolean;
 }>;
 
+export type CreatorPremiumEditorActionVisibility = Readonly<{
+  showActionBar: boolean;
+  showDelete: boolean;
+  showRetire: boolean;
+}>;
+
 export type CreatorPremiumVideoPickerAsset = Readonly<{
   uri: string;
   mimeType: string | null | undefined;
@@ -46,6 +52,16 @@ export function collectCreatorPremiumPlanPages<
   }>,
   options?: { pageSize?: number; maxPages?: number },
 ): Promise<TPlan[]>;
+export function resolveCreatorPremiumPlanSelection(input?: {
+  plans?: Array<{
+    id: string;
+    status?: string | null;
+    mapped_content_ids?: string[] | null;
+  }>;
+  contentId?: string | null;
+  selectedPlanIds?: string[];
+  preserveSelection?: boolean;
+}): string[];
 export function formatCreatorPremiumBdag(
   value: string | null | undefined,
   options?: { empty?: string },
@@ -81,5 +97,9 @@ export function creatorPremiumLifecycleActions(input?: {
   review_reason?: string | null;
   removal_reason?: string | null;
 }): CreatorPremiumLifecycleActions;
+export function creatorPremiumEditorActionVisibility(
+  actions?: Partial<CreatorPremiumLifecycleActions>,
+  options?: { hasContentId?: boolean },
+): CreatorPremiumEditorActionVisibility;
 export function creatorPremiumPolicyBlocksRetry(errorCode?: string | null): boolean;
 

@@ -135,12 +135,14 @@ test('editor preflights the canonical post-save blocker instead of stale local p
   const editor = editorSource;
   const submitBody = editor.slice(editor.indexOf('const submit = useCallback'), editor.indexOf('const confirmDelete'));
   const saveIndex = submitBody.indexOf('await saveDraft()');
-  const preflightIndex = submitBody.indexOf('const preflight = await load(id, true, true)');
+  const preflightIndex = submitBody.indexOf('const preflight = await load(id, true, true, selectedPlanIds)');
+  const freshPlanIndex = submitBody.indexOf('planIds = preflight.selectedPlanIds');
   const blockerIndex = submitBody.indexOf('preflight.submission_blocker');
   const publishIndex = submitBody.indexOf('publishMyCreatorPremiumContent');
 
-  assert.ok(saveIndex >= 0 && preflightIndex > saveIndex && blockerIndex > preflightIndex && publishIndex > blockerIndex,
-    'draft changes must be persisted and read back through the canonical blocker before submit');
+  assert.ok(saveIndex >= 0 && preflightIndex > saveIndex && freshPlanIndex > preflightIndex
+    && blockerIndex > freshPlanIndex && publishIndex > blockerIndex,
+  'draft changes must be persisted and submit must use the fresh active plan snapshot');
   assert.doesNotMatch(submitBody, /Math\.max\([^)]*mapped_plan_count/i,
     'a stale mapped-plan count cannot authorize the current submit');
   assert.match(editor, /throwOnError[\s\S]*if\s*\(throwOnError\)\s*throw\s+reason/i,
