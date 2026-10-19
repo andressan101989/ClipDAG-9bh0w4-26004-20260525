@@ -3,7 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.106.1'
 import { evaluateTextRules } from './ruleEngine.mjs'
 import { AudioPipelineError, WHISPER_MODEL, bytesToBase64, downloadStreamAudioBytes, loadStreamAudioDescriptor, makeProbeWav, normalizeWhisperResult, selectStreamAudioDownloadRoute, timecodeForMatch, validateStreamAudioTargetType } from './audioPipeline.mjs'
 import { VISUAL_AI_PROVIDER, VISUAL_MODEL, VisualProbeError, runVisualMultiImageProviderProbe, runVisualProviderProbe } from './visualProbe.mjs'
-import { MAX_PREMIUM_VISUAL_IMAGE_BYTES, MAX_VISUAL_IMAGE_BYTES, VisualPipelineError, analyzeVisualBytes, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps } from './visualPipeline.mjs'
+import { CREATOR_PREMIUM_VISUAL_PROMPT_VERSION, MAX_PREMIUM_VISUAL_IMAGE_BYTES, MAX_VISUAL_IMAGE_BYTES, VISUAL_PROMPT_VERSION, VisualPipelineError, analyzeVisualBytes, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps } from './visualPipeline.mjs'
 import { POLICY_CONTEXT_POLICY_ID, POLICY_CONTEXT_PROMPT_VERSION, POLICY_CONTEXT_SCHEMA_VERSION, PolicyContextError, policyContextErrorFrom, runPolicyContextAnalysis, runPolicyContextProviderProbe } from './policyContext.mjs'
 import { streamAccountId, streamCustomerCode, streamFetch } from '../_shared/stream.ts'
 import { createPremiumStreamAudioDownloadGrant, createPremiumStreamPlaybackGrant } from '../_shared/premiumStreamSecurity.ts'
@@ -251,7 +251,10 @@ Deno.serve(async req => {
   const { data: visualData, error: visualClaimError } = await admin.rpc('claim_content_safety_visual_scans', { p_limit: 1 })
   if (!visualClaimError) for (const value of Array.isArray(visualData) ? visualData : []) {
     const scan = object(value); visualClaimed += 1
-    if (!uuid(scan.scan_id) || typeof scan.content_fingerprint !== 'string' || !['eligible_image', 'eligible_stream_video'].includes(String(scan.source_kind))) {
+    const promptVersion = String(scan.visual_prompt_version ?? '')
+    const supportedPrompt = promptVersion === VISUAL_PROMPT_VERSION ||
+      (scan.target_type === 'creator_premium' && promptVersion === CREATOR_PREMIUM_VISUAL_PROMPT_VERSION)
+    if (!uuid(scan.scan_id) || typeof scan.content_fingerprint !== 'string' || !['eligible_image', 'eligible_stream_video'].includes(String(scan.source_kind)) || !supportedPrompt) {
       if (uuid(scan.scan_id)) await admin.rpc('fail_content_safety_visual_scan', { p_scan_id: scan.scan_id, p_error_code: 'malformed_visual_scan', p_retryable: false, p_provider_called: false })
       visualFailed += 1; continue
     }
@@ -293,6 +296,7 @@ Deno.serve(async req => {
       }
       const finding = await analyzeVisualBytes({ token: Deno.env.get('CLOUDFLARE_AI_TOKEN')?.trim(), accountId: streamAccountId(), bytes, mimeType,
         sourceKind, frameIndex: sourceKind === 'eligible_stream_video' ? frameCursor : null,
+        promptVersion: String(scan.visual_prompt_version),
         imageByteLimit: isPremium ? MAX_PREMIUM_VISUAL_IMAGE_BYTES : MAX_VISUAL_IMAGE_BYTES })
       providerCalled = true
       if (sourceKind === 'eligible_stream_video' && frameCursor < timestamps.length - 1) {
@@ -304,7 +308,7 @@ Deno.serve(async req => {
         const prior = Array.isArray(object(scan.partial_result).frames) ? object(scan.partial_result).frames as Record<string, unknown>[] : []
         const result = sourceKind === 'eligible_image' ? finding : mergeVisualFrameResults([...prior, { frame_index: frameCursor, timestamp_ms: timestampMs, result: finding }])
         const frameTimestamps = sourceKind === 'eligible_image' ? [] : timestamps
-        const fingerprint = await sha256(`${scan.scan_id}|${scan.content_fingerprint}|${VISUAL_MODEL}|visual-safety-v1|${JSON.stringify(frameTimestamps)}|${JSON.stringify(result)}`)
+        const fingerprint = await sha256(`${scan.scan_id}|${scan.content_fingerprint}|${VISUAL_MODEL}|${scan.visual_prompt_version}|${JSON.stringify(frameTimestamps)}|${JSON.stringify(result)}`)
         const { data, error } = await admin.rpc('complete_content_safety_visual_analysis', { p_scan_id: scan.scan_id,
           p_content_fingerprint: scan.content_fingerprint, p_analysis_result: result, p_analysis_fingerprint: fingerprint,
           p_frame_timestamps_ms: frameTimestamps })
@@ -359,6 +363,10 @@ Deno.serve(async req => {
           claim.policy_id !== POLICY_CONTEXT_POLICY_ID ||
           claim.schema_version !== POLICY_CONTEXT_SCHEMA_VERSION ||
           claim.prompt_version !== POLICY_CONTEXT_PROMPT_VERSION ||
+          visualResult.schema_version !== CREATOR_PREMIUM_VISUAL_PROMPT_VERSION ||
+          !['none', 'visible_non_threatening', 'threatening_or_used', 'ambiguous'].includes(
+            String(visualResult.weapon_disposition),
+          ) ||
           !Number.isInteger(claim.attempt_count) || Number(claim.attempt_count) < 1 || Number(claim.attempt_count) > 5 ||
           !['complete', 'no_speech', 'not_applicable'].includes(String(claim.transcript_coverage)) ||
           typeof claim.transcript_text !== 'string') {
@@ -372,6 +380,7 @@ Deno.serve(async req => {
           review_required: visualResult.review_required,
           findings,
           summary: visualResult.summary,
+          weapon_disposition: visualResult.weapon_disposition,
         },
       }
       const result = await runPolicyContextAnalysis({ token: Deno.env.get('CLOUDFLARE_AI_TOKEN')?.trim(),

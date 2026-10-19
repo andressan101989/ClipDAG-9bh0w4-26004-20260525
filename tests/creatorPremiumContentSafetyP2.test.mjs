@@ -117,6 +117,7 @@ const completeImageInput = Object.freeze({
   transcript: { coverage: 'not_applicable', text: '' },
   visual: {
     coverage: 'complete',
+    weapon_disposition: 'none',
     review_required: false,
     findings: [],
     summary: 'A presenter stands beside a painted mural.',
@@ -144,6 +145,7 @@ const nonGraphicPoliceInput = Object.freeze({
   transcript: { coverage: 'not_applicable', text: '' },
   visual: {
     coverage: 'complete',
+    weapon_disposition: 'visible_non_threatening',
     review_required: true,
     findings: [{
       category: 'weapons',
@@ -223,6 +225,7 @@ test('P3 police-operation allow also accepts a peaceful scene without weapons fi
       review_required: false,
       findings: [],
       summary: 'Routine peaceful patrol with no weapon, threat, injury, blood, or violence visible.',
+      weapon_disposition: 'none',
     },
   }
   assert.deepEqual(validatePolicyContextResult(expected, input), expected)
@@ -241,6 +244,7 @@ test('P3 allows a visible carried or holstered weapon without police only when i
         description: 'A visible holstered weapon is not being handled, pointed, brandished, or used.',
       }],
       summary: 'A visible holstered weapon in a peaceful setting with no threat, force, injury, or violence.',
+      weapon_disposition: 'visible_non_threatening',
     },
   }
   const expected = contextualResult({
@@ -281,6 +285,7 @@ test('P3 police-operation allow accepts only bounded low or medium weapons and o
       ...nonGraphicPoliceInput,
       visual: {
         ...nonGraphicPoliceInput.visual,
+        weapon_disposition: 'ambiguous',
         findings: [{
           category: 'weapons',
           triage_level,
@@ -292,6 +297,7 @@ test('P3 police-operation allow accepts only bounded low or medium weapons and o
       ...nonGraphicPoliceInput,
       visual: {
         ...nonGraphicPoliceInput.visual,
+        weapon_disposition: 'none',
         findings: [{
           category,
           triage_level: 'medium',
@@ -303,6 +309,7 @@ test('P3 police-operation allow accepts only bounded low or medium weapons and o
       ...nonGraphicPoliceInput,
       visual: {
         ...nonGraphicPoliceInput.visual,
+        weapon_disposition: 'none',
         findings: [{
           category: 'other',
           triage_level: 'medium',
@@ -314,6 +321,7 @@ test('P3 police-operation allow accepts only bounded low or medium weapons and o
       ...nonGraphicPoliceInput,
       visual: {
         ...nonGraphicPoliceInput.visual,
+        weapon_disposition: 'none',
         findings: [{
           category: 'nudity',
           triage_level: 'low',
@@ -359,6 +367,7 @@ test('P3 rejects every ALLOW that tries to hide incompatible visual safety findi
         ...completeImageInput.visual,
         review_required: true,
         findings: [finding],
+        weapon_disposition: finding.category === 'weapons' ? 'visible_non_threatening' : 'none',
       },
     }
     assert.throws(
@@ -382,6 +391,7 @@ test('P3 preserves the existing contextual swimwear allowance for bounded low se
         description: 'Non-explicit swimwear with no sexual activity.',
       }],
       summary: 'Non-explicit swimwear catalog.',
+      weapon_disposition: 'none',
     },
   }
   const expected = contextualResult({
@@ -403,6 +413,7 @@ test('P3 cannot use a non-sexual-art label to bypass an actual sexual visual fin
         description: 'A sexual signal that requires an explicitly bounded P2 allowance or review.',
       }],
       summary: 'A sexual visual signal is present.',
+      weapon_disposition: 'none',
     },
   }
   assert.throws(
@@ -441,6 +452,8 @@ test('P3 does not turn swimwear in a non-graphic police scene into sexual conten
 test('P3 routes weapon threats real non-graphic violence and ambiguous law-enforcement context to review', () => {
   const cases = [
     {
+      finding_category: 'weapons',
+      weapon_disposition: 'threatening_or_used',
       description: 'An officer points a firearm toward a person; no shot, blood, or injury is visible.',
       summary: 'Visible weapon brandishing creates a credible threat without graphic injury.',
       categories: ['ambiguous_weapon_or_law_enforcement_context'],
@@ -450,6 +463,8 @@ test('P3 routes weapon threats real non-graphic violence and ambiguous law-enfor
       law_enforcement_state: 'force_or_confrontation',
     },
     {
+      finding_category: 'violence',
+      weapon_disposition: 'none',
       description: 'Officers physically restrain a person; the extent and necessity of force are unclear.',
       summary: 'Real non-graphic force is visible and requires contextual review.',
       categories: ['documentary_violence'],
@@ -460,6 +475,8 @@ test('P3 routes weapon threats real non-graphic violence and ambiguous law-enfor
       violence_state: 'real_non_graphic_or_incidental_injury',
     },
     {
+      finding_category: 'weapons',
+      weapon_disposition: 'ambiguous',
       description: 'A weapon-like object appears during a police scene, but its use and surrounding events are unclear.',
       summary: 'The law-enforcement context is ambiguous.',
       categories: ['ambiguous_weapon_or_law_enforcement_context'],
@@ -475,8 +492,9 @@ test('P3 routes weapon threats real non-graphic violence and ambiguous law-enfor
       ...nonGraphicPoliceInput,
       visual: {
         ...nonGraphicPoliceInput.visual,
-        findings: [{ category: 'weapons', triage_level: 'medium', description: item.description }],
+        findings: [{ category: item.finding_category, triage_level: 'medium', description: item.description }],
         summary: item.summary,
+        weapon_disposition: item.weapon_disposition,
       },
     }
     const expected = contextualResult({
@@ -501,6 +519,7 @@ test('P3 rejects an ALLOW when the structured weapon signal says pointed brandis
         description: 'An officer points a firearm toward a person in a credible threat.',
       }],
       summary: 'A pointed weapon creates a credible non-graphic threat.',
+      weapon_disposition: 'threatening_or_used',
     },
   }
   const contradictoryAllow = contextualResult({
@@ -573,6 +592,7 @@ test('P3 routes an ordinary non-graphic fight and documentary violence to REVIEW
         review_required: true,
         findings: [{ category: 'violence', triage_level: 'medium', description: fixture.description }],
         summary: fixture.summary,
+        weapon_disposition: 'none',
       },
     }
     const expected = contextualResult({
@@ -595,6 +615,7 @@ test('P3 keeps incidental blood or non-graphic injury in review', () => {
         description: 'A person has a small visible injury with incidental blood; no gore or graphic assault is shown.',
       }],
       summary: 'A non-graphic injury with incidental blood is visible.',
+      weapon_disposition: 'none',
     },
   }
   const expected = contextualResult({

@@ -1,5 +1,1059 @@
 begin;
 
+-- The P3 policy consumes a visual contract that carries a frame-derived
+-- weapon disposition. The legacy contract remains readable for exact P2
+-- history and non-Premium producers, but the two shapes never interoperate.
+alter table private.content_safety_scans
+  drop constraint content_safety_scans_visual_prompt_check,
+  add constraint content_safety_scans_visual_prompt_check check (
+    visual_prompt_version is null
+    or visual_prompt_version in (
+      'visual-safety-v1',
+      'creator-premium-visual-safety-p3-v1'
+    )
+  );
+
+alter table private.content_safety_visual_analyses
+  drop constraint content_safety_visual_analyses_prompt_check,
+  add constraint content_safety_visual_analyses_prompt_check check (
+    prompt_version in (
+      'visual-safety-v1',
+      'creator-premium-visual-safety-p3-v1'
+    )
+  );
+
+create or replace function private.content_safety_visual_analysis_id_for_asset(
+  p_video_asset_id uuid,
+  p_media_asset_id uuid,
+  p_prompt_version text
+)
+returns uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select analysis.id
+  from private.content_safety_visual_analyses analysis
+  where p_prompt_version in (
+      'visual-safety-v1',
+      'creator-premium-visual-safety-p3-v1'
+    )
+    and analysis.provider = 'cloudflare_workers_ai'
+    and analysis.model = '@cf/google/gemma-4-26b-a4b-it'
+    and analysis.prompt_version = p_prompt_version
+    and (
+      (p_media_asset_id is not null
+        and analysis.media_asset_id = p_media_asset_id
+        and analysis.sample_strategy = 'single_image_v1')
+      or
+      (p_video_asset_id is not null
+        and analysis.video_asset_id = p_video_asset_id
+        and analysis.sample_strategy = 'percentile_5_v1')
+    )
+  order by analysis.created_at,analysis.id
+  limit 1;
+$$;
+
+create or replace function private.content_safety_visual_analysis_id_for_asset(
+  p_video_asset_id uuid,
+  p_media_asset_id uuid
+)
+returns uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select private.content_safety_visual_analysis_id_for_asset(
+    p_video_asset_id,
+    p_media_asset_id,
+    'visual-safety-v1'
+  );
+$$;
+
+create or replace function private.content_safety_visual_producer_scan_id(
+  p_video_asset_id uuid,
+  p_media_asset_id uuid,
+  p_prompt_version text
+)
+returns uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select scan.id
+  from private.content_safety_scans scan
+  where p_prompt_version in (
+      'visual-safety-v1',
+      'creator-premium-visual-safety-p3-v1'
+    )
+    and scan.target_type in ('video','creator_premium')
+    and scan.visual_provider = 'cloudflare_workers_ai'
+    and scan.visual_model = '@cf/google/gemma-4-26b-a4b-it'
+    and scan.visual_prompt_version = p_prompt_version
+    and (
+      (p_media_asset_id is not null
+        and scan.visual_media_asset_id = p_media_asset_id
+        and scan.visual_source_kind = 'eligible_image')
+      or
+      (p_video_asset_id is not null
+        and scan.visual_video_asset_id = p_video_asset_id
+        and scan.visual_source_kind = 'eligible_stream_video')
+    )
+  order by
+    case
+      when scan.visual_status = 'pending'
+       and scan.visual_analysis_id is null then 0
+      else 1
+    end,
+    scan.created_at,
+    scan.id
+  limit 1;
+$$;
+
+create or replace function private.content_safety_visual_producer_scan_id(
+  p_video_asset_id uuid,
+  p_media_asset_id uuid
+)
+returns uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select private.content_safety_visual_producer_scan_id(
+    p_video_asset_id,
+    p_media_asset_id,
+    'visual-safety-v1'
+  );
+$$;
+
+revoke all on function private.content_safety_visual_analysis_id_for_asset(uuid,uuid,text)
+  from public,anon,authenticated,service_role;
+revoke all on function private.content_safety_visual_producer_scan_id(uuid,uuid,text)
+  from public,anon,authenticated,service_role;
+
+comment on function private.content_safety_visual_analysis_id_for_asset(uuid,uuid,text) is
+  'Returns one immutable visual analysis only for the exact provider/model/prompt/asset contract. P2 and P3 shapes cannot be reused across versions.';
+comment on function private.content_safety_visual_producer_scan_id(uuid,uuid,text) is
+  'Returns the canonical pending-or-historical producer only for the exact visual prompt version, preventing cross-version producer fencing.';
+
+create or replace function private.enqueue_content_safety_scan(
+  p_target_type text,
+  p_target_id uuid,
+  p_requested_reason text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_snapshot jsonb;
+  v_fingerprint text;
+  v_id uuid;
+  v_source_scan uuid;
+  v_analysis_id uuid;
+  v_audio text;
+  v_visual text;
+  v_audio_source jsonb;
+  v_visual_source jsonb;
+  v_premium_prompt constant text := 'creator-premium-visual-safety-p3-v1';
+begin
+  if p_target_type not in (
+      'video','comment','story','live_message','message','creator_premium'
+    )
+    or p_requested_reason not in (
+      'content_created','content_updated','report_signal','shared_source',
+      'backfill','retry'
+    ) then
+    return null;
+  end if;
+  v_snapshot := private.content_safety_target_snapshot(p_target_type,p_target_id);
+  if v_snapshot is null then return null; end if;
+  v_fingerprint := private.content_safety_sha256(
+    p_target_type || '|' || p_target_id::text || '|' ||
+    coalesce(v_snapshot->>'content_version','')
+  );
+  if p_target_type = 'story'
+     and nullif(v_snapshot->>'shared_video_id','') is not null then
+    v_source_scan := private.enqueue_content_safety_scan(
+      'video',(v_snapshot->>'shared_video_id')::uuid,'shared_source'
+    );
+  end if;
+  v_audio := case
+    when p_target_type in ('video','story','creator_premium')
+      or (p_target_type = 'message'
+        and coalesce(v_snapshot->>'scope','') = 'reported_message')
+      then 'not_configured'
+    else 'not_applicable'
+  end;
+  v_visual := case
+    when p_target_type in ('video','story','creator_premium')
+      then 'not_configured'
+    else 'not_applicable'
+  end;
+  insert into private.content_safety_scans(
+    target_type,target_id,owner_user_id,content_fingerprint,
+    media_source_scan_id,status,requested_reason,text_status,audio_status,
+    visual_status,reports_status,available_at
+  ) values (
+    p_target_type,p_target_id,(v_snapshot->>'owner_user_id')::uuid,
+    v_fingerprint,v_source_scan,'queued',p_requested_reason,'pending',
+    v_audio,v_visual,'pending',pg_catalog.clock_timestamp()
+  )
+  on conflict(target_type,target_id,content_fingerprint) do update set
+    status = case
+      when private.content_safety_scans.status = 'processing'
+        then 'processing'
+      else 'queued'
+    end,
+    requested_reason = excluded.requested_reason,
+    media_source_scan_id = coalesce(
+      excluded.media_source_scan_id,
+      private.content_safety_scans.media_source_scan_id
+    ),
+    text_status = case
+      when private.content_safety_scans.status = 'processing'
+        then private.content_safety_scans.text_status
+      else 'pending'
+    end,
+    reports_status = case
+      when private.content_safety_scans.status = 'processing'
+        then private.content_safety_scans.reports_status
+      else 'pending'
+    end,
+    attempt_count = case
+      when private.content_safety_scans.status = 'processing'
+        then private.content_safety_scans.attempt_count
+      else 0
+    end,
+    available_at = case
+      when private.content_safety_scans.status = 'processing'
+        then private.content_safety_scans.available_at
+      else pg_catalog.clock_timestamp()
+    end,
+    started_at = case
+      when private.content_safety_scans.status = 'processing'
+        then private.content_safety_scans.started_at
+      else null
+    end,
+    completed_at = case
+      when private.content_safety_scans.status = 'processing'
+        then private.content_safety_scans.completed_at
+      else null
+    end,
+    last_error_code = case
+      when private.content_safety_scans.status = 'processing'
+        then private.content_safety_scans.last_error_code
+      else null
+    end,
+    updated_at = pg_catalog.clock_timestamp()
+  returning id into v_id;
+
+  if p_target_type = 'creator_premium' then
+    v_audio_source := private.content_safety_audio_source(
+      p_target_type,p_target_id
+    );
+    v_visual_source := private.content_safety_visual_source(
+      p_target_type,p_target_id
+    );
+    update private.content_safety_scans scan set
+      audio_status = case v_audio_source->>'kind'
+        when 'eligible' then case
+          when scan.audio_status = 'analyzed' then 'analyzed'
+          else 'pending'
+        end
+        when 'not_applicable' then 'not_applicable'
+        else 'not_configured'
+      end,
+      audio_provider = case
+        when v_audio_source->>'kind' = 'eligible'
+          then 'cloudflare_workers_ai'
+        else null
+      end,
+      audio_model = case
+        when v_audio_source->>'kind' = 'eligible'
+          then '@cf/openai/whisper-large-v3-turbo'
+        else null
+      end,
+      audio_source_asset_id = case
+        when v_audio_source->>'source_asset_id' is null then null
+        else (v_audio_source->>'source_asset_id')::uuid
+      end,
+      audio_available_at = case
+        when v_audio_source->>'kind' = 'eligible'
+         and scan.audio_status <> 'analyzed'
+          then pg_catalog.clock_timestamp()
+        else scan.audio_available_at
+      end,
+      audio_last_error_code = case
+        when v_audio_source->>'kind' in ('eligible','not_applicable') then null
+        else v_audio_source->>'reason'
+      end,
+      visual_status = case
+        when v_visual_source->>'kind' in (
+          'eligible_image','eligible_stream_video'
+        ) then case
+          when scan.visual_status = 'analyzed'
+           and scan.visual_prompt_version = v_premium_prompt
+            then 'analyzed'
+          else 'pending'
+        end
+        else 'not_configured'
+      end,
+      visual_provider = case
+        when v_visual_source->>'kind' in (
+          'eligible_image','eligible_stream_video'
+        ) then 'cloudflare_workers_ai'
+        else null
+      end,
+      visual_model = case
+        when v_visual_source->>'kind' in (
+          'eligible_image','eligible_stream_video'
+        ) then '@cf/google/gemma-4-26b-a4b-it'
+        else null
+      end,
+      visual_prompt_version = case
+        when v_visual_source->>'kind' in (
+          'eligible_image','eligible_stream_video'
+        ) then 'creator-premium-visual-safety-p3-v1'
+        else null
+      end,
+      visual_source_kind = case
+        when v_visual_source->>'kind' in (
+          'eligible_image','eligible_stream_video'
+        ) then v_visual_source->>'kind'
+        else null
+      end,
+      visual_video_asset_id = case
+        when v_visual_source->>'video_asset_id' is null then null
+        else (v_visual_source->>'video_asset_id')::uuid
+      end,
+      visual_media_asset_id = case
+        when v_visual_source->>'media_asset_id' is null then null
+        else (v_visual_source->>'media_asset_id')::uuid
+      end,
+      visual_analysis_id = case
+        when scan.visual_prompt_version = v_premium_prompt
+          then scan.visual_analysis_id
+        else null
+      end,
+      visual_frame_cursor = case
+        when scan.visual_prompt_version = v_premium_prompt
+          then scan.visual_frame_cursor
+        else 0
+      end,
+      visual_partial_result = case
+        when scan.visual_prompt_version = v_premium_prompt
+          then scan.visual_partial_result
+        else null
+      end,
+      visual_provider_call_count = case
+        when scan.visual_prompt_version = v_premium_prompt
+          then scan.visual_provider_call_count
+        else 0
+      end,
+      visual_attempt_count = case
+        when scan.visual_prompt_version = v_premium_prompt
+          then scan.visual_attempt_count
+        else 0
+      end,
+      visual_available_at = case
+        when v_visual_source->>'kind' in (
+          'eligible_image','eligible_stream_video'
+        )
+         and not (
+           scan.visual_status = 'analyzed'
+           and scan.visual_prompt_version = v_premium_prompt
+         ) then pg_catalog.clock_timestamp()
+        else scan.visual_available_at
+      end,
+      visual_started_at = case
+        when scan.visual_prompt_version = v_premium_prompt
+          then scan.visual_started_at
+        else null
+      end,
+      visual_completed_at = case
+        when scan.visual_prompt_version = v_premium_prompt
+          then scan.visual_completed_at
+        else null
+      end,
+      visual_last_error_code = case
+        when v_visual_source->>'kind' in (
+          'eligible_image','eligible_stream_video'
+        ) then null
+        else v_visual_source->>'reason'
+      end,
+      updated_at = pg_catalog.clock_timestamp()
+    where scan.id = v_id;
+
+    v_analysis_id := private.content_safety_visual_analysis_id_for_asset(
+      case when v_visual_source->>'video_asset_id' is null then null
+        else (v_visual_source->>'video_asset_id')::uuid end,
+      case when v_visual_source->>'media_asset_id' is null then null
+        else (v_visual_source->>'media_asset_id')::uuid end,
+      v_premium_prompt
+    );
+    if v_analysis_id is not null then
+      perform private.content_safety_attach_visual_analysis(v_analysis_id);
+    end if;
+  end if;
+  return v_id;
+end;
+$$;
+
+create or replace function public.advance_content_safety_visual_scan(
+  p_scan_id uuid,
+  p_expected_cursor integer,
+  p_frame_timestamp_ms integer,
+  p_frame_result jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_scan private.content_safety_scans;
+  v_frames jsonb;
+begin
+  select * into v_scan
+  from private.content_safety_scans
+  where id = p_scan_id
+  for update;
+  if not found then
+    raise exception using
+      errcode = 'P0002', message = 'content_safety_visual_scan_not_found';
+  end if;
+  if v_scan.target_type not in ('video','creator_premium')
+     or (v_scan.target_type = 'video'
+       and v_scan.visual_prompt_version <> 'visual-safety-v1')
+     or (v_scan.target_type = 'creator_premium'
+       and v_scan.visual_prompt_version not in (
+         'visual-safety-v1','creator-premium-visual-safety-p3-v1'
+       ))
+     or v_scan.visual_status <> 'pending'
+     or v_scan.visual_source_kind <> 'eligible_stream_video'
+     or v_scan.visual_frame_cursor <> p_expected_cursor
+     or p_expected_cursor not between 0 and 3
+     or p_frame_timestamp_ms < 0
+     or v_scan.visual_provider_call_count >= 5
+     or not private.content_safety_visual_result_valid_for_prompt(
+       p_frame_result,
+       v_scan.visual_prompt_version,
+       v_scan.visual_source_kind,
+       p_expected_cursor,
+       5
+     )
+     or exists (
+       select 1
+       from pg_catalog.jsonb_array_elements(
+         coalesce(v_scan.visual_partial_result->'frames','[]'::jsonb)
+       ) frame
+       where frame->'result'->>'schema_version'
+         is distinct from v_scan.visual_prompt_version
+     ) then
+    raise exception using
+      errcode = '22023', message = 'invalid_content_safety_visual_advance';
+  end if;
+  v_frames := coalesce(
+      v_scan.visual_partial_result->'frames','[]'::jsonb
+    ) || pg_catalog.jsonb_build_array(
+      pg_catalog.jsonb_build_object(
+        'frame_index',p_expected_cursor,
+        'timestamp_ms',p_frame_timestamp_ms,
+        'result',p_frame_result
+      )
+    );
+  if pg_catalog.pg_column_size(
+      pg_catalog.jsonb_build_object('frames',v_frames)
+    ) > 32768 then
+    raise exception using
+      errcode = '22023', message = 'content_safety_visual_partial_too_large';
+  end if;
+  update private.content_safety_scans set
+    visual_frame_cursor = visual_frame_cursor + 1,
+    visual_partial_result = pg_catalog.jsonb_build_object('frames',v_frames),
+    visual_provider_call_count = visual_provider_call_count + 1,
+    visual_attempt_count = 0,
+    visual_started_at = null,
+    visual_available_at = pg_catalog.clock_timestamp(),
+    updated_at = pg_catalog.clock_timestamp()
+  where id = v_scan.id;
+  return pg_catalog.jsonb_build_object(
+    'scan_id',v_scan.id,
+    'visual_status','pending',
+    'visual_prompt_version',v_scan.visual_prompt_version,
+    'frame_cursor',v_scan.visual_frame_cursor + 1,
+    'provider_call_count',v_scan.visual_provider_call_count + 1
+  );
+end;
+$$;
+
+create or replace function public.complete_content_safety_visual_analysis(
+  p_scan_id uuid,
+  p_content_fingerprint text,
+  p_analysis_result jsonb,
+  p_analysis_fingerprint text,
+  p_frame_timestamps_ms integer[]
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_scan private.content_safety_scans;
+  v_analysis private.content_safety_visual_analyses;
+  v_provider_calls integer;
+  v_frame_count integer;
+  v_strategy text;
+  v_existing_id uuid;
+  v_producer_id uuid;
+  v_attach jsonb;
+  v_inserted boolean := false;
+begin
+  select * into v_scan
+  from private.content_safety_scans
+  where id = p_scan_id
+  for update;
+  if not found then
+    raise exception using
+      errcode = 'P0002', message = 'content_safety_visual_scan_not_found';
+  end if;
+  v_strategy := case
+    when v_scan.visual_source_kind = 'eligible_image' then 'single_image_v1'
+    else 'percentile_5_v1'
+  end;
+  v_existing_id := private.content_safety_visual_analysis_id_for_asset(
+    v_scan.visual_video_asset_id,
+    v_scan.visual_media_asset_id,
+    v_scan.visual_prompt_version
+  );
+  v_provider_calls := v_scan.visual_provider_call_count + 1;
+  if v_existing_id is not null then
+    update private.content_safety_scans set
+      visual_provider_call_count = v_provider_calls,
+      visual_started_at = null,
+      updated_at = pg_catalog.clock_timestamp()
+    where id = v_scan.id;
+    v_attach := private.content_safety_attach_visual_analysis(v_existing_id);
+    return pg_catalog.jsonb_build_object(
+      'scan_id',v_scan.id,
+      'analysis_id',v_existing_id,
+      'visual_status','analyzed',
+      'visual_prompt_version',v_scan.visual_prompt_version,
+      'alerts_processed',coalesce(
+        (v_attach->>'alerts_processed')::integer,0
+      ),
+      'provider_call_count',v_provider_calls,
+      'race_reused',true
+    );
+  end if;
+  v_producer_id := private.content_safety_visual_producer_scan_id(
+    v_scan.visual_video_asset_id,
+    v_scan.visual_media_asset_id,
+    v_scan.visual_prompt_version
+  );
+  v_frame_count := case
+    when v_scan.visual_source_kind = 'eligible_image' then 1
+    else pg_catalog.cardinality(p_frame_timestamps_ms)
+  end;
+  if v_scan.target_type not in ('video','creator_premium')
+     or (v_scan.target_type = 'video'
+       and v_scan.visual_prompt_version <> 'visual-safety-v1')
+     or (v_scan.target_type = 'creator_premium'
+       and v_scan.visual_prompt_version not in (
+         'visual-safety-v1','creator-premium-visual-safety-p3-v1'
+       ))
+     or v_scan.id is distinct from v_producer_id
+     or v_scan.visual_status <> 'pending'
+     or v_scan.content_fingerprint <> p_content_fingerprint
+     or v_scan.visual_source_kind not in (
+       'eligible_image','eligible_stream_video'
+     )
+     or v_provider_calls not between 1 and 5
+     or p_analysis_fingerprint !~ '^[0-9a-f]{64}$'
+     or (v_scan.visual_prompt_version =
+          'creator-premium-visual-safety-p3-v1'
+       and p_analysis_result->>'weapon_disposition' not in (
+         'none','visible_non_threatening','threatening_or_used','ambiguous'
+       ))
+     or (v_scan.visual_source_kind = 'eligible_image'
+       and pg_catalog.cardinality(p_frame_timestamps_ms) <> 0)
+     or (v_scan.visual_source_kind = 'eligible_stream_video' and (
+       v_frame_count < 1
+       or v_frame_count > 5
+       or v_scan.visual_frame_cursor <> v_frame_count - 1
+     ))
+     or not private.content_safety_visual_result_valid_for_prompt(
+       p_analysis_result,
+       v_scan.visual_prompt_version,
+       v_scan.visual_source_kind,
+       null,
+       v_frame_count
+     ) then
+    raise exception using
+      errcode = '22023', message = 'invalid_content_safety_visual_completion';
+  end if;
+  if exists (
+      select 1
+      from pg_catalog.unnest(p_frame_timestamps_ms) with ordinality a(value,pos)
+      join pg_catalog.unnest(p_frame_timestamps_ms) with ordinality b(value,pos)
+        on b.pos = a.pos + 1
+      where b.value <= a.value
+    ) or exists (
+      select 1
+      from pg_catalog.unnest(p_frame_timestamps_ms) value
+      where value < 0
+    ) then
+    raise exception using
+      errcode = '22023', message = 'invalid_visual_frame_timestamps';
+  end if;
+  insert into private.content_safety_visual_analyses(
+    source_scan_id,video_asset_id,media_asset_id,
+    source_content_fingerprint,provider,model,prompt_version,
+    sample_strategy,frame_count,frame_timestamps_ms,analysis_result,
+    analysis_fingerprint,provider_call_count
+  ) values (
+    v_scan.id,v_scan.visual_video_asset_id,v_scan.visual_media_asset_id,
+    v_scan.content_fingerprint,'cloudflare_workers_ai',
+    '@cf/google/gemma-4-26b-a4b-it',v_scan.visual_prompt_version,
+    v_strategy,v_frame_count,p_frame_timestamps_ms,p_analysis_result,
+    p_analysis_fingerprint,v_provider_calls
+  )
+  on conflict do nothing
+  returning * into v_analysis;
+  if v_analysis.id is null then
+    v_existing_id := private.content_safety_visual_analysis_id_for_asset(
+      v_scan.visual_video_asset_id,
+      v_scan.visual_media_asset_id,
+      v_scan.visual_prompt_version
+    );
+    if v_existing_id is null then
+      raise exception using
+        errcode = '23505',
+        message = 'content_safety_visual_analysis_race_unresolved';
+    end if;
+    select * into v_analysis
+    from private.content_safety_visual_analyses
+    where id = v_existing_id;
+  else
+    v_inserted := true;
+  end if;
+  update private.content_safety_scans set
+    visual_provider_call_count = v_provider_calls,
+    visual_frame_cursor = v_frame_count,
+    visual_started_at = null,
+    updated_at = pg_catalog.clock_timestamp()
+  where id = v_scan.id;
+  v_attach := private.content_safety_attach_visual_analysis(v_analysis.id);
+  return pg_catalog.jsonb_build_object(
+    'scan_id',v_scan.id,
+    'analysis_id',v_analysis.id,
+    'visual_status','analyzed',
+    'visual_prompt_version',v_scan.visual_prompt_version,
+    'alerts_processed',coalesce(
+      (v_attach->>'alerts_processed')::integer,0
+    ),
+    'provider_call_count',v_provider_calls,
+    'frame_count',v_frame_count,
+    'race_reused',not v_inserted
+  );
+end;
+$$;
+
+create or replace function private.content_safety_attach_visual_analysis(
+  p_analysis_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_analysis private.content_safety_visual_analyses;
+  v_scan_id uuid;
+  v_scan_count integer := 0;
+  v_story_count integer := 0;
+  v_alert_count integer := 0;
+begin
+  select * into v_analysis
+  from private.content_safety_visual_analyses
+  where id = p_analysis_id;
+  if not found then
+    raise exception using
+      errcode = 'P0002',
+      message = 'content_safety_visual_analysis_not_found';
+  end if;
+  update private.content_safety_scans scan set
+    visual_analysis_id = v_analysis.id,
+    visual_status = 'analyzed',
+    visual_provider = v_analysis.provider,
+    visual_model = v_analysis.model,
+    visual_prompt_version = v_analysis.prompt_version,
+    visual_completed_at = coalesce(
+      scan.visual_completed_at,pg_catalog.clock_timestamp()
+    ),
+    visual_started_at = null,
+    visual_last_error_code = null,
+    visual_attempt_count = 0,
+    visual_partial_result = null,
+    updated_at = pg_catalog.clock_timestamp()
+  where scan.target_type in ('video','creator_premium')
+    and scan.visual_prompt_version = v_analysis.prompt_version
+    and scan.visual_provider = v_analysis.provider
+    and scan.visual_model = v_analysis.model
+    and (
+      (v_analysis.media_asset_id is not null
+        and scan.visual_media_asset_id = v_analysis.media_asset_id
+        and scan.visual_source_kind = 'eligible_image')
+      or
+      (v_analysis.video_asset_id is not null
+        and scan.visual_video_asset_id = v_analysis.video_asset_id
+        and scan.visual_source_kind = 'eligible_stream_video')
+    );
+  get diagnostics v_scan_count = row_count;
+
+  -- Stories retain the historical v1 feed contract. A Premium P3 result is
+  -- never attached to a story or used as feed evidence.
+  if v_analysis.prompt_version = 'visual-safety-v1' then
+    update private.content_safety_scans story set
+      visual_analysis_id = v_analysis.id,
+      visual_provider = v_analysis.provider,
+      visual_model = v_analysis.model,
+      visual_prompt_version = v_analysis.prompt_version,
+      visual_source_kind = case
+        when v_analysis.media_asset_id is not null then 'shared_image'
+        else 'shared_stream_video'
+      end,
+      visual_video_asset_id = v_analysis.video_asset_id,
+      visual_media_asset_id = v_analysis.media_asset_id,
+      visual_status = 'analyzed',
+      visual_completed_at = coalesce(
+        story.visual_completed_at,pg_catalog.clock_timestamp()
+      ),
+      visual_started_at = null,
+      visual_last_error_code = null,
+      visual_attempt_count = 0,
+      visual_partial_result = null,
+      updated_at = pg_catalog.clock_timestamp()
+    where story.target_type = 'story'
+      and exists (
+        select 1
+        from private.content_safety_scans source_scan
+        where source_scan.id = story.media_source_scan_id
+          and source_scan.visual_prompt_version = v_analysis.prompt_version
+          and (
+            (v_analysis.media_asset_id is not null
+              and source_scan.visual_media_asset_id = v_analysis.media_asset_id)
+            or
+            (v_analysis.video_asset_id is not null
+              and source_scan.visual_video_asset_id = v_analysis.video_asset_id)
+          )
+      );
+    get diagnostics v_story_count = row_count;
+  end if;
+
+  for v_scan_id in
+    select scan.id
+    from private.content_safety_scans scan
+    where scan.target_type in ('video','creator_premium')
+      and scan.visual_analysis_id = v_analysis.id
+      and scan.visual_prompt_version = v_analysis.prompt_version
+  loop
+    v_alert_count := v_alert_count +
+      private.content_safety_create_visual_alerts_for_scan(
+        v_scan_id,v_analysis.id
+      );
+  end loop;
+  return pg_catalog.jsonb_build_object(
+    'analysis_id',v_analysis.id,
+    'scans_attached',v_scan_count,
+    'stories_attached',v_story_count,
+    'alerts_processed',v_alert_count
+  );
+end;
+$$;
+
+create or replace function private.content_safety_visual_result_valid_for_prompt(
+  p_result jsonb,
+  p_prompt_version text,
+  p_source_kind text,
+  p_expected_frame_index integer,
+  p_frame_count integer
+)
+returns boolean
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare
+  v_keys text[];
+  v_finding jsonb;
+  v_finding_keys text[];
+  v_finding_count integer;
+  v_weapon_count integer := 0;
+  v_disposition text;
+begin
+  if p_prompt_version not in (
+      'visual-safety-v1',
+      'creator-premium-visual-safety-p3-v1'
+    )
+    or p_source_kind not in ('eligible_image','eligible_stream_video')
+    or pg_catalog.jsonb_typeof(p_result) is distinct from 'object'
+    or pg_catalog.pg_column_size(p_result) > 32768 then
+    return false;
+  end if;
+
+  select pg_catalog.array_agg(key order by key)
+  into v_keys
+  from pg_catalog.jsonb_object_keys(p_result) key;
+  if p_prompt_version = 'visual-safety-v1' then
+    if v_keys is distinct from array[
+      'findings','review_required','schema_version','summary'
+    ]::text[] then return false; end if;
+  elsif v_keys is distinct from array[
+      'findings','review_required','schema_version','summary',
+      'weapon_disposition'
+    ]::text[] then
+    return false;
+  end if;
+
+  if p_result->>'schema_version' is distinct from p_prompt_version
+     or pg_catalog.jsonb_typeof(p_result->'review_required')
+        is distinct from 'boolean'
+     or pg_catalog.jsonb_typeof(p_result->'findings')
+        is distinct from 'array'
+     or pg_catalog.jsonb_array_length(p_result->'findings') > 10
+     or pg_catalog.jsonb_typeof(p_result->'summary')
+        is distinct from 'string'
+     or pg_catalog.char_length(p_result->>'summary') > 500 then
+    return false;
+  end if;
+
+  v_finding_count := pg_catalog.jsonb_array_length(p_result->'findings');
+  if ((p_result->>'review_required')::boolean and v_finding_count = 0)
+     or (not (p_result->>'review_required')::boolean and v_finding_count <> 0) then
+    return false;
+  end if;
+
+  for v_finding in
+    select value
+    from pg_catalog.jsonb_array_elements(p_result->'findings')
+  loop
+    if pg_catalog.jsonb_typeof(v_finding) is distinct from 'object' then
+      return false;
+    end if;
+    select pg_catalog.array_agg(key order by key)
+    into v_finding_keys
+    from pg_catalog.jsonb_object_keys(v_finding) key;
+    if v_finding_keys is distinct from array[
+        'category','description','frame_index','triage_level'
+      ]::text[]
+      or v_finding->>'category' not in (
+        'violence','threat','sexual','self_harm','drugs','weapons',
+        'fraud','spam','other'
+      )
+      or v_finding->>'triage_level' not in (
+        'low','medium','high','critical'
+      )
+      or pg_catalog.jsonb_typeof(v_finding->'description')
+         is distinct from 'string'
+      or pg_catalog.char_length(v_finding->>'description') > 240 then
+      return false;
+    end if;
+    if p_source_kind = 'eligible_image' then
+      if pg_catalog.jsonb_typeof(v_finding->'frame_index')
+         is distinct from 'null' then return false; end if;
+    elsif pg_catalog.jsonb_typeof(v_finding->'frame_index')
+          is distinct from 'number'
+      or (v_finding->>'frame_index')::integer < 0
+      or (v_finding->>'frame_index')::integer >= p_frame_count
+      or (p_expected_frame_index is not null
+        and (v_finding->>'frame_index')::integer <> p_expected_frame_index) then
+      return false;
+    end if;
+    if v_finding->>'category' = 'weapons' then
+      v_weapon_count := v_weapon_count + 1;
+    end if;
+  end loop;
+
+  if p_prompt_version = 'creator-premium-visual-safety-p3-v1' then
+    v_disposition := p_result->>'weapon_disposition';
+    if v_disposition is null
+      or v_disposition not in (
+        'none','visible_non_threatening','threatening_or_used','ambiguous'
+      )
+      or ((v_disposition = 'none') <> (v_weapon_count = 0))
+      or (v_disposition = 'visible_non_threatening' and exists (
+        select 1
+        from pg_catalog.jsonb_array_elements(p_result->'findings') finding
+        where finding->>'category' = 'weapons'
+          and finding->>'triage_level' not in ('low','medium')
+      )) then
+      return false;
+    end if;
+  end if;
+  return true;
+end;
+$$;
+
+revoke all on function private.content_safety_visual_result_valid_for_prompt(
+  jsonb,text,text,integer,integer
+) from public,anon,authenticated,service_role;
+
+create or replace function public.claim_content_safety_visual_scans(
+  p_limit integer default 1
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_row record;
+  v_result jsonb := '[]'::jsonb;
+begin
+  if p_limit < 1 or p_limit > 1 then
+    raise exception using
+      errcode = '22023', message = 'invalid_visual_claim_limit';
+  end if;
+  for v_row in
+    select
+      scan.id,scan.target_type,scan.target_id,scan.content_fingerprint,
+      scan.visual_source_kind,scan.visual_video_asset_id,
+      scan.visual_media_asset_id,scan.visual_prompt_version,
+      scan.visual_attempt_count,scan.visual_provider_call_count,
+      scan.visual_frame_cursor,scan.visual_partial_result,
+      video.cloudflare_uid,video.duration_seconds,
+      media.bucket_name,media.object_key,media.mime_type,media.size_bytes
+    from private.content_safety_scans scan
+    left join public.video_assets video
+      on video.id = scan.visual_video_asset_id
+    left join public.media_assets media
+      on media.id = scan.visual_media_asset_id
+    where scan.target_type in ('video','creator_premium')
+      and (
+        (scan.target_type = 'video'
+          and scan.visual_prompt_version = 'visual-safety-v1')
+        or
+        (scan.target_type = 'creator_premium'
+          and scan.visual_prompt_version in (
+            'visual-safety-v1','creator-premium-visual-safety-p3-v1'
+          ))
+      )
+      and scan.visual_status = 'pending'
+      and scan.visual_analysis_id is null
+      and scan.visual_attempt_count < 5
+      and scan.visual_provider_call_count < 5
+      and scan.visual_available_at <= pg_catalog.clock_timestamp()
+      and (
+        scan.visual_started_at is null
+        or scan.visual_started_at <
+          pg_catalog.clock_timestamp() - interval '10 minutes'
+      )
+      and scan.id = private.content_safety_visual_producer_scan_id(
+        scan.visual_video_asset_id,
+        scan.visual_media_asset_id,
+        scan.visual_prompt_version
+      )
+      and private.content_safety_visual_analysis_id_for_asset(
+        scan.visual_video_asset_id,
+        scan.visual_media_asset_id,
+        scan.visual_prompt_version
+      ) is null
+      and (
+        (
+          scan.visual_source_kind = 'eligible_stream_video'
+          and video.provider = 'cloudflare_stream'
+          and video.status = 'ready'
+          and video.deleted_at is null
+          and video.mime_type like 'video/%'
+          and video.duration_seconds > 0
+          and video.duration_seconds <= case
+            when scan.target_type = 'creator_premium' then 180
+            else 60
+          end
+          and nullif(pg_catalog.btrim(video.cloudflare_uid),'') is not null
+          and (
+            (scan.target_type = 'video' and video.visibility = 'public')
+            or (
+              scan.target_type = 'creator_premium'
+              and video.visibility = 'private'
+              and video.purpose = 'creator_premium_video'
+              and video.provider_metadata->'require_signed_urls' = 'true'::jsonb
+              and video.hls_url is null
+              and video.dash_url is null
+              and video.thumbnail_url is null
+            )
+          )
+        )
+        or (
+          scan.visual_source_kind = 'eligible_image'
+          and media.provider = 'r2'
+          and media.status = 'ready'
+          and media.deleted_at is null
+          and media.media_kind = 'image'
+          and media.mime_type in ('image/jpeg','image/png','image/webp')
+          and media.size_bytes > 0
+          and media.size_bytes <= case
+            when scan.target_type = 'creator_premium' then 25000000
+            else 10485760
+          end
+          and nullif(pg_catalog.btrim(media.bucket_name),'') is not null
+          and nullif(pg_catalog.btrim(media.object_key),'') is not null
+          and (
+            (scan.target_type = 'video' and media.visibility = 'public')
+            or (
+              scan.target_type = 'creator_premium'
+              and media.visibility = 'private'
+              and media.purpose = 'creator_premium_original_image'
+              and media.public_url is null
+            )
+          )
+        )
+      )
+    order by scan.visual_available_at,scan.created_at,scan.id
+    for update of scan skip locked
+    limit p_limit
+  loop
+    update private.content_safety_scans set
+      visual_attempt_count = visual_attempt_count + 1,
+      visual_started_at = pg_catalog.clock_timestamp(),
+      visual_last_error_code = null,
+      updated_at = pg_catalog.clock_timestamp()
+    where id = v_row.id;
+    v_result := v_result || pg_catalog.jsonb_build_array(
+      pg_catalog.jsonb_build_object(
+        'scan_id',v_row.id,
+        'target_type',v_row.target_type,
+        'target_id',v_row.target_id,
+        'content_fingerprint',v_row.content_fingerprint,
+        'source_kind',v_row.visual_source_kind,
+        'visual_prompt_version',v_row.visual_prompt_version,
+        'video_asset_id',v_row.visual_video_asset_id,
+        'media_asset_id',v_row.visual_media_asset_id,
+        'cloudflare_uid',v_row.cloudflare_uid,
+        'duration_seconds',v_row.duration_seconds,
+        'bucket_name',v_row.bucket_name,
+        'object_key',v_row.object_key,
+        'mime_type',v_row.mime_type,
+        'size_bytes',v_row.size_bytes,
+        'frame_cursor',v_row.visual_frame_cursor,
+        'partial_result',v_row.visual_partial_result,
+        'attempt_count',v_row.visual_attempt_count + 1,
+        'provider_call_count',v_row.visual_provider_call_count
+      )
+    );
+  end loop;
+  return v_result;
+end;
+$$;
+
 -- P3 succeeds the active Creator Premium general policy without mutating
 -- historical P1/P2 evaluations. Only the two exact revision tuples are valid.
 alter table private.creator_premium_content_safety_context_evaluations
@@ -240,6 +1294,11 @@ set search_path = ''
 as $$
   select coalesce(
     p_context_result->>'decision'='allow'
+    and p_analysis_result->>'schema_version'=
+      'creator-premium-visual-safety-p3-v1'
+    and p_analysis_result->>'weapon_disposition' in (
+      'none','visible_non_threatening'
+    )
     and p_context_result->>'violence_state'='none_observed'
     and p_context_result->>'law_enforcement_state' in (
       'not_observed','routine_peaceful'
@@ -273,6 +1332,15 @@ as $$
         'non_threatening_weapon_presence')
       =
       (p_context_result->>'weapon_state'='visible_non_threatening')
+    )
+    and (
+      (p_analysis_result->>'weapon_disposition'='none'
+        and p_context_result->>'weapon_state'='not_observed')
+      or
+      (p_analysis_result->>'weapon_disposition'=
+          'visible_non_threatening'
+        and p_context_result->>'weapon_state'=
+          'visible_non_threatening')
     )
     and (
       (p_context_result->'categories' ? 'non_threatening_weapon_presence')
@@ -935,12 +2003,21 @@ begin
     and analysis.analysis_fingerprint=v_evaluation.visual_analysis_fingerprint
     and analysis.provider='cloudflare_workers_ai'
     and analysis.model='@cf/google/gemma-4-26b-a4b-it'
-    and analysis.prompt_version='visual-safety-v1'
+    and analysis.prompt_version='creator-premium-visual-safety-p3-v1'
     and ((v_content.content_kind='image'
         and analysis.media_asset_id=v_scan.visual_media_asset_id)
       or (v_content.content_kind='video'
         and analysis.video_asset_id=v_scan.visual_video_asset_id));
   if not found
+     or v_scan.visual_prompt_version<>
+       'creator-premium-visual-safety-p3-v1'
+     or not private.content_safety_visual_result_valid_for_prompt(
+       v_analysis.analysis_result,
+       v_analysis.prompt_version,
+       v_scan.visual_source_kind,
+       null,
+       v_analysis.frame_count
+     )
      or (v_content.content_kind='image' and (
        v_evaluation.transcript_coverage<>'not_applicable'
        or v_evaluation.transcript_id is not null
@@ -1022,7 +2099,7 @@ as $$
     "policy_id":"nelyon.creator_premium.general.p1.v2",
     "predecessor_policy_id":"nelyon.creator_premium.general.p1.v1",
     "title":"Creator Premium General Content Safety P3",
-    "artifact_sha256":"98607897d8e82f5f3df7e632fa214c557f86b0a7e8ff068a03a5794c6b256911",
+    "artifact_sha256":"17215246071255d1b433c9866f5be2998d783ec16ebcade84634fa56fc1a4bcb",
     "normative_approval":{"status":"approved","source":"owner_prompt","authorized_phase":"CONTENT-SAFETY-P3","authorized_at":"2026-10-19","owner_bound":true},
     "scope":{"creator_premium_general":true,"public_feed_policy_changed":false,"explicit_adult_premium":false,"mobile_explicit_adult":false,"finance_effect":false},
     "decision_matrix":{
@@ -1031,6 +2108,7 @@ as $$
       "block":["explicit_sexual_activity","pornography","sexualized_explicit_genital_exposure","child_sexual_exploitation","non_consensual_intimate_content","sexual_violence","torture","mutilation","graphic_murder","graphic_serious_assault","explicit_promotion_of_severe_harm"]
     },
     "context_contract":{"classify_content_and_context_together":true,"keywords_are_context_only":true,"isolated_police_or_weapon_presence_decides_outcome":false,"peaceful_non_graphic_police_operation":"allow","visible_carried_or_holstered_weapon_without_threat":"allow","non_threatening_weapon_presence_requires_visual_binding":true,"structured_signals":{"weapon_state":["not_observed","visible_non_threatening","pointed_brandished_fired_or_threatening","uncertain"],"law_enforcement_state":["not_observed","routine_peaceful","force_or_confrontation","uncertain"],"violence_state":["none_observed","real_non_graphic_or_incidental_injury","graphic_or_severe","uncertain"],"allow_requires_non_threatening_weapon_state":true,"allow_requires_routine_or_absent_law_enforcement_state":true,"allow_requires_no_observed_violence":true},"pointed_brandished_or_fired_weapon":"review","credible_threat_confrontation_or_force":"review","non_graphic_real_violence_or_injury":"review","incidental_blood_or_documentary_violence":"review","ambiguous_or_incomplete":"review","graphic_severe_harm":"block","missing_required_modality":"review","uncertain_age_or_consent":"review"},
+    "visual_contract":{"prompt_version":"creator-premium-visual-safety-p3-v1","evidence_source":"sampled_frames","weapon_disposition":["none","visible_non_threatening","threatening_or_used","ambiguous"],"non_none_requires_weapon_finding":true,"none_forbids_weapon_finding":true,"visible_non_threatening_allows_only_low_or_medium_weapon_findings":true,"merge_lattice":["none","visible_non_threatening","ambiguous","threatening_or_used"],"legacy_visual_safety_v1_authorizes_new_p3_allow":false},
     "activation":{"status":"active","enabled":true,"auto_publish_enabled":true,"blockers":[],"authorized_phase":"CONTENT-SAFETY-P3","authorized_at":"2026-10-19","owner_bound":true,"p2_evidence_preserved":true,"disable_strategy":"forward_only_policy_revision"},
     "publication":{"auto_publish_requires_all_modalities":true,"requires_current_generation":true,"requires_current_owner_and_permissions":true,"requires_provider_validity":true,"requires_active_approved_policy":true,"requires_unambiguous_allow":true,"historical_decisions_are_not_reclassified_automatically":true,"technical_failure":"fail_closed","ambiguous_or_incomplete":"human_review","http_200_is_evidence":false},
     "administrative_review":{"private_by_default":true,"authorized_reviewers_only":true,"audit_required":true,"existing_alerts_are_not_auto_dismissed":true,"historical_restricted_content_is_not_auto_restored":true,"child_exploitation_block_cannot_be_overridden_by_ordinary_review":true},
@@ -1096,7 +2174,7 @@ begin
     v_policy->>'schema_version'='nelyon.creator_premium_content_safety_policy.v2'
     and v_policy->>'policy_id'='nelyon.creator_premium.general.p1.v2'
     and v_policy->>'predecessor_policy_id'='nelyon.creator_premium.general.p1.v1'
-    and v_policy->>'artifact_sha256'='98607897d8e82f5f3df7e632fa214c557f86b0a7e8ff068a03a5794c6b256911'
+    and v_policy->>'artifact_sha256'='17215246071255d1b433c9866f5be2998d783ec16ebcade84634fa56fc1a4bcb'
     and v_policy#>>'{normative_approval,status}'='approved'
     and v_policy#>>'{normative_approval,source}'='owner_prompt'
     and v_policy#>>'{normative_approval,authorized_phase}'='CONTENT-SAFETY-P3'
@@ -1106,6 +2184,21 @@ begin
     and v_policy#>'{scope,explicit_adult_premium}'='false'::jsonb
     and v_policy#>'{scope,mobile_explicit_adult}'='false'::jsonb
     and v_policy#>'{scope,finance_effect}'='false'::jsonb
+    and v_policy#>>'{visual_contract,prompt_version}'=
+      'creator-premium-visual-safety-p3-v1'
+    and v_policy#>>'{visual_contract,evidence_source}'='sampled_frames'
+    and v_policy#>'{visual_contract,weapon_disposition}'=
+      '["none","visible_non_threatening","threatening_or_used","ambiguous"]'::jsonb
+    and v_policy#>'{visual_contract,non_none_requires_weapon_finding}'=
+      'true'::jsonb
+    and v_policy#>'{visual_contract,none_forbids_weapon_finding}'=
+      'true'::jsonb
+    and v_policy#>'{visual_contract,visible_non_threatening_allows_only_low_or_medium_weapon_findings}'=
+      'true'::jsonb
+    and v_policy#>'{visual_contract,merge_lattice}'=
+      '["none","visible_non_threatening","ambiguous","threatening_or_used"]'::jsonb
+    and v_policy#>'{visual_contract,legacy_visual_safety_v1_authorizes_new_p3_allow}'=
+      'false'::jsonb
     and v_policy#>>'{activation,status}'='active'
     and v_policy#>'{activation,enabled}'='true'::jsonb
     and v_policy#>'{activation,auto_publish_enabled}'='true'::jsonb
@@ -1152,7 +2245,7 @@ begin
   end if;
   return v_candidate || pg_catalog.jsonb_build_object(
     'activation_effect',true,
-    'policy_artifact_sha256','98607897d8e82f5f3df7e632fa214c557f86b0a7e8ff068a03a5794c6b256911'
+    'policy_artifact_sha256','17215246071255d1b433c9866f5be2998d783ec16ebcade84634fa56fc1a4bcb'
   );
 end;
 $$;
@@ -1234,6 +2327,8 @@ begin
      or v_scan.text_status<>'analyzed'
      or v_scan.reports_status<>'analyzed'
      or v_scan.visual_status<>'analyzed'
+     or v_scan.visual_prompt_version<>
+       'creator-premium-visual-safety-p3-v1'
      or v_scan.owner_user_id is distinct from v_evaluation.owner_user_id
      or v_scan.content_fingerprint<>v_evaluation.source_content_fingerprint
      or v_content.creator_id<>v_evaluation.owner_user_id
@@ -1249,7 +2344,14 @@ begin
        v_evaluation.visual_analysis_fingerprint
      or v_analysis.provider<>'cloudflare_workers_ai'
      or v_analysis.model<>'@cf/google/gemma-4-26b-a4b-it'
-     or v_analysis.prompt_version<>'visual-safety-v1'
+     or v_analysis.prompt_version<>'creator-premium-visual-safety-p3-v1'
+     or not private.content_safety_visual_result_valid_for_prompt(
+       v_analysis.analysis_result,
+       v_analysis.prompt_version,
+       v_scan.visual_source_kind,
+       null,
+       v_analysis.frame_count
+     )
      or (v_content.content_kind='image'
        and v_analysis.media_asset_id is distinct from v_scan.visual_media_asset_id)
      or (v_content.content_kind='video'
@@ -1460,6 +2562,8 @@ begin
     and scan.text_status='analyzed'
     and scan.reports_status='analyzed'
     and scan.visual_status='analyzed'
+    and scan.visual_prompt_version=
+      'creator-premium-visual-safety-p3-v1'
     and scan.owner_user_id=content.creator_id
     and content.lifecycle_status='pending_review'
     and content.verification_scan_id=scan.id
@@ -1471,7 +2575,14 @@ begin
     )
     and analysis.provider='cloudflare_workers_ai'
     and analysis.model='@cf/google/gemma-4-26b-a4b-it'
-    and analysis.prompt_version='visual-safety-v1'
+    and analysis.prompt_version='creator-premium-visual-safety-p3-v1'
+    and private.content_safety_visual_result_valid_for_prompt(
+      analysis.analysis_result,
+      analysis.prompt_version,
+      scan.visual_source_kind,
+      null,
+      analysis.frame_count
+    )
     and ((content.content_kind='image'
         and scan.audio_status='not_applicable'
         and transcript.id is null
@@ -1518,8 +2629,19 @@ begin
       and scan.text_status='analyzed'
       and scan.reports_status='analyzed'
       and scan.visual_status='analyzed'
+      and scan.visual_prompt_version=
+        'creator-premium-visual-safety-p3-v1'
       and scan.content_fingerprint=evaluation.source_content_fingerprint
       and scan.visual_analysis_id=evaluation.visual_analysis_id
+      and analysis.prompt_version=
+        'creator-premium-visual-safety-p3-v1'
+      and private.content_safety_visual_result_valid_for_prompt(
+        analysis.analysis_result,
+        analysis.prompt_version,
+        scan.visual_source_kind,
+        null,
+        analysis.frame_count
+      )
       and content.creator_id=evaluation.owner_user_id
       and content.lifecycle_status='pending_review'
       and content.verification_scan_id=scan.id

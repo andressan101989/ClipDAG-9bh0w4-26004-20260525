@@ -115,8 +115,35 @@ test('P3 validates visual compatibility for every ALLOW instead of trusting the 
   assert.match(compatibility, /non_threatening_weapon_presence/i)
   assert.match(compatibility, /non_threatening_weapon_context/i)
   assert.match(compatibility, /finding->>'category'\s*=\s*'other'[\s\S]*non_graphic_law_enforcement_operation/i)
+  assert.match(compatibility, /creator-premium-visual-safety-p3-v1/i)
+  assert.match(compatibility, /analysis_result->>'weapon_disposition'/i)
+  assert.match(compatibility, /visible_non_threatening/i)
   assert.match(candidate, /creator_premium_content_safety_visual_allow_compatible_p3_v1\s*\(/i)
   assert.match(completion, /creator_premium_content_safety_visual_allow_compatible_p3_v1\s*\(/i)
+})
+
+test('P3 versions only new Creator Premium visual scans while retaining bounded v1 compatibility', () => {
+  const enqueue = functionBody('private.enqueue_content_safety_scan')
+  const claim = functionBody('public.claim_content_safety_visual_scans')
+  const complete = functionBody('public.complete_content_safety_visual_analysis')
+  const attach = functionBody('private.content_safety_attach_visual_analysis')
+  assert.match(sql, /creator-premium-visual-safety-p3-v1/i)
+  assert.match(sql, /content_safety_scans_visual_prompt_check[\s\S]*visual-safety-v1[\s\S]*creator-premium-visual-safety-p3-v1/i)
+  assert.match(sql, /content_safety_visual_analyses_prompt_check[\s\S]*visual-safety-v1[\s\S]*creator-premium-visual-safety-p3-v1/i)
+  assert.match(enqueue, /p_target_type\s*=\s*'creator_premium'[\s\S]*creator-premium-visual-safety-p3-v1/i)
+  assert.match(claim, /visual_prompt_version/i)
+  assert.match(claim, /creator-premium-visual-safety-p3-v1/i)
+  assert.match(complete, /v_scan\.visual_prompt_version/i)
+  assert.match(complete, /analysis_result->>'weapon_disposition'/i)
+  assert.match(attach, /scan\.visual_prompt_version\s*=\s*v_analysis\.prompt_version/i)
+
+  const worker = readFileSync(
+    new URL('../supabase/functions/content-safety-scan/index.ts', import.meta.url),
+    'utf8',
+  )
+  assert.match(worker, /visual_prompt_version/i)
+  assert.match(worker, /promptVersion:\s*String\(scan\.visual_prompt_version\)/i)
+  assert.match(worker, /scan\.visual_prompt_version[^]*JSON\.stringify\(result\)/i)
 })
 
 test('P3 double reconciliation leaves contextual scanner alerts stable and still processes external alerts', () => {

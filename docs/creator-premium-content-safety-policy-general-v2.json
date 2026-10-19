@@ -98,6 +98,26 @@
     "missing_required_modality": "review",
     "uncertain_age_or_consent": "review"
   },
+  "visual_contract": {
+    "prompt_version": "creator-premium-visual-safety-p3-v1",
+    "evidence_source": "sampled_frames",
+    "weapon_disposition": [
+      "none",
+      "visible_non_threatening",
+      "threatening_or_used",
+      "ambiguous"
+    ],
+    "non_none_requires_weapon_finding": true,
+    "none_forbids_weapon_finding": true,
+    "visible_non_threatening_allows_only_low_or_medium_weapon_findings": true,
+    "merge_lattice": [
+      "none",
+      "visible_non_threatening",
+      "ambiguous",
+      "threatening_or_used"
+    ],
+    "legacy_visual_safety_v1_authorizes_new_p3_allow": false
+  },
   "activation": {
     "status": "active",
     "enabled": true,
