@@ -522,11 +522,11 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
     assert.match(exception.authorization.negative_test_evidence_sha256, /^[0-9a-f]{64}$/);
     if (exception.advisor_fingerprint === P3_C2_EXCEPTION_FINGERPRINT) {
       assert.equal(exception.object.name, 'get_admin_creator_premium_content_v1');
-      assert.equal(exception.attestation.definition_sha256, '55e7e99f0e9015f738e973484a8e857df0c650c174dee01817784557ea297c4f');
+      assert.equal(exception.attestation.definition_sha256, 'da4ae0e4416fc032f0b0cb3dfad00b6e1c5b95592bfa6b7ae926964b696f79bc');
       assert.equal(exception.origin.migration, '20261020030515_creator_premium_p3_c2_admin_restriction_recovery');
-      assert.equal(exception.origin.migration_blob, 'af06002bfacd22f4cbc0dcfc3e02b6df260bdf2e');
-      assert.equal(exception.origin.source_sha, '82f412fecad546e56dc756833c4a50288088a798');
-      assert.equal(exception.authorization.negative_test_evidence_sha256, '839500ce3f146f17811258c9fe3468b75cd764a1c7eb368a8de4175afeb1a2bc');
+      assert.equal(exception.origin.migration_blob, '3cb930ae07e72e8a49c862556057822128a1087a');
+      assert.equal(exception.origin.source_sha, 'd8fc23a8d823494df68af7aaf93314c30631b5aa');
+      assert.equal(exception.authorization.negative_test_evidence_sha256, 'ae0206b79e90c6af6cacb6f11444437211467c7323c7667078c05c9d6b9446cb');
       assert.deepEqual(exception.authorization.controls, [
         'authenticated_session',
         'bounded_private_projection',

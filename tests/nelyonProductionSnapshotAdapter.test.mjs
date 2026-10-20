@@ -1179,8 +1179,8 @@ test('phase-bound RPC attestations activate P3-C2 recovery readiness only after 
   const postDetail = post.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
   const recoveryDetail = recovery.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
   assert.equal(preDetail.attestation.definition_sha256, '2a91f72e122beeee0f3d3c9f59ef99f13d2aefab9bcbc987594a5ac43c40a47e');
-  assert.equal(postDetail.attestation.definition_sha256, '55e7e99f0e9015f738e973484a8e857df0c650c174dee01817784557ea297c4f');
-  assert.equal(recoveryDetail.attestation.definition_sha256, '55e7e99f0e9015f738e973484a8e857df0c650c174dee01817784557ea297c4f');
+  assert.equal(postDetail.attestation.definition_sha256, 'da4ae0e4416fc032f0b0cb3dfad00b6e1c5b95592bfa6b7ae926964b696f79bc');
+  assert.equal(recoveryDetail.attestation.definition_sha256, 'da4ae0e4416fc032f0b0cb3dfad00b6e1c5b95592bfa6b7ae926964b696f79bc');
 });
 
 test('postcheck advisor delta accepts only exact phase-approved fingerprints', async () => {
