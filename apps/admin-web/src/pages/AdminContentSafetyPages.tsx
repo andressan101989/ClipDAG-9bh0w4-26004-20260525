@@ -16,6 +16,13 @@ const categories=["violence","threat","harassment","hate","sexual","self_harm","
 const alertPageLimit=50;
 const alertSearchFilters=(severity:string,status:string,category:string,target:string,source:string,coverage:string)=>({p_severity:severity||null,p_status:status||null,p_category:category||null,p_target_type:target||null,p_source_type:source||null,p_coverage:coverage||null,p_limit:alertPageLimit});
 const normalizeAlertPage=(page:Record<string,unknown>):Record<string,unknown>=>({...page,next_cursor:asRows(page.items).length===alertPageLimit?page.next_cursor:null});
+const contentSafetyAlertActionError=(cause:unknown)=>{
+  const message=cause instanceof Error?cause.message:"";
+  if(message==="content_safety_alert_already_closed")return"La alerta ya tiene una decisión final. Actualiza el detalle; esa decisión no puede sobrescribirse.";
+  if(message==="content_safety_alert_not_found")return"La alerta ya no está disponible. Actualiza la cola antes de continuar.";
+  if(message==="admin_capability_forbidden")return"Tu sesión no tiene la capacidad administrativa necesaria para revisar esta alerta.";
+  return"No se pudo revisar la alerta. Actualiza el detalle antes de reintentar.";
+};
 
 export function AdminContentSafetyPage(){
   const [severity,setSeverity]=useState(""),[status,setStatus]=useState("open"),[category,setCategory]=useState(""),[target,setTarget]=useState(""),[source,setSource]=useState(""),[coverage,setCoverage]=useState(""),[data,setData]=useState<Record<string,unknown>|null>(null),[error,setError]=useState<string|null>(null),[loadError,setLoadError]=useState<string|null>(null),[loadingMore,setLoadingMore]=useState(false),[nonce,setNonce]=useState(0);
@@ -39,7 +46,7 @@ export function AdminContentSafetyPage(){
 export function AdminContentSafetyDetailPage(){
   const {id=""}=useParams(),{hasCapability}=useAdminAuth();const [detail,setDetail]=useState<Record<string,unknown>|null>(null),[error,setError]=useState<string|null>(null),[note,setNote]=useState(""),[resolution,setResolution]=useState("reviewed"),[busy,setBusy]=useState(false),[nonce,setNonce]=useState(0);
   useEffect(()=>{let active=true;setDetail(null);setError(null);void getAdminContentSafetyAlert(id).then((value)=>{if(active)setDetail(value)}).catch((cause)=>{if(active)setError(cause instanceof Error?cause.message:"No se pudo cargar la alerta")});return()=>{active=false}},[id,nonce]);
-  const act=async(action:"take_review"|"dismiss"|"resolve")=>{if(action!=="take_review"&&note.trim().length<2)return setError("Indica una nota de al menos 2 caracteres.");setBusy(true);setError(null);try{await reviewAdminContentSafetyAlert({id,action,resolution:action==="resolve"?resolution:null,note:note.trim()||null,idempotencyKey:crypto.randomUUID()});setNote("");setNonce((value)=>value+1)}catch(cause){setError(cause instanceof Error?cause.message:"No se pudo revisar la alerta")}finally{setBusy(false)}};
+  const act=async(action:"take_review"|"dismiss"|"resolve")=>{if(action!=="take_review"&&note.trim().length<2)return setError("Indica una nota de al menos 2 caracteres.");setBusy(true);setError(null);try{await reviewAdminContentSafetyAlert({id,action,resolution:action==="resolve"?resolution:null,note:note.trim()||null,idempotencyKey:crypto.randomUUID()});setNote("");setNonce((value)=>value+1)}catch(cause){setError(contentSafetyAlertActionError(cause))}finally{setBusy(false)}};
   const retry=async()=>{const scan=asRecord(detail?.scan);setBusy(true);setError(null);try{await retryAdminContentSafetyScan({id:String(scan.id),idempotencyKey:crypto.randomUUID()});setNonce((value)=>value+1)}catch(cause){setError(cause instanceof Error?cause.message:"No se pudo reintentar el scan")}finally{setBusy(false)}};
   if(error&&!detail)return <ErrorState message={error} onRetry={()=>setNonce((value)=>value+1)}/>;if(!detail)return <LoadingState label="Cargando alerta…"/>;
   const author=asRecord(detail.author),scan=asRecord(detail.scan),coverage=asRecord(scan.coverage),content=asRecord(detail.content),rule=asRecord(detail.rule),evidence=asRecord(detail.evidence),relatedReports=asRows(detail.related_reports),incomplete=[coverage.audio,coverage.visual].includes("not_configured");

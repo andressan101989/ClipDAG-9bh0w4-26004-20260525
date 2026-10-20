@@ -2,7 +2,7 @@ import {act,fireEvent,render,screen,waitFor,within} from "@testing-library/react
 import {MemoryRouter,Route,Routes} from "react-router-dom";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
-import {approveAdminContentSafetyRule,createAdminContentSafetyRule,getAdminContentSafetyAlert,getAdminContentSafetyAudioDetail,getAdminContentSafetyVisualDetail,previewAdminContentSafetyRule,searchAdminContentSafetyAlerts,searchAdminContentSafetyAudio,searchAdminContentSafetyRules,searchAdminContentSafetyVisual,setAdminContentSafetyRuleEnabled,updateAdminContentSafetyRule} from "../lib/adminSafetyApi";
+import {approveAdminContentSafetyRule,createAdminContentSafetyRule,getAdminContentSafetyAlert,getAdminContentSafetyAudioDetail,getAdminContentSafetyVisualDetail,previewAdminContentSafetyRule,reviewAdminContentSafetyAlert,searchAdminContentSafetyAlerts,searchAdminContentSafetyAudio,searchAdminContentSafetyRules,searchAdminContentSafetyVisual,setAdminContentSafetyRuleEnabled,updateAdminContentSafetyRule} from "../lib/adminSafetyApi";
 import {AdminContentSafetyAudioDetailPage,AdminContentSafetyAudioPage,AdminContentSafetyDetailPage,AdminContentSafetyPage,AdminContentSafetyRulesPage,AdminContentSafetyVisualDetailPage,AdminContentSafetyVisualPage} from "../pages/AdminContentSafetyPages";
 
 vi.mock("../auth/AdminAuthProvider",()=>({useAdminAuth:vi.fn()}));
@@ -94,6 +94,16 @@ describe("ADMIN-SUPERUSER-OPT-F4 Content Safety",()=>{
     expect(within(review).getByRole("button",{name:"Tomar para revisión"})).toBeInTheDocument();
     expect(within(review).getByRole("button",{name:"Sin infracción"})).toBeInTheDocument();
     expect(within(review).queryByRole("button",{name:/ocultar|suspender|warning/i})).not.toBeInTheDocument();
+  });
+
+  it("explains a concurrent terminal alert decision without exposing the domain error",async()=>{
+    vi.mocked(reviewAdminContentSafetyAlert).mockRejectedValue(new Error("content_safety_alert_already_closed"));
+    render(<MemoryRouter initialEntries={[`/content-safety/${alertId}`]}><Routes><Route path="/content-safety/:id" element={<AdminContentSafetyDetailPage/>}/></Routes></MemoryRouter>);
+    await screen.findByRole("heading",{name:"Revisión humana"});
+    fireEvent.change(screen.getByLabelText("Nota de revisión"),{target:{value:"Revisión independiente completa"}});
+    fireEvent.click(screen.getByRole("button",{name:"Sin infracción"}));
+    expect(await screen.findByRole("alert")).toHaveTextContent("La alerta ya tiene una decisión final. Actualiza el detalle; esa decisión no puede sobrescribirse.");
+    expect(screen.queryByText("content_safety_alert_already_closed")).not.toBeInTheDocument();
   });
 
   it("shows Audio AI source reuse, transcript timing and no automatic sanctions",async()=>{
