@@ -1,4 +1,4 @@
-import {fireEvent,render,screen,waitFor,within} from "@testing-library/react";
+import {act,fireEvent,render,screen,waitFor,within} from "@testing-library/react";
 import {MemoryRouter,Route,Routes} from "react-router-dom";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
@@ -44,20 +44,45 @@ describe("ADMIN-SUPERUSER-OPT-F4 Content Safety",()=>{
   });
 
   it("loads the next alert page with the exact server cursor and keeps the first page visible",async()=>{
-    const nextCursor={priority_score:78,created_at:"2026-09-14T12:00:00Z",id:alertId};
-    const nextItem={...item,id:"10000000-0000-4000-8000-000000000009",target_id:"20000000-0000-4000-8000-000000000009",evidence_excerpt:"extracto página 2",priority_score:65};
+    const firstPage=Array.from({length:50},(_,index)=>({...item,id:index===0?alertId:`10000000-0000-4000-8000-${String(index+1).padStart(12,"0")}`,target_id:index===0?targetId:`20000000-0000-4000-8000-${String(index+1).padStart(12,"0")}`,evidence_excerpt:index===0?"extracto acotado":`extracto página 1-${index}`}));
+    const lastItem=firstPage.at(-1)!;
+    const nextCursor={priority_score:lastItem.priority_score,created_at:lastItem.created_at,id:lastItem.id};
+    const nextItem={...item,id:"10000000-0000-4000-8000-000000000999",target_id:"20000000-0000-4000-8000-000000000999",evidence_excerpt:"extracto página 2",priority_score:65};
     vi.mocked(searchAdminContentSafetyAlerts)
-      .mockResolvedValueOnce({stats:{critical_count:0,high_count:2,medium_count:0,low_count:0,open_count:2,in_review_count:0},active_rule_count:0,items:[item],next_cursor:nextCursor})
-      .mockResolvedValueOnce({stats:{critical_count:0,high_count:2,medium_count:0,low_count:0,open_count:2,in_review_count:0},active_rule_count:0,items:[nextItem],next_cursor:null});
+      .mockResolvedValueOnce({stats:{critical_count:0,high_count:51,medium_count:0,low_count:0,open_count:51,in_review_count:0},active_rule_count:0,items:firstPage,next_cursor:nextCursor})
+      .mockResolvedValueOnce({stats:{critical_count:0,high_count:51,medium_count:0,low_count:0,open_count:51,in_review_count:0},active_rule_count:0,items:[nextItem],next_cursor:{priority_score:65,created_at:nextItem.created_at,id:nextItem.id}});
     render(<MemoryRouter><AdminContentSafetyPage/></MemoryRouter>);
     expect(await screen.findByText("extracto acotado")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button",{name:"Cargar más alertas"}));
     await waitFor(()=>expect(searchAdminContentSafetyAlerts).toHaveBeenLastCalledWith(expect.objectContaining({
-      p_cursor_priority:78,p_cursor_created_at:"2026-09-14T12:00:00Z",p_cursor_id:alertId,
+      p_cursor_priority:78,p_cursor_created_at:"2026-09-14T12:00:00Z",p_cursor_id:lastItem.id,
     })));
     expect(screen.getByText("extracto acotado")).toBeInTheDocument();
     expect(await screen.findByText("extracto página 2")).toBeInTheDocument();
     expect(screen.queryByRole("button",{name:"Cargar más alertas"})).not.toBeInTheDocument();
+  });
+
+  it("discards a stale pagination response after alert filters change",async()=>{
+    const firstPage=Array.from({length:50},(_,index)=>({...item,id:index===0?alertId:`10000000-0000-4000-8001-${String(index+1).padStart(12,"0")}`,target_id:index===0?targetId:`20000000-0000-4000-8001-${String(index+1).padStart(12,"0")}`,evidence_excerpt:index===0?"extracto acotado":`extracto inicial ${index}`}));
+    const lastItem=firstPage.at(-1)!;
+    const nextCursor={priority_score:lastItem.priority_score,created_at:lastItem.created_at,id:lastItem.id};
+    const staleItem={...item,id:"10000000-0000-4000-8002-000000000001",target_id:"20000000-0000-4000-8002-000000000001",evidence_excerpt:"respuesta obsoleta"};
+    const filteredItem={...item,id:"10000000-0000-4000-8002-000000000002",target_id:"20000000-0000-4000-8002-000000000002",evidence_excerpt:"resultado threat"};
+    let resolveStale!:(value:Awaited<ReturnType<typeof searchAdminContentSafetyAlerts>>)=>void;
+    const stalePage=new Promise<Awaited<ReturnType<typeof searchAdminContentSafetyAlerts>>>((resolve)=>{resolveStale=resolve});
+    vi.mocked(searchAdminContentSafetyAlerts)
+      .mockResolvedValueOnce({stats:{critical_count:0,high_count:50,medium_count:0,low_count:0,open_count:50,in_review_count:0},active_rule_count:0,items:firstPage,next_cursor:nextCursor})
+      .mockImplementationOnce(()=>stalePage)
+      .mockResolvedValueOnce({stats:{critical_count:0,high_count:1,medium_count:0,low_count:0,open_count:1,in_review_count:0},active_rule_count:0,items:[filteredItem],next_cursor:{priority_score:78,created_at:filteredItem.created_at,id:filteredItem.id}});
+    render(<MemoryRouter><AdminContentSafetyPage/></MemoryRouter>);
+    await screen.findByText("extracto acotado");
+    fireEvent.click(screen.getByRole("button",{name:"Cargar más alertas"}));
+    fireEvent.change(screen.getByLabelText("Categoría"),{target:{value:"threat"}});
+    expect(await screen.findByText("resultado threat")).toBeInTheDocument();
+    await act(async()=>{resolveStale({stats:{critical_count:0,high_count:51,medium_count:0,low_count:0,open_count:51,in_review_count:0},active_rule_count:0,items:[staleItem],next_cursor:null});await stalePage});
+    expect(screen.queryByText("respuesta obsoleta")).not.toBeInTheDocument();
+    expect(screen.getByText("resultado threat")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("keeps review human-only and routes enforcement to canonical content/user surfaces",async()=>{
