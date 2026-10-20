@@ -43,6 +43,23 @@ describe("ADMIN-SUPERUSER-OPT-F4 Content Safety",()=>{
     await waitFor(()=>expect(searchAdminContentSafetyAlerts).toHaveBeenLastCalledWith(expect.objectContaining({p_category:"threat"})));
   });
 
+  it("loads the next alert page with the exact server cursor and keeps the first page visible",async()=>{
+    const nextCursor={priority_score:78,created_at:"2026-09-14T12:00:00Z",id:alertId};
+    const nextItem={...item,id:"10000000-0000-4000-8000-000000000009",target_id:"20000000-0000-4000-8000-000000000009",evidence_excerpt:"extracto página 2",priority_score:65};
+    vi.mocked(searchAdminContentSafetyAlerts)
+      .mockResolvedValueOnce({stats:{critical_count:0,high_count:2,medium_count:0,low_count:0,open_count:2,in_review_count:0},active_rule_count:0,items:[item],next_cursor:nextCursor})
+      .mockResolvedValueOnce({stats:{critical_count:0,high_count:2,medium_count:0,low_count:0,open_count:2,in_review_count:0},active_rule_count:0,items:[nextItem],next_cursor:null});
+    render(<MemoryRouter><AdminContentSafetyPage/></MemoryRouter>);
+    expect(await screen.findByText("extracto acotado")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Cargar más alertas"}));
+    await waitFor(()=>expect(searchAdminContentSafetyAlerts).toHaveBeenLastCalledWith(expect.objectContaining({
+      p_cursor_priority:78,p_cursor_created_at:"2026-09-14T12:00:00Z",p_cursor_id:alertId,
+    })));
+    expect(screen.getByText("extracto acotado")).toBeInTheDocument();
+    expect(await screen.findByText("extracto página 2")).toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Cargar más alertas"})).not.toBeInTheDocument();
+  });
+
   it("keeps review human-only and routes enforcement to canonical content/user surfaces",async()=>{
     render(<MemoryRouter initialEntries={[`/content-safety/${alertId}`]}><Routes><Route path="/content-safety/:id" element={<AdminContentSafetyDetailPage/>}/></Routes></MemoryRouter>);
     expect(await screen.findByText("El análisis automático no cubrió audio/visual. Esta alerta no certifica que el contenido sea seguro.")).toBeInTheDocument();
