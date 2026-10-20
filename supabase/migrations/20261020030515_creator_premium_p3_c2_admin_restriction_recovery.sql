@@ -52,7 +52,9 @@ begin
       end,
       'current_scan_alert_count', recovery.current_scan_alert_count,
       'favorable_alert_count', recovery.favorable_alert_count,
-      'blocking_alert_count', recovery.blocking_alert_count
+      'blocking_alert_count', recovery.blocking_alert_count,
+      'actionable_alert_count', recovery.actionable_alert_count,
+      'terminal_unfavorable_alert_count', recovery.terminal_unfavorable_alert_count
     ),
     'offer', (
       select pg_catalog.jsonb_build_object(
@@ -158,9 +160,20 @@ begin
         where not (
           alert.status = 'dismissed' and alert.resolution = 'no_violation'
         )
-      )::integer as blocking_alert_count
+      )::integer as blocking_alert_count,
+      pg_catalog.count(*) filter (
+        where alert.status in ('open','in_review')
+      )::integer as actionable_alert_count,
+      pg_catalog.count(*) filter (
+        where alert.status not in ('open','in_review')
+          and not (
+            alert.status = 'dismissed' and alert.resolution = 'no_violation'
+          )
+      )::integer as terminal_unfavorable_alert_count
     from private.content_safety_alerts alert
-    where alert.scan_id = content.verification_scan_id
+    where alert.target_type = 'creator_premium'
+      and alert.target_id = content.id
+      and alert.scan_id = content.verification_scan_id
   ) recovery
   where content.id = p_content_id
     and content.lifecycle_status in (
@@ -228,6 +241,13 @@ begin
     'resolution', v_resolution,
     'note', v_note
   )::text);
+
+  -- Serialize an exact command before reading its audit receipt so two
+  -- concurrent replays cannot both miss the first committed result.
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    v_scope || ':' || p_idempotency_key::text,
+    0
+  ));
 
   select * into v_existing
   from private.admin_action_audit

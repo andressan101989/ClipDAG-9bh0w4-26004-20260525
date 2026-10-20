@@ -42,7 +42,7 @@ const renderDetail=()=>render(
   </MemoryRouter>,
 );
 
-const detail=(blockingAlertCount:number)=>({
+const detail=(blockingAlertCount:number,terminalUnfavorableAlertCount=0)=>({
   id:contentId,
   creator:{id:"30000000-0000-4000-8000-000000000003",username:"creator",display_name:"Creator",avatar_url:null},
   title:"Prueba segura",
@@ -70,6 +70,8 @@ const detail=(blockingAlertCount:number)=>({
     current_scan_alert_count:2,
     favorable_alert_count:2-blockingAlertCount,
     blocking_alert_count:blockingAlertCount,
+    actionable_alert_count:blockingAlertCount-terminalUnfavorableAlertCount,
+    terminal_unfavorable_alert_count:terminalUnfavorableAlertCount,
   },
 });
 
@@ -98,6 +100,16 @@ describe("P3-C2 Creator Premium admin recovery",()=>{
     expect(screen.getByRole("link",{name:"Abrir Content Safety → Alertas"})).toHaveAttribute("href","/content-safety");
     expect(screen.getByRole("button",{name:"Solicitar nueva verificación"})).toBeDisabled();
     expect(reviewAdminCreatorPremiumContent).not.toHaveBeenCalled();
+  });
+
+  it("does not tell reviewers to overwrite an immutable unfavorable decision",async()=>{
+    vi.mocked(getAdminCreatorPremiumContent).mockResolvedValue(detail(1,1));
+    renderDetail();
+
+    expect(await screen.findByText("Nueva verificación bloqueada")).toBeInTheDocument();
+    expect(screen.getByText(/1 decisión terminal desfavorable no puede sobrescribirse/i)).toBeInTheDocument();
+    expect(screen.queryByText(/usa el filtro En revisión y marca Sin infracción/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Solicitar nueva verificación"})).toBeDisabled();
   });
 
   it("allows the canonical retry only after the server reports recovery readiness",async()=>{

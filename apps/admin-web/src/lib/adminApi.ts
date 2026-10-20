@@ -361,6 +361,8 @@ export type AdminCreatorPremiumReverification={
   current_scan_alert_count:number;
   favorable_alert_count:number;
   blocking_alert_count:number;
+  actionable_alert_count:number;
+  terminal_unfavorable_alert_count:number;
 };
 
 const validateAdminCreatorPremiumSummary=(value:unknown,name:string):AdminCreatorPremiumSummary=>{const row=object(value,name);return{
@@ -386,14 +388,18 @@ const validateAdminCreatorPremiumReverification=(value:unknown):AdminCreatorPrem
   const currentScanAlertCount=integer(row.current_scan_alert_count,`${name}.current_scan_alert_count`);
   const favorableAlertCount=integer(row.favorable_alert_count,`${name}.favorable_alert_count`);
   const blockingAlertCount=integer(row.blocking_alert_count,`${name}.blocking_alert_count`);
-  if(currentScanAlertCount<0||favorableAlertCount<0||blockingAlertCount<0
+  const actionableAlertCount=integer(row.actionable_alert_count,`${name}.actionable_alert_count`);
+  const terminalUnfavorableAlertCount=integer(row.terminal_unfavorable_alert_count,`${name}.terminal_unfavorable_alert_count`);
+  if(currentScanAlertCount<0||favorableAlertCount<0||blockingAlertCount<0||actionableAlertCount<0||terminalUnfavorableAlertCount<0
     ||favorableAlertCount+blockingAlertCount!==currentScanAlertCount
+    ||actionableAlertCount+terminalUnfavorableAlertCount!==blockingAlertCount
     ||ready!==(lifecycleEligible&&blockingAlertCount===0)
     ||ready===(reasonCode!==null))invalid(`${name}.consistency`);
   return{
     lifecycle_eligible:lifecycleEligible,ready,reason_code:reasonCode,
     current_scan_alert_count:currentScanAlertCount,favorable_alert_count:favorableAlertCount,
-    blocking_alert_count:blockingAlertCount,
+    blocking_alert_count:blockingAlertCount,actionable_alert_count:actionableAlertCount,
+    terminal_unfavorable_alert_count:terminalUnfavorableAlertCount,
   };
 };
 export async function getAdminCreatorPremiumContent(id:string){uuid(id,"creatorPremiumContentId");const value=object(await rpc("get_admin_creator_premium_content_v1",{p_content_id:id}),"creator_premium_detail");return{...value,reverification:validateAdminCreatorPremiumReverification(value.reverification)}}
