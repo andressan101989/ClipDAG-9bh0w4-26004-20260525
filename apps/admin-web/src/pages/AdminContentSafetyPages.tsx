@@ -15,7 +15,7 @@ const scopes=["video_caption","comment","story_text","live_chat","reported_messa
 const categories=["violence","threat","harassment","hate","sexual","self_harm","drugs","weapons","fraud","spam","child_safety","other"];
 const alertPageLimit=50;
 const alertSearchFilters=(severity:string,status:string,category:string,target:string,source:string,coverage:string)=>({p_severity:severity||null,p_status:status||null,p_category:category||null,p_target_type:target||null,p_source_type:source||null,p_coverage:coverage||null,p_limit:alertPageLimit});
-const normalizeAlertPage=(page:Record<string,unknown>)=>({...page,next_cursor:asRows(page.items).length===alertPageLimit?page.next_cursor:null});
+const normalizeAlertPage=(page:Record<string,unknown>):Record<string,unknown>=>({...page,next_cursor:asRows(page.items).length===alertPageLimit?page.next_cursor:null});
 
 export function AdminContentSafetyPage(){
   const [severity,setSeverity]=useState(""),[status,setStatus]=useState("open"),[category,setCategory]=useState(""),[target,setTarget]=useState(""),[source,setSource]=useState(""),[coverage,setCoverage]=useState(""),[data,setData]=useState<Record<string,unknown>|null>(null),[error,setError]=useState<string|null>(null),[loadError,setLoadError]=useState<string|null>(null),[loadingMore,setLoadingMore]=useState(false),[nonce,setNonce]=useState(0);
