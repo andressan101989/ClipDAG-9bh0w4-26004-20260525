@@ -4,7 +4,7 @@ import { evaluateTextRules } from './ruleEngine.mjs'
 import { AudioPipelineError, WHISPER_MODEL, bytesToBase64, downloadStreamAudioBytes, loadStreamAudioDescriptor, makeProbeWav, normalizeWhisperResult, selectStreamAudioDownloadRoute, timecodeForMatch, validateStreamAudioTargetType } from './audioPipeline.mjs'
 import { VISUAL_AI_PROVIDER, VISUAL_MODEL, VisualProbeError, runVisualMultiImageProviderProbe, runVisualProviderProbe } from './visualProbe.mjs'
 import { CREATOR_PREMIUM_VISUAL_PROMPT_VERSION, MAX_PREMIUM_VISUAL_IMAGE_BYTES, MAX_VISUAL_IMAGE_BYTES, VISUAL_PROMPT_VERSION, VisualPipelineError, analyzeVisualBytes, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps } from './visualPipeline.mjs'
-import { POLICY_CONTEXT_POLICY_ID, POLICY_CONTEXT_PROMPT_VERSION, POLICY_CONTEXT_SCHEMA_VERSION, PolicyContextError, policyContextErrorFrom, runPolicyContextAnalysis, runPolicyContextProviderProbe } from './policyContext.mjs'
+import { POLICY_CONTEXT_POLICY_ID, POLICY_CONTEXT_PROMPT_VERSION, POLICY_CONTEXT_SCHEMA_VERSION, PolicyContextError, policyContextCompletionError, policyContextErrorFrom, runPolicyContextAnalysis, runPolicyContextProviderProbe } from './policyContext.mjs'
 import { streamAccountId, streamCustomerCode, streamFetch } from '../_shared/stream.ts'
 import { createPremiumStreamAudioDownloadGrant, createPremiumStreamPlaybackGrant } from '../_shared/premiumStreamSecurity.ts'
 import { getObjectBytes, isR2Transient } from '../_shared/r2.ts'
@@ -396,14 +396,19 @@ Deno.serve(async req => {
         p_context_result: result,
         p_worker_contract: WORKER_CONTRACT,
       })
-      if (error) throw new PolicyContextError('creator_premium_context_completion_failed', { retryable: true, providerCalled: true })
+      if (error) throw policyContextCompletionError(error)
       contextAnalyzed += 1
     } catch (error) {
       const issue = policyContextErrorFrom(error)
       console.warn('creator_premium_context_processing_failed', {
+        scan_id: String(claim.scan_id),
+        policy_id: String(claim.policy_id),
+        schema_version: String(claim.schema_version),
+        prompt_version: String(claim.prompt_version),
         code: issue.code,
         retryable: issue.retryable,
         provider_called: issue.providerCalled,
+        validation_reason: issue.validationReason ?? null,
         attempt_count: Number(claim.attempt_count ?? 0),
         provider_status_code: issue.providerTelemetry?.status_code ?? null,
         provider_correlation_id: issue.providerTelemetry?.request_correlation_id ?? null,
