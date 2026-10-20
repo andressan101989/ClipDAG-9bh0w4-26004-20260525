@@ -75,6 +75,7 @@ const P3_C2_RPC_SECURITY_CASE = {
     'alert_p3c2_dismissed_terminal',
     'alert_p3c2_resolved_terminal',
     'alert_p3c2_concurrent_first_terminal_wins',
+    'alert_p3c2_concurrent_exact_replay',
     'p3c2_finance_off_no_side_effect',
   ],
 };
@@ -913,8 +914,10 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
       ready: false,
       reason_code: 'creator_premium_safety_alert_resolution_required',
       lifecycle_eligible: true,
+      actionable_alert_count: 1,
       blocking_alert_count: 1,
       favorable_alert_count: 0,
+      terminal_unfavorable_alert_count: 0,
       current_scan_alert_count: 1,
     });
     p3c2Proved.add('admin_detail_p3c2_current_scan_blocked');
@@ -931,8 +934,10 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
       ready: true,
       reason_code: null,
       lifecycle_eligible: true,
+      actionable_alert_count: 0,
       blocking_alert_count: 0,
       favorable_alert_count: 1,
+      terminal_unfavorable_alert_count: 0,
       current_scan_alert_count: 1,
     });
     p3c2Proved.add('admin_detail_p3c2_all_alerts_favorable');
@@ -972,13 +977,35 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     assert.equal(concurrentAlertDecisions.filter(result => /content_safety_alert_already_closed/i.test(`${result.stdout}\n${result.stderr}`)).length, 1);
     assert.match(psql(db, `select status||'|'||resolution from private.content_safety_alerts where id='${concurrentHistoricalAlertId}'`).stdout, /^(dismissed\|no_violation|resolved\|content_action_taken)$/);
     p3c2Proved.add('alert_p3c2_concurrent_first_terminal_wins');
+    const exactReplayAlertId = psql(db, `
+      insert into private.content_safety_alerts(
+        scan_id,target_type,target_id,owner_user_id,source_type,category,severity,
+        confidence,priority_score,alert_fingerprint,evidence
+      )
+      select scan_id,target_type,target_id,owner_user_id,'audio_classifier','other','low',
+        0.900000,20,'${createHash('sha256').update(`exact-replay:${blocked.id}`).digest('hex')}',
+        '{"fixture":"p3c2-exact-replay-race"}'::jsonb
+      from private.content_safety_alerts where id='${blockedAlertId}'
+      returning id
+    `).stdout;
+    const exactReplayKey = uid();
+    const exactReplayResults = await Promise.all([
+      adminCommandAsync('admin_review_content_safety_alert',[exactReplayAlertId,'dismiss','no_violation','Concurrent exact replay',exactReplayKey]),
+      adminCommandAsync('admin_review_content_safety_alert',[exactReplayAlertId,'dismiss','no_violation','Concurrent exact replay',exactReplayKey]),
+    ]);
+    assert.equal(exactReplayResults.filter(result => result.status === 0).length, 2);
+    assert.deepEqual(exactReplayResults.map(result => JSON.parse(result.stdout).idempotent).sort(), [false,true]);
+    assert.equal(psql(db, `select count(*) from private.admin_action_audit where idempotency_key='${exactReplayKey}'`).stdout, '1');
+    p3c2Proved.add('alert_p3c2_concurrent_exact_replay');
     const pendingRecovery = json(asRole(db, 'authenticated', id.admin, `select public.get_admin_creator_premium_content_v1('${blocked.id}')`)).reverification;
     assert.deepEqual(pendingRecovery, {
       ready: false,
       reason_code: 'creator_premium_admin_restore_invalid_state',
       lifecycle_eligible: false,
+      actionable_alert_count: 0,
       blocking_alert_count: 0,
       favorable_alert_count: 0,
+      terminal_unfavorable_alert_count: 0,
       current_scan_alert_count: 0,
     });
     p3c2Proved.add('admin_detail_p3c2_new_generation_not_ready');

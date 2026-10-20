@@ -21,6 +21,8 @@ test('P3-C2 adds one forward-only read projection without weakening moderation a
   assert.match(sql, /'favorable_alert_count'/i);
   assert.match(sql, /'blocking_alert_count'/i);
   assert.match(sql, /alert\.scan_id\s*=\s*content\.verification_scan_id/i);
+  assert.match(sql, /alert\.target_type\s*=\s*'creator_premium'[\s\S]*alert\.target_id\s*=\s*content\.id/i,
+    'current-scan readiness must stay bounded by the existing target index');
   assert.match(sql, /alert\.status\s*=\s*'dismissed'[\s\S]*alert\.resolution\s*=\s*'no_violation'/i);
   assert.match(sql, /creator_premium_safety_alert_resolution_required/i);
   assert.doesNotMatch(sql, /alter\s+function\s+public\.get_admin_creator_premium_content_v1\s*\(\s*uuid\s*\)\s+owner\s+to/i,
@@ -33,6 +35,8 @@ test('P3-C2 adds one forward-only read projection without weakening moderation a
   assert.doesNotMatch(sql.slice(detailStart,alertAuthorityStart), /\b(?:insert\s+into|update|delete\s+from)\s+private\./i,
     'the recovery projection migration must not mutate production content or alerts');
   assert.match(sql, /create\s+or\s+replace\s+function\s+public\.admin_review_content_safety_alert\s*\(/i);
+  assert.match(sql, /pg_advisory_xact_lock\s*\(\s*pg_catalog\.hashtextextended\s*\([\s\S]*p_idempotency_key/i,
+    'exact concurrent replays must serialize before the audit lookup');
   assert.match(sql, /p_action\s+in\s*\(\s*'dismiss'\s*,\s*'resolve'\s*\)[\s\S]*v_alert\.status\s+not\s+in\s*\(\s*'open'\s*,\s*'in_review'\s*\)[\s\S]*content_safety_alert_already_closed/i,
     'terminal alert decisions must be immutable while exact idempotent replay remains available');
   assert.match(sql, /revoke\s+all\s+on\s+function\s+public\.admin_review_content_safety_alert\s*\(\s*uuid\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*uuid\s*\)\s+from\s+public\s*,\s*anon\s*,\s*authenticated\s*,\s*service_role/i);
