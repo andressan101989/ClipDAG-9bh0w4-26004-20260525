@@ -204,6 +204,11 @@ export async function runVisualMultiImageProviderProbe({ token, accountId, fetch
 }
 
 export async function runVisualStructuredRequest({ token, accountId, request, fetchImpl = fetch }) {
+  const result = await runVisualStructuredRequestWithTelemetry({ token, accountId, request, fetchImpl })
+  return result.value
+}
+
+export async function runVisualStructuredRequestWithTelemetry({ token, accountId, request, fetchImpl = fetch }) {
   if (!token || !accountId) throw new VisualProbeError('visual_workers_ai_configuration_missing', 503)
   if (!validVisualFunctionRequest(request)) throw new VisualProbeError('visual_workers_ai_request_contract_invalid', 400)
   const response = await fetchImpl(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${VISUAL_MODEL}`, {
@@ -213,11 +218,14 @@ export async function runVisualStructuredRequest({ token, accountId, request, fe
   }).catch(() => { throw new VisualProbeError('visual_workers_ai_network_error', 502, { retryable: true, providerCalled: true }) })
   if (!response.ok) throw providerError(response.status)
   const payload = await response.json().catch(() => { throw new VisualProbeError('visual_workers_ai_response_malformed', 502, { providerCalled: true }) })
-  try { return visualStructuredResponseValue(payload) }
+  const providerTelemetry = safeProviderTelemetry(response, payload)
+  try {
+    return { value: visualStructuredResponseValue(payload), providerTelemetry }
+  }
   catch (error) {
     if (error instanceof VisualProbeError) {
       error.providerCalled = true
-      error.providerTelemetry = safeProviderTelemetry(response, payload)
+      error.providerTelemetry = providerTelemetry
     }
     throw error
   }

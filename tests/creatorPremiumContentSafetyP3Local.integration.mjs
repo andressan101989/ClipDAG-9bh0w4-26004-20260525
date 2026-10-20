@@ -26,6 +26,7 @@ const suffixes = [
   '_creator_premium_f1_c4_final_recovery.sql',
   '_creator_premium_f1_c6_submit_unavailable_mapping_recovery.sql',
   '_creator_premium_content_safety_p3_contextual_violence_policy_v2.sql',
+  '_creator_premium_p3_c3_safety_decision_recovery.sql',
 ]
 const chain = suffixes.map(suffix => {
   const found = readdirSync(migrations).filter(name => name.endsWith(suffix))
@@ -71,6 +72,7 @@ function quoteSql(value) {
 
 function imageFixtureSql({
   actor, content, scan, analysis, original, teaser, title, findings,
+  generation = 1,
   promptVersion = 'creator-premium-visual-safety-p3-v1',
   weaponDisposition = findings.some(finding => finding.category === 'weapons')
     ? 'visible_non_threatening'
@@ -100,11 +102,11 @@ function imageFixtureSql({
     insert into private.creator_premium_contents(
       id,creator_id,title,description,content_kind,access_mode,lifecycle_status,
       submitted_at,verification_scan_id,verification_fingerprint,verification_status,
-      verification_requested_at
+      verification_requested_at,verification_generation
     ) values(
       '${content}','${actor}','${quoteSql(title)}','P3 contextual violence disposable fixture',
       'image','purchase','pending_review',clock_timestamp(),'${scan}','${'a'.repeat(64)}',
-      'pending',clock_timestamp()
+      'pending',clock_timestamp(),${generation}
     );
     insert into public.media_assets(
       id,owner_id,provider,media_kind,purpose,visibility,bucket_name,object_key,
@@ -147,6 +149,114 @@ function imageFixtureSql({
   `
 }
 
+function videoFixtureSql({
+  actor, content, scan, analysis, video, transcript, teaser, title, generation = 2,
+}) {
+  const analysisResult = JSON.stringify({
+    schema_version: 'creator-premium-visual-safety-p3-v1',
+    weapon_disposition: 'visible_non_threatening',
+    review_required: true,
+    findings: [0, 2, 4].map(frameIndex => ({
+      category: 'weapons',
+      triage_level: 'low',
+      description: 'Visible but non-threatening service weapon in a synthetic fixture.',
+      frame_index: frameIndex,
+    })),
+    summary: 'Five synthetic sampled frames show no threat, force, injury, blood, or violence.',
+  })
+  return `
+    set session_replication_role=replica;
+    insert into private.content_safety_scans(
+      id,target_type,target_id,owner_user_id,content_fingerprint,status,requested_reason,
+      text_status,audio_status,visual_status,reports_status,completed_at,created_at,updated_at,
+      visual_provider,visual_model,visual_prompt_version,visual_source_kind
+    ) values(
+      '${scan}','creator_premium','${content}','${actor}','${'a'.repeat(64)}',
+      'completed','retry','analyzed','analyzed','analyzed','analyzed',clock_timestamp(),
+      clock_timestamp()-interval '1 second',clock_timestamp(),
+      'cloudflare_workers_ai','@cf/google/gemma-4-26b-a4b-it',
+      'creator-premium-visual-safety-p3-v1','eligible_stream_video'
+    );
+    insert into private.creator_premium_contents(
+      id,creator_id,title,description,content_kind,access_mode,lifecycle_status,
+      submitted_at,verification_scan_id,verification_fingerprint,verification_status,
+      verification_requested_at,verification_generation
+    ) values(
+      '${content}','${actor}','${quoteSql(title)}','P3 generation two video fixture',
+      'video','purchase','pending_review',clock_timestamp(),'${scan}','${'a'.repeat(64)}',
+      'pending',clock_timestamp(),${generation}
+    );
+    insert into public.media_assets(
+      id,owner_id,provider,media_kind,purpose,visibility,bucket_name,object_key,
+      mime_type,size_bytes,status,ready_at,public_url
+    ) values(
+      '${teaser}','${actor}','r2','image','creator_premium_teaser_image','public',
+      'public-bucket','premium/${teaser}.jpg','image/jpeg',1000,'ready',clock_timestamp(),
+      'https://cdn.test/${teaser}.jpg'
+    );
+    insert into public.video_assets(
+      id,owner_id,provider,purpose,visibility,status,cloudflare_uid,mime_type,size_bytes,
+      max_duration_seconds,duration_seconds,ready_at,provider_metadata,hls_url,dash_url,
+      thumbnail_url
+    ) values(
+      '${video}','${actor}','cloudflare_stream','creator_premium_video','private','ready',
+      'premium-${video}','video/mp4',2000000,180,90,clock_timestamp(),
+      '{"require_signed_urls":true}'::jsonb,null,null,null
+    );
+    insert into public.media_asset_links(asset_id,entity_type,entity_id,slot,"position") values
+      ('${teaser}','creator_premium_content','${content}','teaser',0);
+    insert into public.video_asset_links(
+      asset_id,owner_id,entity_type,entity_id,slot,"position"
+    ) values(
+      '${video}','${actor}','creator_premium_content','${content}','original',0
+    );
+    insert into private.content_safety_visual_analyses(
+      id,source_scan_id,video_asset_id,source_content_fingerprint,provider,model,
+      prompt_version,sample_strategy,frame_count,frame_timestamps_ms,analysis_result,
+      analysis_fingerprint,provider_call_count
+    ) values(
+      '${analysis}','${scan}','${video}','${'a'.repeat(64)}','cloudflare_workers_ai',
+      '@cf/google/gemma-4-26b-a4b-it','creator-premium-visual-safety-p3-v1',
+      'percentile_5_v1',5,array[0,22500,45000,67500,90000]::integer[],
+      '${quoteSql(analysisResult)}'::jsonb,'${'d'.repeat(64)}',5
+    );
+    insert into private.content_safety_audio_transcripts(
+      id,source_scan_id,source_asset_id,source_content_fingerprint,provider,model,
+      detected_language,transcript_text,word_count,segments,no_speech,
+      transcript_fingerprint,rule_eval_status,rule_eval_attempt_count,
+      rule_eval_ruleset_fingerprint,rule_eval_completed_at,created_at,updated_at
+    ) values(
+      '${transcript}','${scan}','${video}','${'a'.repeat(64)}','cloudflare_workers_ai',
+      '@cf/openai/whisper-large-v3-turbo','es',
+      'Operativo pacifico sin amenaza fuerza sangre lesion ni violencia.',9,'[]'::jsonb,false,
+      '${'e'.repeat(64)}','completed',1,'${'f'.repeat(64)}',clock_timestamp(),
+      clock_timestamp()-interval '1 second',clock_timestamp()
+    );
+    update private.content_safety_scans set
+      content_fingerprint=private.content_safety_sha256(
+        'creator_premium|'||target_id::text||'|'||coalesce(
+          private.content_safety_target_snapshot('creator_premium',target_id)->>'content_version',''
+        )
+      ),
+      visual_analysis_id='${analysis}',visual_video_asset_id='${video}',
+      audio_source_asset_id='${video}'
+    where id='${scan}';
+    update private.creator_premium_contents content_row set
+      verification_fingerprint=scan_row.content_fingerprint
+    from private.content_safety_scans scan_row
+    where content_row.id='${content}' and scan_row.id='${scan}';
+    update private.content_safety_visual_analyses analysis_row set
+      source_content_fingerprint=scan_row.content_fingerprint
+    from private.content_safety_scans scan_row
+    where analysis_row.id='${analysis}' and scan_row.id='${scan}';
+    update private.content_safety_audio_transcripts transcript_row set
+      source_content_fingerprint=scan_row.content_fingerprint
+    from private.content_safety_scans scan_row
+    where transcript_row.id='${transcript}' and scan_row.id='${scan}';
+    set session_replication_role=origin;
+  `
+}
+
 function addActiveOffer(db, actor, fixture) {
   psql(db, `
     insert into private.creator_premium_offer_versions(
@@ -169,10 +279,14 @@ function addActiveOffer(db, actor, fixture) {
       source_content_fingerprint=scan_row.content_fingerprint
     from private.content_safety_scans scan_row
     where analysis_row.id='${fixture.analysis}' and scan_row.id='${fixture.scan}';
+    update private.content_safety_audio_transcripts transcript_row set
+      source_content_fingerprint=scan_row.content_fingerprint
+    from private.content_safety_scans scan_row
+    where transcript_row.source_scan_id='${fixture.scan}' and scan_row.id='${fixture.scan}';
   `)
 }
 
-function p3ContextResult() {
+function p3ContextResult({ transcript = 'not_applicable' } = {}) {
   return JSON.stringify({
     schema_version: 'creator-premium-context-p3-v1',
     policy_id: 'nelyon.creator_premium.general.p1.v2',
@@ -181,7 +295,7 @@ function p3ContextResult() {
       'non_graphic_law_enforcement_operation',
       'non_threatening_weapon_presence',
     ],
-    coverage: { text: 'complete', transcript: 'not_applicable', visual: 'complete' },
+    coverage: { text: 'complete', transcript, visual: 'complete' },
     uncertainty: 'unambiguous',
     age_uncertainty: 'not_relevant',
     consent_uncertainty: 'not_relevant',
@@ -196,6 +310,14 @@ function p3ContextResult() {
   })
 }
 
+function p3CanonicalizedWeaponAllowResult({ transcript = 'complete' } = {}) {
+  const result = JSON.parse(p3ContextResult({ transcript }))
+  result.categories = ['entertainment', 'non_threatening_weapon_presence']
+  result.law_enforcement_state = 'not_observed'
+  result.rationale_codes = ['benign_context', 'non_threatening_weapon_context']
+  return JSON.stringify(result)
+}
+
 function p2ContextResult() {
   return JSON.stringify({
     schema_version: 'creator-premium-context-p2-v1',
@@ -208,6 +330,24 @@ function p2ContextResult() {
     consent_uncertainty: 'not_relevant',
     certainty_basis: 'discrete_contract',
     rationale_codes: ['educational_context'],
+  })
+}
+
+function p3ReviewResult() {
+  return JSON.stringify({
+    schema_version: 'creator-premium-context-p3-v1',
+    policy_id: 'nelyon.creator_premium.general.p1.v2',
+    decision: 'review',
+    categories: ['ambiguous_weapon_or_law_enforcement_context'],
+    coverage: { text: 'complete', transcript: 'not_applicable', visual: 'complete' },
+    uncertainty: 'ambiguous',
+    age_uncertainty: 'not_relevant',
+    consent_uncertainty: 'not_relevant',
+    weapon_state: 'visible_non_threatening',
+    law_enforcement_state: 'routine_peaceful',
+    violence_state: 'none_observed',
+    certainty_basis: 'discrete_contract',
+    rationale_codes: ['ambiguous_context'],
   })
 }
 
@@ -322,11 +462,15 @@ function addAlert(db, actor, fixture, { sourceType, category, fingerprint, ruleI
   `)
 }
 
-test('P3 disposable harness binds one forward-only contextual violence migration', () => {
+test('P3 disposable harness binds the contextual policy and one focal P3-C3 recovery migration', () => {
   for (const item of chain) assert.equal(item.found.length, 1, item.suffix)
   assert.match(
-    chain.at(-1).found[0],
+    chain.at(-2).found[0],
     /^\d{14}_creator_premium_content_safety_p3_contextual_violence_policy_v2\.sql$/,
+  )
+  assert.match(
+    chain.at(-1).found[0],
+    /^\d{14}_creator_premium_p3_c3_safety_decision_recovery\.sql$/,
   )
 })
 
@@ -357,7 +501,14 @@ test('P3 disposable runtime preserves version identity, publishes contextual sca
         ('MODERATOR','content.items.moderate')
       on conflict(role_code,capability_code) do nothing;
     `)
-    for (const item of chain) psql(db, item.sql)
+    for (const item of chain.slice(0, -1)) psql(db, item.sql)
+    const validatorOwnerBefore = psql(db, `
+      select pg_catalog.pg_get_userbyid(proc.proowner)
+      from pg_catalog.pg_proc proc
+      where proc.oid=
+        'private.creator_premium_content_safety_context_result_valid_p3_v1(jsonb,text)'::regprocedure
+    `).stdout
+    psql(db, chain.at(-1).sql)
 
     assert.equal(
       psql(db, `
@@ -400,6 +551,7 @@ test('P3 disposable runtime preserves version identity, publishes contextual sca
     for (const signature of [
       'private.content_safety_visual_analysis_id_for_asset(uuid,uuid,text)',
       'private.content_safety_visual_producer_scan_id(uuid,uuid,text)',
+      'private.creator_premium_content_safety_context_result_valid_p3_v1(jsonb,text)',
       'private.creator_premium_content_safety_visual_allow_compatible_p3_v1(jsonb,jsonb)',
       'private.creator_premium_content_safety_historical_p2_allow_valid_p3_v1(uuid)',
     ]) {
@@ -408,6 +560,23 @@ test('P3 disposable runtime preserves version identity, publishes contextual sca
           select has_function_privilege('${role}','${signature}','execute')
         `).stdout, 'f', `${role}:${signature}`)
       }
+    }
+    assert.equal(psql(db, `
+      select pg_catalog.pg_get_userbyid(proc.proowner)||'|'||
+        proc.prosecdef::text||'|'||proc.provolatile::text||'|'||
+        coalesce(pg_catalog.array_to_string(proc.proconfig,','),'')
+      from pg_catalog.pg_proc proc
+      where proc.oid=
+        'private.creator_premium_content_safety_context_result_valid_p3_v1(jsonb,text)'::regprocedure
+    `).stdout, `${validatorOwnerBefore}|false|i|search_path=""`)
+    for (const role of ['postgres', 'supabase_admin']) {
+      assert.equal(psql(db, `
+        select has_function_privilege(
+          '${role}',
+          'private.creator_premium_content_safety_context_result_valid_p3_v1(jsonb,text)',
+          'execute'
+        )
+      `).stdout, 't', `${role}:private validator execute`)
     }
 
     for (const path of [
@@ -481,6 +650,22 @@ test('P3 disposable runtime preserves version identity, publishes contextual sca
         )
       `).stdout, 'f', `contradictory provider output must fail closed: ${JSON.stringify(invalid)}`)
     }
+    assert.equal(psql(db, `
+      select private.creator_premium_content_safety_context_result_valid_p3_v1(
+        '${quoteSql(p3ReviewResult())}'::jsonb,'not_applicable'
+      )
+    `).stdout, 't', 'REVIEW may preserve independent safe observable states without ALLOW labels')
+    const independentBlock = JSON.parse(p3ReviewResult())
+    independentBlock.decision = 'block'
+    independentBlock.categories = ['graphic_serious_assault']
+    independentBlock.uncertainty = 'unambiguous'
+    independentBlock.violence_state = 'graphic_or_severe'
+    independentBlock.rationale_codes = ['severe_explicit_context']
+    assert.equal(psql(db, `
+      select private.creator_premium_content_safety_context_result_valid_p3_v1(
+        '${quoteSql(JSON.stringify(independentBlock))}'::jsonb,'not_applicable'
+      )
+    `).stdout, 't', 'BLOCK may preserve unrelated bounded weapon and police observations')
 
     assert.equal(
       psql(db, `
@@ -848,6 +1033,89 @@ test('P3 disposable runtime preserves version identity, publishes contextual sca
       select lifecycle_status||'|'||verification_status
       from private.creator_premium_contents where id='${allowed.content}'
     `).stdout, 'published|passed')
+
+    const generationTwo = {
+      content: randomUUID(), scan: randomUUID(), analysis: randomUUID(),
+      original: randomUUID(), teaser: randomUUID(), offer: randomUUID(),
+    }
+    psql(db, imageFixtureSql({
+      actor,
+      ...generationTwo,
+      generation: 2,
+      title: 'P3 generation two review fixture',
+      findings: [{
+        category: 'weapons',
+        triage_level: 'low',
+        description: 'Visible but non-threatening weapon in an ambiguous wider context.',
+      }],
+    }))
+    const generationTwoClaim = claimP3(db)
+    assert.equal(generationTwoClaim.scan_id, generationTwo.scan)
+    assert.equal(psql(db, `
+      select verification_generation from private.creator_premium_contents
+      where id='${generationTwo.content}'
+    `).stdout, '2')
+    completeP3(db, generationTwoClaim, p3ReviewResult())
+    const generationTwoDecision = JSON.parse(psql(db, `
+      select private.creator_premium_content_safety_decision_p1_v1('${generationTwo.scan}')
+    `).stdout)
+    assert.equal(generationTwoDecision.decision, 'review')
+    const generationTwoReconcile = JSON.parse(asRole(
+      db, 'service_role', 'select public.reconcile_creator_premium_publications_v1(25)',
+    ).stdout)
+    assert.equal(generationTwoReconcile.processed, 1)
+    assert.equal(generationTwoReconcile.results[0].outcome, 'review')
+    assert.equal(psql(db, `
+      select lifecycle_status||'|'||verification_status||'|'||verification_generation
+      from private.creator_premium_contents where id='${generationTwo.content}'
+    `).stdout, 'quarantined|restricted|2')
+    assert.equal(JSON.parse(asRole(
+      db, 'service_role', 'select public.reconcile_creator_premium_publications_v1(25)',
+    ).stdout).processed, 0, 'generation two reconciliation stays idempotent')
+
+    const generationTwoVideo = {
+      content: randomUUID(), scan: randomUUID(), analysis: randomUUID(),
+      video: randomUUID(), transcript: randomUUID(), teaser: randomUUID(),
+      offer: randomUUID(),
+    }
+    psql(db, videoFixtureSql({
+      actor,
+      ...generationTwoVideo,
+      generation: 2,
+      title: 'P3 generation two video allow fixture',
+    }))
+    addActiveOffer(db, actor, generationTwoVideo)
+    const generationTwoVideoClaim = claimP3(db)
+    assert.equal(generationTwoVideoClaim.scan_id, generationTwoVideo.scan)
+    assert.equal(generationTwoVideoClaim.transcript_coverage, 'complete')
+    assert.match(generationTwoVideoClaim.transcript_text, /operativo pacifico/i)
+    assert.equal(psql(db, `
+      select verification_generation from private.creator_premium_contents
+      where id='${generationTwoVideo.content}'
+    `).stdout, '2')
+    completeP3(
+      db,
+      generationTwoVideoClaim,
+      p3CanonicalizedWeaponAllowResult({ transcript: 'complete' }),
+    )
+    const generationTwoVideoDecision = JSON.parse(psql(db, `
+      select private.creator_premium_content_safety_decision_p1_v1(
+        '${generationTwoVideo.scan}'
+      )
+    `).stdout)
+    assert.equal(generationTwoVideoDecision.decision, 'allow')
+    const generationTwoVideoReconcile = JSON.parse(asRole(
+      db, 'service_role', 'select public.reconcile_creator_premium_publications_v1(25)',
+    ).stdout)
+    assert.equal(generationTwoVideoReconcile.processed, 1)
+    assert.equal(generationTwoVideoReconcile.results[0].outcome, 'published')
+    assert.equal(psql(db, `
+      select lifecycle_status||'|'||verification_status||'|'||verification_generation
+      from private.creator_premium_contents where id='${generationTwoVideo.content}'
+    `).stdout, 'published|passed|2')
+    assert.equal(JSON.parse(asRole(
+      db, 'service_role', 'select public.reconcile_creator_premium_publications_v1(25)',
+    ).stdout).processed, 0, 'generation two video reconciliation stays idempotent')
 
     addAlert(db, actor, allowed, {
       sourceType: 'user_reports',

@@ -2,6 +2,7 @@ import {
   VisualProbeError,
   buildVisualFunctionContract,
   runVisualStructuredRequest,
+  runVisualStructuredRequestWithTelemetry,
 } from './visualProbe.mjs'
 
 export const POLICY_CONTEXT_SCHEMA_VERSION = 'creator-premium-context-p3-v1'
@@ -128,7 +129,13 @@ const VIOLENCE_STATES = Object.freeze([
 ])
 
 export class PolicyContextError extends Error {
-  constructor(code, { status = 502, retryable = false, providerCalled = false, providerTelemetry = null } = {}) {
+  constructor(code, {
+    status = 502,
+    retryable = false,
+    providerCalled = false,
+    providerTelemetry = null,
+    validationReason = null,
+  } = {}) {
     super(code)
     this.name = 'PolicyContextError'
     this.code = code
@@ -136,6 +143,7 @@ export class PolicyContextError extends Error {
     this.retryable = retryable
     this.providerCalled = providerCalled
     this.providerTelemetry = providerTelemetry
+    this.validationReason = validationReason
   }
 }
 
@@ -262,8 +270,11 @@ export function buildPolicyContextRequest(input) {
   }
 }
 
-function schemaInvalid() {
-  throw new PolicyContextError('creator_premium_context_schema_invalid', { providerCalled: true })
+function schemaInvalid(validationReason) {
+  throw new PolicyContextError('creator_premium_context_schema_invalid', {
+    providerCalled: true,
+    validationReason,
+  })
 }
 
 function validVisualAllow(value, input) {
@@ -322,47 +333,107 @@ export function validatePolicyContextResult(value, input) {
       !LAW_ENFORCEMENT_STATES.includes(value.law_enforcement_state) || !VIOLENCE_STATES.includes(value.violence_state) ||
       value.certainty_basis !== 'discrete_contract' ||
       !Array.isArray(value.rationale_codes) || value.rationale_codes.length < 1 || value.rationale_codes.length > 8 ||
-      !unique(value.rationale_codes) || !subset(value.rationale_codes, RATIONALE_CODES)) schemaInvalid()
+      !unique(value.rationale_codes) || !subset(value.rationale_codes, RATIONALE_CODES)) schemaInvalid('result_shape_invalid')
 
   if (value.decision === 'allow' && (!subset(value.categories, POLICY_ALLOW_CATEGORIES) ||
       !subset(value.rationale_codes, ALLOW_RATIONALE_CODES) ||
       value.uncertainty !== 'unambiguous' || value.age_uncertainty !== 'not_relevant' ||
-      value.consent_uncertainty !== 'not_relevant' || !validVisualAllow(value, normalized))) schemaInvalid()
+      value.consent_uncertainty !== 'not_relevant' || !validVisualAllow(value, normalized))) schemaInvalid('allow_visual_binding_invalid')
   if (value.decision === 'review' && (value.categories.some(category => POLICY_BLOCK_CATEGORIES.includes(category)) ||
       value.rationale_codes.includes('severe_explicit_context') ||
       !value.rationale_codes.some(code => REVIEW_RATIONALE_CODES.includes(code)) ||
       value.violence_state === 'graphic_or_severe' ||
       (!value.categories.some(category => POLICY_REVIEW_CATEGORIES.includes(category)) && value.uncertainty !== 'ambiguous' &&
-       value.age_uncertainty !== 'present' && value.consent_uncertainty !== 'present'))) schemaInvalid()
+       value.age_uncertainty !== 'present' && value.consent_uncertainty !== 'present'))) schemaInvalid('review_contract_invalid')
   if (value.decision === 'block' && (value.uncertainty !== 'unambiguous' ||
       !subset(value.categories, POLICY_BLOCK_CATEGORIES) ||
-      !value.rationale_codes.includes('severe_explicit_context'))) schemaInvalid()
-  if (value.violence_state === 'graphic_or_severe' && value.decision !== 'block') schemaInvalid()
+      !value.rationale_codes.includes('severe_explicit_context'))) schemaInvalid('block_contract_invalid')
+  if (value.violence_state === 'graphic_or_severe' && value.decision !== 'block') schemaInvalid('violence_contract_invalid')
   if (value.age_uncertainty === 'present' && !value.categories.some(category =>
-    category === 'age_uncertain' || category === 'child_sexual_exploitation')) schemaInvalid()
-  if (value.categories.includes('age_uncertain') && value.age_uncertainty !== 'present') schemaInvalid()
+    category === 'age_uncertain' || category === 'child_sexual_exploitation')) schemaInvalid('age_contract_invalid')
+  if (value.categories.includes('age_uncertain') && value.age_uncertainty !== 'present') schemaInvalid('age_contract_invalid')
   if (value.consent_uncertainty === 'present' && !value.categories.some(category =>
-    ['consent_uncertain', 'non_consensual_intimate_content', 'sexual_violence'].includes(category))) schemaInvalid()
-  if (value.categories.includes('consent_uncertain') && value.consent_uncertainty !== 'present') schemaInvalid()
-  if (value.categories.includes('child_sexual_exploitation') && value.age_uncertainty !== 'present') schemaInvalid()
+    ['consent_uncertain', 'non_consensual_intimate_content', 'sexual_violence'].includes(category))) schemaInvalid('consent_contract_invalid')
+  if (value.categories.includes('consent_uncertain') && value.consent_uncertainty !== 'present') schemaInvalid('consent_contract_invalid')
+  if (value.categories.includes('child_sexual_exploitation') && value.age_uncertainty !== 'present') schemaInvalid('age_contract_invalid')
   if (value.categories.some(category => ['non_consensual_intimate_content', 'sexual_violence'].includes(category)) &&
-      value.consent_uncertainty !== 'present') schemaInvalid()
+      value.consent_uncertainty !== 'present') schemaInvalid('consent_contract_invalid')
   if (value.categories.includes('non_graphic_law_enforcement_operation') !==
-      value.rationale_codes.includes('non_graphic_law_enforcement_context')) schemaInvalid()
+      value.rationale_codes.includes('non_graphic_law_enforcement_context')) schemaInvalid('law_annotation_binding_invalid')
   if (value.categories.includes('non_threatening_weapon_presence') !==
-      value.rationale_codes.includes('non_threatening_weapon_context')) schemaInvalid()
+      value.rationale_codes.includes('non_threatening_weapon_context')) schemaInvalid('weapon_annotation_binding_invalid')
   return value
+}
+
+function appendOnce(values, value) {
+  return values.includes(value) ? values : [...values, value]
+}
+
+function canonicalizeRedundantAllowAnnotations(value, input) {
+  if (!object(value) || value.decision !== 'allow' || !Array.isArray(value.categories) ||
+      !Array.isArray(value.rationale_codes)) return { value, normalizationCodes: [] }
+
+  let categories = [...value.categories]
+  let rationaleCodes = [...value.rationale_codes]
+  const normalizationCodes = []
+  if (value.weapon_state === 'visible_non_threatening' &&
+      input.visual.weapon_disposition === 'visible_non_threatening') {
+    const nextCategories = appendOnce(categories, 'non_threatening_weapon_presence')
+    const nextRationales = appendOnce(rationaleCodes, 'non_threatening_weapon_context')
+    if (nextCategories !== categories || nextRationales !== rationaleCodes) {
+      normalizationCodes.push('bounded_weapon_annotations_restored')
+      categories = nextCategories
+      rationaleCodes = nextRationales
+    }
+  }
+  if (normalizationCodes.length === 0) return { value, normalizationCodes }
+  return {
+    value: { ...value, categories, rationale_codes: rationaleCodes },
+    normalizationCodes,
+  }
 }
 
 export async function runPolicyContextAnalysis({ token, accountId, input, fetchImpl = fetch }) {
   const request = buildPolicyContextRequest(input)
-  const value = await runVisualStructuredRequest({ token, accountId, request, fetchImpl })
+  const provider = await runVisualStructuredRequestWithTelemetry({ token, accountId, request, fetchImpl })
+  const normalizedInput = normalizePolicyContextInput(input)
+  const canonical = canonicalizeRedundantAllowAnnotations(provider.value, normalizedInput)
   try {
-    return validatePolicyContextResult(value, input)
+    const result = validatePolicyContextResult(canonical.value, normalizedInput)
+    if (canonical.normalizationCodes.length > 0) {
+      console.info('creator_premium_context_result_normalized', {
+        normalization_codes: canonical.normalizationCodes,
+      })
+    }
+    return result
   } catch (error) {
-    if (error instanceof PolicyContextError) error.providerCalled = true
+    if (error instanceof PolicyContextError) {
+      error.providerCalled = true
+      error.providerTelemetry = provider.providerTelemetry
+    }
     throw error
   }
+}
+
+const COMPLETION_ERROR_CODES = Object.freeze(new Map([
+  ['22023|creator_premium_context_schema_invalid', 'creator_premium_context_completion_schema_invalid'],
+  ['55000|creator_premium_context_binding_invalid', 'creator_premium_context_completion_binding_invalid'],
+  ['55000|creator_premium_context_transcript_binding_invalid', 'creator_premium_context_completion_binding_invalid'],
+  ['55000|creator_premium_context_attempt_stale', 'creator_premium_context_completion_attempt_stale'],
+  ['55000|creator_premium_context_provider_limit_reached', 'creator_premium_context_completion_provider_limit'],
+  ['23505|creator_premium_context_completion_conflict', 'creator_premium_context_completion_conflict'],
+  ['P0002|creator_premium_context_evaluation_not_found', 'creator_premium_context_completion_not_found'],
+]))
+
+export function policyContextCompletionError(error) {
+  const sqlstate = object(error) && typeof error.code === 'string' ? error.code : ''
+  const message = object(error) && typeof error.message === 'string' ? error.message : ''
+  const code = COMPLETION_ERROR_CODES.get(`${sqlstate}|${message}`)
+  return new PolicyContextError(code ?? 'creator_premium_context_completion_failed', {
+    retryable: code === undefined,
+    providerCalled: true,
+    validationReason: code === undefined ? 'completion_transport_unknown' : 'completion_domain_rejected',
+  })
 }
 
 const PROBE_CASES = Object.freeze([
