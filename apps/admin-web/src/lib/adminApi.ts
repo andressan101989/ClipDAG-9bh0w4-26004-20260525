@@ -43,9 +43,23 @@ const money=(value:unknown,name:string):Money=>(typeof value==="string"||typeof 
 const nullableMoney=(value:unknown,name:string)=>value===null?null:money(value,name);
 const range=(value:unknown):AdminRange=>ranges.includes(value as AdminRange)?value as AdminRange:invalid("range");
 
-class AdminRpcError extends Error{code:string|null;constructor(message:string,code?:string|null){super(message);this.name="AdminRpcError";this.code=code||null}}
+export class AdminRpcError extends Error{code:string|null;constructor(message:string,code?:string|null){super(message);this.name="AdminRpcError";this.code=code||null}}
 async function rpc(name:string,args:Record<string,unknown>={}){const {data,error}=await supabase.rpc(name,args);if(error)throw new AdminRpcError(error.message||"No se pudo consultar Marketplace",error.code);return data as unknown;}
 export function isAmbiguousAdminMutationError(error:unknown){return!(error instanceof AdminRpcError)||!error.code||/^PGRST00[0-3]$/.test(error.code)}
+
+const creatorPremiumReviewDomainMessages:Record<string,string>={
+  creator_premium_safety_alert_resolution_required:"Antes de solicitar una nueva verificación, todas las alertas del análisis vigente deben resolverse como Sin infracción en Content Safety → Alertas.",
+  creator_premium_admin_restore_invalid_state:"El estado del contenido cambió y ya no admite una nueva verificación. Actualiza el detalle.",
+  creator_premium_safety_enqueue_failed:"No se pudo encolar la nueva verificación. El contenido permanece privado; actualiza e inténtalo de nuevo.",
+  creator_premium_admin_content_not_found:"El contenido ya no está disponible en la cola administrativa.",
+  creator_premium_admin_review_invalid:"La solicitud administrativa no cumple el contrato de moderación.",
+  admin_capability_forbidden:"Tu sesión no tiene la capacidad administrativa necesaria para esta operación.",
+  admin_idempotency_conflict:"La operación cambió mientras se procesaba. Actualiza el detalle antes de reintentar.",
+};
+export function getAdminCreatorPremiumReviewErrorMessage(error:unknown){
+  if(!(error instanceof AdminRpcError))return"Operación rechazada por la autoridad administrativa.";
+  return creatorPremiumReviewDomainMessages[error.message]??"Operación rechazada por la autoridad administrativa.";
+}
 
 export async function getAdminAccess():Promise<AdminAccess>{
   const value=object(await rpc("get_my_admin_access"),"access");
@@ -340,6 +354,14 @@ export type AdminCreatorPremiumSummary={
 };
 export type AdminCreatorPremiumCursor={submitted_at:string;id:string};
 export type AdminCreatorPremiumPage={items:AdminCreatorPremiumSummary[];next_cursor:AdminCreatorPremiumCursor|null};
+export type AdminCreatorPremiumReverification={
+  lifecycle_eligible:boolean;
+  ready:boolean;
+  reason_code:string|null;
+  current_scan_alert_count:number;
+  favorable_alert_count:number;
+  blocking_alert_count:number;
+};
 
 const validateAdminCreatorPremiumSummary=(value:unknown,name:string):AdminCreatorPremiumSummary=>{const row=object(value,name);return{
   id:uuid(row.id,`${name}.id`),creator:identity(row.creator,`${name}.creator`),title:string(row.title,`${name}.title`),
@@ -356,7 +378,25 @@ export async function searchAdminCreatorPremiumContent(input:{status?:string|nul
   const next=value.next_cursor===null?null:(()=>{const cursor=object(value.next_cursor,"creator_premium.next_cursor");return{submitted_at:date(cursor.submitted_at,"creator_premium.next_cursor.submitted_at"),id:uuid(cursor.id,"creator_premium.next_cursor.id")};})();
   return{items,next_cursor:next};
 }
-export async function getAdminCreatorPremiumContent(id:string){uuid(id,"creatorPremiumContentId");return object(await rpc("get_admin_creator_premium_content_v1",{p_content_id:id}),"creator_premium_detail")}
+const validateAdminCreatorPremiumReverification=(value:unknown):AdminCreatorPremiumReverification=>{
+  const name="creator_premium_detail.reverification",row=object(value,name);
+  const lifecycleEligible=bool(row.lifecycle_eligible,`${name}.lifecycle_eligible`);
+  const ready=bool(row.ready,`${name}.ready`);
+  const reasonCode=nullableString(row.reason_code,`${name}.reason_code`);
+  const currentScanAlertCount=integer(row.current_scan_alert_count,`${name}.current_scan_alert_count`);
+  const favorableAlertCount=integer(row.favorable_alert_count,`${name}.favorable_alert_count`);
+  const blockingAlertCount=integer(row.blocking_alert_count,`${name}.blocking_alert_count`);
+  if(currentScanAlertCount<0||favorableAlertCount<0||blockingAlertCount<0
+    ||favorableAlertCount+blockingAlertCount!==currentScanAlertCount
+    ||ready!==(lifecycleEligible&&blockingAlertCount===0)
+    ||ready===(reasonCode!==null))invalid(`${name}.consistency`);
+  return{
+    lifecycle_eligible:lifecycleEligible,ready,reason_code:reasonCode,
+    current_scan_alert_count:currentScanAlertCount,favorable_alert_count:favorableAlertCount,
+    blocking_alert_count:blockingAlertCount,
+  };
+};
+export async function getAdminCreatorPremiumContent(id:string){uuid(id,"creatorPremiumContentId");const value=object(await rpc("get_admin_creator_premium_content_v1",{p_content_id:id}),"creator_premium_detail");return{...value,reverification:validateAdminCreatorPremiumReverification(value.reverification)}}
 export async function reviewAdminCreatorPremiumContent(input:{id:string;action:"quarantine"|"remove"|"restore";reason:string;idempotencyKey:string}){uuid(input.id,"creatorPremiumContentId");uuid(input.idempotencyKey,"idempotencyKey");return object(await rpc("admin_review_creator_premium_content_v1",{p_content_id:input.id,p_action:input.action,p_reason:input.reason,p_idempotency_key:input.idempotencyKey}),"creator_premium_review_receipt")}
 
 const premiumAdminGrant=async(functionName:"get-media-url"|"get-stream-playback",contentId:string)=>{uuid(contentId,"creatorPremiumContentId");const{data,error}=await supabase.functions.invoke(functionName,{body:{premium_content_id:contentId,admin_review:true}});if(error)throw new Error("No pudimos emitir el acceso temporal para revisión.");const envelope=object(data,"creator_premium_admin_grant");if(envelope.success!==true)invalid("creator_premium_admin_grant.success");return object(envelope.data,"creator_premium_admin_grant.data")};

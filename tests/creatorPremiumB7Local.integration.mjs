@@ -35,6 +35,10 @@ const c3Files = readdirSync(migrations).filter(name => name.endsWith('_creator_p
 const c3Sql = c3Files.length === 1
   ? readFileSync(new URL(`../supabase/migrations/${c3Files[0]}`, import.meta.url), 'utf8')
   : '';
+const p3c2Files = readdirSync(migrations).filter(name => name.endsWith('_creator_premium_p3_c2_admin_restriction_recovery.sql'));
+const p3c2Sql = p3c2Files.length === 1
+  ? readFileSync(new URL(`../supabase/migrations/${p3c2Files[0]}`, import.meta.url), 'utf8')
+  : '';
 
 const A2_B7_BLOB = '43f014260e0ecfa6f0634e61e1646594bcf13e1d';
 const C1_MIGRATION_BLOB = '4605ac94221a52d47190b1575ab1a71e23c82fac';
@@ -51,6 +55,27 @@ const C1_RPC_SECURITY_CASE = {
     'cancel_media_offer_history_preserved',
     'cancel_service_role_acl',
     'cancel_stale_scan_generation_fenced',
+  ],
+};
+const P3_C2_RPC_SECURITY_CASE = {
+  signature: 'public.get_admin_creator_premium_content_v1(uuid)',
+  advisorFingerprint: 'b5ca8be9cf9433a21ee7f19906d8a23340ef629d6cedd414c196b431ab5dfaf1',
+  caseIds: [
+    'admin_detail_p3c2_owner_preserved',
+    'admin_detail_p3c2_anon_acl',
+    'admin_detail_p3c2_service_role_acl',
+    'admin_detail_p3c2_authenticated_acl',
+    'admin_detail_p3c2_user_denied',
+    'admin_detail_p3c2_admin_without_capability',
+    'admin_detail_p3c2_authorized_read_only',
+    'admin_detail_p3c2_current_scan_blocked',
+    'admin_detail_p3c2_all_alerts_favorable',
+    'admin_detail_p3c2_new_generation_not_ready',
+    'admin_detail_p3c2_current_scan_scope',
+    'alert_p3c2_dismissed_terminal',
+    'alert_p3c2_resolved_terminal',
+    'alert_p3c2_concurrent_first_terminal_wins',
+    'p3c2_finance_off_no_side_effect',
   ],
 };
 const A2_RPC_SECURITY_CASES = [
@@ -178,6 +203,11 @@ function canonicalJson(value) {
   return JSON.stringify(value);
 }
 
+function gitBlobSha1(value) {
+  const bytes = Buffer.from(value, 'utf8');
+  return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+}
+
 test('B7 disposable harness targets the complete single-migration Premium chain', () => {
   for (const item of chain) assert.equal(item.found.length, 1, item.suffix);
   assert.match(chain.at(-1).found[0], /^\d{14}_creator_premium_b7_full_functional_commercial_completion\.sql$/);
@@ -195,6 +225,13 @@ test('C3 disposable harness binds exactly one forward-only visual retry producer
   assert.match(c3Files[0], /^\d{14}_creator_premium_c3_visual_retry_producer\.sql$/);
   assert.match(c3Sql, /content_safety_visual_producer_scan_id/);
   assert.match(c3Sql, /case\s+when\s+scan\.visual_status='pending'\s+and\s+scan\.visual_analysis_id\s+is\s+null\s+then\s+0\s+else\s+1\s+end/i);
+});
+
+test('P3-C2 disposable harness binds exactly one forward-only admin recovery migration', () => {
+  assert.equal(p3c2Files.length, 1);
+  assert.match(p3c2Files[0], /^\d{14}_creator_premium_p3_c2_admin_restriction_recovery\.sql$/);
+  assert.match(p3c2Sql, /get_admin_creator_premium_content_v1/);
+  assert.match(p3c2Sql, /creator_premium_safety_alert_resolution_required/);
 });
 
 test('B7 disposable harness contains executable lifecycle and financial invariants, not install-only smoke checks', () => {
@@ -264,6 +301,7 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
   };
   const proved = new Set();
   const c1Proved = new Set();
+  const p3c2Proved = new Set();
   const service = (name, args, options = {}) => asRole(
     db, 'service_role', null,
     `select public.${name}(${args.map(value => `'${value}'`).join(',')})`,
@@ -443,11 +481,21 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     psql(db, chain.at(-1).sql);
     psql(db, c1Sql);
     psql(db, c3Sql);
+    const adminDetailOwner = psql(db, `select pg_catalog.pg_get_userbyid(proowner) from pg_catalog.pg_proc where oid='public.get_admin_creator_premium_content_v1(uuid)'::pg_catalog.regprocedure`).stdout;
+    psql(db, p3c2Sql);
+    assert.equal(psql(db, `select pg_catalog.pg_get_userbyid(proowner) from pg_catalog.pg_proc where oid='public.get_admin_creator_premium_content_v1(uuid)'::pg_catalog.regprocedure`).stdout, adminDetailOwner);
+    p3c2Proved.add('admin_detail_p3c2_owner_preserved');
     assert.equal(psql(db, `select has_function_privilege('anon','public.cancel_my_creator_premium_submission_v1(uuid)','execute')`).stdout, 'f');
     assert.equal(psql(db, `select has_function_privilege('service_role','public.cancel_my_creator_premium_submission_v1(uuid)','execute')`).stdout, 'f');
     assert.equal(psql(db, `select has_function_privilege('authenticated','public.cancel_my_creator_premium_submission_v1(uuid)','execute')`).stdout, 't');
     c1Proved.add('cancel_anon_acl');
     c1Proved.add('cancel_service_role_acl');
+    assert.equal(psql(db, `select pg_catalog.has_function_privilege('anon','${P3_C2_RPC_SECURITY_CASE.signature}','execute')`).stdout, 'f');
+    assert.equal(psql(db, `select pg_catalog.has_function_privilege('service_role','${P3_C2_RPC_SECURITY_CASE.signature}','execute')`).stdout, 'f');
+    assert.equal(psql(db, `select pg_catalog.has_function_privilege('authenticated','${P3_C2_RPC_SECURITY_CASE.signature}','execute')`).stdout, 't');
+    p3c2Proved.add('admin_detail_p3c2_anon_acl');
+    p3c2Proved.add('admin_detail_p3c2_service_role_acl');
+    p3c2Proved.add('admin_detail_p3c2_authenticated_acl');
     for (const item of A2_RPC_SECURITY_CASES) {
       assert.equal(
         psql(db, `select pg_catalog.has_function_privilege('anon','${item.signature}','execute')`).stdout,
@@ -637,6 +685,8 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     proved.add('admin_review_admin_without_capability');
     proved.add('admin_detail_user_denied');
     proved.add('admin_detail_admin_without_capability');
+    p3c2Proved.add('admin_detail_p3c2_user_denied');
+    p3c2Proved.add('admin_detail_p3c2_admin_without_capability');
     proved.add('refund_candidates_user_denied');
     proved.add('refund_candidates_admin_without_capability');
     proved.add('admin_search_user_denied');
@@ -835,9 +885,12 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     const adminSearch = json(asRole(db, 'authenticated', id.admin, `select public.search_admin_creator_premium_content_v1(null,null,null,null,50)`));
     assert.ok(adminSearch.items.some(item => item.id === purchase.id));
     proved.add('admin_search_authorized_read');
+    const adminDetailReadOnlyState = securityState();
     const adminDetail = json(asRole(db, 'authenticated', id.admin, `select public.get_admin_creator_premium_content_v1('${purchase.id}')`));
     assert.equal(adminDetail.id, purchase.id);
+    assert.equal(securityState(), adminDetailReadOnlyState);
     proved.add('admin_detail_authorized_read');
+    p3c2Proved.add('admin_detail_p3c2_authorized_read_only');
     const commerceOff = json(asRole(db, 'authenticated', id.buyer, `select public.get_creator_premium_commerce_v1('${purchase.id}')`));
     assert.deepEqual(commerceOff.policy, {
       policy_version: 'creator-premium-b4-v1',
@@ -855,12 +908,81 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
 
     const blockedAlertId = psql(db, `select id from private.content_safety_alerts where target_type='creator_premium' and target_id='${blocked.id}' and source_type='visual_classifier' order by created_at desc limit 1`).stdout;
     assert.match(blockedAlertId, /^[0-9a-f-]{36}$/i);
+    const blockedRecovery = json(asRole(db, 'authenticated', id.admin, `select public.get_admin_creator_premium_content_v1('${blocked.id}')`)).reverification;
+    assert.deepEqual(blockedRecovery, {
+      ready: false,
+      reason_code: 'creator_premium_safety_alert_resolution_required',
+      lifecycle_eligible: true,
+      blocking_alert_count: 1,
+      favorable_alert_count: 0,
+      current_scan_alert_count: 1,
+    });
+    p3c2Proved.add('admin_detail_p3c2_current_scan_blocked');
     expectFailure(adminCommand('admin_review_creator_premium_content_v1',[blocked.id,'restore','unsafe restore without alert resolution',uid()], { allowFailure: true }), 'creator_premium_safety_alert_resolution_required');
     expectFailure(asRole(db, 'authenticated', id.buyer, `select public.admin_review_content_safety_alert('${blockedAlertId}','dismiss','no_violation','not authorized','${uid()}')`, { allowFailure: true }), 'admin_capability_forbidden');
     const dismissed = json(adminCommand('admin_review_content_safety_alert',[blockedAlertId,'dismiss','no_violation','Disposable verified false positive',id.safetyDismissKey]));
     assert.equal(dismissed.status, 'dismissed');
     assert.equal(json(adminCommand('admin_review_content_safety_alert',[blockedAlertId,'dismiss','no_violation','Disposable verified false positive',id.safetyDismissKey])).idempotent, true);
+    expectFailure(adminCommand('admin_review_content_safety_alert',[blockedAlertId,'resolve','content_action_taken','A second decision must not replace the favorable terminal decision',uid()], { allowFailure: true }), 'content_safety_alert_already_closed');
+    assert.equal(psql(db, `select status||'|'||resolution from private.content_safety_alerts where id='${blockedAlertId}'`).stdout, 'dismissed|no_violation');
+    p3c2Proved.add('alert_p3c2_dismissed_terminal');
+    const clearedRecovery = json(asRole(db, 'authenticated', id.admin, `select public.get_admin_creator_premium_content_v1('${blocked.id}')`)).reverification;
+    assert.deepEqual(clearedRecovery, {
+      ready: true,
+      reason_code: null,
+      lifecycle_eligible: true,
+      blocking_alert_count: 0,
+      favorable_alert_count: 1,
+      current_scan_alert_count: 1,
+    });
+    p3c2Proved.add('admin_detail_p3c2_all_alerts_favorable');
     assert.equal(review(blocked.id,'restore','canonical false-positive resolution recorded').lifecycle_status, 'pending_review');
+    const resolvedHistoricalAlertId = psql(db, `
+      insert into private.content_safety_alerts(
+        scan_id,target_type,target_id,owner_user_id,source_type,category,severity,
+        confidence,priority_score,alert_fingerprint,evidence
+      )
+      select scan_id,target_type,target_id,owner_user_id,'audio_classifier','other','low',
+        0.900000,20,'${createHash('sha256').update(`terminal:${blocked.id}`).digest('hex')}',
+        '{"fixture":"p3c2-terminal-decision"}'::jsonb
+      from private.content_safety_alerts where id='${blockedAlertId}'
+      returning id
+    `).stdout;
+    assert.match(resolvedHistoricalAlertId, /^[0-9a-f-]{36}$/i);
+    assert.equal(json(adminCommand('admin_review_content_safety_alert',[resolvedHistoricalAlertId,'resolve','content_action_taken','Confirmed violation remains immutable',uid()])).status, 'resolved');
+    expectFailure(adminCommand('admin_review_content_safety_alert',[resolvedHistoricalAlertId,'dismiss','no_violation','Must not erase a confirmed violation',uid()], { allowFailure: true }), 'content_safety_alert_already_closed');
+    assert.equal(psql(db, `select status||'|'||resolution from private.content_safety_alerts where id='${resolvedHistoricalAlertId}'`).stdout, 'resolved|content_action_taken');
+    p3c2Proved.add('alert_p3c2_resolved_terminal');
+    const concurrentHistoricalAlertId = psql(db, `
+      insert into private.content_safety_alerts(
+        scan_id,target_type,target_id,owner_user_id,source_type,category,severity,
+        confidence,priority_score,alert_fingerprint,evidence
+      )
+      select scan_id,target_type,target_id,owner_user_id,'audio_classifier','other','low',
+        0.900000,20,'${createHash('sha256').update(`race:${blocked.id}`).digest('hex')}',
+        '{"fixture":"p3c2-terminal-race"}'::jsonb
+      from private.content_safety_alerts where id='${blockedAlertId}'
+      returning id
+    `).stdout;
+    const concurrentAlertDecisions = await Promise.all([
+      adminCommandAsync('admin_review_content_safety_alert',[concurrentHistoricalAlertId,'dismiss','no_violation','Concurrent favorable decision',uid()]),
+      adminCommandAsync('admin_review_content_safety_alert',[concurrentHistoricalAlertId,'resolve','content_action_taken','Concurrent violation decision',uid()]),
+    ]);
+    assert.equal(concurrentAlertDecisions.filter(result => result.status === 0).length, 1);
+    assert.equal(concurrentAlertDecisions.filter(result => /content_safety_alert_already_closed/i.test(`${result.stdout}\n${result.stderr}`)).length, 1);
+    assert.match(psql(db, `select status||'|'||resolution from private.content_safety_alerts where id='${concurrentHistoricalAlertId}'`).stdout, /^(dismissed\|no_violation|resolved\|content_action_taken)$/);
+    p3c2Proved.add('alert_p3c2_concurrent_first_terminal_wins');
+    const pendingRecovery = json(asRole(db, 'authenticated', id.admin, `select public.get_admin_creator_premium_content_v1('${blocked.id}')`)).reverification;
+    assert.deepEqual(pendingRecovery, {
+      ready: false,
+      reason_code: 'creator_premium_admin_restore_invalid_state',
+      lifecycle_eligible: false,
+      blocking_alert_count: 0,
+      favorable_alert_count: 0,
+      current_scan_alert_count: 0,
+    });
+    p3c2Proved.add('admin_detail_p3c2_new_generation_not_ready');
+    p3c2Proved.add('admin_detail_p3c2_current_scan_scope');
     completeAutomaticSafety();
     assert.equal(psql(db, `select lifecycle_status||'|'||verification_status from private.creator_premium_contents where id='${blocked.id}'`).stdout, 'published|passed');
     assert.equal(psql(db, `select count(*) from private.content_safety_alerts where target_type='creator_premium' and target_id='${blocked.id}' and source_type='visual_classifier'`).stdout, '1');
@@ -1015,6 +1137,7 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     proved.add('reopen_financial_history');
     psql(db, `update private.creator_premium_finance_policy set purchase_enabled=false,subscription_enabled=false,refunds_enabled=false,platform_fee_bps=0,updated_at=clock_timestamp()`);
     assert.equal(psql(db, `select purchase_enabled||'|'||subscription_enabled||'|'||refunds_enabled||'|'||platform_fee_bps from private.creator_premium_finance_policy where singleton`).stdout, 'false|false|false|0');
+    p3c2Proved.add('p3c2_finance_off_no_side_effect');
 
     const expectedCaseIds = A2_RPC_SECURITY_CASES.flatMap(item => item.caseIds).sort();
     assert.deepEqual([...proved].sort(), expectedCaseIds);
@@ -1045,6 +1168,26 @@ test('B7 disposable database denies unauthorized access to all eleven A2 RPCs', 
     };
     const c1EvidenceSha256 = createHash('sha256').update(`${canonicalJson(c1Evidence)}\n`, 'utf8').digest('hex');
     t.diagnostic(`C1_RPC_SECURITY_EVIDENCE_SHA256 ${c1EvidenceSha256}`);
+    assert.deepEqual([...p3c2Proved].sort(), [...P3_C2_RPC_SECURITY_CASE.caseIds].sort());
+    const p3c2Definition = json(psql(db, `select pg_catalog.to_json(pg_catalog.pg_get_functiondef('public.get_admin_creator_premium_content_v1(uuid)'::pg_catalog.regprocedure))`));
+    const p3c2DefinitionSha256 = createHash('sha256').update(p3c2Definition.replace(/\r\n?/g, '\n'), 'utf8').digest('hex');
+    const p3c2MigrationBlob = gitBlobSha1(p3c2Sql);
+    const p3c2Evidence = {
+      schema_version: 1,
+      migration_blob: p3c2MigrationBlob,
+      rpcs: [{
+        signature: P3_C2_RPC_SECURITY_CASE.signature,
+        advisor_fingerprint: P3_C2_RPC_SECURITY_CASE.advisorFingerprint,
+        definition_sha256: p3c2DefinitionSha256,
+        case_ids: [...P3_C2_RPC_SECURITY_CASE.caseIds],
+        result: 'SAFE',
+      }],
+      result: 'PASS',
+    };
+    const p3c2EvidenceSha256 = createHash('sha256').update(`${canonicalJson(p3c2Evidence)}\n`, 'utf8').digest('hex');
+    t.diagnostic(`P3_C2_MIGRATION_BLOB ${p3c2MigrationBlob}`);
+    t.diagnostic(`P3_C2_RPC_DEFINITION_SHA256 ${p3c2DefinitionSha256}`);
+    t.diagnostic(`P3_C2_RPC_SECURITY_EVIDENCE_SHA256 ${p3c2EvidenceSha256}`);
   } finally {
     docker(`dropdb -U supabase_admin --force --if-exists ${db}`, { allowFailure: true });
   }
