@@ -1160,6 +1160,29 @@ test('phase-bound RPC attestations activate the repaired submit definition only 
   assert.equal(postSubmit.attestation.definition_sha256, '00e9195a045185a65ca260a9abacc6916b289f7b1a2cf094cdaf9d4d86f55eff');
 });
 
+test('phase-bound RPC attestations activate P3-C2 recovery readiness only after its migration', async () => {
+  const adapter = await loadAdapter();
+  const controlledPolicy = structuredClone(policy);
+  const controlledManifest = manifest();
+  controlledManifest.resources.migrations = [{
+    path: 'supabase/migrations/20261020030515_creator_premium_p3_c2_admin_restriction_recovery.sql',
+    version: '20261020030515',
+  }];
+  const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
+  const pre = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre');
+  const post = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post');
+  const recovery = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery');
+  assert.equal(rpcCount(pre), 15);
+  assert.equal(rpcCount(post), 15);
+  assert.equal(rpcCount(recovery), 15);
+  const preDetail = pre.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
+  const postDetail = post.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
+  const recoveryDetail = recovery.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
+  assert.equal(preDetail.attestation.definition_sha256, '2a91f72e122beeee0f3d3c9f59ef99f13d2aefab9bcbc987594a5ac43c40a47e');
+  assert.equal(postDetail.attestation.definition_sha256, '55e7e99f0e9015f738e973484a8e857df0c650c174dee01817784557ea297c4f');
+  assert.equal(recoveryDetail.attestation.definition_sha256, '55e7e99f0e9015f738e973484a8e857df0c650c174dee01817784557ea297c4f');
+});
+
 test('postcheck advisor delta accepts only exact phase-approved fingerprints', async () => {
   const adapter = await loadAdapter();
   const pre = [{ fingerprint: '1'.repeat(64), level: 'WARN', resource_kind: 'existing' }];

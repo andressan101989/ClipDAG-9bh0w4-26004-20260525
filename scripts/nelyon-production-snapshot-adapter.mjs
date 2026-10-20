@@ -1015,6 +1015,20 @@ function migrationIdentity(item) {
 
 const RPC_REPLACEMENT_PREDECESSOR_ATTESTATIONS = new Map([
   [
+    '20261020030515_creator_premium_p3_c2_admin_restriction_recovery|b5ca8be9cf9433a21ee7f19906d8a23340ef629d6cedd414c196b431ab5dfaf1',
+    {
+      security_definer: true,
+      owner: 'postgres',
+      search_path: ['search_path=""'],
+      acl: [
+        { grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false },
+        { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+      ],
+      execute: { anon: false, authenticated: true, public: false, service_role: false },
+      definition_sha256: '2a91f72e122beeee0f3d3c9f59ef99f13d2aefab9bcbc987594a5ac43c40a47e',
+    },
+  ],
+  [
     '20261019023431_creator_premium_f1_c4_final_recovery|5ceb93fa71004f64ba75a7bd251fadaf66d7ebdce81fb48904fd988ed9023fef',
     {
       security_definer: true,

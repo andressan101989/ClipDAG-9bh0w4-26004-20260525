@@ -29,9 +29,13 @@ const F1_C6_NEGATIVE_TEST_EVIDENCE_SHA256 = '805d91901ca2a82715fa9e647705fef78a0
 const F1_C6_MIGRATION = '20261019170853_creator_premium_f1_c6_submit_unavailable_mapping_recovery';
 const F1_C6_MIGRATION_BLOB = 'af810d8dc1940f08907408305e2373a838d4db60';
 const F1_C6_SOURCE_SHA = '01bd67f914b151129d9d3659e1ec79581ea76227';
+const P3_C2_NEGATIVE_TEST_EVIDENCE_SHA256 = '839500ce3f146f17811258c9fe3468b75cd764a1c7eb368a8de4175afeb1a2bc';
+const P3_C2_MIGRATION = '20261020030515_creator_premium_p3_c2_admin_restriction_recovery';
+const P3_C2_MIGRATION_BLOB = 'af06002bfacd22f4cbc0dcfc3e02b6df260bdf2e';
+const P3_C2_SOURCE_SHA = '82f412fecad546e56dc756833c4a50288088a798';
 const SECURITY_ADVISOR_RPC_EXCEPTIONS = [
   ['f9c25bdf8e5c7f7ff7385410370dac9fe2ded1a0468f76d8bd2d265186718f32', 'get_creator_premium_commerce_v1', ['uuid'], 'p_content_id uuid', '30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
-  ['b5ca8be9cf9433a21ee7f19906d8a23340ef629d6cedd414c196b431ab5dfaf1', 'get_admin_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', '2a91f72e122beeee0f3d3c9f59ef99f13d2aefab9bcbc987594a5ac43c40a47e', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['b5ca8be9cf9433a21ee7f19906d8a23340ef629d6cedd414c196b431ab5dfaf1', 'get_admin_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', '55e7e99f0e9015f738e973484a8e857df0c650c174dee01817784557ea297c4f', P3_C2_NEGATIVE_TEST_EVIDENCE_SHA256, P3_C2_MIGRATION, P3_C2_MIGRATION_BLOB, P3_C2_SOURCE_SHA],
   ['16793ac45491560ceb15eed84a53c946830aca9f3c1dad338a98e42c539aad18', 'admin_refund_creator_premium_subscription_period_v1', ['uuid', 'uuid', 'text'], 'p_period_id uuid, p_idempotency_key uuid, p_reason_code text', '592df071aa52e846d7034e79c61f114f00eaf49d24dccd3682536e83377439ca', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
   ['ed55682047d682b69c66430b68fc819fb781b7289539fa398fadf09ec0c064fc', 'get_my_creator_premium_commercial_summary_v1', ['timestamp with time zone', 'timestamp with time zone'], 'p_from timestamp with time zone, p_to timestamp with time zone', '1a34a92abe226cdb66b3d8ba95b848d7576fe81e324839c9424582dc44610d05', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
   ['95f426ce02f0b60b9ac06e78d26d4171ec2d74aef205a06a6bc111142d1a923d', 'search_admin_creator_premium_content_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer'], 'p_status text, p_query text, p_cursor_submitted_at timestamp with time zone, p_cursor_id uuid, p_limit integer', '0379d81bef4b106861b9b59962f52e480b7b48cc1205eae938f238d1fd04ece6', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],

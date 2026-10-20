@@ -45,11 +45,11 @@ const A2_EXCEPTION_FINGERPRINTS = [
   '81ffb44830028e3a76316686c2bd2d8f38b4f4b26b7d4f93a3c0c94a168e4852',
   '95f426ce02f0b60b9ac06e78d26d4171ec2d74aef205a06a6bc111142d1a923d',
   'b55221bf7e4ec14f761ca29bc13589854080dccb3049e7dbcd996c37eb7223cf',
-  'b5ca8be9cf9433a21ee7f19906d8a23340ef629d6cedd414c196b431ab5dfaf1',
   'cf4b6520e9c96170ea5a5125f287b991d15c377e80cf3394f879dc1cbad0e6ae',
   'ed55682047d682b69c66430b68fc819fb781b7289539fa398fadf09ec0c064fc',
   'f9c25bdf8e5c7f7ff7385410370dac9fe2ded1a0468f76d8bd2d265186718f32',
 ];
+const P3_C2_EXCEPTION_FINGERPRINT = 'b5ca8be9cf9433a21ee7f19906d8a23340ef629d6cedd414c196b431ab5dfaf1';
 const A2_PREEXISTING_FINGERPRINTS = [
   '44c69807ea7e06dadbd8f841ec50a8911c25a76b28ed8096ec6fea66d129b55b',
   '92d3ea284e4ee4c77be88f4a3cade83460caa098dbbc3028587388cf0158933b',
@@ -496,7 +496,7 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
   assert.equal(policy.security_advisor.baseline.cron_security_sha256, '2dd76dccc8b348eb932fee5c8ada572f57243287f3ca96bf851a75a2e9244846');
   const exceptions = policy.security_advisor.exceptions;
   assert.equal(exceptions.length, 16);
-  assert.deepEqual(exceptions.map(item => item.advisor_fingerprint).sort(), [...A2_EXCEPTION_FINGERPRINTS, ...F1_EXCEPTION_FINGERPRINTS, ...F1_C4_EXCEPTION_FINGERPRINTS, P2_RELATION_ADVISOR_FINGERPRINT].sort());
+  assert.deepEqual(exceptions.map(item => item.advisor_fingerprint).sort(), [...A2_EXCEPTION_FINGERPRINTS, P3_C2_EXCEPTION_FINGERPRINT, ...F1_EXCEPTION_FINGERPRINTS, ...F1_C4_EXCEPTION_FINGERPRINTS, P2_RELATION_ADVISOR_FINGERPRINT].sort());
   assert.equal(exceptions.some(item => A2_PREEXISTING_FINGERPRINTS.includes(item.advisor_fingerprint)), false);
   const rpcExceptions = exceptions.filter(item => item.advisor_type === 'authenticated_security_definer_function_executable');
   assert.equal(rpcExceptions.length, 15);
@@ -520,7 +520,22 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
     assert.ok(exception.authorization.functional_reason.length > 0);
     assert.deepEqual([...exception.authorization.controls].sort(), exception.authorization.controls);
     assert.match(exception.authorization.negative_test_evidence_sha256, /^[0-9a-f]{64}$/);
-    if (exception.object.name === 'submit_my_creator_premium_content_with_plans_v1') {
+    if (exception.advisor_fingerprint === P3_C2_EXCEPTION_FINGERPRINT) {
+      assert.equal(exception.object.name, 'get_admin_creator_premium_content_v1');
+      assert.equal(exception.attestation.definition_sha256, '55e7e99f0e9015f738e973484a8e857df0c650c174dee01817784557ea297c4f');
+      assert.equal(exception.origin.migration, '20261020030515_creator_premium_p3_c2_admin_restriction_recovery');
+      assert.equal(exception.origin.migration_blob, 'af06002bfacd22f4cbc0dcfc3e02b6df260bdf2e');
+      assert.equal(exception.origin.source_sha, '82f412fecad546e56dc756833c4a50288088a798');
+      assert.equal(exception.authorization.negative_test_evidence_sha256, '839500ce3f146f17811258c9fe3468b75cd764a1c7eb368a8de4175afeb1a2bc');
+      assert.deepEqual(exception.authorization.controls, [
+        'authenticated_session',
+        'bounded_private_projection',
+        'current_scan_binding',
+        'exact_admin_capability',
+        'negative_authorization_tests',
+        'read_only_reverification_readiness',
+      ]);
+    } else if (exception.object.name === 'submit_my_creator_premium_content_with_plans_v1') {
       assert.equal(exception.origin.migration, '20261019170853_creator_premium_f1_c6_submit_unavailable_mapping_recovery');
       assert.equal(exception.origin.migration_blob, 'af810d8dc1940f08907408305e2373a838d4db60');
       assert.equal(exception.origin.source_sha, '01bd67f914b151129d9d3659e1ec79581ea76227');
