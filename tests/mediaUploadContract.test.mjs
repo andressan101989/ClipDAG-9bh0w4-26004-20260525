@@ -16,7 +16,8 @@ test('create returns a short-lived write-once direct PUT contract', () => {
   assert.match(r2, /ContentType:mime/);
   assert.match(r2, /IfNoneMatch:'\*'/);
   assert.match(r2, /signableHeaders:new Set\(\['content-type','if-none-match'\]\)/);
-  assert.match(r2, /expiresIn:300/);
+  assert.match(r2, /R2_PUT_URL_TTL_SECONDS=300/);
+  assert.match(r2, /expiresIn:R2_PUT_URL_TTL_SECONDS/);
 });
 test('finalize uses HEAD and changes only verified objects to ready', () => {
   assert.match(finalize, /headObject\(/);

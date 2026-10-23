@@ -71,10 +71,12 @@ async function post(handler, body) {
   return { response, json: await response.json() };
 }
 
-function mutationResult(result = { error: null }) {
+function mutationResult(result = { data: { id: assetId }, error: null }) {
   const chain = {
     eq() { return chain; },
+    in() { return chain; },
     select() { return chain; },
+    maybeSingle: async () => result,
     single: async () => result,
     then(resolve, reject) { return Promise.resolve(result).then(resolve, reject); },
   };
@@ -97,6 +99,12 @@ function loadCreateStreamUpload({
   tusStatus = 201,
   tusProviderErrorCode = null,
   tusFetchError = null,
+  allocationStale = false,
+  compensationQueueError = null,
+  compensationQueueStatus = 'pending',
+  scheduleResult = { data: 'scheduled', error: null },
+  directDeleteError = null,
+  directAbsent = true,
 } = {}) {
   let handler;
   const providerCalls = [];
@@ -107,6 +115,7 @@ function loadCreateStreamUpload({
   const db = {
     async rpc(name, args) {
       rpcCalls.push({ name, args: structuredClone(args) });
+      if (name === 'schedule_video_asset_deletion_v1') return scheduleResult;
       return { data: 'created', error: null };
     },
     from(table) {
@@ -114,7 +123,18 @@ function loadCreateStreamUpload({
       return {
         update(values) {
           updates.push(structuredClone(values));
-          return mutationResult({ error: null });
+          const allocation = values.status === 'uploading' && values.cloudflare_uid;
+          const compensationQueue = !allocation && values.cloudflare_uid;
+          return mutationResult({
+            data: allocation && allocationStale
+              ? null
+              : compensationQueue
+                ? compensationQueueStatus === null
+                  ? null
+                  : { id: assetId, status: compensationQueueStatus }
+                : { id: assetId, status: 'pending' },
+            error: compensationQueue ? compensationQueueError : null,
+          });
         },
       };
     },
@@ -158,6 +178,15 @@ function loadCreateStreamUpload({
           this.transient = transient;
         }
       },
+      async deleteStreamVideo() {
+        providerCalls.push({ kind: 'compensation-delete' });
+        if (directDeleteError) throw directDeleteError;
+        return { accepted: true, alreadyAbsent: false, requestId: null };
+      },
+      async verifyStreamVideoAbsent() {
+        providerCalls.push({ kind: 'compensation-verify' });
+        return { absent: directAbsent, requestId: null };
+      },
       safeFilename: value => String(value ?? 'video'),
       sanitizeProviderError: error => ({
         code: error?.code ?? error?.message ?? 'provider_error',
@@ -179,6 +208,7 @@ function loadCreateStreamUpload({
       validateStreamSize: value => Number(value) > 0 && Number(value) <= 200_000_000 ? Number(value) : null,
     },
   }, {
+    crypto: { randomUUID: () => assetId },
     fetch: async (url, init) => {
       providerCalls.push({
         kind: 'tus',
@@ -284,12 +314,9 @@ test('Premium TUS upload rejects a provider Location outside the canonical Cloud
   const { response, json: payload } = await post(harness.handler, upload);
   assert.equal(response.status, 502);
   assert.equal(payload.error, 'stream_provider_invalid_response');
-  assert.deepEqual(harness.providerCalls.find(call => call.kind === 'direct'), {
-    kind: 'direct', pathname: `/${providerUid}`, method: 'DELETE', body: null,
-  });
-  assert.equal(harness.updates.some(update => (
-    update.status === 'failed' && update.cloudflare_uid === providerUid
-  )), true);
+  assert.equal(harness.providerCalls.some(call => call.kind === 'direct'), false);
+  assert.equal(harness.rpcCalls.some(call => call.name === 'schedule_video_asset_deletion_v1'), true);
+  assert.equal(harness.updates.some(update => update.cloudflare_uid === providerUid), true);
 });
 
 test('Premium TUS provisioning maps provider and timeout failures to stable safe domains', async () => {
@@ -323,6 +350,136 @@ test('Premium TUS provisioning maps provider and timeout failures to stable safe
   assert.equal(timeout.updates.at(-1).status, 'failed');
 });
 
+test('Premium allocation losing the reservation race queues the known provider UID and fails stale', async () => {
+  const harness = loadCreateStreamUpload({ allocationStale: true });
+  const { response, json: payload } = await post(harness.handler, upload);
+  assert.equal(response.status, 409);
+  assert.equal(payload.error, 'stream_allocation_stale');
+  assert.equal(
+    harness.rpcCalls.some(call => call.name === 'schedule_video_asset_deletion_v1'),
+    true,
+  );
+  assert.equal(harness.updates.some(update => update.cloudflare_uid === providerUid), true);
+});
+
+test('Premium compensation directly deletes and verifies a new UID when queue persistence errors', async () => {
+  const harness = loadCreateStreamUpload({
+    tusLocation: `https://attacker.example/tus/${providerUid}?tusv2=true`,
+    compensationQueueError: { message: 'simulated queue failure' },
+  });
+  const { response, json: payload } = await post(harness.handler, upload);
+  assert.equal(response.status, 502);
+  assert.equal(payload.error, 'stream_provider_invalid_response');
+  assert.deepEqual(
+    harness.providerCalls.filter(call => call.kind.startsWith('compensation-')),
+    [{ kind: 'compensation-delete' }, { kind: 'compensation-verify' }],
+  );
+  assert.equal(harness.rpcCalls.some(call => call.name === 'schedule_video_asset_deletion_v1'), false);
+});
+
+test('Premium compensation never treats missing or terminal queue rows as enqueued', async () => {
+  for (const compensationQueueStatus of [null, 'delete_pending', 'deleted']) {
+    const harness = loadCreateStreamUpload({
+      tusLocation: `https://attacker.example/tus/${providerUid}?tusv2=true`,
+      compensationQueueStatus,
+    });
+    const { response, json: payload } = await post(harness.handler, upload);
+    assert.equal(response.status, 502);
+    assert.equal(payload.error, 'stream_provider_invalid_response');
+    assert.deepEqual(
+      harness.providerCalls.filter(call => call.kind.startsWith('compensation-')),
+      [{ kind: 'compensation-delete' }, { kind: 'compensation-verify' }],
+    );
+    assert.equal(harness.rpcCalls.some(call => call.name === 'schedule_video_asset_deletion_v1'), false);
+  }
+});
+
+test('Premium compensation directly deletes and verifies when canonical scheduling fails or reports deleted', async () => {
+  for (const scheduleResult of [
+    { data: null, error: { message: 'simulated scheduler failure' } },
+    { data: 'deleted', error: null },
+  ]) {
+    const harness = loadCreateStreamUpload({
+      tusLocation: `https://attacker.example/tus/${providerUid}?tusv2=true`,
+      scheduleResult,
+    });
+    const { response, json: payload } = await post(harness.handler, upload);
+    assert.equal(response.status, 502);
+    assert.equal(payload.error, 'stream_provider_invalid_response');
+    assert.equal(harness.rpcCalls.filter(call => call.name === 'schedule_video_asset_deletion_v1').length, 1);
+    assert.deepEqual(
+      harness.providerCalls.filter(call => call.kind.startsWith('compensation-')),
+      [{ kind: 'compensation-delete' }, { kind: 'compensation-verify' }],
+    );
+  }
+});
+
+test('Premium compensation fails closed when direct provider absence cannot be proven', async () => {
+  const harness = loadCreateStreamUpload({
+    tusLocation: `https://attacker.example/tus/${providerUid}?tusv2=true`,
+    compensationQueueError: { message: 'simulated queue failure' },
+    directDeleteError: new Error('simulated provider delete failure'),
+    directAbsent: false,
+  });
+  const { response, json: payload } = await post(harness.handler, upload);
+  assert.equal(response.status, 503);
+  assert.equal(payload.error, 'asset_state_failed');
+  assert.deepEqual(
+    harness.providerCalls.filter(call => call.kind.startsWith('compensation-')),
+    [{ kind: 'compensation-delete' }, { kind: 'compensation-verify' }],
+  );
+});
+
+test('generic Stream compensation accepts confirmed physical absence even when bookkeeping affects no row', async () => {
+  const harness = loadCreateStreamUpload({
+    allocationStale: true,
+    compensationQueueStatus: null,
+    directAbsent: true,
+  });
+  const { response, json: payload } = await post(harness.handler, {
+    ...upload,
+    purpose: 'feed_video',
+    premium_content_id: undefined,
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(payload.error, 'stream_allocation_stale');
+  assert.deepEqual(
+    harness.providerCalls.filter(call => call.kind.startsWith('compensation-')),
+    [{ kind: 'compensation-delete' }, { kind: 'compensation-verify' }],
+  );
+});
+
+test('generic Stream compensation retries direct deletion when delete_pending persistence is missing or errors', async () => {
+  for (const persistenceFailure of [
+    { compensationQueueStatus: null },
+    { compensationQueueError: { message: 'simulated queue failure' } },
+  ]) {
+    const harness = loadCreateStreamUpload({
+      allocationStale: true,
+      directAbsent: false,
+      ...persistenceFailure,
+    });
+    const { response, json: payload } = await post(harness.handler, {
+      ...upload,
+      purpose: 'feed_video',
+      premium_content_id: undefined,
+    });
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.error, 'asset_state_failed');
+    assert.deepEqual(
+      harness.providerCalls.filter(call => call.kind.startsWith('compensation-')),
+      [
+        { kind: 'compensation-delete' },
+        { kind: 'compensation-verify' },
+        { kind: 'compensation-delete' },
+        { kind: 'compensation-verify' },
+      ],
+    );
+  }
+});
+
 test('Feed and Business keep unsigned direct uploads and never receive Premium metadata', async () => {
   for (const body of [
     { ...upload, purpose: 'feed_video', premium_content_id: undefined },
@@ -337,7 +494,7 @@ test('Feed and Business keep unsigned direct uploads and never receive Premium m
   }
 });
 
-function loadWebhook({ asset, premiumUpdates, publicUpdates } = {}) {
+function loadWebhook({ asset, premiumUpdates, publicUpdates, updateStale = false } = {}) {
   let handler;
   const updates = [];
   const row = asset ?? {
@@ -347,6 +504,7 @@ function loadWebhook({ asset, premiumUpdates, publicUpdates } = {}) {
     cloudflare_uid: 'provider-uid',
     max_duration_seconds: 60,
     ready_at: null,
+    updated_at: '2026-10-08T00:00:00.000Z',
   };
   const db = {
     from(table) {
@@ -361,7 +519,7 @@ function loadWebhook({ asset, premiumUpdates, publicUpdates } = {}) {
         },
         update(values) {
           updates.push(structuredClone(values));
-          return mutationResult({ error: null });
+          return mutationResult({ data: updateStale ? null : { id: assetId }, error: null });
         },
       };
     },
@@ -381,6 +539,7 @@ function loadWebhook({ asset, premiumUpdates, publicUpdates } = {}) {
     },
     '../_shared/stream.ts': {
       isUuid: value => typeof value === 'string' && value.length === 36,
+      monotonicStreamUpdates: (_current, proposed) => proposed,
       reconcileStreamVideo: () => publicUpdates ?? {
         status: 'ready', hls_url: 'https://public.example/hls.m3u8',
         dash_url: 'https://public.example/video.mpd', thumbnail_url: 'https://public.example/thumb.jpg',
@@ -422,6 +581,17 @@ test('webhook uses Premium reconciliation without persisting provider playback U
   assert.deepEqual(harness.updates[0].provider_metadata, { require_signed_urls: true });
 });
 
+test('late webhook becomes an idempotent no-op when deletion wins the compare-and-set', async () => {
+  const harness = loadWebhook({ updateStale: true });
+  const { response, json: payload } = await webhook(harness.handler, {
+    uid: 'provider-uid', meta: { asset_id: assetId }, status: { state: 'ready' },
+    readyToStream: true, requireSignedURLs: true,
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(payload, { success: true });
+  assert.equal(harness.updates.length, 1);
+});
+
 test('webhook preserves public reconciliation and Premium ready idempotency', async () => {
   const publicHarness = loadWebhook({ asset: {
     id: assetId, purpose: 'feed_video', status: 'processing', cloudflare_uid: 'provider-uid', max_duration_seconds: 60,
@@ -444,6 +614,7 @@ test('ready Premium webhook preserves proven protection unless provider explicit
   const readyAsset = {
     id: assetId, purpose: 'creator_premium_video', status: 'ready', cloudflare_uid: 'provider-uid',
     max_duration_seconds: 60, ready_at: 'original-ready-at',
+    updated_at: '2026-10-08T00:00:00.000Z',
   };
   const signedRequiredFailure = {
     status: 'failed', hls_url: null, dash_url: null, thumbnail_url: null,
@@ -513,14 +684,37 @@ function loadPlayback({
     duration_seconds: 12, width: 1920, height: 1080, ready_at: '2026-10-08T00:00:00.000Z',
     last_provider_check_at: new Date().toISOString(), max_duration_seconds: 60,
   }],
+  updateStale = false,
+  canonicalAfterStale = null,
+  premiumUpdates = null,
+  publicUpdates = null,
+  providerResult = {},
+  monotonicUpdates = (_current, proposed) => proposed,
 } = {}) {
   let handler;
   const grantCalls = [];
   const rpcCalls = [];
+  const updates = [];
+  let assetSelectCount = 0;
   const db = {
     from(table) {
       if (table === 'video_asset_links') return rowsChain(links);
-      if (table === 'video_assets') return rowsChain(assets);
+      if (table === 'video_assets') return {
+        select() {
+          assetSelectCount += 1;
+          const rows = assetSelectCount > 1 && canonicalAfterStale
+            ? [canonicalAfterStale]
+            : assets;
+          return rowsChain(rows);
+        },
+        update(values) {
+          updates.push(structuredClone(values));
+          return mutationResult({
+            data: updateStale ? null : { ...assets[0], ...values },
+            error: null,
+          });
+        },
+      };
       throw new Error(`Unexpected table: ${table}`);
     },
   };
@@ -548,19 +742,23 @@ function loadPlayback({
           expiresAt: new Date(Date.now() + 300_000).toISOString(),
         };
       },
-      reconcilePremiumStreamVideo: () => ({}),
+      reconcilePremiumStreamVideo: () => premiumUpdates ?? {},
     },
     '../_shared/stream.ts': {
       isUuid: value => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value),
-      reconcileStreamVideo: () => ({}),
+      monotonicStreamUpdates: monotonicUpdates,
+      reconcileStreamVideo: () => publicUpdates ?? {},
       sanitizeProviderError: () => ({ code: 'provider_error', status: 502 }),
       streamCustomerCode: () => 'code',
-      streamFetch: async () => ({ result: {} }),
+      streamFetch: async () => ({ result: providerResult }),
     },
   }, {
     Deno: { serve(fn) { handler = fn; } },
   });
-  return { handler, grantCalls, rpcCalls };
+  return {
+    handler, grantCalls, rpcCalls, updates,
+    get assetSelectCount() { return assetSelectCount; },
+  };
 }
 
 test('Premium playback request is exclusive and entitlement precedes internal media resolution', async () => {
@@ -636,6 +834,133 @@ test('owner asset route exposes safe Premium processing state but never playback
   assert.equal(payload.data.dashUrl, null);
   assert.equal(payload.data.thumbnailUrl, null);
   assert.equal(harness.grantCalls.length, 0);
+});
+
+test('owner playback returns the canonical row when a webhook wins the provider-refresh CAS', async () => {
+  const initial = {
+    id: assetId, owner_id: userId, purpose: 'creator_premium_video', provider: 'cloudflare_stream',
+    visibility: 'private', status: 'processing', cloudflare_uid: 'provider-uid',
+    hls_url: null, dash_url: null, thumbnail_url: null, provider_progress: 35,
+    duration_seconds: null, width: null, height: null, ready_at: null,
+    last_provider_check_at: '2026-10-08T00:00:00.000Z', max_duration_seconds: 180,
+    updated_at: '2026-10-08T00:00:00.000Z',
+  };
+  const canonical = {
+    ...initial,
+    status: 'ready', provider_progress: 100, duration_seconds: 42,
+    width: 1920, height: 1080, ready_at: '2026-10-08T00:00:05.000Z',
+    last_provider_check_at: '2026-10-08T00:00:05.000Z',
+    updated_at: '2026-10-08T00:00:05.000Z',
+  };
+  const harness = loadPlayback({
+    assets: [initial],
+    updateStale: true,
+    canonicalAfterStale: canonical,
+    providerResult: { uid: 'provider-uid' },
+    premiumUpdates: {
+      status: 'ready', provider_progress: 100, duration_seconds: 42,
+      width: 1920, height: 1080, hls_url: null, dash_url: null, thumbnail_url: null,
+      ready_at: '2026-10-08T00:00:05.000Z', last_provider_check_at: '2026-10-08T00:00:05.000Z',
+    },
+  });
+
+  const { response, json: payload } = await post(harness.handler, { asset_id: assetId });
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.success, true);
+  assert.equal(payload.data.status, 'ready');
+  assert.equal(payload.data.durationSeconds, 42);
+  assert.equal(payload.data.playbackMode, 'premium_entitlement_required');
+  assert.equal(payload.data.hlsUrl, null);
+  assert.equal(harness.updates.length, 1);
+  assert.equal(harness.assetSelectCount, 2);
+});
+
+test('owner playback ignores an out-of-order provider observation and returns canonical processing state', async () => {
+  const initial = {
+    id: assetId, owner_id: userId, purpose: 'creator_premium_video', provider: 'cloudflare_stream',
+    visibility: 'private', status: 'processing', cloudflare_uid: 'provider-uid',
+    hls_url: null, dash_url: null, thumbnail_url: null, provider_progress: 85,
+    duration_seconds: null, width: null, height: null, ready_at: null,
+    last_provider_check_at: '2026-10-08T00:00:00.000Z', max_duration_seconds: 180,
+    updated_at: '2026-10-08T00:00:00.000Z',
+  };
+  const harness = loadPlayback({
+    assets: [initial],
+    canonicalAfterStale: initial,
+    providerResult: { uid: 'provider-uid' },
+    premiumUpdates: {
+      status: 'uploading', provider_progress: 25, duration_seconds: null,
+      width: null, height: null, hls_url: null, dash_url: null, thumbnail_url: null,
+      ready_at: null, last_provider_check_at: '2026-10-08T00:00:05.000Z',
+    },
+    monotonicUpdates: () => null,
+  });
+
+  const { response, json: payload } = await post(harness.handler, { asset_id: assetId });
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.success, true);
+  assert.equal(payload.data.status, 'processing');
+  assert.equal(payload.data.progress, 85);
+  assert.equal(payload.data.playbackMode, 'premium_entitlement_required');
+  assert.equal(payload.data.hlsUrl, null);
+  assert.equal(harness.updates.length, 0);
+  assert.equal(harness.assetSelectCount, 2);
+});
+
+test('Stream reconciliation rejects regressions and preserves same-state evidence', () => {
+  class Command { constructor(input) { this.input = input; } }
+  const shared = executeModule(read('supabase/functions/_shared/stream.ts'), 'stream.ts', {
+    'npm:@aws-sdk/client-s3@3.637.0': {
+      DeleteObjectCommand: Command, GetObjectCommand: Command, HeadObjectCommand: Command,
+      PutObjectCommand: Command, S3Client: class { send() {} },
+    },
+    'npm:@aws-sdk/s3-request-presigner@3.637.0': { getSignedUrl: async () => 'signed' },
+  }, {
+    Deno: { env: { get() { return 'configured'; } } },
+  });
+  const current = {
+    status: 'processing', provider_progress: 80, duration_seconds: 12,
+    width: 1920, provider_metadata: { stable: true },
+  };
+  assert.equal(shared.monotonicStreamUpdates(current, {
+    status: 'uploading', provider_progress: 90,
+  }), null);
+  assert.equal(shared.monotonicStreamUpdates({ status: 'failed' }, {
+    status: 'ready', provider_progress: 100,
+  }), null);
+  assert.equal(shared.monotonicStreamUpdates({ status: 'uploading' }, {
+    status: 'failed', error_code: 'stream_processing_failed',
+  }).status, 'failed');
+  assert.equal(shared.monotonicStreamUpdates({ status: 'processing' }, {
+    status: 'failed', error_code: 'stream_processing_failed',
+  }).status, 'failed');
+  const same = shared.monotonicStreamUpdates(current, {
+    status: 'processing', provider_progress: 25, duration_seconds: null,
+    width: null, provider_metadata: null, last_provider_check_at: 'later',
+  });
+  assert.equal(same.provider_progress, 80);
+  assert.equal(same.duration_seconds, 12);
+  assert.equal(same.width, 1920);
+  assert.deepEqual(same.provider_metadata, { stable: true });
+  assert.equal(shared.monotonicStreamUpdates({ status: 'ready' }, {
+    status: 'failed', error_code: 'creator_premium_stream_signed_urls_required',
+  }), null);
+  assert.equal(shared.monotonicStreamUpdates({ status: 'ready' }, {
+    status: 'failed', error_code: 'creator_premium_stream_signed_urls_required',
+  }, { allowReadySecurityFailure: true }).status, 'failed');
+});
+
+test('webhook and playback compare-and-set the row version as well as status', () => {
+  assert.match(
+    read('supabase/functions/stream-webhook/index.ts'),
+    /\.eq\('status',asset\.status\)[\s\S]*?\.eq\('updated_at',asset\.updated_at\)/,
+  );
+  assert.match(
+    read('supabase/functions/get-stream-playback/index.ts'),
+    /\.eq\('status',String\(asset\.status\)\)[\s\S]*?\.eq\('updated_at',String\(asset\.updated_at\)\)/,
+  );
 });
 
 test('B3 Stream sources contain no secret, UID, token, or signed URL logging and preserve narrow deployment scope', () => {

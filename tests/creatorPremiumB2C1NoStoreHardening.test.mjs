@@ -71,7 +71,7 @@ test('Premium presigner binds canonical object no-store metadata and all require
           return 'https://r2.example.test/premium-original';
         },
       },
-      './r2.ts': { r2Client: () => canonicalClient },
+      './r2.ts': { R2_PUT_URL_TTL_SECONDS: 300, r2Client: () => canonicalClient },
     },
   );
 
@@ -163,7 +163,7 @@ test(
         {
           'npm:@aws-sdk/client-s3@3.637.0': clientSdk,
           'npm:@aws-sdk/s3-request-presigner@3.637.0': presignerSdk,
-          './r2.ts': { r2Client: () => client },
+          './r2.ts': { R2_PUT_URL_TTL_SECONDS: 300, r2Client: () => client },
         },
       );
       const signedUrl = await helper.signPremiumOriginalPutIfAbsent(
@@ -201,6 +201,7 @@ function queryResult(result) {
     eq() { return chain; },
     gte() { return chain; },
     in() { return chain; },
+    maybeSingle: async () => result,
     then(resolve, reject) { return Promise.resolve(result).then(resolve, reject); },
   };
   return chain;
@@ -210,13 +211,15 @@ function loadCreateMediaUpload() {
   let handler;
   const normalPresigns = [];
   const premiumPresigns = [];
+  let insertedId = null;
   const db = {
+    async rpc() { return { data: 'scheduled', error: null }; },
     from() {
       return {
         select() { return queryResult({ data: [], count: 0, error: null }); },
-        insert() { return Promise.resolve({ error: null }); },
+        insert(row) { insertedId = row.id; return Promise.resolve({ error: null }); },
         update() {
-          return { eq: async () => ({ error: null }) };
+          return queryResult({ data: { id: insertedId }, error: null });
         },
       };
     },
@@ -241,6 +244,7 @@ function loadCreateMediaUpload() {
     '../_shared/r2.ts': {
       R2_PRIVATE_BUCKET: () => 'private-bucket',
       R2_PUBLIC_BUCKET: () => 'public-bucket',
+      R2_PUT_URL_TTL_SECONDS: 300,
       async signPutIfAbsent(...args) {
         normalPresigns.push(args);
         return 'https://upload.example.test/ordinary';
@@ -272,6 +276,7 @@ async function post(handler, body) {
 }
 
 const contentId = '20000000-0000-4000-8000-000000000001';
+const assetId = '30000000-0000-4000-8000-000000000001';
 const baseUpload = {
   mime_type: 'image/jpeg',
   size_bytes: 1234,
@@ -396,6 +401,8 @@ function mutationResult(result = { error: null }, filters = []) {
   const chain = {
     eq(column, value) { filters.push({ operator: 'eq', column, value }); return chain; },
     in(column, values) { filters.push({ operator: 'in', column, values }); return chain; },
+    select() { return chain; },
+    maybeSingle: async () => result,
     then(resolve, reject) { return Promise.resolve(result).then(resolve, reject); },
   };
   return chain;
@@ -404,11 +411,11 @@ function mutationResult(result = { error: null }, filters = []) {
 function loadFinalizeMediaUpload({
   purpose = 'creator_premium_original_image',
   cacheControl,
-  deleteError = null,
+  scheduleResult = { data: 'scheduled', error: null },
 } = {}) {
   let handler;
   const updates = [];
-  const deletes = [];
+  const rpcCalls = [];
   const asset = {
     id: '30000000-0000-4000-8000-000000000001',
     owner_id: '10000000-0000-4000-8000-000000000001',
@@ -425,6 +432,10 @@ function loadFinalizeMediaUpload({
     cleanup_attempts: 0,
   };
   const db = {
+    async rpc(name, args) {
+      rpcCalls.push({ name, args: JSON.parse(JSON.stringify(args)) });
+      return scheduleResult;
+    },
     from(table) {
       assert.equal(table, 'media_assets');
       return {
@@ -440,7 +451,7 @@ function loadFinalizeMediaUpload({
             filters: [],
           };
           updates.push(mutation);
-          return mutationResult({ error: null }, mutation.filters);
+          return mutationResult({ data: { id: asset.id }, error: null }, mutation.filters);
         },
       };
     },
@@ -465,10 +476,6 @@ function loadFinalizeMediaUpload({
           ETag: '"etag"',
         };
       },
-      async deleteObject(bucket, key) {
-        deletes.push({ bucket, key });
-        if (deleteError) throw deleteError;
-      },
       isR2NotFound: () => false,
       isR2Transient: () => false,
       publicUrl: key => `https://public.example.test/${key}`,
@@ -481,7 +488,7 @@ function loadFinalizeMediaUpload({
   }, {
     Deno: { serve(fn) { handler = fn; } },
   });
-  return { handler, updates, deletes };
+  return { handler, updates, rpcCalls };
 }
 
 test('finalize allows Premium original ready only after provider proves exact no-store metadata', async () => {
@@ -493,7 +500,7 @@ test('finalize allows Premium original ready only after provider proves exact no
     assert.equal(response.status, 200);
     assert.equal(json.data.status, 'ready');
     assert.ok(harness.updates.some(update => update.row.status === 'ready'));
-    assert.equal(harness.deletes.length, 0);
+    assert.equal(harness.rpcCalls.length, 0);
   }
 });
 
@@ -506,37 +513,26 @@ test('finalize rejects missing, wrong, and public Premium original Cache-Control
     assert.equal(response.status, 409);
     assert.equal(json.error, 'object_mismatch');
     assert.equal(json.mismatch_code, 'premium_original_cache_control_mismatch');
-    assert.ok(harness.updates.some(update => update.row.status === 'delete_pending'));
-    const deleted = harness.updates.find(update => update.row.status === 'deleted');
-    assert.ok(deleted);
-    assert.ok(deleted.filters.some(filter =>
-      filter.operator === 'eq'
-      && filter.column === 'status'
-      && filter.value === 'delete_pending'));
     assert.equal(harness.updates.some(update => update.row.status === 'ready'), false);
-    assert.equal(harness.deletes.length, 1);
+    assert.deepEqual(harness.rpcCalls, [{
+      name: 'schedule_media_asset_deletion',
+      args: { p_asset_id: assetId, p_owner_id: '10000000-0000-4000-8000-000000000001' },
+    }]);
   }
 });
 
-test('finalize retains delete-pending retry metadata when mismatch cleanup cannot delete R2 object', async () => {
+test('finalize fails closed when canonical mismatch cleanup cannot be scheduled', async () => {
   const harness = loadFinalizeMediaUpload({
     cacheControl: 'public, max-age=31536000',
-    deleteError: new Error('simulated provider delete failure'),
+    scheduleResult: { data: null, error: { message: 'simulated schedule failure' } },
   });
   const { response, json } = await post(harness.handler, {
     asset_id: '30000000-0000-4000-8000-000000000001',
   });
   assert.equal(response.status, 409);
-  assert.equal(json.mismatch_code, 'premium_original_cache_control_mismatch');
-  assert.ok(harness.updates.some(update =>
-    update.row.status === 'delete_pending'
-    && update.row.error_code === 'premium_original_cache_control_mismatch'
-    && typeof update.row.next_cleanup_attempt_at === 'string'));
-  assert.ok(harness.updates.some(update =>
-    update.row.error_code === 'object_mismatch_delete_retry'));
-  assert.equal(harness.updates.some(update => update.row.status === 'deleted'), false);
+  assert.equal(json.error, 'media_finalize_stale');
   assert.equal(harness.updates.some(update => update.row.status === 'ready'), false);
-  assert.equal(harness.deletes.length, 1);
+  assert.equal(harness.rpcCalls.at(-1).name, 'schedule_media_asset_deletion');
 });
 
 test('Premium teaser does not require private no-store metadata at finalize', async () => {

@@ -91,13 +91,17 @@ function loadCreateMediaUpload({ authorize = { data: true, error: null } } = {})
   const rpcCalls = [];
   const updates = [];
   const db = {
+    async rpc(name, args) {
+      rpcCalls.push({ name, args: JSON.parse(JSON.stringify(args)) });
+      return { data: 'scheduled', error: null };
+    },
     from(table) {
       return {
         select() { return queryResult({ data: [], count: 0, error: null }); },
         insert(row) { inserts.push({ table, row }); return Promise.resolve({ error: null }); },
         update(row) {
           updates.push({ table, row });
-          return { eq: async () => ({ error: null }) };
+          return queryResult({ data: { id: inserts.at(-1)?.row?.id }, error: null });
         },
       };
     },
@@ -131,6 +135,7 @@ function loadCreateMediaUpload({ authorize = { data: true, error: null } } = {})
     '../_shared/r2.ts': {
       R2_PRIVATE_BUCKET: () => 'private-bucket',
       R2_PUBLIC_BUCKET: () => 'public-bucket',
+      R2_PUT_URL_TTL_SECONDS: 300,
       signPutIfAbsent: async () => 'https://upload.example.test/signed-put',
     },
   }, {

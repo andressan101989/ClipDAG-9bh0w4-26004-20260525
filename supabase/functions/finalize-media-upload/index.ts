@@ -5,7 +5,6 @@ import {
   premiumOriginalHasRequiredCacheControl,
 } from "../_shared/premiumR2Security.ts";
 import {
-  deleteObject,
   headObject,
   isR2NotFound,
   isR2Transient,
@@ -95,6 +94,18 @@ async function headWithRetry(bucket: string, key: string) {
   }
   throw lastError;
 }
+
+async function scheduleCleanup(
+  db: ReturnType<typeof admin>,
+  assetId: string,
+  ownerId: string,
+): Promise<boolean> {
+  const { data, error } = await db.rpc("schedule_media_asset_deletion", {
+    p_asset_id: assetId,
+    p_owner_id: ownerId,
+  });
+  return !error && ["scheduled", "deleted"].includes(String(data));
+}
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
@@ -172,34 +183,8 @@ Deno.serve(async (req) => {
         expectedContentType,
         actualContentType,
       });
-      await db
-        .from("media_assets")
-        .update({
-          status: "delete_pending",
-          error_code: mismatchDiagnostic.mismatch_code,
-          next_cleanup_attempt_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", a.id);
-      try {
-        await deleteObject(a.bucket_name, a.object_key);
-        await db
-          .from("media_assets")
-          .update({
-            status: "deleted",
-            deleted_at: new Date().toISOString(),
-            next_cleanup_attempt_at: null,
-            cleanup_attempts: Number(a.cleanup_attempts ?? 0) + 1,
-            last_cleanup_attempt_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", a.id)
-          .eq("status", "delete_pending");
-      } catch {
-        await db
-          .from("media_assets")
-          .update({ error_code: "object_mismatch_delete_retry" })
-          .eq("id", a.id);
+      if (!await scheduleCleanup(db, String(a.id), String(a.owner_id))) {
+        return json({ error: "media_finalize_stale" }, 409);
       }
       return json(mismatchDiagnostic, 409);
     }
@@ -210,19 +195,14 @@ Deno.serve(async (req) => {
         durationMs <= 0 ||
         durationMs > 60000)
     ) {
-      await db
-        .from("media_assets")
-        .update({
-          status: "failed",
-          error_code: "invalid_video_duration",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", a.id);
+      if (!await scheduleCleanup(db, String(a.id), String(a.owner_id))) {
+        return json({ error: "media_finalize_stale" }, 409);
+      }
       return json({ error: "invalid_video_duration" }, 400);
     }
     const resolvedPublicUrl =
       a.visibility === "public" ? publicUrl(a.object_key) : null;
-    const { error: readyError } = await db
+    const { data: readyRow, error: readyError } = await db
       .from("media_assets")
       .update({
         status: "ready",
@@ -233,8 +213,10 @@ Deno.serve(async (req) => {
         updated_at: new Date().toISOString(),
       })
       .eq("id", a.id)
-      .in("status", ["pending", "uploading"]);
+      .in("status", ["pending", "uploading"])
+      .select("id").maybeSingle();
     if (readyError) return json({ error: "finalize_state_failed" }, 503);
+    if (readyRow?.id !== a.id) return json({ error: "media_finalize_stale" }, 409);
     return json({
       success: true,
       data: {
@@ -249,14 +231,18 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     if (isR2NotFound(error)) {
-      await db
+      const { data: failedRow, error: failedError } = await db
         .from("media_assets")
         .update({
           status: "failed",
           error_code: "object_missing",
           updated_at: new Date().toISOString(),
         })
-        .eq("id", a.id);
+        .eq("id", a.id)
+        .in("status", ["pending", "uploading"])
+        .select("id").maybeSingle();
+      if (failedError) return json({ error: "finalize_state_failed" }, 503);
+      if (failedRow?.id !== a.id) return json({ error: "media_finalize_stale" }, 409);
       return json({ error: "object_missing" }, 409);
     }
     await db

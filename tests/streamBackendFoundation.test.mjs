@@ -188,9 +188,9 @@ assert.match(create,/if\(!uploadUrl\)[\s\S]*compensateUid\(uid,'stream_provider_
 assert.match(playback,/Date\.now\(\)-checkedAt>=5_000/);
 assert.match(playback,/stream_provider_uid_mismatch/);
 assert.match(playback,/providerUid!==asset\.cloudflare_uid/);
-assert.match(deletion,/stream_not_found/);
-assert.match(deletion,/if\(pendingError\) return json\(\{error:'asset_state_failed'\},503\)/);
-assert.match(deletion,/if\(deletedError\) return json\(\{error:'asset_state_failed'\},503\)/);
+assert.match(deletion,/schedule_video_asset_deletion_v1/);
+assert.match(deletion,/status:'delete_pending'/);
+assert.doesNotMatch(deletion,/streamFetch|deleteStreamVideo|stream_not_found/);
 assert.match(webhook,/const rawBody=await req\.text\(\)/);
 assert.match(webhook,/stream_webhook_not_configured/);
 assert.match(webhook,/stream_webhook_lookup_failed/);

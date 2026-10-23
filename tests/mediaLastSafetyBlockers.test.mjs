@@ -53,10 +53,11 @@ test('avatar update and link replacement are atomic', () => {
   assert.match(profile, /setProfileAvatarWithMedia\(uploaded\.assetId\)/);
 });
 
-test('delete rejects assets in authoritative use and finalizes link cleanup', () => {
+test('delete rejects assets in authoritative use and delegates fenced cleanup', () => {
   assert.match(remove, /schedule_media_asset_deletion/);
   assert.match(remove, /\{error:'asset_in_use'\},409/);
-  assert.match(remove, /finalize_media_asset_deletion/);
+  assert.match(remove, /status:'delete_pending'/);
+  assert.doesNotMatch(remove, /finalize_media_asset_deletion|deleteObject\(/);
   assert.match(migration, /delete from public\.media_asset_links where asset_id = p_asset_id/i);
 });
 
