@@ -27,6 +27,96 @@ export class StreamProviderError extends Error {
   }
 }
 
+function safeProviderRequestId(response:Response):string|null {
+  const value=response.headers.get('cf-ray')?.trim()??'';
+  return /^[A-Za-z0-9._:-]{1,128}$/.test(value)?value:null;
+}
+
+function streamRequestSignal(signal:AbortSignal|null|undefined):AbortSignal {
+  const timeout=AbortSignal.timeout(15_000);
+  return signal?AbortSignal.any([signal,timeout]):timeout;
+}
+
+async function streamProviderResponse(path:string,init:RequestInit):Promise<Response> {
+  try {
+    return await fetch(`${streamApiBase()}${path}`,{
+      ...init,
+      signal:streamRequestSignal(init.signal),
+      headers:{Authorization:`Bearer ${streamToken()}`,...(init.headers??{})},
+    });
+  } catch(error) {
+    if(error instanceof StreamProviderError) throw error;
+    const name=error&&typeof error==='object'&&'name' in error?String(error.name):'';
+    throw new StreamProviderError(
+      name==='AbortError'||name==='TimeoutError'
+        ?'stream_provider_temporarily_unavailable'
+        :'stream_provider_error',
+      name==='AbortError'||name==='TimeoutError'?503:502,
+      name==='AbortError'||name==='TimeoutError',
+    );
+  }
+}
+
+function throwStreamResponseError(response:Response):never {
+  if(response.status===404) throw new StreamProviderError('stream_not_found',404);
+  const transient=response.status===408||response.status===425||response.status===429||response.status>=500;
+  throw new StreamProviderError(
+    transient?'stream_provider_temporarily_unavailable':'stream_provider_rejected',
+    transient?503:502,
+    transient,
+  );
+}
+
+export async function deleteStreamVideo(uid:string,signal?:AbortSignal|null):Promise<{
+  accepted:boolean;
+  alreadyAbsent:boolean;
+  requestId:string|null;
+}> {
+  if(!uid.trim()) throw new StreamProviderError('stream_provider_identity_missing',500);
+  const response=await streamProviderResponse(`/${encodeURIComponent(uid)}`,{
+    method:'DELETE',headers:{Accept:'*/*'},signal,
+  });
+  const requestId=safeProviderRequestId(response);
+  if(response.status===404) return {accepted:true,alreadyAbsent:true,requestId};
+  if(!response.ok) throwStreamResponseError(response);
+  // Cloudflare may return either an empty 2xx response or its normal API
+  // envelope.  An explicit `success:false` must never be persisted as an
+  // accepted provider deletion merely because the HTTP status was 2xx.
+  const body=await response.text().catch(()=>null);
+  if(body===null) throw new StreamProviderError('stream_provider_invalid_response',502);
+  if(body.trim()) {
+    let payload:Record<string,unknown>|null=null;
+    try {
+      const parsed=JSON.parse(body) as unknown;
+      payload=parsed&&typeof parsed==='object'&&!Array.isArray(parsed)
+        ?parsed as Record<string,unknown>
+        :null;
+    } catch {
+      payload=null;
+    }
+    if(!payload||payload.success!==true) {
+      throw new StreamProviderError('stream_provider_invalid_response',502);
+    }
+  }
+  return {accepted:true,alreadyAbsent:false,requestId};
+}
+
+export async function verifyStreamVideoAbsent(uid:string,signal?:AbortSignal|null):Promise<{
+  absent:boolean;
+  requestId:string|null;
+}> {
+  if(!uid.trim()) throw new StreamProviderError('stream_provider_identity_missing',500);
+  const response=await streamProviderResponse(`/${encodeURIComponent(uid)}`,{
+    method:'GET',headers:{Accept:'application/json'},signal,
+  });
+  const requestId=safeProviderRequestId(response);
+  if(response.status===404) return {absent:true,requestId};
+  if(!response.ok) throwStreamResponseError(response);
+  const payload=await response.json().catch(()=>null) as Record<string,unknown>|null;
+  if(!payload||payload.success!==true) throw new StreamProviderError('stream_provider_invalid_response',502);
+  return {absent:false,requestId};
+}
+
 export function validateStreamMime(mime:unknown):string|null {
   const value=String(mime??'').trim().toLowerCase();
   return STREAM_MIME_TYPES.has(value)?value:null;
@@ -49,18 +139,11 @@ export function sanitizeProviderError(error:unknown):{code:string;message:string
 }
 
 export async function streamFetch(path:string,init:RequestInit={}):Promise<Record<string,unknown>> {
-  const response=await fetch(`${streamApiBase()}${path}`,{
+  const response=await streamProviderResponse(path,{
     ...init,
-    headers:{Authorization:`Bearer ${streamToken()}`,'Content-Type':'application/json',...(init.headers??{})},
+    headers:{'Content-Type':'application/json',...(init.headers??{})},
   });
-  if(!response.ok) {
-    if(response.status===404) throw new StreamProviderError('stream_not_found',404);
-    throw new StreamProviderError(
-      response.status===429||response.status>=500?'stream_provider_temporarily_unavailable':'stream_provider_rejected',
-      response.status===429||response.status>=500?503:502,
-      response.status===429||response.status>=500,
-    );
-  }
+  if(!response.ok) throwStreamResponseError(response);
   const payload=await response.json().catch(()=>null) as Record<string,unknown>|null;
   if(!payload||payload.success!==true) throw new StreamProviderError('stream_provider_invalid_response',502);
   return payload;
@@ -80,6 +163,54 @@ export function progressOrNull(value:unknown):number|null {
   if(value===null||value===undefined||value==='') return null;
   const number=Number(value);
   return Number.isFinite(number)&&number>=0&&number<=100?number:null;
+}
+
+const streamStateRank:Record<string,number>={pending:0,uploading:1,processing:2,ready:3};
+const preserveOnSameState=[
+  'duration_seconds','width','height','hls_url','dash_url','thumbnail_url',
+  'provider_metadata','ready_at',
+] as const;
+
+/**
+ * Reject out-of-order provider observations before an optimistic DB write.
+ * The caller must additionally compare-and-set the row's `updated_at` token;
+ * otherwise two observations read from the same state could still race.
+ */
+export function monotonicStreamUpdates(
+  current:Record<string,unknown>,
+  proposed:Record<string,unknown>,
+  options:{allowReadySecurityFailure?:boolean}={},
+):Record<string,unknown>|null {
+  const currentStatus=String(current.status??'');
+  const proposedStatus=String(proposed.status??'');
+  if(['delete_pending','deleted'].includes(currentStatus)) return null;
+  if(currentStatus==='failed'&&proposedStatus!=='failed') return null;
+  if(proposedStatus==='failed') {
+    if(currentStatus==='ready'&&options.allowReadySecurityFailure!==true) return null;
+    if(currentStatus!=='failed'&&currentStatus!=='ready'
+      &&streamStateRank[currentStatus]===undefined) return null;
+  } else if(currentStatus==='ready'&&proposedStatus!=='ready') {
+    return null;
+  } else {
+    const currentRank=streamStateRank[currentStatus];
+    const proposedRank=streamStateRank[proposedStatus];
+    if(currentStatus!=='failed'&&(
+      currentRank===undefined||proposedRank===undefined||proposedRank<currentRank
+    )) return null;
+  }
+
+  const updates={...proposed};
+  if(currentStatus===proposedStatus) {
+    const currentProgress=progressOrNull(current.provider_progress);
+    const proposedProgress=progressOrNull(proposed.provider_progress);
+    if(currentProgress!==null&&(proposedProgress===null||proposedProgress<currentProgress)) {
+      updates.provider_progress=currentProgress;
+    }
+    for(const key of preserveOnSameState) {
+      if(current[key]!==null&&current[key]!==undefined) updates[key]=current[key];
+    }
+  }
+  return updates;
 }
 function httpsOrNull(value:unknown):string|null {
   return typeof value==='string'&&value.startsWith('https://')?value:null;

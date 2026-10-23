@@ -1,5 +1,5 @@
 import { authenticatedUser,admin,json } from '../_shared/mediaAuth.ts';
-import { isUuid,sanitizeProviderError,streamFetch,StreamProviderError } from '../_shared/stream.ts';
+import { isUuid } from '../_shared/stream.ts';
 
 Deno.serve(async(req)=>{
   if(req.method!=='POST') return json({error:'method_not_allowed'},405);
@@ -11,34 +11,15 @@ Deno.serve(async(req)=>{
   if(error) return json({error:'asset_lookup_failed'},500);
   if(!data) return json({error:'asset_not_found'},404);
   if(data.status==='deleted') return json({success:true,data:{assetId:data.id,status:'deleted'}});
-  const {count,error:linkError}=await db.from('video_asset_links').select('*',{head:true,count:'exact'}).eq('asset_id',data.id);
-  if(linkError) return json({error:'asset_link_check_failed'},503);
-  if((count??0)>0) return json({error:'asset_in_use'},409);
-  const attempts=Number(data.delete_attempts??0)+1;
-  const {error:pendingError}=await db.from('video_assets')
-    .update({status:'delete_pending',delete_attempts:attempts}).eq('id',data.id).eq('owner_id',user.id);
-  if(pendingError) return json({error:'asset_state_failed'},503);
-  try {
-    if(data.cloudflare_uid) {
-      try { await streamFetch(`/${encodeURIComponent(data.cloudflare_uid)}`,{method:'DELETE'}); }
-      catch(error) {
-        if(error instanceof StreamProviderError&&error.code==='stream_not_found') { /* idempotent */ }
-        else throw error;
-      }
-    }
-    const {error:deletedError}=await db.from('video_assets').update({
-      status:'deleted',deleted_at:new Date().toISOString(),hls_url:null,dash_url:null,thumbnail_url:null,
-      error_code:null,error_message:null,next_cleanup_attempt_at:null,
-    }).eq('id',data.id).eq('owner_id',user.id);
-    if(deletedError) return json({error:'asset_state_failed'},503);
-    return json({success:true,data:{assetId:data.id,status:'deleted'}});
-  } catch(providerError) {
-    const safe=sanitizeProviderError(providerError);
-    const {error:failureStateError}=await db.from('video_assets').update({
-      status:'delete_pending',error_code:safe.code,error_message:safe.message,
-      next_cleanup_attempt_at:new Date(Date.now()+Math.min(3600,60*Math.max(1,attempts))*1000).toISOString(),
-    }).eq('id',data.id).eq('owner_id',user.id);
-    if(failureStateError) return json({error:'asset_state_failed'},503);
-    return json({error:safe.code},503);
-  }
+  const {data:schedule,error:scheduleError}=await db.rpc(
+    'schedule_video_asset_deletion_v1',
+    {p_asset_id:data.id,p_owner_id:user.id},
+  );
+  if(scheduleError) return json({error:'asset_state_failed'},503);
+  if(schedule==='asset_in_use') return json({error:'asset_in_use'},409);
+  if(schedule==='not_found') return json({error:'asset_not_found'},404);
+  if(schedule==='deleted') return json({success:true,data:{assetId:data.id,status:'deleted'}});
+  if(schedule==='exhausted') return json({error:'stream_cleanup_attempts_exhausted'},409);
+  if(schedule!=='scheduled') return json({error:'delete_schedule_failed'},503);
+  return json({success:true,data:{assetId:data.id,status:'delete_pending'}});
 });

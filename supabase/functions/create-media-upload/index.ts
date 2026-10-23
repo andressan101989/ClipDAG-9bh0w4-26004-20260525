@@ -5,7 +5,9 @@ import {
   PREMIUM_ORIGINAL_CACHE_CONTROL,
   signPremiumOriginalPutIfAbsent,
 } from '../_shared/premiumR2Security.ts';
-import { R2_PRIVATE_BUCKET,R2_PUBLIC_BUCKET,signPutIfAbsent } from '../_shared/r2.ts';
+import {
+  R2_PRIVATE_BUCKET,R2_PUBLIC_BUCKET,R2_PUT_URL_TTL_SECONDS,signPutIfAbsent,
+} from '../_shared/r2.ts';
 
 Deno.serve(async(req)=>{
   if(req.method==='OPTIONS') return new Response('ok',{headers:corsHeaders});
@@ -68,11 +70,17 @@ Deno.serve(async(req)=>{
   if((recent??0)>=20||(pending??0)>=10) return json({error:'rate_limited'},429);
   if((bytes??[]).reduce((n,r)=>n+Number(r.size_bytes??0),0)+size>500_000_000) return json({error:'byte_rate_limited'},429);
   const id=crypto.randomUUID(),now=new Date(),ext=extensionForMime(mime);
+  const expiresAt=new Date(now.getTime()+R2_PUT_URL_TTL_SECONDS*1000).toISOString();
   const env=Deno.env.get('DENO_DEPLOYMENT_ID')?'production':'development';
   const key=`${env}/${purpose}/${ownerId}/${now.getUTCFullYear()}/${String(now.getUTCMonth()+1).padStart(2,'0')}/${id}.${ext}`;
   const bucket=visibility==='public'?R2_PUBLIC_BUCKET():R2_PRIVATE_BUCKET();
   const safeName=String(body.file_name??'upload').replace(/[\u0000-\u001f\\\/]/g,'_').slice(0,180);
-  const {error}=await db.from('media_assets').insert({id,owner_id:ownerId,provider:'r2',media_kind:validated.rule.kind,purpose,visibility,bucket_name:bucket,object_key:key,mime_type:mime,size_bytes:size,original_filename:safeName,status:'pending'});
+  const {error}=await db.from('media_assets').insert({
+    id,owner_id:ownerId,provider:'r2',media_kind:validated.rule.kind,purpose,visibility,
+    bucket_name:bucket,object_key:key,mime_type:mime,size_bytes:size,
+    original_filename:safeName,status:'pending',
+    upload_authorization_expires_at:expiresAt,lifecycle_contract_version:1,
+  });
   if(error) return json({error:'asset_create_failed'},500);
   let uploadUrl:string;
   try {
@@ -86,16 +94,15 @@ Deno.serve(async(req)=>{
     await db.from('media_assets').update({status:'failed',error_code:'presign_failed',updated_at:new Date().toISOString()}).eq('id',id);
     return json({error:'presign_failed'},503);
   }
-  const {error:stateError}=await db.from('media_assets').update({status:'uploading',updated_at:new Date().toISOString()}).eq('id',id);
-  if(stateError) {
-    await db.from('media_assets').update({
-      status:'delete_pending',error_code:'asset_state_failed',
-      next_cleanup_attempt_at:new Date().toISOString(),updated_at:new Date().toISOString(),
-    }).eq('id',id);
+  const {data:stateRow,error:stateError}=await db.from('media_assets')
+    .update({status:'uploading',updated_at:new Date().toISOString()})
+    .eq('id',id).eq('status','pending').select('id').maybeSingle();
+  if(stateError||stateRow?.id!==id) {
+    await db.rpc('schedule_media_asset_deletion',{p_asset_id:id,p_owner_id:ownerId});
     return json({error:'asset_state_failed'},503);
   }
   const uploadContract=isPremiumOriginal
     ? {headers:{'Content-Type':mime,'If-None-Match':'*','Cache-Control':PREMIUM_ORIGINAL_CACHE_CONTROL}}
     : {headers:{'Content-Type':mime,'If-None-Match':'*'}};
-  return json({success:true,data:{assetId:id,uploadUrl,method:'PUT',...uploadContract,expiresAt:new Date(Date.now()+300_000).toISOString(),ownerId}});
+  return json({success:true,data:{assetId:id,uploadUrl,method:'PUT',...uploadContract,expiresAt,ownerId}});
 });

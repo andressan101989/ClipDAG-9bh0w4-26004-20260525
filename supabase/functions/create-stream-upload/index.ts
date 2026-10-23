@@ -7,8 +7,9 @@ import {
   classifyCloudflareTusFailure,
 } from './premiumTusContract.mjs';
 import {
-  STREAM_MAX_DURATION_SECONDS,STREAM_MAX_SIZE_BYTES,StreamProviderError,safeFilename,
-  sanitizeProviderError,streamApiBase,streamFetch,streamToken,
+  STREAM_MAX_DURATION_SECONDS,STREAM_MAX_SIZE_BYTES,StreamProviderError,deleteStreamVideo,
+  safeFilename,sanitizeProviderError,streamApiBase,streamFetch,streamToken,
+  verifyStreamVideoAbsent,
   validateStreamMime,validateStreamSize,
 } from '../_shared/stream.ts';
 
@@ -184,27 +185,90 @@ Deno.serve(async(req)=>{
 
   let uid:string|undefined;
   const persistRecovery=async(values:Record<string,unknown>,code:string):Promise<boolean>=>{
-    const {error}=await db.from('video_assets').update(values).eq('id',id).eq('owner_id',ownerId);
-    if(error) {
+    const {data:recovered,error}=await db.from('video_assets').update(values)
+      .eq('id',id).eq('owner_id',ownerId)
+      .in('status',['pending','uploading','processing','failed'])
+      .select('id,status').maybeSingle();
+    if(error||recovered?.id!==id) {
       console.error('[create-stream-upload] recovery_state_persist_failed',{code});
       return false;
     }
     return true;
   };
-  const compensateUid=async(uidToDelete:string,failureCode:string):Promise<boolean>=>{
-    let deleted=false,deleteCode=failureCode;
+  const deleteUnpublishedUid=async(uidToDelete:string):Promise<boolean>=>{
+    let deleteAccepted=false;
     try {
-      await streamFetch(`/${encodeURIComponent(uidToDelete)}`,{method:'DELETE'});
-      deleted=true;
-    } catch(error) {
-      const safe=sanitizeProviderError(error);
-      if(safe.status===404) deleted=true;
-      else deleteCode=safe.code;
+      await deleteStreamVideo(uidToDelete);
+      deleteAccepted=true;
+    } catch {
+      // A transport failure can happen after the provider accepted DELETE.
+      // Always perform the independent absence read before deciding cleanup failed.
     }
-    return persistRecovery(deleted
-      ? {status:'failed',cloudflare_uid:uidToDelete,error_code:failureCode,error_message:failureCode,next_cleanup_attempt_at:null}
-      : {status:'delete_pending',cloudflare_uid:uidToDelete,error_code:deleteCode,error_message:deleteCode,next_cleanup_attempt_at:new Date().toISOString()},
-    deleteCode);
+    try {
+      const absent=(await verifyStreamVideoAbsent(uidToDelete)).absent;
+      if(!absent&&deleteAccepted) {
+        console.error('[create-stream-upload] unpublished_stream_compensation_unconfirmed',{
+          code:'stream_compensation_absence_unconfirmed',
+        });
+      }
+      return absent;
+    } catch {
+      return false;
+    }
+  };
+  const compensateDirectly=async(uidToDelete:string,failureCode:string):Promise<boolean>=>{
+    const absent=await deleteUnpublishedUid(uidToDelete);
+    if(absent) {
+      // Best-effort bookkeeping only. Physical absence is authoritative for the
+      // newly provisioned, unpublished UID and must not depend on a stale row.
+      await persistRecovery({
+        status:'failed',cloudflare_uid:uidToDelete,
+        error_code:failureCode,error_message:failureCode,next_cleanup_attempt_at:null,
+      },failureCode);
+    }
+    return absent;
+  };
+  const compensateUid=async(uidToDelete:string,failureCode:string):Promise<boolean>=>{
+    if(!isPremium) {
+      const absent=await deleteUnpublishedUid(uidToDelete);
+      if(absent) {
+        // Physical absence is authoritative for this newly provisioned,
+        // unpublished UID. Bookkeeping is best-effort when a concurrent
+        // terminal transition already removed the mutable reservation row.
+        await persistRecovery({
+          status:'failed',cloudflare_uid:uidToDelete,
+          error_code:failureCode,error_message:failureCode,next_cleanup_attempt_at:null,
+        },failureCode);
+        return true;
+      }
+      const queued=await persistRecovery({
+        status:'delete_pending',cloudflare_uid:uidToDelete,
+        error_code:'stream_cleanup_retry_required',error_message:'stream_cleanup_retry_required',
+        next_cleanup_attempt_at:new Date().toISOString(),
+      },failureCode);
+      if(queued) return true;
+      // The first provider deletion was not proven and there is no durable
+      // cleanup row. Make one bounded direct compensation attempt, including
+      // an independent absence read, and fail closed if it remains ambiguous.
+      return compensateDirectly(uidToDelete,failureCode);
+    }
+    const {data:queued,error:queueError}=await db.from('video_assets').update({
+      cloudflare_uid:uidToDelete,
+      lifecycle_contract_version:1,
+      error_code:failureCode,
+      error_message:failureCode,
+      next_cleanup_attempt_at:new Date().toISOString(),
+    }).eq('id',id).eq('owner_id',ownerId)
+      .in('status',['pending','failed'])
+      .select('id,status').maybeSingle();
+    if(queueError||!queued||!['pending','failed'].includes(String(queued.status))) {
+      return compensateDirectly(uidToDelete,failureCode);
+    }
+    const {data:schedule,error:scheduleError}=await db.rpc('schedule_video_asset_deletion_v1',{
+      p_asset_id:id,p_owner_id:ownerId,
+    });
+    if(!scheduleError&&String(schedule)==='scheduled') return true;
+    return compensateDirectly(uidToDelete,failureCode);
   };
 
   try {
@@ -240,13 +304,15 @@ Deno.serve(async(req)=>{
       if(!persisted) return json({error:'asset_state_failed'},503);
       return json({error:'stream_provider_invalid_response'},502);
     }
-    const {error:updateError}=await db.from('video_assets').update({
-      cloudflare_uid:uid,status:'uploading',upload_expires_at:expiresAt,provider_status:'pendingupload',
-    }).eq('id',id).eq('owner_id',ownerId);
-    if(updateError) {
+    const {data:allocatedRow,error:updateError}=await db.from('video_assets').update({
+      cloudflare_uid:uid,status:'uploading',upload_expires_at:expiresAt,
+      provider_status:'pendingupload',lifecycle_contract_version:1,
+    }).eq('id',id).eq('owner_id',ownerId).in('status',['pending'])
+      .select('id').maybeSingle();
+    if(updateError||allocatedRow?.id!==id) {
       const persisted=await compensateUid(uid,'asset_state_failed');
       if(!persisted) return json({error:'asset_state_failed'},503);
-      return json({error:'asset_state_failed'},503);
+      return json({error:'stream_allocation_stale'},409);
     }
     return json({success:true,data:isPremium?{
       assetId:id,uploadUrl,protocol:'tus',method:'PATCH',expiresAt,

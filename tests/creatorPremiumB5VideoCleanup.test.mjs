@@ -21,12 +21,20 @@ function compile(source, filename) {
   }).outputText;
 }
 
-function loadCleanupEdge(providerMode = 'success', dbUpdateMode = 'success') {
+function loadCleanupEdge(
+  providerMode = 'success',
+  dbUpdateMode = 'success',
+  operation = 'delete',
+  completion = 'finalized',
+  cloudflareUid = 'provider-secret-uid',
+  purpose = 'creator_premium_video',
+) {
   let handler;
   const providerCalls = [];
-  const updates = [];
+  const rpcCalls = [];
   const logs = [];
-  let videoUpdateCount = 0;
+  let claimed = false;
+  let streamVerificationCount = 0;
   class StreamProviderError extends Error {
     constructor(code, httpStatus = 502, transient = false) {
       super(code);
@@ -35,44 +43,37 @@ function loadCleanupEdge(providerMode = 'success', dbUpdateMode = 'success') {
       this.transient = transient;
     }
   }
-  const mutation = result => {
-    const chain = {
-      eq() { return chain; },
-      select() { return chain; },
-      maybeSingle() { return Promise.resolve(result); },
-      then(resolve, reject) { return Promise.resolve(result).then(resolve, reject); },
-    };
-    return chain;
-  };
   const db = {
-    async rpc(name) {
+    async rpc(name, params = {}) {
+      rpcCalls.push({ name, params: structuredClone(params) });
       if (name === 'cleanup_stale_media_upload_records') return { data: [], error: null };
-      assert.equal(name, 'cleanup_stale_creator_premium_video_records');
-      return {
-        data: [{ id: '30000000-0000-4000-8000-000000000001', cloudflare_uid: 'provider-secret-uid', delete_attempts: 2 }],
-        error: null,
-      };
-    },
-    from(table) {
-      return {
-        update(values) {
-          updates.push({ table, values: structuredClone(values) });
-          if (table === 'video_assets') {
-            videoUpdateCount += 1;
-            if (dbUpdateMode === 'fail_deleted' && videoUpdateCount === 1) {
-              return mutation({ data: null, error: { message: 'write failed' } });
-            }
-            if (dbUpdateMode === 'fail_all') {
-              return mutation({ data: null, error: { message: 'write failed' } });
-            }
-            return mutation({
-              data: { id: '30000000-0000-4000-8000-000000000001' },
-              error: null,
-            });
-          }
-          return mutation({ error: null });
-        },
-      };
+      if (name === 'cleanup_stale_creator_premium_video_records') {
+        const data = claimed ? [] : [{
+          id: '30000000-0000-4000-8000-000000000001',
+          cloudflare_uid: cloudflareUid,
+          purpose,
+          delete_attempts: 2,
+          operation,
+        }];
+        claimed = true;
+        return { data, error: null };
+      }
+      if (name === 'record_creator_premium_video_provider_delete_v1') {
+        return { data: true, error: null };
+      }
+      if (name === 'finalize_creator_premium_video_cleanup_v1') {
+        if (dbUpdateMode === 'fail_finalize') {
+          return { data: null, error: { message: 'write failed' } };
+        }
+        return { data: completion, error: null };
+      }
+      if (name === 'record_creator_premium_video_cleanup_failure_v1') {
+        if (dbUpdateMode === 'fail_retry') {
+          return { data: null, error: { message: 'write failed' } };
+        }
+        return { data: true, error: null };
+      }
+      throw new Error(`Unexpected cleanup RPC: ${name}`);
     },
   };
   const module = { exports: {} };
@@ -83,6 +84,7 @@ function loadCleanupEdge(providerMode = 'success', dbUpdateMode = 'success') {
     Response,
     Headers,
     URL,
+    AbortSignal,
     structuredClone,
     console: {
       log: (...args) => logs.push(args),
@@ -94,15 +96,30 @@ function loadCleanupEdge(providerMode = 'success', dbUpdateMode = 'success') {
         admin: () => db,
         json: (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }),
       };
-      if (specifier === '../_shared/r2.ts') return { deleteObject: async () => {} };
+      if (specifier === '../_shared/r2.ts') return {
+        deleteObjectWithReceipt: async () => ({ alreadyAbsent: false, requestId: null }),
+        verifyObjectAbsent: async () => ({ absent: true, requestId: null }),
+        isR2Transient: () => false,
+      };
       if (specifier === '../_shared/stream.ts') return {
         StreamProviderError,
         sanitizeProviderError: error => ({ code: error.code ?? 'stream_provider_error', message: error.code ?? 'stream_provider_error' }),
-        async streamFetch(pathname, init) {
-          providerCalls.push({ pathname, method: init?.method });
-          if (providerMode === 'not_found') throw new StreamProviderError('stream_not_found', 404);
+        async deleteStreamVideo(uid) {
+          providerCalls.push({ operation: 'delete', uid });
           if (providerMode === 'error') throw new StreamProviderError('stream_provider_temporarily_unavailable', 503, true);
-          return { success: true };
+          return {
+            accepted: true,
+            alreadyAbsent: providerMode === 'not_found',
+            requestId: 'delete-request',
+          };
+        },
+        async verifyStreamVideoAbsent(uid) {
+          providerCalls.push({ operation: 'verify_absence', uid });
+          streamVerificationCount += 1;
+          return {
+            absent: providerMode !== 'reappeared' || streamVerificationCount > 1,
+            requestId: `verify-request-${streamVerificationCount}`,
+          };
         },
       };
       throw new Error(`Unexpected cleanup module: ${specifier}`);
@@ -112,7 +129,7 @@ function loadCleanupEdge(providerMode = 'success', dbUpdateMode = 'success') {
       serve(fn) { handler = fn; },
     },
   }, { filename: 'cleanup-stale-media-uploads.js' });
-  return { handler, providerCalls, updates, logs };
+  return { handler, providerCalls, rpcCalls, logs };
 }
 
 async function invokeCleanup(harness) {
@@ -169,15 +186,31 @@ test('abandoned Premium video promotion locks candidates before delete_pending t
 test('existing cleanup Edge handles R2 and Premium Stream through canonical clients', () => {
   assert.match(edge, /cleanup_stale_media_upload_records/);
   assert.match(edge, /cleanup_stale_creator_premium_video_records/);
-  assert.match(edge, /deleteObject/);
-  assert.match(edge, /streamFetch/);
-  assert.match(edge, /method\s*:\s*'DELETE'/);
-  assert.match(edge, /StreamProviderError/);
-  assert.match(edge, /stream_not_found/);
-  assert.match(edge, /status\s*:\s*'deleted'/);
-  assert.match(edge, /status\s*:\s*'delete_pending'/);
+  assert.match(edge, /deleteObjectWithReceipt/);
+  assert.match(edge, /verifyObjectAbsent/);
+  assert.match(edge, /deleteStreamVideo/);
+  assert.match(edge, /verifyStreamVideoAbsent/);
+  assert.match(edge, /finalize_media_asset_cleanup_v1/);
+  assert.match(edge, /record_media_asset_cleanup_failure_v1/);
+  assert.match(edge, /finalize_creator_premium_video_cleanup_v1/);
+  assert.match(edge, /record_creator_premium_video_cleanup_failure_v1/);
+  assert.doesNotMatch(edge, /\.from\(\s*['"](?:media_assets|video_assets)['"]\s*\)\s*\.update/i);
   assert.doesNotMatch(edge, /console\.(?:log|warn|error)/);
-  assert.doesNotMatch(edge, /cloudflare_uid[^\n]*(?:log|warn|error)/i);
+  assert.doesNotMatch(
+    edge,
+    /console\.(?:log|warn|error)\([^)]*cloudflare_uid/i,
+  );
+});
+
+test('cleanup claims both provider lanes before concurrent bounded provider work', () => {
+  const loop = edge.slice(edge.indexOf('for(let round=0'));
+  const r2Claim = loop.indexOf("cleanup_stale_media_upload_records");
+  const streamClaim = loop.indexOf("cleanup_stale_creator_premium_video_records");
+  const providerWork = loop.indexOf('Promise.allSettled');
+  assert.ok(r2Claim >= 0 && r2Claim < providerWork);
+  assert.ok(streamClaim >= 0 && streamClaim < providerWork);
+  assert.match(edge, /const\s+PROVIDER_DEADLINE_MS\s*=\s*35_000/);
+  assert.match(edge, /const\s+START_NEW_WORK_BUDGET_MS\s*=\s*20_000/);
 });
 
 test('cleanup Edge never claims ordinary Stream purposes', () => {
@@ -189,10 +222,55 @@ test('cleanup Edge treats provider 404 as idempotent deletion without logging id
   const harness = loadCleanupEdge('not_found');
   const { response, payload } = await invokeCleanup(harness);
   assert.equal(response.status, 200);
+  assert.equal(payload.streamVideosClaimed, 1);
+  assert.equal(payload.streamVideosDeleted, 1);
   assert.equal(payload.premiumVideosDeleted, 1);
-  assert.deepEqual(harness.providerCalls, [{ pathname: '/provider-secret-uid', method: 'DELETE' }]);
-  assert.equal(harness.updates.at(-1).table, 'video_assets');
-  assert.equal(harness.updates.at(-1).values.status, 'deleted');
+  assert.deepEqual(harness.providerCalls, [
+    { operation: 'delete', uid: 'provider-secret-uid' },
+    { operation: 'verify_absence', uid: 'provider-secret-uid' },
+  ]);
+  const finalized = harness.rpcCalls.find(call => call.name === 'finalize_creator_premium_video_cleanup_v1');
+  assert.equal(finalized.params.p_operation, 'delete');
+  assert.equal(finalized.params.p_delete_outcome, 'already_absent');
+  assert.equal(finalized.params.p_delete_request_id, 'delete-request');
+  assert.equal(finalized.params.p_absence_request_id, 'verify-request-1');
+  assert.equal(finalized.params.p_delete_attempt, 2);
+  assert.deepEqual(harness.logs, []);
+});
+
+test('cleanup Edge reports generic Stream and Premium telemetry without relabelling Feed assets', async () => {
+  const harness = loadCleanupEdge(
+    'not_found',
+    'success',
+    'delete',
+    'finalized',
+    'provider-secret-uid',
+    'feed_video',
+  );
+  const { response, payload } = await invokeCleanup(harness);
+  assert.equal(response.status, 200);
+  assert.equal(payload.streamVideosClaimed, 1);
+  assert.equal(payload.streamVideosDeleted, 1);
+  assert.equal(payload.streamVideosRechecked, 0);
+  assert.equal(payload.premiumVideosStale, 0);
+  assert.equal(payload.premiumVideosDeleted, 0);
+  assert.equal(payload.premiumVideosRechecked, 0);
+});
+
+test('cleanup Edge performs only independent absence verification for final tombstones', async () => {
+  const harness = loadCleanupEdge('success', 'success', 'verify_absence', 'verified');
+  const { response, payload } = await invokeCleanup(harness);
+  assert.equal(response.status, 200);
+  assert.equal(payload.premiumVideosDeleted, 0);
+  assert.equal(payload.premiumVideosRechecked, 1);
+  assert.deepEqual(harness.providerCalls, [
+    { operation: 'verify_absence', uid: 'provider-secret-uid' },
+  ]);
+  const finalized = harness.rpcCalls.find(call => call.name === 'finalize_creator_premium_video_cleanup_v1');
+  assert.equal(finalized.params.p_operation, 'verify_absence');
+  assert.equal(finalized.params.p_delete_outcome, null);
+  assert.equal(finalized.params.p_delete_request_id, null);
+  assert.equal(finalized.params.p_absence_request_id, 'verify-request-1');
   assert.deepEqual(harness.logs, []);
 });
 
@@ -201,24 +279,53 @@ test('cleanup Edge keeps provider failures delete_pending for the database backo
   const { response, payload } = await invokeCleanup(harness);
   assert.equal(response.status, 200);
   assert.equal(payload.premiumVideosDeleted, 0);
-  assert.equal(harness.updates.at(-1).table, 'video_assets');
-  assert.equal(harness.updates.at(-1).values.status, 'delete_pending');
-  assert.equal(harness.updates.at(-1).values.error_code, 'stream_provider_temporarily_unavailable');
+  const failure = harness.rpcCalls.find(call => call.name === 'record_creator_premium_video_cleanup_failure_v1');
+  assert.equal(failure.params.p_error_code, 'stream_provider_temporarily_unavailable');
+  assert.equal(failure.params.p_delete_attempt, 2);
   assert.deepEqual(harness.logs, []);
 });
 
-test('cleanup Edge never reports a Premium video deleted when the database completion write fails', async () => {
-  const harness = loadCleanupEdge('success', 'fail_deleted');
+test('cleanup Edge treats a missing Stream UID as indeterminate, never as physical absence', async () => {
+  const harness = loadCleanupEdge('success', 'success', 'delete', 'finalized', null);
   const { response, payload } = await invokeCleanup(harness);
   assert.equal(response.status, 200);
   assert.equal(payload.premiumVideosDeleted, 0);
-  assert.equal(harness.updates.at(-1).table, 'video_assets');
-  assert.equal(harness.updates.at(-1).values.status, 'delete_pending');
+  assert.deepEqual(harness.providerCalls, []);
+  const failure = harness.rpcCalls.find(call => call.name === 'record_creator_premium_video_cleanup_failure_v1');
+  assert.equal(failure.params.p_error_code, 'stream_provider_identity_missing');
+  assert.equal(
+    harness.rpcCalls.some(call => call.name === 'finalize_creator_premium_video_cleanup_v1'),
+    false,
+  );
+});
+
+test('cleanup Edge re-deletes a tombstoned Stream object that reappears before finalizing', async () => {
+  const harness = loadCleanupEdge('reappeared', 'success', 'verify_absence', 'verified_recheck_scheduled');
+  const { response, payload } = await invokeCleanup(harness);
+  assert.equal(response.status, 200);
+  assert.equal(payload.premiumVideosRechecked, 1);
+  assert.deepEqual(harness.providerCalls, [
+    { operation: 'verify_absence', uid: 'provider-secret-uid' },
+    { operation: 'delete', uid: 'provider-secret-uid' },
+    { operation: 'verify_absence', uid: 'provider-secret-uid' },
+  ]);
+  const receipt = harness.rpcCalls.find(call => call.name === 'record_creator_premium_video_provider_delete_v1');
+  assert.equal(receipt.params.p_operation, 'verify_absence');
+  const finalized = harness.rpcCalls.find(call => call.name === 'finalize_creator_premium_video_cleanup_v1');
+  assert.equal(finalized.params.p_absence_request_id, 'verify-request-2');
+});
+
+test('cleanup Edge never reports a Premium video deleted when the database completion write fails', async () => {
+  const harness = loadCleanupEdge('success', 'fail_finalize');
+  const { response, payload } = await invokeCleanup(harness);
+  assert.equal(response.status, 500);
+  assert.equal(payload.error, 'cleanup_failed');
+  assert.equal(harness.rpcCalls.at(-1).name, 'finalize_creator_premium_video_cleanup_v1');
   assert.deepEqual(harness.logs, []);
 });
 
 test('cleanup Edge returns a controlled failure when the retry-state write also fails', async () => {
-  const harness = loadCleanupEdge('error', 'fail_all');
+  const harness = loadCleanupEdge('error', 'fail_retry');
   const { response, payload } = await invokeCleanup(harness);
   assert.equal(response.status, 500);
   assert.equal(payload.error, 'cleanup_failed');

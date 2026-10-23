@@ -260,10 +260,11 @@ test("B7 claim identity must precede the target-aware worker deployment",()=>{
 test("the worker validates server claim identity before touching Stream derivatives",()=>{
   const downloader=worker.slice(worker.indexOf("async function streamAudioDownload"),worker.indexOf("async function deleteStreamAudio"));
   const identityCheck=downloader.indexOf("validateStreamAudioTargetType(targetType)");
-  const firstProviderCall=downloader.indexOf("streamFetch(");
+  const firstProviderCall=downloader.indexOf("loadStreamAudioDescriptor(");
   assert.ok(identityCheck>=0);
   assert.ok(firstProviderCall>=0);
   assert.ok(identityCheck<firstProviderCall);
+  assert.match(downloader,/loadStreamAudioDescriptor\(\{\s*uid,\s*streamFetchImpl:\s*streamFetch\s*\}\)/);
 });
 
 test("Workers AI responses normalize only text, word count, language and bounded timing",()=>{

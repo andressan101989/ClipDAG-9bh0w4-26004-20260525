@@ -3,7 +3,10 @@ import {
   CREATOR_PREMIUM_STREAM_PURPOSE,createPremiumStreamPlaybackGrant,
   reconcilePremiumStreamVideo,
 } from '../_shared/premiumStreamSecurity.ts';
-import { isUuid,reconcileStreamVideo,sanitizeProviderError,streamCustomerCode,streamFetch } from '../_shared/stream.ts';
+import {
+  isUuid,monotonicStreamUpdates,reconcileStreamVideo,sanitizeProviderError,
+  streamCustomerCode,streamFetch,
+} from '../_shared/stream.ts';
 
 const premiumJson=(body:unknown,status=200)=>new Response(JSON.stringify(body),{
   status,
@@ -160,10 +163,31 @@ Deno.serve(async(req)=>{
         : reconcileStreamVideo(
           result,streamCustomerCode(),String(asset.cloudflare_uid),Number(asset.max_duration_seconds??60),
         );
-      const {data:updated,error:updateError}=await db.from('video_assets').update(updates)
-        .eq('id',asset.id).eq('owner_id',user.id).select('*').single();
-      if(updateError) return json({error:'asset_state_failed'},503);
-      asset=updated as Record<string,unknown>;
+      const guardedUpdates=monotonicStreamUpdates(asset,updates);
+      let updated:Record<string,unknown>|null=null;
+      if(guardedUpdates) {
+        const {data:updateData,error:updateError}=await db.from('video_assets').update(guardedUpdates)
+          .eq('id',asset.id)
+          .eq('owner_id',user.id)
+          .eq('cloudflare_uid',String(asset.cloudflare_uid))
+          .eq('status',String(asset.status))
+          .eq('updated_at',String(asset.updated_at))
+          .select('*').maybeSingle();
+        if(updateError) return json({error:'asset_state_failed'},503);
+        updated=updateData as Record<string,unknown>|null;
+      }
+      if(updated) {
+        asset=updated;
+      } else {
+        // A webhook/deletion may win the CAS, or Cloudflare may return an
+        // out-of-order observation rejected by the monotonic guard. Re-read
+        // without writing so polling always observes canonical server state.
+        const {data:canonical,error:canonicalError}=await db.from('video_assets')
+          .select('*').eq('id',asset.id).eq('owner_id',user.id).maybeSingle();
+        if(canonicalError) return json({error:'asset_state_failed'},503);
+        if(!canonical) return json({error:'asset_not_found'},404);
+        asset=canonical as Record<string,unknown>;
+      }
     } catch(providerError) {
       const safe=sanitizeProviderError(providerError);
       return json({error:safe.code},safe.status);

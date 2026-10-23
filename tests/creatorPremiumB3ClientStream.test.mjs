@@ -196,6 +196,36 @@ test('Premium processing accepts ready with null URLs only under entitlement-req
   );
 });
 
+test('Premium polling continues from a canonical processing reread and accepts the later ready state', async () => {
+  const states = [
+    {
+      assetId: videoAssetId, status: 'processing', progress: 85, durationSeconds: null,
+      width: null, height: null, hlsUrl: null, dashUrl: null, thumbnailUrl: null,
+      errorCode: null, readyAt: null, playbackMode: 'premium_entitlement_required',
+    },
+    {
+      assetId: videoAssetId, status: 'ready', progress: 100, durationSeconds: 42,
+      width: 1920, height: 1080, hlsUrl: null, dashUrl: null, thumbnailUrl: null,
+      errorCode: null, readyAt: new Date().toISOString(),
+      playbackMode: 'premium_entitlement_required',
+    },
+  ];
+  let invokes = 0;
+  const service = loadStreamService(async () => {
+    invokes += 1;
+    return { data: { success: true, data: states.shift() }, error: null };
+  });
+
+  const ready = await service.waitForCreatorPremiumStreamReady(videoAssetId, {
+    sleep: async () => {},
+    pollIntervalMs: 0,
+  });
+
+  assert.equal(invokes, 2);
+  assert.equal(ready.status, 'ready');
+  assert.equal(ready.durationSeconds, 42);
+});
+
 function loadPremiumService({
   uploadTeaser = async () => ({
     assetId: teaserAssetId, provider: 'r2', mediaKind: 'image',

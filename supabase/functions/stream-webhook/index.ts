@@ -3,7 +3,8 @@ import {
   CREATOR_PREMIUM_STREAM_PURPOSE,reconcilePremiumStreamVideo,
 } from '../_shared/premiumStreamSecurity.ts';
 import {
-  isUuid,reconcileStreamVideo,streamCustomerCode,streamWebhookSecret,verifyWebhook,webhookVideo,
+  isUuid,monotonicStreamUpdates,reconcileStreamVideo,streamCustomerCode,
+  streamWebhookSecret,verifyWebhook,webhookVideo,
 } from '../_shared/stream.ts';
 
 Deno.serve(async(req)=>{
@@ -37,6 +38,7 @@ Deno.serve(async(req)=>{
     : reconcileStreamVideo(
       video,streamCustomerCode(),asset.cloudflare_uid,Number(asset.max_duration_seconds??60),
     );
+  let allowReadySecurityFailure=false;
   if(asset.status==='ready') {
     if(premium) {
       if(updates.status!=='ready') {
@@ -44,6 +46,7 @@ Deno.serve(async(req)=>{
           ||video.requireSignedURLs!==false) {
           return json({success:true});
         }
+        allowReadySecurityFailure=true;
       } else {
         updates.status='ready';
         updates.ready_at=asset.ready_at;
@@ -69,7 +72,15 @@ Deno.serve(async(req)=>{
   } else if(asset.ready_at) {
     updates.ready_at=asset.ready_at;
   }
-  const {error:updateError}=await db.from('video_assets').update(updates).eq('id',asset.id);
+  const guardedUpdates=monotonicStreamUpdates(asset,updates,{allowReadySecurityFailure});
+  if(!guardedUpdates) return json({success:true});
+  const {data:updatedRow,error:updateError}=await db.from('video_assets').update(guardedUpdates)
+    .eq('id',asset.id)
+    .eq('cloudflare_uid',uid)
+    .eq('status',asset.status)
+    .eq('updated_at',asset.updated_at)
+    .select('id').maybeSingle();
   if(updateError) return json({error:'stream_webhook_update_failed'},503);
+  if(!updatedRow) return json({success:true});
   return json({success:true});
 });

@@ -1,7 +1,7 @@
 /* eslint-disable import/no-unresolved */
 import { PutObjectCommand } from 'npm:@aws-sdk/client-s3@3.637.0';
 import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.637.0';
-import { r2Client } from './r2.ts';
+import { R2_PUT_URL_TTL_SECONDS,r2Client } from './r2.ts';
 
 export const PREMIUM_ORIGINAL_CACHE_CONTROL = 'private, no-store';
 
@@ -26,7 +26,7 @@ export const signPremiumOriginalPutIfAbsent = (
     CacheControl: PREMIUM_ORIGINAL_CACHE_CONTROL,
   }),
   {
-    expiresIn: 300,
+    expiresIn: R2_PUT_URL_TTL_SECONDS,
     signableHeaders: new Set([
       'content-type',
       'if-none-match',
