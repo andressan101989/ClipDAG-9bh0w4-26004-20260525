@@ -126,7 +126,7 @@ function f2ManagedScopeManifest(overrides = {}) {
           { path: 'supabase/functions/_shared/cors.ts', sha256: '225ca89a1d2e584317beef75c9bb76265496fb8a5e5a543f42c59f1dc1c78e29' },
           { path: 'supabase/functions/bdag-ledger/index.ts', sha256: '7feea234fc2624c5c2047d4807d8155ebc7ea461a2afb90627918dd9cde42b41' },
         ],
-        source_sha256: 'b1bff2bf162afe7d3f211a9325ace522b66157ed911fac2a81a245627d425385',
+        source_sha256: '06a7f77242df926411f7aae44eb808f8bb1ce1e88b8a342376911f1e6519e8fa',
       }],
       migrations: [{
         blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
@@ -163,7 +163,7 @@ function f2ManagedScopeTransition() {
     attested_source_sha: '5613724beb966f83cc39ee9b1cebe8c0e08b7d7b',
     migration: '20261024173500_creator_premium_f2_complete_monetization',
     migration_blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
-    function_source_sha256: 'b1bff2bf162afe7d3f211a9325ace522b66157ed911fac2a81a245627d425385',
+    function_source_sha256: '06a7f77242df926411f7aae44eb808f8bb1ce1e88b8a342376911f1e6519e8fa',
     finance_off_required: true,
     requires_postcheck: true,
     requires_separate_baseline_promotion: true,

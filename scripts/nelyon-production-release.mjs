@@ -47,7 +47,7 @@ const F2_MANAGED_SCOPE_TRANSITION = Object.freeze({
   attested_source_sha: F2_SOURCE_SHA,
   migration: F2_MIGRATION,
   migration_blob: F2_MIGRATION_BLOB,
-  function_source_sha256: 'b1bff2bf162afe7d3f211a9325ace522b66157ed911fac2a81a245627d425385',
+  function_source_sha256: '06a7f77242df926411f7aae44eb808f8bb1ce1e88b8a342376911f1e6519e8fa',
   finance_off_required: true,
   requires_postcheck: true,
   requires_separate_baseline_promotion: true,
