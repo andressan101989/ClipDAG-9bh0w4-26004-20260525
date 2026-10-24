@@ -97,6 +97,84 @@ function manifest() {
   };
 }
 
+function f2ManagedScopeManifest(overrides = {}) {
+  const base = {
+    identity: {
+      approved_sha: 'a'.repeat(40),
+      release_id: 'nelyon-20261012-001',
+      run_id: '123456789',
+      run_attempt: 1,
+    },
+    baseline: {
+      state: 'verified',
+      sha: '9b4a5d15a6746e11a27bc1d9edafeab10e7d421d',
+      origin_main_sha: 'a'.repeat(40),
+    },
+    compiler: {
+      snapshot_adapter_path: 'scripts/nelyon-production-snapshot-adapter.mjs',
+      snapshot_adapter_sha256: '6'.repeat(64),
+    },
+    resources: {
+      functions: ['bdag-ledger'],
+      function_contracts: [{
+        name: 'bdag-ledger',
+        entrypoint: 'supabase/functions/bdag-ledger/index.ts',
+        import_map: null,
+        verify_jwt: true,
+        source_changed: true,
+        source_files: [
+          { path: 'supabase/functions/_shared/cors.ts', sha256: '225ca89a1d2e584317beef75c9bb76265496fb8a5e5a543f42c59f1dc1c78e29' },
+          { path: 'supabase/functions/bdag-ledger/index.ts', sha256: '7feea234fc2624c5c2047d4807d8155ebc7ea461a2afb90627918dd9cde42b41' },
+        ],
+        source_sha256: 'b1bff2bf162afe7d3f211a9325ace522b66157ed911fac2a81a245627d425385',
+      }],
+      migrations: [{
+        blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
+        path: 'supabase/migrations/20261024173500_creator_premium_f2_complete_monetization.sql',
+        version: '20261024173500',
+      }],
+      config_changed: true,
+      managed_scope_transition: {
+        id: 'creator-premium-f2-bdag-ledger-enrollment-v1',
+        attested_source_sha: '79d79cef98aed1a693904a3681808e5603eed044',
+        approved_sha: 'a'.repeat(40),
+        descendant_verified: true,
+        migration_blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
+      },
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    identity: { ...base.identity, ...(overrides.identity ?? {}) },
+    baseline: { ...base.baseline, ...(overrides.baseline ?? {}) },
+    resources: { ...base.resources, ...(overrides.resources ?? {}) },
+  };
+}
+
+function f2ManagedScopeTransition() {
+  return {
+    id: 'creator-premium-f2-bdag-ledger-enrollment-v1',
+    state: 'attested_one_time',
+    resource: 'bdag-ledger',
+    from_classification: 'unmanaged',
+    to_classification: 'managed',
+    baseline_sha: '9b4a5d15a6746e11a27bc1d9edafeab10e7d421d',
+    attested_source_sha: '79d79cef98aed1a693904a3681808e5603eed044',
+    migration: '20261024173500_creator_premium_f2_complete_monetization',
+    migration_blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
+    function_source_sha256: 'b1bff2bf162afe7d3f211a9325ace522b66157ed911fac2a81a245627d425385',
+    finance_off_required: true,
+    requires_postcheck: true,
+    requires_separate_baseline_promotion: true,
+  };
+}
+
+function markManagedScopeTransitionPromoted(policyValue) {
+  policyValue.baseline.sha = 'f'.repeat(40);
+  return policyValue;
+}
+
 function zeroReconciliation() {
   return {
     account_balance_ledger_mismatch: 0,
@@ -171,10 +249,12 @@ const PROTECTED_TEST_RPC_IDENTITIES = [
   ['get_admin_creator_premium_refund_candidates_v1', ['uuid']],
   ['get_creator_premium_commerce_v1', ['uuid']],
   ['get_my_creator_premium_commercial_summary_v1', ['timestamp with time zone', 'timestamp with time zone']],
+  ['get_my_creator_premium_financial_history_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer']],
   ['get_my_creator_premium_subscriptions_v1', ['timestamp with time zone', 'uuid', 'integer']],
   ['reopen_my_creator_premium_rejected_v1', ['uuid']],
   ['report_creator_premium_content_v1', ['uuid', 'text', 'text']],
   ['search_admin_creator_premium_content_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer']],
+  ['search_admin_creator_premium_finance_v1', ['text', 'text', 'text', 'timestamp with time zone', 'uuid', 'integer']],
   ['cancel_my_creator_premium_submission_v1', ['uuid']],
   ['submit_my_creator_premium_content_with_plans_v1', ['uuid', 'uuid[]', 'uuid']],
   ['retire_my_creator_premium_content_v1', ['uuid']],
@@ -251,7 +331,7 @@ function successfulFetch(log, overrides = {}) {
       return jsonResponse([{ version: '20261009021414', name: 'creator_premium_b5_creator_management_ux' }]);
     }
     if (pathname.endsWith('/functions')) {
-      return jsonResponse([{ slug: 'content-safety-scan', status: 'ACTIVE', version: 35, verify_jwt: true, ezbr_sha256: '5'.repeat(64) }]);
+      return jsonResponse(overrides.functions ?? [{ slug: 'content-safety-scan', status: 'ACTIVE', version: 35, verify_jwt: true, ezbr_sha256: '5'.repeat(64) }]);
     }
     if (pathname.endsWith('/database/backups')) {
       return jsonResponse({
@@ -433,8 +513,8 @@ test('RPC security normalization preserves overload identity hashes definitions 
   const raw = rpcSecurityRows();
   const snapshot = adapter.normalizeRpcSecurityAttestations(raw);
   assert.equal(snapshot.complete, true);
-  assert.equal(snapshot.count, 15);
-  assert.equal(snapshot.items.length, 15);
+  assert.equal(snapshot.count, 17);
+  assert.equal(snapshot.items.length, 17);
   assert.deepEqual(snapshot.items.map(item => item.name), [...snapshot.items.map(item => item.name)].sort());
   const firstRaw = raw.find(item => item.name === snapshot.items[0].name);
   assert.equal(
@@ -583,7 +663,7 @@ test('fixed documented recovery capture uses four read-only SQL requests and red
     observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
   });
   assert.equal(result.phase, 'recovery');
-  assert.equal(result.rpc_security.count, 15);
+  assert.equal(result.rpc_security.count, 17);
   assert.equal(result.premium_state.complete, true);
   assert.equal(calls.length, 9);
   const sqlCalls = calls.filter(call => (call.options.method ?? 'GET') === 'POST');
@@ -732,7 +812,7 @@ test('missing token identity drift and arbitrary public transport inputs are den
 
 test('snapshot pair binds immutable evidence and permits only manifest-listed remote changes', async () => {
   const adapter = await loadAdapter();
-  const controlledPolicy = structuredClone(policy);
+  const controlledPolicy = markManagedScopeTransitionPromoted(structuredClone(policy));
   controlledPolicy.baseline.migration_count = 1;
   controlledPolicy.baseline.latest_migration = '20261009021414_creator_premium_b5_creator_management_ux';
   controlledPolicy.supabase.expected_remote_function_count = 1;
@@ -829,7 +909,7 @@ test('snapshot pair binds immutable evidence and permits only manifest-listed re
 
 test('postcheck binds deployed function config and source identity to each manifest contract', async () => {
   const adapter = await loadAdapter();
-  const controlledPolicy = structuredClone(policy);
+  const controlledPolicy = markManagedScopeTransitionPromoted(structuredClone(policy));
   controlledPolicy.baseline.migration_count = 1;
   controlledPolicy.baseline.latest_migration = '20261009021414_creator_premium_b5_creator_management_ux';
   controlledPolicy.supabase.expected_remote_function_count = 1;
@@ -876,7 +956,7 @@ test('postcheck binds deployed function config and source identity to each manif
 
 test('postcheck preserves every pre-existing ledger account identity while allowing new accounts', async () => {
   const adapter = await loadAdapter();
-  const controlledPolicy = structuredClone(policy);
+  const controlledPolicy = markManagedScopeTransitionPromoted(structuredClone(policy));
   controlledPolicy.baseline.migration_count = 1;
   controlledPolicy.baseline.latest_migration = '20261009021414_creator_premium_b5_creator_management_ux';
   controlledPolicy.supabase.expected_remote_function_count = 1;
@@ -937,7 +1017,7 @@ test('postcheck preserves every pre-existing ledger account identity while allow
 
 test('pre-snapshot must match every owner-reviewed baseline digest before mutation', async () => {
   const adapter = await loadAdapter();
-  const controlledPolicy = structuredClone(policy);
+  const controlledPolicy = markManagedScopeTransitionPromoted(structuredClone(policy));
   controlledPolicy.supabase.expected_remote_function_count = 1;
   controlledPolicy.supabase.managed_functions = ['content-safety-scan'];
   const pre = await adapter.captureProductionSnapshot({
@@ -986,9 +1066,139 @@ test('pre-snapshot must match every owner-reviewed baseline digest before mutati
   }
 });
 
+test('pre-snapshot permits only the attested F2 bdag-ledger unmanaged-to-managed transition', async () => {
+  const adapter = await loadAdapter();
+  const oldPolicy = structuredClone(policy);
+  oldPolicy.supabase.expected_remote_function_count = 2;
+  oldPolicy.supabase.managed_functions = ['content-safety-scan'];
+  delete oldPolicy.managed_scope_transitions;
+  const functions = [
+    { slug: 'bdag-ledger', status: 'ACTIVE', version: 22, verify_jwt: true, ezbr_sha256: 'b'.repeat(64) },
+    { slug: 'content-safety-scan', status: 'ACTIVE', version: 46, verify_jwt: true, ezbr_sha256: 'c'.repeat(64) },
+  ];
+  const pre = await adapter.captureProductionSnapshot({
+    phase: 'pre', policy: oldPolicy, request: request(), manifest: manifest(),
+    token: 'private-read-token', fetchImpl: successfulFetch([], { functions }),
+    observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
+  });
+  pre.identity.manifest_sha256 = sha256(canonicalJson(f2ManagedScopeManifest()));
+  bindRpcSecurityEvidence(pre, adapter.advisorExceptionsForPhase(oldPolicy, f2ManagedScopeManifest(), 'pre'));
+  const controlledPolicy = structuredClone(oldPolicy);
+  controlledPolicy.supabase.managed_functions = ['bdag-ledger', 'content-safety-scan'];
+  controlledPolicy.managed_scope_transitions = [f2ManagedScopeTransition()];
+  controlledPolicy.baseline = {
+    ...controlledPolicy.baseline,
+    state: 'verified',
+    sha: '9b4a5d15a6746e11a27bc1d9edafeab10e7d421d',
+    migration_count: 1,
+    latest_migration: '20261009021414_creator_premium_b5_creator_management_ux',
+    evidence: '7'.repeat(64),
+    evidence_digests: adapter.buildProductionBaselineDigests({ evidence: pre, policy: oldPolicy }),
+    blocked_resources: [],
+    reviewed_policy_sha256: '8'.repeat(64),
+    verified_by: controlledPolicy.owner,
+    verified_at: '2026-10-12T11:59:00.000Z',
+    authority_source: 'owner-control-plane',
+    requires_separate_policy_commit: true,
+  };
+  const result = adapter.verifyProductionPreSnapshot({
+    pre, policy: controlledPolicy, request: request(), manifest: f2ManagedScopeManifest(),
+    adapterSourceSha256: '6'.repeat(64),
+  });
+  assert.equal(result.result, 'REMOTE_BASELINE_VERIFIED');
+  assert.deepEqual(result.managed_scope_transition, {
+    id: 'creator-premium-f2-bdag-ledger-enrollment-v1',
+    resource: 'bdag-ledger',
+    from_classification: 'unmanaged',
+    to_classification: 'managed',
+    observed_version: 22,
+    observed_source_sha256: 'b'.repeat(64),
+    requires_postcheck: true,
+    requires_separate_baseline_promotion: true,
+  });
+});
+
+test('managed scope transition fails closed for any non-attested baseline manifest or inventory delta', async () => {
+  const adapter = await loadAdapter();
+  const oldPolicy = structuredClone(policy);
+  oldPolicy.supabase.expected_remote_function_count = 3;
+  oldPolicy.supabase.managed_functions = ['content-safety-scan'];
+  delete oldPolicy.managed_scope_transitions;
+  const functions = [
+    { slug: 'bdag-ledger', status: 'ACTIVE', version: 22, verify_jwt: true, ezbr_sha256: 'b'.repeat(64) },
+    { slug: 'content-safety-scan', status: 'ACTIVE', version: 46, verify_jwt: true, ezbr_sha256: 'c'.repeat(64) },
+    { slug: 'rogue-function', status: 'ACTIVE', version: 1, verify_jwt: true, ezbr_sha256: 'd'.repeat(64) },
+  ];
+  const pre = await adapter.captureProductionSnapshot({
+    phase: 'pre', policy: oldPolicy, request: request(), manifest: manifest(),
+    token: 'private-read-token', fetchImpl: successfulFetch([], { functions }),
+    observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
+  });
+  pre.identity.manifest_sha256 = sha256(canonicalJson(f2ManagedScopeManifest()));
+  bindRpcSecurityEvidence(pre, adapter.advisorExceptionsForPhase(oldPolicy, f2ManagedScopeManifest(), 'pre'));
+  const controlledPolicy = structuredClone(oldPolicy);
+  controlledPolicy.supabase.managed_functions = ['bdag-ledger', 'content-safety-scan'];
+  controlledPolicy.managed_scope_transitions = [f2ManagedScopeTransition()];
+  controlledPolicy.baseline = {
+    ...controlledPolicy.baseline,
+    state: 'verified', sha: '9b4a5d15a6746e11a27bc1d9edafeab10e7d421d',
+    migration_count: 1, latest_migration: '20261009021414_creator_premium_b5_creator_management_ux',
+    evidence: '7'.repeat(64),
+    evidence_digests: adapter.buildProductionBaselineDigests({ evidence: pre, policy: oldPolicy }),
+    blocked_resources: [], reviewed_policy_sha256: '8'.repeat(64),
+    verified_by: controlledPolicy.owner, verified_at: '2026-10-12T11:59:00.000Z',
+    authority_source: 'owner-control-plane', requires_separate_policy_commit: true,
+  };
+  const verify = ({ policyPatch = {}, manifestValue = f2ManagedScopeManifest(), evidence = pre } = {}) => adapter.verifyProductionPreSnapshot({
+    pre: evidence,
+    policy: { ...structuredClone(controlledPolicy), ...policyPatch },
+    request: request(),
+    manifest: manifestValue,
+    adapterSourceSha256: '6'.repeat(64),
+  });
+  assert.throws(() => verify({ policyPatch: { managed_scope_transitions: [] } }), /REMOTE_BASELINE_MISMATCH/);
+  assert.throws(() => verify({
+    policyPatch: {
+      managed_scope_transitions: [{ ...f2ManagedScopeTransition(), resource: 'rogue-function' }],
+    },
+  }), /REMOTE_BASELINE_MISMATCH/);
+  const extraFunctionManifest = f2ManagedScopeManifest({
+    resources: { ...f2ManagedScopeManifest().resources, functions: ['bdag-ledger', 'rogue-function'] },
+  });
+  const reboundEvidence = structuredClone(pre);
+  reboundEvidence.identity.manifest_sha256 = sha256(canonicalJson(extraFunctionManifest));
+  resignEvidence(reboundEvidence);
+  assert.throws(() => verify({
+    manifestValue: extraFunctionManifest,
+    evidence: reboundEvidence,
+  }), /REMOTE_BASELINE_MISMATCH/);
+  const originalF2Manifest = f2ManagedScopeManifest();
+  const changedMigrationBlobManifest = f2ManagedScopeManifest({
+    resources: {
+      ...originalF2Manifest.resources,
+      migrations: [{ ...originalF2Manifest.resources.migrations[0], blob: '0'.repeat(40) }],
+    },
+  });
+  const changedMigrationBlobEvidence = structuredClone(pre);
+  changedMigrationBlobEvidence.identity.manifest_sha256 = sha256(canonicalJson(changedMigrationBlobManifest));
+  resignEvidence(changedMigrationBlobEvidence);
+  assert.throws(() => verify({
+    manifestValue: changedMigrationBlobManifest,
+    evidence: changedMigrationBlobEvidence,
+  }), /REMOTE_BASELINE_MISMATCH/);
+  const extraManaged = structuredClone(controlledPolicy);
+  extraManaged.supabase.managed_functions.push('rogue-function');
+  assert.throws(() => verify({ policyPatch: { supabase: extraManaged.supabase } }), /REMOTE_BASELINE_MISMATCH/);
+  const changedVersion = structuredClone(pre);
+  changedVersion.functions.items.find(item => item.slug === 'bdag-ledger').version = 23;
+  changedVersion.functions.sha256 = sha256(canonicalJson(changedVersion.functions.items));
+  resignEvidence(changedVersion);
+  assert.throws(() => verify({ evidence: changedVersion }), /REMOTE_BASELINE_MISMATCH/);
+});
+
 test('pre-snapshot baseline binds finance schema Premium bindings and zero reconciliation', async () => {
   const adapter = await loadAdapter();
-  const controlledPolicy = structuredClone(policy);
+  const controlledPolicy = markManagedScopeTransitionPromoted(structuredClone(policy));
   controlledPolicy.supabase.expected_remote_function_count = 1;
   controlledPolicy.supabase.managed_functions = ['content-safety-scan'];
   controlledPolicy.baseline.migration_count = 1;
@@ -1117,9 +1327,9 @@ test('phase-bound RPC attestations include F1 protected RPCs only after the mani
     version: '20261018211327',
   }];
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
-  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre')), 14);
-  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post')), 15);
-  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery')), 15);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre')), 16);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post')), 17);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery')), 17);
 });
 
 test('phase-bound RPC attestations activate the revised plan deletion definition only after C4', async () => {
@@ -1133,8 +1343,8 @@ test('phase-bound RPC attestations activate the revised plan deletion definition
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
   const pre = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre');
   const post = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post');
-  assert.equal(rpcCount(pre), 15);
-  assert.equal(rpcCount(post), 15);
+  assert.equal(rpcCount(pre), 17);
+  assert.equal(rpcCount(post), 17);
   const preDeletePlan = pre.find(item => item.object.name === 'delete_my_creator_premium_plan_draft_v1');
   const postDeletePlan = post.find(item => item.object.name === 'delete_my_creator_premium_plan_draft_v1');
   assert.equal(preDeletePlan.attestation.definition_sha256, '40cbc02821cceb68cdd5a31cfd531d9ec8f537d36c47acb1fc7fcafd0df42ed3');
@@ -1152,8 +1362,8 @@ test('phase-bound RPC attestations activate the repaired submit definition only 
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
   const pre = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre');
   const post = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post');
-  assert.equal(rpcCount(pre), 15);
-  assert.equal(rpcCount(post), 15);
+  assert.equal(rpcCount(pre), 17);
+  assert.equal(rpcCount(post), 17);
   const preSubmit = pre.find(item => item.object.name === 'submit_my_creator_premium_content_with_plans_v1');
   const postSubmit = post.find(item => item.object.name === 'submit_my_creator_premium_content_with_plans_v1');
   assert.equal(preSubmit.attestation.definition_sha256, '7e3e9f176c216fd35bd9dc4fe00b7d577558265afe2f884630d53747737f02ee');
@@ -1172,15 +1382,40 @@ test('phase-bound RPC attestations activate P3-C2 recovery readiness only after 
   const pre = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre');
   const post = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post');
   const recovery = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery');
-  assert.equal(rpcCount(pre), 15);
-  assert.equal(rpcCount(post), 15);
-  assert.equal(rpcCount(recovery), 15);
+  assert.equal(rpcCount(pre), 17);
+  assert.equal(rpcCount(post), 17);
+  assert.equal(rpcCount(recovery), 17);
   const preDetail = pre.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
   const postDetail = post.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
   const recoveryDetail = recovery.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
   assert.equal(preDetail.attestation.definition_sha256, '2a91f72e122beeee0f3d3c9f59ef99f13d2aefab9bcbc987594a5ac43c40a47e');
   assert.equal(postDetail.attestation.definition_sha256, 'da4ae0e4416fc032f0b0cb3dfad00b6e1c5b95592bfa6b7ae926964b696f79bc');
   assert.equal(recoveryDetail.attestation.definition_sha256, 'da4ae0e4416fc032f0b0cb3dfad00b6e1c5b95592bfa6b7ae926964b696f79bc');
+});
+
+test('phase-bound RPC attestations activate F2 projections only after the exact migration', async () => {
+  const adapter = await loadAdapter();
+  const controlledManifest = manifest();
+  controlledManifest.resources.migrations = [{
+    path: 'supabase/migrations/20261024173500_creator_premium_f2_complete_monetization.sql',
+    version: '20261024173500',
+  }];
+  const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
+  const pre = adapter.advisorExceptionsForPhase(policy, controlledManifest, 'pre');
+  const post = adapter.advisorExceptionsForPhase(policy, controlledManifest, 'post');
+  assert.equal(rpcCount(pre), 15);
+  assert.equal(rpcCount(post), 17);
+  assert.equal(pre.some(item => item.object.name === 'get_my_creator_premium_financial_history_v1'), false);
+  assert.equal(pre.some(item => item.object.name === 'search_admin_creator_premium_finance_v1'), false);
+  const expected = new Map([
+    ['get_creator_premium_commerce_v1', ['30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86', 'e96caaab2c8ad2cd24e508849c0a7fff15d0257ac7a55a035aaa59b8632ed5c0']],
+    ['get_my_creator_premium_commercial_summary_v1', ['1a34a92abe226cdb66b3d8ba95b848d7576fe81e324839c9424582dc44610d05', 'e4f4cb3d311ba740bd9827b821c28ba2069be49adfad954b29ba790a6bd3dadb']],
+    ['get_my_creator_premium_subscriptions_v1', ['dddaf6f218f2abe7a24d97dfdd4fc0cb125fed5b7e2088c510bd4f8368124685', 'e60b91e953d720f966b3c0622ba86cf375a125166dac8ba384dc956e35cb8830']],
+  ]);
+  for (const [name, [before, after]] of expected) {
+    assert.equal(pre.find(item => item.object.name === name).attestation.definition_sha256, before);
+    assert.equal(post.find(item => item.object.name === name).attestation.definition_sha256, after);
+  }
 });
 
 test('postcheck advisor delta accepts only exact phase-approved fingerprints', async () => {

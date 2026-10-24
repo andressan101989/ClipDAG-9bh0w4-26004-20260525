@@ -34,6 +34,23 @@
     "source": "owner-control-plane",
     "workflow_may_promote": false
   },
+  "managed_scope_transitions": [
+    {
+      "id": "creator-premium-f2-bdag-ledger-enrollment-v1",
+      "state": "attested_one_time",
+      "resource": "bdag-ledger",
+      "from_classification": "unmanaged",
+      "to_classification": "managed",
+      "baseline_sha": "9b4a5d15a6746e11a27bc1d9edafeab10e7d421d",
+      "attested_source_sha": "79d79cef98aed1a693904a3681808e5603eed044",
+      "migration": "20261024173500_creator_premium_f2_complete_monetization",
+      "migration_blob": "01468928aac3743245916157a6acf0bd9d7aab7f",
+      "function_source_sha256": "b1bff2bf162afe7d3f211a9325ace522b66157ed911fac2a81a245627d425385",
+      "finance_off_required": true,
+      "requires_postcheck": true,
+      "requires_separate_baseline_promotion": true
+    }
+  ],
   "cutover": {
     "control": "supabase-github-integration-off",
     "initial_evidence": {
@@ -379,7 +396,7 @@
             "public": false,
             "service_role": false
           },
-          "definition_sha256": "30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86"
+          "definition_sha256": "e96caaab2c8ad2cd24e508849c0a7fff15d0257ac7a55a035aaa59b8632ed5c0"
         },
         "authorization": {
           "functional_reason": "Returns the caller-authorized commerce view while preserving private rows and the Finance OFF boundary.",
@@ -388,14 +405,15 @@
             "entitlement_or_ownership_check",
             "finance_off_guard",
             "negative_authorization_tests",
-            "published_safe_visibility"
+            "published_safe_visibility",
+            "renewal_state_validation"
           ],
-          "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e"
+          "negative_test_evidence_sha256": "d6bb67745b64f39fc0828bda792eab47e371224d7def9ec6a401a9a0502b4a2c"
         },
         "origin": {
-          "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion",
-          "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d",
-          "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb"
+          "migration": "20261024173500_creator_premium_f2_complete_monetization",
+          "migration_blob": "01468928aac3743245916157a6acf0bd9d7aab7f",
+          "source_sha": "79d79cef98aed1a693904a3681808e5603eed044"
         },
         "technical_approval": "verified"
       },
@@ -552,22 +570,24 @@
             "public": false,
             "service_role": false
           },
-          "definition_sha256": "1a34a92abe226cdb66b3d8ba95b848d7576fe81e324839c9424582dc44610d05"
+          "definition_sha256": "e4f4cb3d311ba740bd9827b821c28ba2069be49adfad954b29ba790a6bd3dadb"
         },
         "authorization": {
           "functional_reason": "Computes bounded commercial aggregates scoped exclusively to the authenticated caller.",
           "controls": [
             "authenticated_session",
-            "bounded_date_validation",
-            "caller_scoped_aggregation",
+            "creator_scoped_projection",
+            "exact_decimal_strings",
+            "immutable_financial_facts",
+            "integrity_fail_closed",
             "negative_authorization_tests"
           ],
-          "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e"
+          "negative_test_evidence_sha256": "d6bb67745b64f39fc0828bda792eab47e371224d7def9ec6a401a9a0502b4a2c"
         },
         "origin": {
-          "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion",
-          "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d",
-          "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb"
+          "migration": "20261024173500_creator_premium_f2_complete_monetization",
+          "migration_blob": "01468928aac3743245916157a6acf0bd9d7aab7f",
+          "source_sha": "79d79cef98aed1a693904a3681808e5603eed044"
         },
         "technical_approval": "verified"
       },
@@ -669,22 +689,24 @@
             "public": false,
             "service_role": false
           },
-          "definition_sha256": "dddaf6f218f2abe7a24d97dfdd4fc0cb125fed5b7e2088c510bd4f8368124685"
+          "definition_sha256": "e60b91e953d720f966b3c0622ba86cf375a125166dac8ba384dc956e35cb8830"
         },
         "authorization": {
           "functional_reason": "Lists only the authenticated caller's subscriptions through a bounded cursor contract.",
           "controls": [
             "authenticated_session",
-            "bounded_pagination",
-            "caller_scoped_rows",
-            "negative_authorization_tests"
+            "caller_scoped_projection",
+            "finance_off_guard",
+            "immutable_period_history",
+            "negative_authorization_tests",
+            "renewal_state_validation"
           ],
-          "negative_test_evidence_sha256": "47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e"
+          "negative_test_evidence_sha256": "d6bb67745b64f39fc0828bda792eab47e371224d7def9ec6a401a9a0502b4a2c"
         },
         "origin": {
-          "migration": "20261010053524_creator_premium_b7_full_functional_commercial_completion",
-          "migration_blob": "43f014260e0ecfa6f0634e61e1646594bcf13e1d",
-          "source_sha": "0560b9e1fdc0869dfcd4d04f081de03ba31b66cb"
+          "migration": "20261024173500_creator_premium_f2_complete_monetization",
+          "migration_blob": "01468928aac3743245916157a6acf0bd9d7aab7f",
+          "source_sha": "79d79cef98aed1a693904a3681808e5603eed044"
         },
         "technical_approval": "verified"
       },
@@ -1213,6 +1235,129 @@
         "technical_approval": "verified"
       },
       {
+        "advisor_fingerprint": "b835139bebe4b813b730fca29d6eeec2a3e7d70a187e0c36b9169d7e84faba1d",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": {
+          "schema": "public",
+          "name": "get_my_creator_premium_financial_history_v1",
+          "argument_types": [
+            "text",
+            "text",
+            "timestamp with time zone",
+            "uuid",
+            "integer"
+          ],
+          "identity_arguments": "p_perspective text, p_source text, p_cursor_event_at timestamp with time zone, p_cursor_event_id uuid, p_limit integer"
+        },
+        "attestation": {
+          "security_definer": true,
+          "owner": "postgres",
+          "search_path": [
+            "search_path=\"\""
+          ],
+          "acl": [
+            {
+              "grantee": "authenticated",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            },
+            {
+              "grantee": "postgres",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            }
+          ],
+          "execute": {
+            "anon": false,
+            "authenticated": true,
+            "public": false,
+            "service_role": false
+          },
+          "definition_sha256": "564fe988b3f6078c559bfd9aa8243b1705c43ec7aa8824248110722fb507f1f2"
+        },
+        "authorization": {
+          "functional_reason": "Returns immutable verified Premium financial facts scoped to the authenticated buyer or creator without exposing private media locators.",
+          "controls": [
+            "authenticated_session",
+            "caller_scoped_projection",
+            "exact_decimal_strings",
+            "immutable_financial_facts",
+            "integrity_fail_closed",
+            "negative_authorization_tests"
+          ],
+          "negative_test_evidence_sha256": "d6bb67745b64f39fc0828bda792eab47e371224d7def9ec6a401a9a0502b4a2c"
+        },
+        "origin": {
+          "migration": "20261024173500_creator_premium_f2_complete_monetization",
+          "migration_blob": "01468928aac3743245916157a6acf0bd9d7aab7f",
+          "source_sha": "79d79cef98aed1a693904a3681808e5603eed044"
+        },
+        "technical_approval": "verified"
+      },
+      {
+        "advisor_fingerprint": "f6c527ed886225b79c3412747e8f8375e7552634febc03b37917123f02649109",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": {
+          "schema": "public",
+          "name": "search_admin_creator_premium_finance_v1",
+          "argument_types": [
+            "text",
+            "text",
+            "text",
+            "timestamp with time zone",
+            "uuid",
+            "integer"
+          ],
+          "identity_arguments": "p_source text, p_state text, p_query text, p_cursor_created_at timestamp with time zone, p_cursor_reference_id uuid, p_limit integer"
+        },
+        "attestation": {
+          "security_definer": true,
+          "owner": "postgres",
+          "search_path": [
+            "search_path=\"\""
+          ],
+          "acl": [
+            {
+              "grantee": "authenticated",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            },
+            {
+              "grantee": "postgres",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            }
+          ],
+          "execute": {
+            "anon": false,
+            "authenticated": true,
+            "public": false,
+            "service_role": false
+          },
+          "definition_sha256": "90d68ed26584e9994b1ff64fbf6e44eaa6b443368bfabe83eb1c0a73fce84cf7"
+        },
+        "authorization": {
+          "functional_reason": "Projects bounded immutable Premium finance facts only to an authenticated administrator with the exact ledger-read capability.",
+          "controls": [
+            "bounded_pagination",
+            "exact_admin_capability",
+            "immutable_financial_facts",
+            "negative_authorization_tests",
+            "read_only_reconciliation",
+            "sanitized_projection"
+          ],
+          "negative_test_evidence_sha256": "d6bb67745b64f39fc0828bda792eab47e371224d7def9ec6a401a9a0502b4a2c"
+        },
+        "origin": {
+          "migration": "20261024173500_creator_premium_f2_complete_monetization",
+          "migration_blob": "01468928aac3743245916157a6acf0bd9d7aab7f",
+          "source_sha": "79d79cef98aed1a693904a3681808e5603eed044"
+        },
+        "technical_approval": "verified"
+      },
+      {
         "advisor_fingerprint": "8088d6be7ca6bd32b041ed429091a56f26d26ac0d7148eb5bf15f9e3c5e70bd6",
         "advisor_type": "table",
         "advisor_severity": "INFO",
@@ -1305,6 +1450,7 @@
     ],
     "managed_functions": [
       "agora-token",
+      "bdag-ledger",
       "create-media-upload",
       "finalize-media-upload",
       "get-media-url",
