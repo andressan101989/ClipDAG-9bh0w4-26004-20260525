@@ -76,7 +76,7 @@ const F2_MANAGED_SCOPE_TRANSITION = {
   from_classification: 'unmanaged',
   to_classification: 'managed',
   baseline_sha: '9b4a5d15a6746e11a27bc1d9edafeab10e7d421d',
-  attested_source_sha: '79d79cef98aed1a693904a3681808e5603eed044',
+  attested_source_sha: '5613724beb966f83cc39ee9b1cebe8c0e08b7d7b',
   migration: '20261024173500_creator_premium_f2_complete_monetization',
   migration_blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
   function_source_sha256: 'b1bff2bf162afe7d3f211a9325ace522b66157ed911fac2a81a245627d425385',
@@ -631,7 +631,7 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
     } else if (F2_EXCEPTION_FINGERPRINTS.includes(exception.advisor_fingerprint)) {
       assert.equal(exception.origin.migration, '20261024173500_creator_premium_f2_complete_monetization');
       assert.equal(exception.origin.migration_blob, '01468928aac3743245916157a6acf0bd9d7aab7f');
-      assert.equal(exception.origin.source_sha, '79d79cef98aed1a693904a3681808e5603eed044');
+      assert.equal(exception.origin.source_sha, '5613724beb966f83cc39ee9b1cebe8c0e08b7d7b');
       assert.equal(exception.authorization.negative_test_evidence_sha256, 'd6bb67745b64f39fc0828bda792eab47e371224d7def9ec6a401a9a0502b4a2c');
     } else if (exception.object.name === 'submit_my_creator_premium_content_with_plans_v1') {
       assert.equal(exception.origin.migration, '20261019170853_creator_premium_f1_c6_submit_unavailable_mapping_recovery');

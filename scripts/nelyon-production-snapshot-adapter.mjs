@@ -29,7 +29,7 @@ const F2_MANAGED_SCOPE_TRANSITION = Object.freeze({
   from_classification: 'unmanaged',
   to_classification: 'managed',
   baseline_sha: '9b4a5d15a6746e11a27bc1d9edafeab10e7d421d',
-  attested_source_sha: '79d79cef98aed1a693904a3681808e5603eed044',
+  attested_source_sha: '5613724beb966f83cc39ee9b1cebe8c0e08b7d7b',
   migration: '20261024173500_creator_premium_f2_complete_monetization',
   migration_blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
   function_source_sha256: 'b1bff2bf162afe7d3f211a9325ace522b66157ed911fac2a81a245627d425385',
