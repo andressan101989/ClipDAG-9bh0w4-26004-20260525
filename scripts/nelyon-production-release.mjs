@@ -33,10 +33,10 @@ const P3_C2_NEGATIVE_TEST_EVIDENCE_SHA256 = 'ae0206b79e90c6af6cacb6f114444372114
 const P3_C2_MIGRATION = '20261020030515_creator_premium_p3_c2_admin_restriction_recovery';
 const P3_C2_MIGRATION_BLOB = '3cb930ae07e72e8a49c862556057822128a1087a';
 const P3_C2_SOURCE_SHA = 'd8fc23a8d823494df68af7aaf93314c30631b5aa';
-const F2_NEGATIVE_TEST_EVIDENCE_SHA256 = 'd6bb67745b64f39fc0828bda792eab47e371224d7def9ec6a401a9a0502b4a2c';
+const F2_NEGATIVE_TEST_EVIDENCE_SHA256 = '222539db2b37c976322690504e9d7574d59343adf7aef9ab83262a88c665c2d8';
 const F2_MIGRATION = '20261024173500_creator_premium_f2_complete_monetization';
-const F2_MIGRATION_BLOB = '01468928aac3743245916157a6acf0bd9d7aab7f';
-const F2_SOURCE_SHA = '5613724beb966f83cc39ee9b1cebe8c0e08b7d7b';
+const F2_MIGRATION_BLOB = 'fce8789a0c79251afbe962bd39f6bd81ae248296';
+const F2_SOURCE_SHA = '93aca037d35dd683f2b0857fa9b343c36b7ffda5';
 const F2_MANAGED_SCOPE_TRANSITION = Object.freeze({
   id: 'creator-premium-f2-bdag-ledger-enrollment-v1',
   state: 'attested_one_time',
@@ -59,7 +59,7 @@ const SECURITY_ADVISOR_RPC_EXCEPTIONS = [
   ['ed55682047d682b69c66430b68fc819fb781b7289539fa398fadf09ec0c064fc', 'get_my_creator_premium_commercial_summary_v1', ['timestamp with time zone', 'timestamp with time zone'], 'p_from timestamp with time zone, p_to timestamp with time zone', 'e4f4cb3d311ba740bd9827b821c28ba2069be49adfad954b29ba790a6bd3dadb', F2_NEGATIVE_TEST_EVIDENCE_SHA256, F2_MIGRATION, F2_MIGRATION_BLOB, F2_SOURCE_SHA],
   ['b835139bebe4b813b730fca29d6eeec2a3e7d70a187e0c36b9169d7e84faba1d', 'get_my_creator_premium_financial_history_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer'], 'p_perspective text, p_source text, p_cursor_event_at timestamp with time zone, p_cursor_event_id uuid, p_limit integer', '564fe988b3f6078c559bfd9aa8243b1705c43ec7aa8824248110722fb507f1f2', F2_NEGATIVE_TEST_EVIDENCE_SHA256, F2_MIGRATION, F2_MIGRATION_BLOB, F2_SOURCE_SHA],
   ['95f426ce02f0b60b9ac06e78d26d4171ec2d74aef205a06a6bc111142d1a923d', 'search_admin_creator_premium_content_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer'], 'p_status text, p_query text, p_cursor_submitted_at timestamp with time zone, p_cursor_id uuid, p_limit integer', '0379d81bef4b106861b9b59962f52e480b7b48cc1205eae938f238d1fd04ece6', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
-  ['cf4b6520e9c96170ea5a5125f287b991d15c377e80cf3394f879dc1cbad0e6ae', 'get_my_creator_premium_subscriptions_v1', ['timestamp with time zone', 'uuid', 'integer'], 'p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_limit integer', 'e60b91e953d720f966b3c0622ba86cf375a125166dac8ba384dc956e35cb8830', F2_NEGATIVE_TEST_EVIDENCE_SHA256, F2_MIGRATION, F2_MIGRATION_BLOB, F2_SOURCE_SHA],
+  ['cf4b6520e9c96170ea5a5125f287b991d15c377e80cf3394f879dc1cbad0e6ae', 'get_my_creator_premium_subscriptions_v1', ['timestamp with time zone', 'uuid', 'integer'], 'p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_limit integer', '8cf06818806f7b82dc9773ef87821897c6c861f3921e0bfc2cd804855545dfb3', F2_NEGATIVE_TEST_EVIDENCE_SHA256, F2_MIGRATION, F2_MIGRATION_BLOB, F2_SOURCE_SHA],
   ['32e1071c786f8cd3afe8867b7dd583e26420bb55845639a6458f724779e389b0', 'admin_review_creator_premium_content_v1', ['uuid', 'text', 'text', 'uuid'], 'p_content_id uuid, p_action text, p_reason text, p_idempotency_key uuid', '9d2a0fdc8982eb44b9e6e2603938649305446aaf512f4bea9f930ee192d8377f', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
   ['81ffb44830028e3a76316686c2bd2d8f38b4f4b26b7d4f93a3c0c94a168e4852', 'report_creator_premium_content_v1', ['uuid', 'text', 'text'], 'p_content_id uuid, p_reason text, p_details text', '923bce96a9cc00e71174c1aa811b791ba11710c9b370295f7474729d928d992c', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
   ['64e0ec779a8bd54824caf58605677e58ef589a62b2a53e4beb216907d3e002ee', 'reopen_my_creator_premium_rejected_v1', ['uuid'], 'p_content_id uuid', '091cb8b2f35c9e76f515295e45310bbee9af8e6a1567d26ddfa0be34b5ceba5d', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],

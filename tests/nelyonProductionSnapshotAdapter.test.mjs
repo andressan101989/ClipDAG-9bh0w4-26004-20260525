@@ -134,17 +134,17 @@ function f2ManagedScopeManifest(overrides = {}) {
         source_sha256: '06a7f77242df926411f7aae44eb808f8bb1ce1e88b8a342376911f1e6519e8fa',
       }],
       migrations: [{
-        blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
+        blob: 'fce8789a0c79251afbe962bd39f6bd81ae248296',
         path: 'supabase/migrations/20261024173500_creator_premium_f2_complete_monetization.sql',
         version: '20261024173500',
       }],
       config_changed: true,
       managed_scope_transition: {
         id: 'creator-premium-f2-bdag-ledger-enrollment-v1',
-        attested_source_sha: '5613724beb966f83cc39ee9b1cebe8c0e08b7d7b',
+        attested_source_sha: '93aca037d35dd683f2b0857fa9b343c36b7ffda5',
         approved_sha: 'a'.repeat(40),
         descendant_verified: true,
-        migration_blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
+        migration_blob: 'fce8789a0c79251afbe962bd39f6bd81ae248296',
       },
     },
   };
@@ -165,9 +165,9 @@ function f2ManagedScopeTransition() {
     from_classification: 'unmanaged',
     to_classification: 'managed',
     baseline_sha: '9b4a5d15a6746e11a27bc1d9edafeab10e7d421d',
-    attested_source_sha: '5613724beb966f83cc39ee9b1cebe8c0e08b7d7b',
+    attested_source_sha: '93aca037d35dd683f2b0857fa9b343c36b7ffda5',
     migration: '20261024173500_creator_premium_f2_complete_monetization',
-    migration_blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
+    migration_blob: 'fce8789a0c79251afbe962bd39f6bd81ae248296',
     function_source_sha256: '06a7f77242df926411f7aae44eb808f8bb1ce1e88b8a342376911f1e6519e8fa',
     finance_off_required: true,
     requires_postcheck: true,
@@ -1415,7 +1415,7 @@ test('phase-bound RPC attestations activate F2 projections only after the exact 
   const expected = new Map([
     ['get_creator_premium_commerce_v1', ['30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86', 'e96caaab2c8ad2cd24e508849c0a7fff15d0257ac7a55a035aaa59b8632ed5c0']],
     ['get_my_creator_premium_commercial_summary_v1', ['1a34a92abe226cdb66b3d8ba95b848d7576fe81e324839c9424582dc44610d05', 'e4f4cb3d311ba740bd9827b821c28ba2069be49adfad954b29ba790a6bd3dadb']],
-    ['get_my_creator_premium_subscriptions_v1', ['dddaf6f218f2abe7a24d97dfdd4fc0cb125fed5b7e2088c510bd4f8368124685', 'e60b91e953d720f966b3c0622ba86cf375a125166dac8ba384dc956e35cb8830']],
+    ['get_my_creator_premium_subscriptions_v1', ['dddaf6f218f2abe7a24d97dfdd4fc0cb125fed5b7e2088c510bd4f8368124685', '8cf06818806f7b82dc9773ef87821897c6c861f3921e0bfc2cd804855545dfb3']],
   ]);
   for (const [name, [before, after]] of expected) {
     assert.equal(pre.find(item => item.object.name === name).attestation.definition_sha256, before);
