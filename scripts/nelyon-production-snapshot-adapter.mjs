@@ -32,7 +32,7 @@ const F2_MANAGED_SCOPE_TRANSITION = Object.freeze({
   attested_source_sha: '5613724beb966f83cc39ee9b1cebe8c0e08b7d7b',
   migration: '20261024173500_creator_premium_f2_complete_monetization',
   migration_blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
-  function_source_sha256: 'b1bff2bf162afe7d3f211a9325ace522b66157ed911fac2a81a245627d425385',
+  function_source_sha256: '06a7f77242df926411f7aae44eb808f8bb1ce1e88b8a342376911f1e6519e8fa',
   finance_off_required: true,
   requires_postcheck: true,
   requires_separate_baseline_promotion: true,

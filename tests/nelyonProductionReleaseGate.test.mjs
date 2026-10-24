@@ -79,7 +79,7 @@ const F2_MANAGED_SCOPE_TRANSITION = {
   attested_source_sha: '5613724beb966f83cc39ee9b1cebe8c0e08b7d7b',
   migration: '20261024173500_creator_premium_f2_complete_monetization',
   migration_blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
-  function_source_sha256: 'b1bff2bf162afe7d3f211a9325ace522b66157ed911fac2a81a245627d425385',
+  function_source_sha256: '06a7f77242df926411f7aae44eb808f8bb1ce1e88b8a342376911f1e6519e8fa',
   finance_off_required: true,
   requires_postcheck: true,
   requires_separate_baseline_promotion: true,
@@ -1300,6 +1300,36 @@ test('F2 release delta is one migration and only the canonical bdag-ledger Edge 
   assert.equal(contracts[0].verify_jwt, true);
   assert.equal(contracts[0].source_changed, true);
   assert.equal(gate.classifyRisk({ affectedFunctions: affected, changedPaths: changes.map(item => item.path), configBefore, configAfter }).level, 'HIGH');
+});
+
+test('F2 managed transition attests the canonical pinned bdag-ledger bundle', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const repositoryRoot = new URL('..', import.meta.url);
+  const rootPath = repositoryRoot.pathname.startsWith('/') && /^[A-Za-z]:/.test(repositoryRoot.pathname.slice(1))
+    ? decodeURIComponent(repositoryRoot.pathname.slice(1))
+    : decodeURIComponent(repositoryRoot.pathname);
+  const sources = Object.fromEntries(Object.entries(
+    collectFunctionSources(join(rootPath, 'supabase', 'functions'), rootPath),
+  ).map(([path, source]) => [path, source.replace(/\r\n/g, '\n')]));
+  const graph = gate.buildFunctionGraph(sources);
+  const configBefore = gate.parseFunctionConfig(execFileSync(
+    'git', ['show', 'f786f0d627f5a5dd330e503c531b05ba84c45daa:supabase/config.toml'],
+    { cwd: rootPath, encoding: 'utf8' },
+  ));
+  const configAfter = gate.parseFunctionConfig(readFileSync(join(rootPath, 'supabase', 'config.toml'), 'utf8'));
+  const contracts = gate.buildFunctionContracts({
+    affectedFunctions: ['bdag-ledger'],
+    graph,
+    configBefore,
+    configAfter,
+    changes: [{ status: 'M', path: 'supabase/functions/bdag-ledger/index.ts' }],
+  });
+  assert.equal(contracts[0].source_sha256, F2_MANAGED_SCOPE_TRANSITION.function_source_sha256);
+  assert.deepEqual(gate.analyzeFunctionReproducibility({ affectedFunctions: ['bdag-ledger'], graph }), {
+    allowed: true,
+    blockedFunctions: [],
+    findings: [],
+  });
 });
 
 test('literal dynamic imports resolve while nonliteral imports deny', async () => {

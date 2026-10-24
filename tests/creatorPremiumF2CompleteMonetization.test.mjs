@@ -224,6 +224,12 @@ test('no simulated likes-derived earnings remain in the profile', () => {
   assert.doesNotMatch(profile, /dagEarned/i);
 });
 
+test('bdag-ledger pins the Supabase client dependency for managed releases', () => {
+  const edge = readFileSync(new URL('supabase/functions/bdag-ledger/index.ts', root), 'utf8');
+  assert.match(edge, /https:\/\/esm\.sh\/@supabase\/supabase-js@2\.106\.1['"]/);
+  assert.doesNotMatch(edge, /https:\/\/esm\.sh\/@supabase\/supabase-js@2['"]/);
+});
+
 test('Admin Premium consumes read-only commerce and reconciliation authorities separately from refund writes', () => {
   assert.match(adminApi, /searchAdminCreatorPremiumFinance/i);
   assert.match(adminPage, /finance\.ledger\.read/i);
