@@ -18,6 +18,7 @@ const PROJECT_REF = 'aewwdlvbwpczqyvkwvvj';
 const MAIN_SHA = '9d5afa4dd0eb48040a18b40e53e7dec22ecf2f33';
 const MANAGED_FUNCTIONS = [
   'agora-token',
+  'bdag-ledger',
   'create-media-upload',
   'finalize-media-upload',
   'get-media-url',
@@ -61,6 +62,28 @@ const F1_EXCEPTION_FINGERPRINTS = [
 const F1_C4_EXCEPTION_FINGERPRINTS = [
   '5ceb93fa71004f64ba75a7bd251fadaf66d7ebdce81fb48904fd988ed9023fef',
 ];
+const F2_EXCEPTION_FINGERPRINTS = [
+  'b835139bebe4b813b730fca29d6eeec2a3e7d70a187e0c36b9169d7e84faba1d',
+  'ed55682047d682b69c66430b68fc819fb781b7289539fa398fadf09ec0c064fc',
+  'f6c527ed886225b79c3412747e8f8375e7552634febc03b37917123f02649109',
+  'f9c25bdf8e5c7f7ff7385410370dac9fe2ded1a0468f76d8bd2d265186718f32',
+  'cf4b6520e9c96170ea5a5125f287b991d15c377e80cf3394f879dc1cbad0e6ae',
+];
+const F2_MANAGED_SCOPE_TRANSITION = {
+  id: 'creator-premium-f2-bdag-ledger-enrollment-v1',
+  state: 'attested_one_time',
+  resource: 'bdag-ledger',
+  from_classification: 'unmanaged',
+  to_classification: 'managed',
+  baseline_sha: '9b4a5d15a6746e11a27bc1d9edafeab10e7d421d',
+  attested_source_sha: '79d79cef98aed1a693904a3681808e5603eed044',
+  migration: '20261024173500_creator_premium_f2_complete_monetization',
+  migration_blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
+  function_source_sha256: 'b1bff2bf162afe7d3f211a9325ace522b66157ed911fac2a81a245627d425385',
+  finance_off_required: true,
+  requires_postcheck: true,
+  requires_separate_baseline_promotion: true,
+};
 const P2_RELATION_ADVISOR_FINGERPRINT = '8088d6be7ca6bd32b041ed429091a56f26d26ac0d7148eb5bf15f9e3c5e70bd6';
 
 async function loadGateAndPolicy() {
@@ -489,17 +512,87 @@ test('policy accepts the exact repository owner project modes and managed functi
   assert.equal(policy.environment.required_reviewer, null);
 });
 
+test('policy binds the sole F2 managed-scope transition to immutable evidence and Finance OFF', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  assert.deepEqual(policy.managed_scope_transitions, [F2_MANAGED_SCOPE_TRANSITION]);
+  for (const mutate of [
+    candidate => { candidate.managed_scope_transitions = []; },
+    candidate => { candidate.managed_scope_transitions[0].resource = 'another-function'; },
+    candidate => { candidate.managed_scope_transitions[0].baseline_sha = '0'.repeat(40); },
+    candidate => { candidate.managed_scope_transitions[0].migration_blob = '0'.repeat(40); },
+    candidate => { candidate.managed_scope_transitions[0].function_source_sha256 = '0'.repeat(64); },
+    candidate => { candidate.managed_scope_transitions[0].finance_off_required = false; },
+    candidate => { candidate.managed_scope_transitions[0].requires_postcheck = false; },
+    candidate => { candidate.managed_scope_transitions[0].requires_separate_baseline_promotion = false; },
+    candidate => { candidate.supabase.finance_policy.purchase_enabled = true; },
+  ]) {
+    const changed = structuredClone(policy);
+    mutate(changed);
+    assertDenied(() => gate.validatePolicy(changed), 'INVALID_MANAGED_SCOPE_TRANSITION');
+  }
+});
+
+test('F2 managed-scope transition binds Git ancestry and the exact committed migration blob', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const migrations = [{
+    path: 'supabase/migrations/20261024173500_creator_premium_f2_complete_monetization.sql',
+    version: '20261024173500',
+  }];
+  const runGit = args => {
+    if (args[0] === 'cat-file' || args[0] === 'merge-base') return '';
+    if (args[0] === 'rev-parse') return `${F2_MANAGED_SCOPE_TRANSITION.migration_blob}\n`;
+    throw new Error(`unexpected git command ${args.join(' ')}`);
+  };
+  const attested = gate.attestManagedScopeTransition({
+    cwd: 'C:/repo',
+    policy,
+    approvedSha: 'a'.repeat(40),
+    migrations,
+    affectedFunctions: ['bdag-ledger'],
+    runGit,
+  });
+  assert.equal(attested.migrations[0].blob, F2_MANAGED_SCOPE_TRANSITION.migration_blob);
+  assert.deepEqual(attested.attestation, {
+    id: F2_MANAGED_SCOPE_TRANSITION.id,
+    attested_source_sha: F2_MANAGED_SCOPE_TRANSITION.attested_source_sha,
+    approved_sha: 'a'.repeat(40),
+    descendant_verified: true,
+    migration_blob: F2_MANAGED_SCOPE_TRANSITION.migration_blob,
+  });
+
+  assertDenied(() => gate.attestManagedScopeTransition({
+    cwd: 'C:/repo',
+    policy,
+    approvedSha: 'a'.repeat(40),
+    migrations,
+    affectedFunctions: ['bdag-ledger'],
+    runGit: args => args[0] === 'rev-parse' ? `${'0'.repeat(40)}\n` : '',
+  }), 'INVALID_MANAGED_SCOPE_TRANSITION');
+
+  assertDenied(() => gate.attestManagedScopeTransition({
+    cwd: 'C:/repo',
+    policy,
+    approvedSha: 'a'.repeat(40),
+    migrations,
+    affectedFunctions: ['bdag-ledger'],
+    runGit: args => {
+      if (args[0] === 'merge-base') throw new Error('not ancestor');
+      return '';
+    },
+  }), 'INVALID_MANAGED_SCOPE_TRANSITION');
+});
+
 test('Security Advisor exceptions are exact object-bound verified attestations', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(gate.validateSecurityAdvisorPolicy(policy.security_advisor), true);
   assert.equal(policy.security_advisor.baseline.count, 554);
   assert.equal(policy.security_advisor.baseline.cron_security_sha256, '2dd76dccc8b348eb932fee5c8ada572f57243287f3ca96bf851a75a2e9244846');
   const exceptions = policy.security_advisor.exceptions;
-  assert.equal(exceptions.length, 16);
-  assert.deepEqual(exceptions.map(item => item.advisor_fingerprint).sort(), [...A2_EXCEPTION_FINGERPRINTS, P3_C2_EXCEPTION_FINGERPRINT, ...F1_EXCEPTION_FINGERPRINTS, ...F1_C4_EXCEPTION_FINGERPRINTS, P2_RELATION_ADVISOR_FINGERPRINT].sort());
+  assert.equal(exceptions.length, 18);
+  assert.deepEqual(exceptions.map(item => item.advisor_fingerprint).sort(), [...new Set([...A2_EXCEPTION_FINGERPRINTS, ...F2_EXCEPTION_FINGERPRINTS]), P3_C2_EXCEPTION_FINGERPRINT, ...F1_EXCEPTION_FINGERPRINTS, ...F1_C4_EXCEPTION_FINGERPRINTS, P2_RELATION_ADVISOR_FINGERPRINT].sort());
   assert.equal(exceptions.some(item => A2_PREEXISTING_FINGERPRINTS.includes(item.advisor_fingerprint)), false);
   const rpcExceptions = exceptions.filter(item => item.advisor_type === 'authenticated_security_definer_function_executable');
-  assert.equal(rpcExceptions.length, 15);
+  assert.equal(rpcExceptions.length, 17);
   for (const exception of rpcExceptions) {
     assert.equal(exception.advisor_type, 'authenticated_security_definer_function_executable');
     assert.equal(exception.advisor_severity, 'WARN');
@@ -535,6 +628,11 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
         'negative_authorization_tests',
         'read_only_reverification_readiness',
       ]);
+    } else if (F2_EXCEPTION_FINGERPRINTS.includes(exception.advisor_fingerprint)) {
+      assert.equal(exception.origin.migration, '20261024173500_creator_premium_f2_complete_monetization');
+      assert.equal(exception.origin.migration_blob, '01468928aac3743245916157a6acf0bd9d7aab7f');
+      assert.equal(exception.origin.source_sha, '79d79cef98aed1a693904a3681808e5603eed044');
+      assert.equal(exception.authorization.negative_test_evidence_sha256, 'd6bb67745b64f39fc0828bda792eab47e371224d7def9ec6a401a9a0502b4a2c');
     } else if (exception.object.name === 'submit_my_creator_premium_content_with_plans_v1') {
       assert.equal(exception.origin.migration, '20261019170853_creator_premium_f1_c6_submit_unavailable_mapping_recovery');
       assert.equal(exception.origin.migration_blob, 'af810d8dc1940f08907408305e2373a838d4db60');
@@ -1164,6 +1262,46 @@ test('C2 shared visual probe delta resolves to only its two canonical Edge consu
   });
 });
 
+test('F2 release delta is one migration and only the canonical bdag-ledger Edge function', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const repositoryRoot = new URL('..', import.meta.url);
+  const rootPath = repositoryRoot.pathname.startsWith('/') && /^[A-Za-z]:/.test(repositoryRoot.pathname.slice(1))
+    ? decodeURIComponent(repositoryRoot.pathname.slice(1))
+    : decodeURIComponent(repositoryRoot.pathname);
+  const graph = gate.buildFunctionGraph(collectFunctionSources(join(rootPath, 'supabase', 'functions'), rootPath));
+  const changes = [
+    { status: 'A', path: 'supabase/migrations/20261024173500_creator_premium_f2_complete_monetization.sql' },
+    { status: 'M', path: 'supabase/config.toml' },
+    { status: 'M', path: 'supabase/functions/bdag-ledger/index.ts' },
+    { status: 'M', path: 'app/creator-premium-offer/[contentId].tsx' },
+    { status: 'M', path: 'apps/admin-web/src/pages/AdminFinanceAuditSystemPages.tsx' },
+  ];
+  const classified = gate.classifyChangedPaths(changes);
+  assert.deepEqual(classified.migrations.map(item => item.path), [changes[0].path]);
+  assert.deepEqual(classified.functions.map(item => item.path), [changes[2].path]);
+  assert.deepEqual(classified.other.map(item => item.path), [changes[3].path, changes[4].path]);
+  const configBefore = gate.parseFunctionConfig(execFileSync(
+    'git', ['show', 'f786f0d627f5a5dd330e503c531b05ba84c45daa:supabase/config.toml'],
+    { cwd: rootPath, encoding: 'utf8' },
+  ));
+  const configAfter = gate.parseFunctionConfig(readFileSync(join(rootPath, 'supabase', 'config.toml'), 'utf8'));
+  const affected = gate.resolveAffectedFunctions({
+    changes,
+    graph,
+    managedFunctions: policy.supabase.managed_functions,
+    forbiddenFunctions: policy.supabase.forbidden_functions,
+    configBefore,
+    configAfter,
+  });
+  assert.deepEqual(affected, ['bdag-ledger']);
+  const contracts = gate.buildFunctionContracts({ affectedFunctions: affected, graph, configBefore, configAfter, changes });
+  assert.equal(contracts.length, 1);
+  assert.equal(contracts[0].name, 'bdag-ledger');
+  assert.equal(contracts[0].verify_jwt, true);
+  assert.equal(contracts[0].source_changed, true);
+  assert.equal(gate.classifyRisk({ affectedFunctions: affected, changedPaths: changes.map(item => item.path), configBefore, configAfter }).level, 'HIGH');
+});
+
 test('literal dynamic imports resolve while nonliteral imports deny', async () => {
   const { gate } = await loadGateAndPolicy();
   assert.deepEqual(gate.parseModuleSpecifiers("await import('./worker.ts');", 'supabase/functions/agora-token/index.ts'), [
@@ -1548,7 +1686,7 @@ test('postcheck recovery verifies B7 current state without productive resources'
   assert.equal(result.migrations.count, 337);
   assert.equal(result.functions.items.length, 12);
   assert.equal(result.security_advisor.baseline_count, 554);
-  assert.equal(result.security_advisor.exception_count, 16);
+  assert.equal(result.security_advisor.exception_count, 18);
   assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
   assert.equal(result.premium_state.legacy.content_count, 2);
   assert.doesNotMatch(JSON.stringify(result), /fixture-token|authorization/i);

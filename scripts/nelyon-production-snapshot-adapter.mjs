@@ -22,6 +22,21 @@ const RECONCILIATION_KEYS = [
   'orphan_ledger_entries',
   'premium_finance_policy_row_count_mismatch',
 ];
+const F2_MANAGED_SCOPE_TRANSITION = Object.freeze({
+  id: 'creator-premium-f2-bdag-ledger-enrollment-v1',
+  state: 'attested_one_time',
+  resource: 'bdag-ledger',
+  from_classification: 'unmanaged',
+  to_classification: 'managed',
+  baseline_sha: '9b4a5d15a6746e11a27bc1d9edafeab10e7d421d',
+  attested_source_sha: '79d79cef98aed1a693904a3681808e5603eed044',
+  migration: '20261024173500_creator_premium_f2_complete_monetization',
+  migration_blob: '01468928aac3743245916157a6acf0bd9d7aab7f',
+  function_source_sha256: 'b1bff2bf162afe7d3f211a9325ace522b66157ed911fac2a81a245627d425385',
+  finance_off_required: true,
+  requires_postcheck: true,
+  requires_separate_baseline_promotion: true,
+});
 
 export const FINANCE_SNAPSHOT_SQL = `with
 clk as (select pg_catalog.clock_timestamp() observed_at),
@@ -214,10 +229,12 @@ export const A2_RPC_IDENTITIES = [
   { schema: 'public', name: 'get_admin_creator_premium_refund_candidates_v1', argument_types: ['uuid'] },
   { schema: 'public', name: 'get_creator_premium_commerce_v1', argument_types: ['uuid'] },
   { schema: 'public', name: 'get_my_creator_premium_commercial_summary_v1', argument_types: ['timestamp with time zone', 'timestamp with time zone'] },
+  { schema: 'public', name: 'get_my_creator_premium_financial_history_v1', argument_types: ['text', 'text', 'timestamp with time zone', 'uuid', 'integer'] },
   { schema: 'public', name: 'get_my_creator_premium_subscriptions_v1', argument_types: ['timestamp with time zone', 'uuid', 'integer'] },
   { schema: 'public', name: 'reopen_my_creator_premium_rejected_v1', argument_types: ['uuid'] },
   { schema: 'public', name: 'report_creator_premium_content_v1', argument_types: ['uuid', 'text', 'text'] },
   { schema: 'public', name: 'search_admin_creator_premium_content_v1', argument_types: ['text', 'text', 'timestamp with time zone', 'uuid', 'integer'] },
+  { schema: 'public', name: 'search_admin_creator_premium_finance_v1', argument_types: ['text', 'text', 'text', 'timestamp with time zone', 'uuid', 'integer'] },
 ];
 
 export const RPC_SECURITY_ATTESTATION_SQL = `with requested as (
@@ -600,13 +617,58 @@ function baselineMigrationName(item) {
   return `${item.version}_${item.name}`;
 }
 
-export function buildProductionBaselineDigests({ evidence, policy }) {
+function activeManagedScopeTransition({ policy, manifest }) {
+  if (policy?.baseline?.sha !== F2_MANAGED_SCOPE_TRANSITION.baseline_sha) return null;
+  if (canonicalJson(policy?.managed_scope_transitions) !== canonicalJson([F2_MANAGED_SCOPE_TRANSITION])) {
+    fail('REMOTE_BASELINE_MISMATCH', 'managed scope transition is not the exact owner-attested F2 transition');
+  }
+  const financeOff = {
+    platform_fee_bps: 0,
+    purchase_enabled: false,
+    refunds_enabled: false,
+    subscription_enabled: false,
+  };
+  const migrations = manifest?.resources?.migrations;
+  const functions = manifest?.resources?.functions;
+  const contracts = manifest?.resources?.function_contracts;
+  const expectedMigration = {
+    blob: F2_MANAGED_SCOPE_TRANSITION.migration_blob,
+    path: `supabase/migrations/${F2_MANAGED_SCOPE_TRANSITION.migration}.sql`,
+    version: F2_MANAGED_SCOPE_TRANSITION.migration.slice(0, 14),
+  };
+  const expectedSourceAttestation = {
+    id: F2_MANAGED_SCOPE_TRANSITION.id,
+    attested_source_sha: F2_MANAGED_SCOPE_TRANSITION.attested_source_sha,
+    approved_sha: manifest?.identity?.approved_sha,
+    descendant_verified: true,
+    migration_blob: F2_MANAGED_SCOPE_TRANSITION.migration_blob,
+  };
+  const contract = Array.isArray(contracts) && contracts.length === 1 ? contracts[0] : null;
+  if (manifest?.baseline?.sha !== F2_MANAGED_SCOPE_TRANSITION.baseline_sha
+    || canonicalJson(migrations) !== canonicalJson([expectedMigration])
+    || canonicalJson(functions) !== canonicalJson([F2_MANAGED_SCOPE_TRANSITION.resource])
+    || canonicalJson(manifest?.resources?.managed_scope_transition) !== canonicalJson(expectedSourceAttestation)
+    || manifest?.resources?.config_changed !== true
+    || !contract
+    || contract.name !== F2_MANAGED_SCOPE_TRANSITION.resource
+    || contract.entrypoint !== 'supabase/functions/bdag-ledger/index.ts'
+    || contract.verify_jwt !== true
+    || contract.source_changed !== true
+    || contract.source_sha256 !== F2_MANAGED_SCOPE_TRANSITION.function_source_sha256
+    || !policy?.supabase?.managed_functions?.includes(F2_MANAGED_SCOPE_TRANSITION.resource)
+    || canonicalJson(policy?.supabase?.finance_policy) !== canonicalJson(financeOff)) {
+    fail('REMOTE_BASELINE_MISMATCH', 'release manifest does not match the exact F2 managed scope transition');
+  }
+  return F2_MANAGED_SCOPE_TRANSITION;
+}
+
+export function buildProductionBaselineDigests({ evidence, policy, managedFunctions }) {
   validateNormalizedMigrations(evidence?.migrations);
   validateNormalizedFunctions(evidence?.functions);
   validateNormalizedAdvisors(evidence?.cron_security?.advisors);
   validateCronSnapshot(evidence?.cron_security?.cron);
   validateFinanceSnapshot(evidence?.finance);
-  const managedNames = [...(policy?.supabase?.managed_functions ?? [])].sort();
+  const managedNames = [...(managedFunctions ?? policy?.supabase?.managed_functions ?? [])].sort();
   const managedSet = new Set(managedNames);
   const blocked = new Set(policy?.baseline?.blocked_resources ?? []);
   const managed = evidence.functions.items
@@ -684,14 +746,40 @@ export function verifyProductionPreSnapshot({ pre, policy, request, manifest, ad
     }) !== canonicalJson(policy?.supabase?.finance_policy)) {
     fail('REMOTE_BASELINE_MISMATCH', 'remote baseline identity, inventory, or finance policy has drifted');
   }
-  const digests = buildProductionBaselineDigests({ evidence: pre, policy });
+  const transition = activeManagedScopeTransition({ policy, manifest });
+  const baselineManagedFunctions = transition
+    ? policy.supabase.managed_functions.filter(name => name !== transition.resource)
+    : policy.supabase.managed_functions;
+  const digests = buildProductionBaselineDigests({
+    evidence: pre,
+    policy,
+    managedFunctions: baselineManagedFunctions,
+  });
   if (canonicalJson(digests) !== canonicalJson(baseline.evidence_digests)) {
     fail('REMOTE_BASELINE_MISMATCH', 'remote baseline section digests differ from owner-reviewed evidence');
+  }
+  const observedTransitionResource = transition
+    ? pre.functions.items.find(item => item.slug === transition.resource)
+    : null;
+  if (transition && (!observedTransitionResource
+    || observedTransitionResource.status !== 'ACTIVE'
+    || observedTransitionResource.verify_jwt !== true)) {
+    fail('REMOTE_BASELINE_MISMATCH', 'managed scope transition resource is not active with JWT verification');
   }
   return {
     result: 'REMOTE_BASELINE_VERIFIED',
     evidence_sha256: pre.evidence_sha256,
     evidence_digests: digests,
+    managed_scope_transition: transition ? {
+      id: transition.id,
+      resource: transition.resource,
+      from_classification: transition.from_classification,
+      to_classification: transition.to_classification,
+      observed_version: observedTransitionResource.version,
+      observed_source_sha256: observedTransitionResource.ezbr_sha256,
+      requires_postcheck: transition.requires_postcheck,
+      requires_separate_baseline_promotion: transition.requires_separate_baseline_promotion,
+    } : null,
   };
 }
 
@@ -1014,6 +1102,24 @@ function migrationIdentity(item) {
 }
 
 const RPC_REPLACEMENT_PREDECESSOR_ATTESTATIONS = new Map([
+  ...[
+    ['f9c25bdf8e5c7f7ff7385410370dac9fe2ded1a0468f76d8bd2d265186718f32', '30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86'],
+    ['ed55682047d682b69c66430b68fc819fb781b7289539fa398fadf09ec0c064fc', '1a34a92abe226cdb66b3d8ba95b848d7576fe81e324839c9424582dc44610d05'],
+    ['cf4b6520e9c96170ea5a5125f287b991d15c377e80cf3394f879dc1cbad0e6ae', 'dddaf6f218f2abe7a24d97dfdd4fc0cb125fed5b7e2088c510bd4f8368124685'],
+  ].map(([fingerprint, definition_sha256]) => [
+    `20261024173500_creator_premium_f2_complete_monetization|${fingerprint}`,
+    {
+      security_definer: true,
+      owner: 'postgres',
+      search_path: ['search_path=""'],
+      acl: [
+        { grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false },
+        { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+      ],
+      execute: { anon: false, authenticated: true, public: false, service_role: false },
+      definition_sha256,
+    },
+  ]),
   [
     '20261020030515_creator_premium_p3_c2_admin_restriction_recovery|b5ca8be9cf9433a21ee7f19906d8a23340ef629d6cedd414c196b431ab5dfaf1',
     {

@@ -33,13 +33,33 @@ const P3_C2_NEGATIVE_TEST_EVIDENCE_SHA256 = 'ae0206b79e90c6af6cacb6f114444372114
 const P3_C2_MIGRATION = '20261020030515_creator_premium_p3_c2_admin_restriction_recovery';
 const P3_C2_MIGRATION_BLOB = '3cb930ae07e72e8a49c862556057822128a1087a';
 const P3_C2_SOURCE_SHA = 'd8fc23a8d823494df68af7aaf93314c30631b5aa';
+const F2_NEGATIVE_TEST_EVIDENCE_SHA256 = 'd6bb67745b64f39fc0828bda792eab47e371224d7def9ec6a401a9a0502b4a2c';
+const F2_MIGRATION = '20261024173500_creator_premium_f2_complete_monetization';
+const F2_MIGRATION_BLOB = '01468928aac3743245916157a6acf0bd9d7aab7f';
+const F2_SOURCE_SHA = '79d79cef98aed1a693904a3681808e5603eed044';
+const F2_MANAGED_SCOPE_TRANSITION = Object.freeze({
+  id: 'creator-premium-f2-bdag-ledger-enrollment-v1',
+  state: 'attested_one_time',
+  resource: 'bdag-ledger',
+  from_classification: 'unmanaged',
+  to_classification: 'managed',
+  baseline_sha: '9b4a5d15a6746e11a27bc1d9edafeab10e7d421d',
+  attested_source_sha: F2_SOURCE_SHA,
+  migration: F2_MIGRATION,
+  migration_blob: F2_MIGRATION_BLOB,
+  function_source_sha256: 'b1bff2bf162afe7d3f211a9325ace522b66157ed911fac2a81a245627d425385',
+  finance_off_required: true,
+  requires_postcheck: true,
+  requires_separate_baseline_promotion: true,
+});
 const SECURITY_ADVISOR_RPC_EXCEPTIONS = [
-  ['f9c25bdf8e5c7f7ff7385410370dac9fe2ded1a0468f76d8bd2d265186718f32', 'get_creator_premium_commerce_v1', ['uuid'], 'p_content_id uuid', '30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['f9c25bdf8e5c7f7ff7385410370dac9fe2ded1a0468f76d8bd2d265186718f32', 'get_creator_premium_commerce_v1', ['uuid'], 'p_content_id uuid', 'e96caaab2c8ad2cd24e508849c0a7fff15d0257ac7a55a035aaa59b8632ed5c0', F2_NEGATIVE_TEST_EVIDENCE_SHA256, F2_MIGRATION, F2_MIGRATION_BLOB, F2_SOURCE_SHA],
   ['b5ca8be9cf9433a21ee7f19906d8a23340ef629d6cedd414c196b431ab5dfaf1', 'get_admin_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', 'da4ae0e4416fc032f0b0cb3dfad00b6e1c5b95592bfa6b7ae926964b696f79bc', P3_C2_NEGATIVE_TEST_EVIDENCE_SHA256, P3_C2_MIGRATION, P3_C2_MIGRATION_BLOB, P3_C2_SOURCE_SHA],
   ['16793ac45491560ceb15eed84a53c946830aca9f3c1dad338a98e42c539aad18', 'admin_refund_creator_premium_subscription_period_v1', ['uuid', 'uuid', 'text'], 'p_period_id uuid, p_idempotency_key uuid, p_reason_code text', '592df071aa52e846d7034e79c61f114f00eaf49d24dccd3682536e83377439ca', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
-  ['ed55682047d682b69c66430b68fc819fb781b7289539fa398fadf09ec0c064fc', 'get_my_creator_premium_commercial_summary_v1', ['timestamp with time zone', 'timestamp with time zone'], 'p_from timestamp with time zone, p_to timestamp with time zone', '1a34a92abe226cdb66b3d8ba95b848d7576fe81e324839c9424582dc44610d05', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['ed55682047d682b69c66430b68fc819fb781b7289539fa398fadf09ec0c064fc', 'get_my_creator_premium_commercial_summary_v1', ['timestamp with time zone', 'timestamp with time zone'], 'p_from timestamp with time zone, p_to timestamp with time zone', 'e4f4cb3d311ba740bd9827b821c28ba2069be49adfad954b29ba790a6bd3dadb', F2_NEGATIVE_TEST_EVIDENCE_SHA256, F2_MIGRATION, F2_MIGRATION_BLOB, F2_SOURCE_SHA],
+  ['b835139bebe4b813b730fca29d6eeec2a3e7d70a187e0c36b9169d7e84faba1d', 'get_my_creator_premium_financial_history_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer'], 'p_perspective text, p_source text, p_cursor_event_at timestamp with time zone, p_cursor_event_id uuid, p_limit integer', '564fe988b3f6078c559bfd9aa8243b1705c43ec7aa8824248110722fb507f1f2', F2_NEGATIVE_TEST_EVIDENCE_SHA256, F2_MIGRATION, F2_MIGRATION_BLOB, F2_SOURCE_SHA],
   ['95f426ce02f0b60b9ac06e78d26d4171ec2d74aef205a06a6bc111142d1a923d', 'search_admin_creator_premium_content_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer'], 'p_status text, p_query text, p_cursor_submitted_at timestamp with time zone, p_cursor_id uuid, p_limit integer', '0379d81bef4b106861b9b59962f52e480b7b48cc1205eae938f238d1fd04ece6', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
-  ['cf4b6520e9c96170ea5a5125f287b991d15c377e80cf3394f879dc1cbad0e6ae', 'get_my_creator_premium_subscriptions_v1', ['timestamp with time zone', 'uuid', 'integer'], 'p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_limit integer', 'dddaf6f218f2abe7a24d97dfdd4fc0cb125fed5b7e2088c510bd4f8368124685', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
+  ['cf4b6520e9c96170ea5a5125f287b991d15c377e80cf3394f879dc1cbad0e6ae', 'get_my_creator_premium_subscriptions_v1', ['timestamp with time zone', 'uuid', 'integer'], 'p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_limit integer', 'e60b91e953d720f966b3c0622ba86cf375a125166dac8ba384dc956e35cb8830', F2_NEGATIVE_TEST_EVIDENCE_SHA256, F2_MIGRATION, F2_MIGRATION_BLOB, F2_SOURCE_SHA],
   ['32e1071c786f8cd3afe8867b7dd583e26420bb55845639a6458f724779e389b0', 'admin_review_creator_premium_content_v1', ['uuid', 'text', 'text', 'uuid'], 'p_content_id uuid, p_action text, p_reason text, p_idempotency_key uuid', '9d2a0fdc8982eb44b9e6e2603938649305446aaf512f4bea9f930ee192d8377f', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
   ['81ffb44830028e3a76316686c2bd2d8f38b4f4b26b7d4f93a3c0c94a168e4852', 'report_creator_premium_content_v1', ['uuid', 'text', 'text'], 'p_content_id uuid, p_reason text, p_details text', '923bce96a9cc00e71174c1aa811b791ba11710c9b370295f7474729d928d992c', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
   ['64e0ec779a8bd54824caf58605677e58ef589a62b2a53e4beb216907d3e002ee', 'reopen_my_creator_premium_rejected_v1', ['uuid'], 'p_content_id uuid', '091cb8b2f35c9e76f515295e45310bbee9af8e6a1567d26ddfa0be34b5ceba5d', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
@@ -49,6 +69,7 @@ const SECURITY_ADVISOR_RPC_EXCEPTIONS = [
   ['1c20753b55dcdb2d0a8e6a3365fcf45453495a74a49d76b9b51af4e51d7b923f', 'submit_my_creator_premium_content_with_plans_v1', ['uuid', 'uuid[]', 'uuid'], 'p_content_id uuid, p_plan_ids uuid[], p_client_request_id uuid', '00e9195a045185a65ca260a9abacc6916b289f7b1a2cf094cdaf9d4d86f55eff', F1_C6_NEGATIVE_TEST_EVIDENCE_SHA256, F1_C6_MIGRATION, F1_C6_MIGRATION_BLOB, F1_C6_SOURCE_SHA],
   ['b0cdd5e8a440096ebc6bbd35fee9b785180d71ae6d06209ade7feaa6c0877c4d', 'retire_my_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', '10a91f4a47efeda414aa7ed7d1ceed81fff971f6eb5009e4f2bfc4f2acbb78d9', F1_NEGATIVE_TEST_EVIDENCE_SHA256, F1_MIGRATION, F1_MIGRATION_BLOB, F1_SOURCE_SHA],
   ['5ceb93fa71004f64ba75a7bd251fadaf66d7ebdce81fb48904fd988ed9023fef', 'delete_my_creator_premium_plan_draft_v1', ['uuid', 'uuid'], 'p_plan_id uuid, p_client_request_id uuid', 'a7bab775b77a5230658cea58c7bcb9f139b4b6102c89c1095a5e3f5d8548d520', F1_C4_NEGATIVE_TEST_EVIDENCE_SHA256, F1_C4_MIGRATION, F1_C4_MIGRATION_BLOB, F1_C4_SOURCE_SHA],
+  ['f6c527ed886225b79c3412747e8f8375e7552634febc03b37917123f02649109', 'search_admin_creator_premium_finance_v1', ['text', 'text', 'text', 'timestamp with time zone', 'uuid', 'integer'], 'p_source text, p_state text, p_query text, p_cursor_created_at timestamp with time zone, p_cursor_reference_id uuid, p_limit integer', '90d68ed26584e9994b1ff64fbf6e44eaa6b443368bfabe83eb1c0a73fce84cf7', F2_NEGATIVE_TEST_EVIDENCE_SHA256, F2_MIGRATION, F2_MIGRATION_BLOB, F2_SOURCE_SHA],
 ];
 const B7_EDGE_ATTESTATIONS = [
   ['ads-v2-delivery', 10, true, '4510ecc897a50a2f9e23d0b326f9bdfc630ce88e5f7bcea0c59e9476233d0536'],
@@ -425,11 +446,25 @@ export function validatePolicy(policy) {
   })) {
     deny('INVALID_BACKUP_POLICY', 'production backup policy is invalid');
   }
-  if (!Array.isArray(policy.supabase?.managed_functions) || policy.supabase.managed_functions.length !== 18) {
-    deny('INVALID_MANAGED_FUNCTIONS', 'managed function allowlist must contain exactly 18 functions');
+  if (!Array.isArray(policy.supabase?.managed_functions) || policy.supabase.managed_functions.length !== 19) {
+    deny('INVALID_MANAGED_FUNCTIONS', 'managed function allowlist must contain exactly 19 functions');
   }
   if (new Set(policy.supabase.managed_functions).size !== policy.supabase.managed_functions.length) {
     deny('INVALID_MANAGED_FUNCTIONS', 'managed function allowlist contains duplicates');
+  }
+  const financeOff = {
+    platform_fee_bps: 0,
+    purchase_enabled: false,
+    refunds_enabled: false,
+    subscription_enabled: false,
+  };
+  if (canonicalJson(policy.managed_scope_transitions) !== canonicalJson([F2_MANAGED_SCOPE_TRANSITION])
+    || !policy.supabase.managed_functions.includes(F2_MANAGED_SCOPE_TRANSITION.resource)
+    || canonicalJson(policy.supabase.finance_policy) !== canonicalJson(financeOff)) {
+    deny(
+      'INVALID_MANAGED_SCOPE_TRANSITION',
+      'managed scope transition must match the exact F2 evidence and preserve Finance OFF',
+    );
   }
   if (policy.baseline.state === 'verified') {
     const digests = policy.baseline.evidence_digests;
@@ -778,6 +813,46 @@ export function validateMigrationDelta({ changes, baselineLatestMigration, remot
     deny('MIGRATION_DRY_RUN_MISMATCH', 'remote dry-run does not exactly match the manifest migrations', { expected, pending });
   }
   return migrations;
+}
+
+export function attestManagedScopeTransition({
+  cwd,
+  policy,
+  approvedSha,
+  migrations,
+  affectedFunctions,
+  runGit,
+}) {
+  if (policy?.baseline?.sha !== F2_MANAGED_SCOPE_TRANSITION.baseline_sha) {
+    return { migrations, attestation: null };
+  }
+  const exactMigrationPath = `supabase/migrations/${F2_MANAGED_SCOPE_TRANSITION.migration}.sql`;
+  const candidate = migrations?.find(item => item?.path === exactMigrationPath);
+  const includesResource = affectedFunctions?.includes(F2_MANAGED_SCOPE_TRANSITION.resource) === true;
+  if (!candidate && !includesResource) return { migrations, attestation: null };
+  if (!candidate || !includesResource || typeof runGit !== 'function' || !SHA_PATTERN.test(approvedSha ?? '')) {
+    deny('INVALID_MANAGED_SCOPE_TRANSITION', 'F2 managed scope transition inputs are incomplete');
+  }
+  try {
+    runGit(['cat-file', '-e', `${F2_MANAGED_SCOPE_TRANSITION.attested_source_sha}^{commit}`], { cwd });
+    runGit(['merge-base', '--is-ancestor', F2_MANAGED_SCOPE_TRANSITION.attested_source_sha, approvedSha], { cwd });
+  } catch {
+    deny('INVALID_MANAGED_SCOPE_TRANSITION', 'approved source is not descended from the attested F2 source');
+  }
+  const migrationBlob = gitText(runGit, ['rev-parse', `${approvedSha}:${exactMigrationPath}`], cwd);
+  if (!SHA_PATTERN.test(migrationBlob) || migrationBlob !== F2_MANAGED_SCOPE_TRANSITION.migration_blob) {
+    deny('INVALID_MANAGED_SCOPE_TRANSITION', 'F2 migration blob does not match the owner-attested source');
+  }
+  return {
+    migrations: migrations.map(item => item.path === exactMigrationPath ? { ...item, blob: migrationBlob } : item),
+    attestation: {
+      id: F2_MANAGED_SCOPE_TRANSITION.id,
+      attested_source_sha: F2_MANAGED_SCOPE_TRANSITION.attested_source_sha,
+      approved_sha: approvedSha,
+      descendant_verified: true,
+      migration_blob: migrationBlob,
+    },
+  };
 }
 
 export function verifyMigrationDryRun({ text, manifest }) {
@@ -1303,7 +1378,7 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     runGit,
   });
   const classified = classifyChangedPaths(gitState.changes);
-  const migrations = validateMigrationDelta({
+  const migrationDelta = validateMigrationDelta({
     changes: gitState.changes,
     baselineLatestMigration: policy.baseline.latest_migration,
   });
@@ -1319,6 +1394,14 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     forbiddenFunctions: policy.supabase.forbidden_functions,
     configBefore,
     configAfter,
+  });
+  const transitionEvidence = attestManagedScopeTransition({
+    cwd,
+    policy,
+    approvedSha: request.approvedSha,
+    migrations: migrationDelta,
+    affectedFunctions,
+    runGit,
   });
   const reproducibility = analyzeFunctionReproducibility({ affectedFunctions, graph });
   const functionContracts = buildFunctionContracts({
@@ -1339,7 +1422,8 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   return {
     gitState,
     classified,
-    migrations,
+    migrations: transitionEvidence.migrations,
+    managedScopeTransition: transitionEvidence.attestation,
     affectedFunctions,
     functionContracts,
     reproducibility,
@@ -1364,6 +1448,7 @@ export function buildManifest({
   gitState,
   classified,
   migrations,
+  managedScopeTransition,
   affectedFunctions,
   functionContracts,
   reproducibility,
@@ -1404,6 +1489,27 @@ export function buildManifest({
       || !/^[0-9a-f]{64}$/.test(contract.source_sha256 ?? '')
       || contract.source_files.some(item => typeof item?.path !== 'string' || !/^[0-9a-f]{64}$/.test(item?.sha256 ?? '')))) {
     deny('FUNCTION_CONTRACT_MISMATCH', 'manifest function contracts do not match the affected function set');
+  }
+  const f2MigrationPath = `supabase/migrations/${F2_MANAGED_SCOPE_TRANSITION.migration}.sql`;
+  const f2Migration = migrations?.find(item => item?.path === f2MigrationPath);
+  const f2TransitionCandidate = !recoveryMode
+    && policy?.baseline?.sha === F2_MANAGED_SCOPE_TRANSITION.baseline_sha
+    && (Boolean(f2Migration) || functionNames.includes(F2_MANAGED_SCOPE_TRANSITION.resource));
+  if (f2TransitionCandidate) {
+    const expectedAttestation = {
+      id: F2_MANAGED_SCOPE_TRANSITION.id,
+      attested_source_sha: F2_MANAGED_SCOPE_TRANSITION.attested_source_sha,
+      approved_sha: request.approvedSha,
+      descendant_verified: true,
+      migration_blob: F2_MANAGED_SCOPE_TRANSITION.migration_blob,
+    };
+    if (!f2Migration
+      || f2Migration.blob !== F2_MANAGED_SCOPE_TRANSITION.migration_blob
+      || canonicalJson(managedScopeTransition) !== canonicalJson(expectedAttestation)) {
+      deny('INVALID_MANAGED_SCOPE_TRANSITION', 'manifest lacks the exact Git-attested F2 managed scope transition');
+    }
+  } else if (managedScopeTransition !== undefined && managedScopeTransition !== null) {
+    deny('INVALID_MANAGED_SCOPE_TRANSITION', 'managed scope transition attestation is not applicable');
   }
   if (!generatedAt || Number.isNaN(Date.parse(generatedAt))) {
     deny('INVALID_MANIFEST_TIME', 'manifest generation time is invalid');
@@ -1464,6 +1570,7 @@ export function buildManifest({
       function_contracts: contracts,
       migrations: (recoveryMode ? [] : [...migrations]).map(stableCopy).sort((left, right) => left.version.localeCompare(right.version)),
       config_changed: recoveryMode ? false : (classified?.config?.length ?? 0) > 0,
+      ...(managedScopeTransition ? { managed_scope_transition: stableCopy(managedScopeTransition) } : {}),
     },
     risk: stableCopy(risk),
     blockers,

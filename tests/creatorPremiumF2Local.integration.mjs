@@ -1,16 +1,19 @@
 // Real disposable PostgreSQL proof. Set RUN_CREATOR_PREMIUM_F2_LOCAL=1 to enable it.
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import { parseCreatorPremiumPurchaseReceipt } from '../services/creatorPremiumFinanceContracts.mjs';
+import { canonicalJson, sha256Hex } from '../scripts/nelyon-production-release.mjs';
+import { normalizeRpcSecurityAttestations, normalizeSecurityAdvisors } from '../scripts/nelyon-production-snapshot-adapter.mjs';
 
 const enabled = process.env.RUN_CREATOR_PREMIUM_F2_LOCAL === '1';
 const container = process.env.CREATOR_PREMIUM_PG_CONTAINER || 'nelyon-ads-v2-d-compile';
 const template = process.env.CREATOR_PREMIUM_PG_TEMPLATE || 'algo6_final_compile_a2';
 const wslNamespacePid = process.env.CREATOR_PREMIUM_PG_WSL_PID || '';
+const evidencePath = process.env.CREATOR_PREMIUM_F2_EVIDENCE_PATH || '';
 const migrations = new URL('../supabase/migrations/', import.meta.url);
 const phases = [
   '_creator_premium_b1_canonical_foundation.sql',
@@ -32,6 +35,36 @@ const chain = phases.map(suffix => {
       : '',
   };
 });
+const f2MigrationBytes = readFileSync(new URL(`../supabase/migrations/${chain.at(-1).found[0]}`, import.meta.url));
+const f2MigrationBlob = createHash('sha1')
+  .update(`blob ${f2MigrationBytes.length}\0`)
+  .update(f2MigrationBytes)
+  .digest('hex');
+const f2ProtectedRpcs = [
+  ['get_creator_premium_commerce_v1', ['uuid'], ['authenticated_projection', 'finance_off_no_mutation', 'rpc_acl_exact']],
+  ['get_my_creator_premium_commercial_summary_v1', ['timestamp with time zone', 'timestamp with time zone'], ['authenticated_projection', 'finance_off_no_mutation', 'rpc_acl_exact']],
+  ['get_my_creator_premium_financial_history_v1', ['text', 'text', 'timestamp with time zone', 'uuid', 'integer'], ['authenticated_projection', 'caller_scope_isolated', 'rpc_acl_exact']],
+  ['get_my_creator_premium_subscriptions_v1', ['timestamp with time zone', 'uuid', 'integer'], ['authenticated_projection', 'caller_scope_isolated', 'rpc_acl_exact']],
+  ['search_admin_creator_premium_finance_v1', ['text', 'text', 'text', 'timestamp with time zone', 'uuid', 'integer'], ['admin_capability_denied', 'admin_capability_granted', 'rpc_acl_exact']],
+];
+
+function advisorFingerprint(name, identityArguments) {
+  const lint = {
+    cache_key: `authenticated_security_definer_function_executable_public_${name}_${identityArguments}`,
+    categories: ['SECURITY'],
+    facing: 'EXTERNAL',
+    level: 'WARN',
+    metadata: {
+      arguments: identityArguments,
+      language: 'plpgsql',
+      name,
+      schema: 'public',
+      security_definer: true,
+    },
+    name: 'authenticated_security_definer_function_executable',
+  };
+  return normalizeSecurityAdvisors({ lints: [lint] }).items[0].fingerprint;
+}
 
 function docker(command, { input = '', allowFailure = false } = {}) {
   const executable = wslNamespacePid ? 'wsl.exe' : 'docker';
@@ -135,6 +168,7 @@ test('F2 manual renewal keeps one immutable relationship per paid period and ref
   const db = `premium_f2_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const uid = () => randomUUID();
   const id = {
+    admin: uid(),
     creator: uid(),
     buyer: uid(),
     buyer2: uid(),
@@ -197,12 +231,14 @@ test('F2 manual renewal keeps one immutable relationship per paid period and ref
       ) on conflict(role_code) do nothing;
       insert into private.admin_capabilities(
         capability_code,domain,effect,description,is_sensitive
-      ) values(
-        'content.items.moderate','content','write','Moderate content.',true
-      ) on conflict(capability_code) do nothing;
+      ) values
+        ('content.items.moderate','content','write','Moderate content.',true),
+        ('finance.ledger.read','finance','read','Read immutable ledger projections.',true)
+      on conflict(capability_code) do nothing;
       insert into private.admin_role_capabilities(role_code,capability_code)
       values
         ('SUPER_ADMIN','content.items.moderate'),
+        ('SUPER_ADMIN','finance.ledger.read'),
         ('MODERATOR','content.items.moderate')
       on conflict(role_code,capability_code) do nothing;
     `);
@@ -226,10 +262,16 @@ test('F2 manual renewal keeps one immutable relationship per paid period and ref
       values(null,'platform','BDAG',0,false);
       set session_replication_role=replica;
       insert into auth.users(id,is_anonymous)
-      values('${id.creator}',false),('${id.buyer}',false),('${id.buyer2}',false);
+      values('${id.admin}',false),('${id.creator}',false),('${id.buyer}',false),('${id.buyer2}',false);
       insert into public.user_profiles(id,username)
-      values('${id.creator}','premium_f2_creator'),('${id.buyer}','premium_f2_buyer'),
+      values('${id.admin}','premium_f2_admin'),('${id.creator}','premium_f2_creator'),('${id.buyer}','premium_f2_buyer'),
             ('${id.buyer2}','premium_f2_buyer_two');
+      insert into private.admin_user_roles(
+        user_id,role_code,grant_actor_kind,grant_operator_reference,grant_reason
+      ) values(
+        '${id.admin}','SUPER_ADMIN','trusted_operator','f2-governance-proof',
+        'Disposable F2 governance authorization proof.'
+      );
       insert into private.user_age_eligibility(
         user_id,status,minimum_age,policy_version,evaluated_at,source,age_band,birth_date
       )
@@ -808,6 +850,102 @@ test('F2 manual renewal keeps one immutable relationship per paid period and ref
       'creator_premium_plan_has_no_valid_content',
     );
     assert.equal(financeCounts(), beforeWithdrawnSaleCounts);
+
+    const history = json(asAuthenticated(
+      db,
+      id.buyer,
+      `select public.get_my_creator_premium_financial_history_v1('buyer',null,null,null,50)`,
+    ));
+    assert.ok(history.items.length >= 1);
+    assert.ok(history.items.every(item => item.source === 'purchase' || item.source === 'subscription'));
+    expectFailure(
+      asAuthenticated(
+        db,
+        id.buyer,
+        `select public.search_admin_creator_premium_finance_v1(null,null,null,null,null,50)`,
+        { allowFailure: true },
+      ),
+      'admin_capability_forbidden',
+    );
+    const adminProjection = json(asAuthenticated(
+      db,
+      id.admin,
+      `select public.search_admin_creator_premium_finance_v1(null,null,null,null,null,50)`,
+    ));
+    assert.equal(adminProjection.policy.purchase_enabled, true);
+    assert.ok(Array.isArray(adminProjection.items));
+
+    // Supabase's production migration role owns deployed RPCs as postgres. The
+    // disposable template compiles migrations as supabase_admin, so normalize
+    // only the catalog owner after all runtime probes have completed.
+    psql(db, `
+      alter function public.get_creator_premium_commerce_v1(uuid) owner to postgres;
+      alter function public.get_my_creator_premium_subscriptions_v1(timestamptz,uuid,integer) owner to postgres;
+      alter function public.get_my_creator_premium_financial_history_v1(text,text,timestamptz,uuid,integer) owner to postgres;
+      alter function public.get_my_creator_premium_commercial_summary_v1(timestamptz,timestamptz) owner to postgres;
+      alter function public.search_admin_creator_premium_finance_v1(text,text,text,timestamptz,uuid,integer) owner to postgres;
+    `);
+
+    const requested = JSON.stringify(f2ProtectedRpcs.map(([name, argumentTypes]) => ({
+      schema: 'public', name, argument_types: argumentTypes,
+    }))).replaceAll("'", "''");
+    const rows = json(psql(db, `
+      with requested as (
+        select item.schema,item.name,item.argument_types
+        from pg_catalog.jsonb_to_recordset('${requested}'::jsonb)
+          as item(schema text,name text,argument_types jsonb)
+      ),functions as (
+        select n.nspname schema,p.proname name,
+          pg_catalog.pg_get_function_identity_arguments(p.oid) identity_arguments,
+          (select pg_catalog.jsonb_agg(pg_catalog.format_type(arg_oid,null) order by ordinality)
+            from pg_catalog.unnest(p.proargtypes::oid[]) with ordinality args(arg_oid,ordinality)) argument_types,
+          p.prosecdef security_definer,owner_role.rolname owner,
+          coalesce(pg_catalog.to_jsonb(p.proconfig),'[]'::jsonb) search_path,
+          coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+            'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+            'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable
+          ) order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+            acl.privilege_type,acl.is_grantable)
+            from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+            left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee
+            where acl.privilege_type='EXECUTE'),'[]'::jsonb) acl,
+          pg_catalog.jsonb_build_object(
+            'public',exists(select 1 from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) x where x.grantee=0 and x.privilege_type='EXECUTE'),
+            'anon',pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE'),
+            'authenticated',pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE'),
+            'service_role',pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE')
+          ) execute,pg_catalog.pg_get_functiondef(p.oid) definition
+        from pg_catalog.pg_proc p
+        join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+        join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
+      )
+      select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(f) order by f.name),'[]'::jsonb)
+      from functions f join requested r on r.schema=f.schema and r.name=f.name
+        and r.argument_types=f.argument_types;
+    `));
+    const attestations = normalizeRpcSecurityAttestations(rows);
+    assert.equal(attestations.count, f2ProtectedRpcs.length);
+    const evidence = {
+      schema_version: 1,
+      migration_blob: f2MigrationBlob,
+      rpcs: attestations.items.map(item => {
+        const contract = f2ProtectedRpcs.find(([name]) => name === item.name);
+        assert.ok(contract);
+        return {
+          signature: `${item.schema}.${item.name}(${item.argument_types.join(',')})`,
+          advisor_fingerprint: advisorFingerprint(item.name, item.identity_arguments),
+          definition_sha256: item.definition_sha256,
+          case_ids: [...contract[2]].sort(),
+          result: 'SAFE',
+        };
+      }).sort((left, right) => left.signature.localeCompare(right.signature)),
+      result: 'PASS',
+    };
+    const evidenceBytes = canonicalJson(evidence);
+    assert.equal(evidence.migration_blob, '01468928aac3743245916157a6acf0bd9d7aab7f');
+    assert.equal(evidence.rpcs.length, 5);
+    if (evidencePath) writeFileSync(evidencePath, evidenceBytes, { encoding: 'utf8', flag: 'w' });
+    process.stdout.write(`# F2_GOVERNANCE_EVIDENCE_SHA256=${sha256Hex(evidenceBytes)}\n`);
   } finally {
     docker(`dropdb -U supabase_admin --force --if-exists ${db}`, { allowFailure: true });
   }
