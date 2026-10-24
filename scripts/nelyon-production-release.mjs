@@ -370,6 +370,38 @@ export function validateRecoverySource(source) {
   return true;
 }
 
+const AUTO_DEPLOY_POLICY = Object.freeze({
+  declaration_variable: 'SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED',
+  evidence_kind: 'OWNER_PERSISTENT_DECLARATION',
+  expected_state: 'OFF',
+  independently_verified: false,
+  observed_state: 'UNAVAILABLE',
+  risk_treatment: 'owner_accepted_unobserved_state',
+});
+
+export function validateAutoDeployPolicy(policy) {
+  if (canonicalJson(policy) !== canonicalJson(AUTO_DEPLOY_POLICY)) {
+    deny('INVALID_AUTO_DEPLOY_POLICY', 'auto-deploy policy must preserve the exact owner declaration and unobserved-state risk contract');
+  }
+  return true;
+}
+
+export function verifyAutoDeployExpectation({ declaration, policy }) {
+  validateAutoDeployPolicy(policy);
+  if (declaration !== policy.expected_state) {
+    deny('AUTO_DEPLOY_DECLARATION_MISMATCH', 'protected auto-deploy declaration must be exactly OFF');
+  }
+  return {
+    declaration_variable: policy.declaration_variable,
+    expected_state: policy.expected_state,
+    declared_state: declaration,
+    evidence_kind: policy.evidence_kind,
+    observed_state: policy.observed_state,
+    independently_verified: policy.independently_verified,
+    risk_treatment: policy.risk_treatment,
+  };
+}
+
 export function validatePolicy(policy) {
   if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
     deny('INVALID_POLICY', 'policy must be an object');
@@ -436,6 +468,7 @@ export function validatePolicy(policy) {
     || policy.cutover.verified_at !== null) {
     deny('INVALID_PENDING_CUTOVER', 'pending cutover must not claim verified authority evidence');
   }
+  validateAutoDeployPolicy(policy.auto_deploy);
   if (policy.supabase?.project_ref !== 'aewwdlvbwpczqyvkwvvj') {
     deny('INVALID_PROJECT_REF', 'unexpected Supabase project');
   }
@@ -2063,11 +2096,8 @@ export function buildApprovalToken(input) {
   if (!SHA_PATTERN.test(input?.approvedSha ?? '')) deny('INVALID_APPROVAL_TOKEN', 'approved SHA must be a full lowercase commit ID');
   if (!/^[0-9a-f]{64}$/.test(input?.manifestDigest ?? '')) deny('INVALID_APPROVAL_TOKEN', 'manifest digest must be lowercase SHA-256');
   const prefix = `NELYON-APPROVE run=${runId} attempt=${runAttempt} env=${environmentId} release=${releaseId} sha=${input.approvedSha} manifest=${input.manifestDigest}`;
-  if (input?.mode === 'gate_proof') return prefix;
-  if (input?.mode !== 'release') deny('INVALID_APPROVAL_TOKEN', 'approval mode must be gate_proof or release');
-  const evidenceId = requireTokenPart(input.evidenceId, 'INVALID_APPROVAL_TOKEN', 'auto-deploy evidence ID');
-  if (!/^[0-9a-f]{64}$/.test(input.evidenceSha256 ?? '')) deny('INVALID_APPROVAL_TOKEN', 'auto-deploy evidence digest must be lowercase SHA-256');
-  return `${prefix} auto_deploy_evidence=${evidenceId} auto_deploy_sha256=${input.evidenceSha256}`;
+  if (!['gate_proof', 'release'].includes(input?.mode)) deny('INVALID_APPROVAL_TOKEN', 'approval mode must be gate_proof or release');
+  return prefix;
 }
 
 export function verifyEnvironmentSnapshot({ environment, branchPolicies, expected }) {
@@ -2149,52 +2179,6 @@ export function verifyAutomaticAuthorizationHistory({
     deny('INVALID_AUTOMATIC_AUTHORIZATION', 'automatic authorization requires current empty deployment approval history');
   }
   return true;
-}
-
-export function verifyAutoDeployEvidence({
-  evidence,
-  approval,
-  now,
-  maxAgeSeconds = 900,
-  maxFutureSkewSeconds = 60,
-}) {
-  const evidenceSha256 = verifyAutoDeployEvidenceDigest(evidence);
-  const validEvidence = evidence
-    && evidence.state === 'off'
-    && evidence.redacted === true
-    && evidence.source === 'owner-dashboard'
-    && evidence.id === approval?.evidenceId
-    && evidenceSha256 === approval?.evidenceSha256
-    && evidence.project_ref === approval?.projectRef
-    && evidence.production_branch === approval?.productionBranch
-    && evidence.observed_by === approval?.owner;
-  if (!validEvidence) deny('INVALID_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence does not match the policy-bound project identity');
-  const observedAt = Date.parse(evidence.observed_at);
-  const nowAt = Date.parse(now);
-  if (!Number.isFinite(observedAt) || !Number.isFinite(nowAt)) {
-    deny('INVALID_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence timestamps are invalid');
-  }
-  const ageSeconds = (nowAt - observedAt) / 1000;
-  if (ageSeconds > maxAgeSeconds) deny('STALE_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence has expired');
-  if (ageSeconds < -maxFutureSkewSeconds) deny('FUTURE_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence is too far in the future');
-  return true;
-}
-
-export function autoDeployEvidencePayload(evidence) {
-  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) {
-    deny('INVALID_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence must be an object');
-  }
-  const { sha256: _claimedDigest, ...payload } = evidence;
-  return payload;
-}
-
-export function verifyAutoDeployEvidenceDigest(evidence) {
-  const claimed = evidence?.sha256;
-  const actual = sha256Hex(canonicalJson(autoDeployEvidencePayload(evidence)));
-  if (!/^[0-9a-f]{64}$/.test(claimed ?? '') || claimed !== actual) {
-    deny('INVALID_AUTO_DEPLOY_EVIDENCE', 'auto-deploy evidence bytes do not match their claimed digest');
-  }
-  return actual;
 }
 
 export function verifyConcurrency({ runs, currentRunId, complete }) {
@@ -2917,12 +2901,10 @@ async function runCli(argv) {
         authorizationMode: policy.environment.authorization_mode ?? 'manual',
       },
     });
-    if (releaseRequest.mode === 'release' && !values['auto-deploy-evidence']) {
-      throw new Error('missing --auto-deploy-evidence');
-    }
-    const autoDeployEvidence = releaseRequest.mode === 'release'
-      ? JSON.parse(readFileSync(values['auto-deploy-evidence'], 'utf8'))
-      : null;
+    const autoDeployExpectation = verifyAutoDeployExpectation({
+      declaration: values['auto-deploy-expected'],
+      policy: policy.auto_deploy,
+    });
     const approvals = JSON.parse(readFileSync(values.approvals, 'utf8'));
     const authorizationMode = policy.environment.authorization_mode ?? 'manual';
     let approvalToken = null;
@@ -2942,10 +2924,6 @@ async function runCli(argv) {
         releaseId: releaseRequest.releaseId,
         approvedSha: releaseRequest.approvedSha,
         manifestDigest: verifiedBundle.digest,
-        ...(autoDeployEvidence ? {
-          evidenceId: autoDeployEvidence.id,
-          evidenceSha256: autoDeployEvidence.sha256,
-        } : {}),
       });
       verifyApprovalHistory({
         approvals,
@@ -2955,21 +2933,6 @@ async function runCli(argv) {
         environmentName: environment.name,
         expectedRunId: releaseRequest.runId,
         expectedRunAttempt: releaseRequest.runAttempt,
-      });
-    }
-    if (autoDeployEvidence) {
-      verifyAutoDeployEvidence({
-        evidence: autoDeployEvidence,
-        approval: {
-          evidenceId: autoDeployEvidence.id,
-          evidenceSha256: autoDeployEvidence.sha256,
-          projectRef: policy.supabase.project_ref,
-          productionBranch: policy.default_branch,
-          owner: policy.owner,
-        },
-        now: new Date().toISOString(),
-        maxAgeSeconds: policy.evidence.auto_deploy_max_age_seconds,
-        maxFutureSkewSeconds: policy.evidence.max_future_clock_skew_seconds,
       });
     }
     verifyConcurrency({
@@ -2988,9 +2951,7 @@ async function runCli(argv) {
       policy_sha256: policySha256,
       manifest_sha256: verifiedBundle.digest,
       authorization_mode: authorizationMode,
-      auto_deploy_evidence: autoDeployEvidence
-        ? { id: autoDeployEvidence.id, sha256: autoDeployEvidence.sha256 }
-        : null,
+      auto_deploy_expectation: autoDeployExpectation,
       approval_token_sha256: approvalToken ? sha256Hex(approvalToken) : null,
     };
     writeFileSync(resolve(values.output), canonicalJson(proof), { encoding: 'utf8', flag: 'wx' });

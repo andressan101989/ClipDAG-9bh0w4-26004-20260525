@@ -10,6 +10,11 @@ async function loadAdapter() {
   return import(`${adapterUrl.href}?test=${Date.now()}-${Math.random()}`);
 }
 
+test('snapshot adapter never pretends to observe Supabase GitHub auto-deploy state', () => {
+  const source = readFileSync(adapterUrl, 'utf8');
+  assert.doesNotMatch(source, /SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED|auto_deploy_(?:evidence|expectation)|Deploy to production/);
+});
+
 function canonicalJson(value) {
   const normalize = item => {
     if (Array.isArray(item)) return item.map(normalize);

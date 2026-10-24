@@ -3,7 +3,8 @@
 This runbook operates the single production authority implemented by
 `.github/workflows/nelyon-production-release.yml`. It does not grant release
 authority by itself. The policy file, GitHub Environment, exact workflow run,
-fresh release evidence, dispatch authorization, and postchecks must all agree.
+persistent owner declaration, dispatch authorization, and postchecks must all
+agree.
 
 ## Single-owner security model
 
@@ -15,9 +16,9 @@ and the owner's identity is never reused to simulate a review.
 
 Compensating controls bind the run and attempt to the protected `main` branch,
 immutable manifest, policy digest, project, current empty deployment approval
-history, fresh auto-deploy evidence for `release`, snapshots, backup, and
-postchecks. `gate_proof` does not require auto-deploy evidence. Re-running a
-workflow creates a new attempt and repeats every technical gate.
+history, the fail-closed auto-deploy expectation, snapshots, backup, and
+postchecks. Re-running a workflow creates a new attempt and repeats every
+technical gate.
 
 ## GitHub production configuration
 
@@ -54,9 +55,16 @@ Set the independently reviewed policy digest in the Environment variable
 `NELYON_RELEASE_POLICY_SHA256`. It must be the SHA-256 of the exact reviewed
 policy bytes committed to `main`, not a reformatted JSON equivalent.
 
-The redacted automatic-deploy evidence is a non-secret repository variable
-named `NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64`. It contains base64-encoded
-canonical JSON, not credentials.
+Create one protected Environment variable:
+
+- `SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED=OFF`
+
+This is an `OWNER_PERSISTENT_DECLARATION` of the required configuration. It is
+not a live provider observation. The gate records `observed_state=UNAVAILABLE`
+and `independently_verified=false`; in plain language, the toggle is **not independently verified** because Supabase does not currently document a
+reliable API or CLI field for reading **Deploy to production**. Missing, empty,
+`ON`, `UNKNOWN`, lowercase, padded, or any other value fails closed. Never
+describe this declaration as proof that the current provider setting is OFF.
 
 Protect `main` with required pull requests, branch integrity controls, no
 force pushes, and no unnecessary administrative bypass. With one owner, use
@@ -97,27 +105,28 @@ project `aewwdlvbwpczqyvkwvvj` and set **Deploy to production** to **OFF**.
 Keep the GitHub integration connected. Do not disable the project or other
 services.
 
-Because there is no reliable read API for this switch, the owner must visually
-verify **Deploy to production** is OFF and capture redacted evidence. Record a
-unique evidence ID, project reference, production branch `main`, state `off`,
-UTC observation time, observer `andressan101989`, source `owner-dashboard`, and
-a digest. Never include a session token, cookie, credential, or unrelated UI.
+The protected policy retains the original owner-bound cutover record only as
+historical evidence of the one-time cutover. It must never be presented as a
+fresh observation of the current setting.
 
-Build the evidence digest without a circular hash: first canonicalize the
-evidence object without its `sha256` field, then calculate the SHA-256 of `canonicalJson(evidenceWithoutSha256)`. Insert that lowercase digest as the
-`sha256` field, canonicalize the complete record again, and base64-encode the complete canonical JSON including `sha256` for
-`NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64`. The evidence digest is the digest of the
-payload without `sha256`, not a hash of the final base64 text.
+Supabase currently documents GitHub Integration setup and Management API
+resources, but not a reliable read field for this production-deploy toggle.
+Until such an official observable exists, the permanent contract is:
 
-Treat that redacted canonical record as a release-time authority input.
-Evidence is valid for at most 15 minutes and permits at most 60 seconds
-of future clock skew. Renew it immediately before every production `release`.
-The plan copies its exact canonical bytes into the immutable artifact, and the
-protected job compares those bytes with the current variable before validating
-the digest, project, branch, observer, state, and freshness. Renewal only
-updates `NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64` and does not require a policy commit.
-The protected policy retains the initial owner-bound cutover record and
-the static requirement that the GitHub integration remain OFF.
+- expected state: `OFF`;
+- declaration: exact protected variable value `OFF`;
+- evidence kind: `OWNER_PERSISTENT_DECLARATION`;
+- observed state: `UNAVAILABLE`;
+- independent verification: `false`; and
+- risk treatment: owner acceptance plus all unchanged compensating controls.
+
+Authoritative references: [GitHub Integration](https://supabase.com/docs/guides/deployment/branching/github-integration)
+and [GitHub connections API](https://supabase.com/docs/reference/api/v2-list-organization-github-connections).
+
+If Supabase later publishes a reliable API for the toggle, add its independent
+observation through a separately reviewed governance change. Do not infer the
+toggle from GitHub connection metadata, action history, HTTP success, or the
+historical screenshot.
 
 After the controlled push to `main`, verify in Supabase that no automatic
 production deployment started. If any automatic deployment appears, stop,
@@ -172,8 +181,8 @@ archive is byte-for-byte identical to a local bundle.
 For a separately authorized future production release:
 
 1. verify the exact main SHA and unused release ID;
-2. renew visual auto-deploy-off evidence within 15 minutes and set the
-   repository evidence variable to those exact canonical bytes;
+2. require `SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED=OFF` and record that the actual
+   provider state remains unobservable rather than claiming a live check;
 3. run the plan and inspect every changed file, migration, function,
    transitive `_shared` consumer, risk, and blocker;
 4. use `RELEASE_STANDARD` or, only for explicitly reviewed sensitive scope,
@@ -191,8 +200,9 @@ For a separately authorized future production release:
    cron, and security comparisons before
    success.
 
-For `release`, the immutable artifact and byte-for-byte variable comparison
-bind the fresh auto-deploy evidence without a human deployment comment.
+For every protected gate, the exact declaration is validated without a human
+deployment comment. It does not replace SHA, manifest, policy digest, backup,
+snapshot, concurrency, Finance, Security Advisor, or postcheck controls.
 
 `video-semantic-index` is a governed transitive consumer of the shared visual
 pipeline and must be included whenever that pipeline changes. The release

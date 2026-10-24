@@ -61,6 +61,14 @@
     "verified_at": "2026-10-09T19:40:27.478Z",
     "verified_by": "andressan101989"
   },
+  "auto_deploy": {
+    "declaration_variable": "SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED",
+    "evidence_kind": "OWNER_PERSISTENT_DECLARATION",
+    "expected_state": "OFF",
+    "independently_verified": false,
+    "observed_state": "UNAVAILABLE",
+    "risk_treatment": "owner_accepted_unobserved_state"
+  },
   "default_branch": "main",
   "environment": {
     "allow_admin_bypass": false,
@@ -72,9 +80,7 @@
     "required_reviewer": null
   },
   "evidence": {
-    "artifact_retention_days": 90,
-    "auto_deploy_max_age_seconds": 900,
-    "max_future_clock_skew_seconds": 60
+    "artifact_retention_days": 90
   },
   "modes": [
     "plan_only",
