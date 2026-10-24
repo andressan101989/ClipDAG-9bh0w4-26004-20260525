@@ -316,6 +316,13 @@ function exactTimestamp(value, code) {
   return value;
 }
 
+function timestampMicros(value, code) {
+  const timestamp = exactTimestamp(value, code);
+  const fraction = /\.(\d{1,6})/.exec(timestamp)?.[1] ?? '';
+  const microsecondRemainder = BigInt((fraction.padEnd(6, '0') || '0')) % 1000n;
+  return BigInt(Date.parse(timestamp)) * 1000n + microsecondRemainder;
+}
+
 function exactTarget(value, expected, code) {
   const normalized = exactUuid(value, code);
   if (normalized !== exactUuid(expected, code)) invalid(code);
@@ -374,9 +381,9 @@ export function parseCreatorPremiumCommercialSummary(value) {
     from: exactTimestamp(rangeRecord.from, code),
     to: exactTimestamp(rangeRecord.to, code),
   });
-  const rangeFrom = Date.parse(range.from);
-  const rangeTo = Date.parse(range.to);
-  if (rangeFrom >= rangeTo || rangeTo - rangeFrom > 366 * 24 * 60 * 60 * 1000) invalid(code);
+  const rangeFrom = timestampMicros(range.from, code);
+  const rangeTo = timestampMicros(range.to, code);
+  if (rangeFrom >= rangeTo || rangeTo - rangeFrom > 366n * 24n * 60n * 60n * 1_000_000n) invalid(code);
 
   const gross = exactBdag(record.gross, code);
   const platformFee = exactBdag(record.platform_fee, code);
@@ -408,8 +415,8 @@ export function parseCreatorPremiumCommercialSummary(value) {
       created_at: exactTimestamp(transactionRecord.created_at, code),
     };
     if ((source === 'purchase') !== (transaction.content_id !== null)
-        || Date.parse(transaction.created_at) < rangeFrom
-        || Date.parse(transaction.created_at) >= rangeTo) invalid(code);
+        || timestampMicros(transaction.created_at, code) < rangeFrom
+        || timestampMicros(transaction.created_at, code) >= rangeTo) invalid(code);
     assertBalanced(transaction, code);
     return Object.freeze(transaction);
   });
@@ -418,8 +425,8 @@ export function parseCreatorPremiumCommercialSummary(value) {
   for (let index = 1; index < recentTransactions.length; index += 1) {
     const previous = recentTransactions[index - 1];
     const current = recentTransactions[index];
-    const previousTime = Date.parse(previous.created_at);
-    const currentTime = Date.parse(current.created_at);
+    const previousTime = timestampMicros(previous.created_at, code);
+    const currentTime = timestampMicros(current.created_at, code);
     if (currentTime > previousTime
         || (currentTime === previousTime
           && current.financial_transaction_id.localeCompare(previous.financial_transaction_id) > 0)) {
@@ -585,7 +592,8 @@ export function parseCreatorPremiumFinancialHistoryPage(value) {
     )) invalid(code);
     if (eventType === 'refund' && parsed.access_state !== 'refunded') invalid(code);
     if ((parsed.starts_at === null) !== (parsed.paid_through_at === null)) invalid(code);
-    if (parsed.starts_at !== null && Date.parse(parsed.paid_through_at) <= Date.parse(parsed.starts_at)) invalid(code);
+    if (parsed.starts_at !== null
+        && timestampMicros(parsed.paid_through_at, code) <= timestampMicros(parsed.starts_at, code)) invalid(code);
     assertBalanced(parsed, code);
     return Object.freeze(parsed);
   });
@@ -593,8 +601,8 @@ export function parseCreatorPremiumFinancialHistoryPage(value) {
   for (let index = 1; index < items.length; index += 1) {
     const previous = items[index - 1];
     const current = items[index];
-    const previousTime = Date.parse(previous.occurred_at);
-    const currentTime = Date.parse(current.occurred_at);
+    const previousTime = timestampMicros(previous.occurred_at, code);
+    const currentTime = timestampMicros(current.occurred_at, code);
     if (previousTime < currentTime
         || (previousTime === currentTime
           && previous.id.toLowerCase() <= current.id.toLowerCase())) invalid(code);
@@ -608,7 +616,7 @@ export function parseCreatorPremiumFinancialHistoryPage(value) {
     });
     const lastItem = items.at(-1);
     if (lastItem === undefined
-        || Date.parse(nextCursor.event_at) !== Date.parse(lastItem.occurred_at)
+        || timestampMicros(nextCursor.event_at, code) !== timestampMicros(lastItem.occurred_at, code)
         || nextCursor.id.toLowerCase() !== lastItem.id.toLowerCase()) invalid(code);
   }
   return Object.freeze({
@@ -790,7 +798,7 @@ function parseSubscriptionPeriod(value, code) {
     access_state: exactEnum(record.access_state, ACCESS_STATES, code),
     gross_amount_bdag: exactBdag(record.gross_amount_bdag, code),
   };
-  if (Date.parse(period.paid_through_at) <= Date.parse(period.starts_at)) invalid(code);
+  if (timestampMicros(period.paid_through_at, code) <= timestampMicros(period.starts_at, code)) invalid(code);
   return Object.freeze(period);
 }
 
@@ -843,9 +851,9 @@ export function parseCreatorPremiumSubscriptionsPage(value) {
         || (status === 'active' && (startedAt === null || cancelledAt !== null || endedAt !== null))
         || (status === 'cancelled' && (startedAt === null || cancelledAt === null))
         || (['expired', 'revoked'].includes(status) && (startedAt === null || endedAt === null))
-        || (cancelledAt !== null && Date.parse(cancelledAt) < Date.parse(startedAt))
-        || (endedAt !== null && Date.parse(endedAt) < Date.parse(startedAt))
-        || Date.parse(updatedAt) < Date.parse(createdAt)) {
+        || (cancelledAt !== null && timestampMicros(cancelledAt, code) < timestampMicros(startedAt, code))
+        || (endedAt !== null && timestampMicros(endedAt, code) < timestampMicros(startedAt, code))
+        || timestampMicros(updatedAt, code) < timestampMicros(createdAt, code)) {
       invalid(code);
     }
 
@@ -970,7 +978,7 @@ export function parseCreatorPremiumSubscriptionReceipt(value, expectedPlanId) {
       || parsed.billing_period_days > 365) {
     invalid(code);
   }
-  if (Date.parse(parsed.paid_through_at) <= Date.parse(parsed.starts_at)) invalid(code);
+  if (timestampMicros(parsed.paid_through_at, code) <= timestampMicros(parsed.starts_at, code)) invalid(code);
   if (parsed.status !== 'active' && parsed.status !== 'cancelled') invalid(code);
   if (parsed.auto_renew !== false) invalid(code);
   assertBalanced(parsed, code);

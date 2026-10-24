@@ -95,8 +95,10 @@ test('subscription history projects elapsed paid periods as expired without muta
   assert.match(body, /v_now\s+timestamptz\s*:=\s*pg_catalog\.clock_timestamp\(\)/i);
   assert.match(body, /paid_through_at\s*<=\s*v_now[\s\S]*effective_status/i);
   assert.match(body, /paid_through_at\s*<=\s*v_now[\s\S]*effective_access_state/i);
+  assert.match(body, /then\s+coalesce\(base\.ended_at,base\.paid_through_at\)\s+else\s+base\.ended_at\s+end\s+as\s+effective_ended_at/i);
   assert.match(body, /'status'\s*,\s*item\.effective_status/i);
   assert.match(body, /'access_state'\s*,\s*item\.effective_access_state/i);
+  assert.match(body, /'ended_at'\s*,\s*item\.effective_ended_at/i);
   assert.doesNotMatch(body, /update\s+private\.creator_premium_(?:subscriptions|subscription_periods)/i);
   assert.match(subscriptions, /item\.status==='active'&&<Pressable/);
 });

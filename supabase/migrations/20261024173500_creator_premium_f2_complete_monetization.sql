@@ -1226,6 +1226,12 @@ begin
           and base.access_state='active'
           and base.paid_through_at<=v_now
           and base.period_fact_valid
+          then coalesce(base.ended_at,base.paid_through_at)
+          else base.ended_at end as effective_ended_at,
+        case when base.status in ('active','cancelled')
+          and base.access_state='active'
+          and base.paid_through_at<=v_now
+          and base.period_fact_valid
           then 'expired' else base.access_state end as effective_access_state,
         base.status in ('active','cancelled')
           and base.access_state='active'
@@ -1292,7 +1298,7 @@ begin
               else null end
           ),
           'status',item.effective_status,'started_at',item.started_at,
-          'cancelled_at',item.cancelled_at,'ended_at',item.ended_at,
+          'cancelled_at',item.cancelled_at,'ended_at',item.effective_ended_at,
           'period',case when item.period_id is null then null else
             pg_catalog.jsonb_build_object(
               'id',item.period_id,'starts_at',item.starts_at,

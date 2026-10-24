@@ -50,7 +50,7 @@ function loadLedgerEdge({
     console,
     structuredClone,
     require(specifier) {
-      if (specifier === 'https://esm.sh/@supabase/supabase-js@2') {
+      if (specifier === 'https://esm.sh/@supabase/supabase-js@2.106.1') {
         return { createClient: () => admin };
       }
       if (specifier === '../_shared/cors.ts') return { corsHeaders: {} };

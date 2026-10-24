@@ -60,6 +60,7 @@ async function rpc(name:string,args:JsonRecord={}){const {data,error}=await supa
 
 const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const decimalPattern=/^(?:0|[1-9][0-9]{0,29})\.[0-9]{8}$/;
+const timestampPattern=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
 const exactRecord=(value:unknown,name:string,keys:readonly string[])=>{
   const parsed=record(value,name),actual=Object.keys(parsed);
   if(actual.length!==keys.length||actual.some((key)=>!keys.includes(key)))throw new Error(`Respuesta inválida: ${name}.campos`);
@@ -69,7 +70,8 @@ const requiredString=(value:unknown,name:string)=>{if(typeof value!=="string"||v
 const nullableString=(value:unknown,name:string)=>value===null?null:requiredString(value,name);
 const requiredUuid=(value:unknown,name:string)=>{const parsed=requiredString(value,name);if(!uuidPattern.test(parsed))throw new Error(`Respuesta inválida: ${name}`);return parsed};
 const nullableUuid=(value:unknown,name:string)=>value===null?null:requiredUuid(value,name);
-const timestamp=(value:unknown,name:string)=>{const parsed=requiredString(value,name);if(!parsed.includes("T")||Number.isNaN(Date.parse(parsed)))throw new Error(`Respuesta inválida: ${name}`);return parsed};
+const timestamp=(value:unknown,name:string)=>{const parsed=requiredString(value,name);if(!timestampPattern.test(parsed)||Number.isNaN(Date.parse(parsed)))throw new Error(`Respuesta inválida: ${name}`);return parsed};
+const timestampMicros=(value:string,name:string)=>{const parsed=timestamp(value,name),fraction=/\.(\d{1,6})/.exec(parsed)?.[1]??"",remainder=BigInt((fraction.padEnd(6,"0")||"0"))%1000n;return BigInt(Date.parse(parsed))*1000n+remainder};
 const nullableTimestamp=(value:unknown,name:string)=>value===null?null:timestamp(value,name);
 const nonNegativeInteger=(value:unknown,name:string)=>{if(!Number.isInteger(value)||Number(value)<0)throw new Error(`Respuesta inválida: ${name}`);return Number(value)};
 const booleanValue=(value:unknown,name:string)=>{if(typeof value!=="boolean")throw new Error(`Respuesta inválida: ${name}`);return value};
@@ -114,13 +116,13 @@ export function parseAdminCreatorPremiumFinance(value:unknown):AdminCreatorPremi
   });
   if(new Set(items.map((item)=>item.reference_id.toLowerCase())).size!==items.length)throw new Error("Respuesta inválida: creator_premium_finance.items.reference_id");
   for(let index=1;index<items.length;index+=1){
-    const previous=items[index-1],current=items[index],previousTime=Date.parse(previous.created_at),currentTime=Date.parse(current.created_at);
+    const previous=items[index-1],current=items[index],previousTime=timestampMicros(previous.created_at,"creator_premium_finance.items.created_at"),currentTime=timestampMicros(current.created_at,"creator_premium_finance.items.created_at");
     if(previousTime<currentTime||(previousTime===currentTime&&previous.reference_id.toLowerCase()<=current.reference_id.toLowerCase()))throw new Error("Respuesta inválida: creator_premium_finance.items.order");
   }
   const rawCursor=parsed.next_cursor===null?null:exactRecord(parsed.next_cursor,"creator_premium_finance.next_cursor",["created_at","reference_id"]);
   const nextCursor=rawCursor===null?null:{created_at:timestamp(rawCursor.created_at,"creator_premium_finance.next_cursor.created_at"),reference_id:requiredUuid(rawCursor.reference_id,"creator_premium_finance.next_cursor.reference_id")};
   const lastItem=items.at(-1);
-  if(nextCursor!==null&&(lastItem===undefined||Date.parse(nextCursor.created_at)!==Date.parse(lastItem.created_at)||nextCursor.reference_id.toLowerCase()!==lastItem.reference_id.toLowerCase()))throw new Error("Respuesta inválida: creator_premium_finance.next_cursor.binding");
+  if(nextCursor!==null&&(lastItem===undefined||timestampMicros(nextCursor.created_at,"creator_premium_finance.next_cursor.created_at")!==timestampMicros(lastItem.created_at,"creator_premium_finance.items.created_at")||nextCursor.reference_id.toLowerCase()!==lastItem.reference_id.toLowerCase()))throw new Error("Respuesta inválida: creator_premium_finance.next_cursor.binding");
   return{
     policy:{purchase_enabled:booleanValue(policy.purchase_enabled,"creator_premium_finance.policy.purchase_enabled"),subscription_enabled:booleanValue(policy.subscription_enabled,"creator_premium_finance.policy.subscription_enabled"),refunds_enabled:booleanValue(policy.refunds_enabled,"creator_premium_finance.policy.refunds_enabled"),platform_fee_bps:platformFeeBps,policy_version:requiredString(policy.policy_version,"creator_premium_finance.policy.policy_version")},
     counts:{purchase_receipts:nonNegativeInteger(counts.purchase_receipts,"creator_premium_finance.counts.purchase_receipts"),subscription_relationships:nonNegativeInteger(counts.subscription_relationships,"creator_premium_finance.counts.subscription_relationships"),subscription_periods:nonNegativeInteger(counts.subscription_periods,"creator_premium_finance.counts.subscription_periods"),refunds:nonNegativeInteger(counts.refunds,"creator_premium_finance.counts.refunds"),integrity_failures:nonNegativeInteger(counts.integrity_failures,"creator_premium_finance.counts.integrity_failures")},
