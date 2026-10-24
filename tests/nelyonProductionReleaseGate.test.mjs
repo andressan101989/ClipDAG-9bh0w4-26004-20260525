@@ -1946,8 +1946,6 @@ function approvalInput(overrides = {}) {
     releaseId: 'nelyon-20261009-001',
     approvedSha: MAIN_SHA,
     manifestDigest: 'c'.repeat(64),
-    evidenceId: 'supabase-off-20261009T120000Z',
-    evidenceSha256: 'd'.repeat(64),
     ...overrides,
   };
 }
@@ -1970,35 +1968,17 @@ function environmentSnapshot(overrides = {}) {
   };
 }
 
-function autoDeployEvidence(gate, overrides = {}) {
-  const { sha256, ...payloadOverrides } = overrides;
-  const payload = {
-    id: 'supabase-off-20261009T120000Z',
-    project_ref: PROJECT_REF,
-    production_branch: 'main',
-    state: 'off',
-    observed_at: '2026-10-09T12:00:00.000Z',
-    observed_by: OWNER,
-    source: 'owner-dashboard',
-    redacted: true,
-    ...payloadOverrides,
-  };
-  return { ...payload, sha256: sha256 ?? gate.sha256Hex(gate.canonicalJson(payload)) };
-}
-
-test('release approval token binds run attempt environment release SHA manifest and fresh evidence', async () => {
+test('release approval token binds run attempt environment release SHA and manifest', async () => {
   const { gate } = await loadGateAndPolicy();
   assert.equal(
     gate.buildApprovalToken(approvalInput()),
-    `NELYON-APPROVE run=123456789 attempt=1 env=42 release=nelyon-20261009-001 sha=${MAIN_SHA} manifest=${'c'.repeat(64)} auto_deploy_evidence=supabase-off-20261009T120000Z auto_deploy_sha256=${'d'.repeat(64)}`,
+    `NELYON-APPROVE run=123456789 attempt=1 env=42 release=nelyon-20261009-001 sha=${MAIN_SHA} manifest=${'c'.repeat(64)}`,
   );
 });
 
-test('gate proof approval token binds the run without requiring auto-deploy evidence', async () => {
+test('gate proof approval token uses the same immutable run binding', async () => {
   const { gate } = await loadGateAndPolicy();
   const input = approvalInput({ mode: 'gate_proof' });
-  delete input.evidenceId;
-  delete input.evidenceSha256;
   assert.equal(
     gate.buildApprovalToken(input),
     `NELYON-APPROVE run=123456789 attempt=1 env=42 release=nelyon-20261009-001 sha=${MAIN_SHA} manifest=${'c'.repeat(64)}`,
@@ -2173,75 +2153,46 @@ test('automatic Environment authorization permits no human gate and preserves ma
   }
 });
 
-test('release requires owner confirmation of current auto-deploy-off evidence', async () => {
-  const { gate } = await loadGateAndPolicy();
-  const evidence = autoDeployEvidence(gate);
-  assert.equal(gate.verifyAutoDeployEvidence({
-    evidence,
-    approval: {
-      evidenceId: evidence.id,
-      evidenceSha256: evidence.sha256,
-      projectRef: PROJECT_REF,
-      productionBranch: 'main',
-      owner: OWNER,
-    },
-    now: '2026-10-09T12:10:00.000Z',
-  }), true);
+test('persistent owner declaration records expected OFF without claiming provider observation', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  assert.deepEqual(gate.verifyAutoDeployExpectation({
+    declaration: 'OFF',
+    policy: policy.auto_deploy,
+  }), {
+    declaration_variable: 'SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED',
+    expected_state: 'OFF',
+    declared_state: 'OFF',
+    evidence_kind: 'OWNER_PERSISTENT_DECLARATION',
+    observed_state: 'UNAVAILABLE',
+    independently_verified: false,
+    risk_treatment: 'owner_accepted_unobserved_state',
+  });
 });
 
-test('toggle evidence older than 900 seconds denies', async () => {
-  const { gate } = await loadGateAndPolicy();
-  const evidence = autoDeployEvidence(gate);
-  assertDenied(() => gate.verifyAutoDeployEvidence({
-    evidence,
-    approval: { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER },
-    now: '2026-10-09T12:15:01.000Z',
-  }), 'STALE_AUTO_DEPLOY_EVIDENCE');
-});
-
-test('future evidence beyond 60 seconds clock skew denies', async () => {
-  const { gate } = await loadGateAndPolicy();
-  const evidence = autoDeployEvidence(gate, { observed_at: '2026-10-09T12:01:01.000Z' });
-  assertDenied(() => gate.verifyAutoDeployEvidence({
-    evidence,
-    approval: { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER },
-    now: '2026-10-09T12:00:00.000Z',
-  }), 'FUTURE_AUTO_DEPLOY_EVIDENCE');
-});
-
-test('mismatched evidence ID digest project branch or approval comment denies', async () => {
-  const { gate } = await loadGateAndPolicy();
-  const evidence = autoDeployEvidence(gate);
-  const approval = { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER };
-  const cases = [
-    [evidence, { ...approval, evidenceId: 'another-evidence' }],
-    [evidence, { ...approval, evidenceSha256: 'e'.repeat(64) }],
-    [{ ...evidence, project_ref: 'wrongprojectwrongpro' }, approval],
-    [{ ...evidence, production_branch: 'dev' }, approval],
-    [{ ...evidence, observed_by: 'someone-else' }, approval],
-  ];
-  for (const [candidate, binding] of cases) {
-    assertDenied(() => gate.verifyAutoDeployEvidence({
-      evidence: candidate,
-      approval: binding,
-      now: '2026-10-09T12:10:00.000Z',
-    }), 'INVALID_AUTO_DEPLOY_EVIDENCE');
+test('missing changed or unknown auto-deploy declaration fails closed', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  for (const declaration of [undefined, null, '', 'ON', 'UNKNOWN', 'off', ' OFF ']) {
+    assertDenied(() => gate.verifyAutoDeployExpectation({
+      declaration,
+      policy: policy.auto_deploy,
+    }), 'AUTO_DEPLOY_DECLARATION_MISMATCH');
   }
 });
 
-test('auto-deploy evidence digest binds canonical bytes without requiring a policy commit', async () => {
-  const { gate } = await loadGateAndPolicy();
-  const evidence = autoDeployEvidence(gate);
-  const approval = { evidenceId: evidence.id, evidenceSha256: evidence.sha256, projectRef: PROJECT_REF, productionBranch: 'main', owner: OWNER };
-  for (const candidate of [
-    { ...evidence, observed_at: '2026-10-09T12:00:01.000Z' },
-    { ...evidence, sha256: 'e'.repeat(64) },
+test('auto-deploy policy cannot claim provider observation or weaken expected state', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  for (const patch of [
+    { expected_state: 'ON' },
+    { observed_state: 'OFF' },
+    { independently_verified: true },
+    { evidence_kind: 'SCREENSHOT' },
+    { declaration_variable: 'ANOTHER_VARIABLE' },
+    { risk_treatment: 'verified_automatically' },
   ]) {
-    assertDenied(() => gate.verifyAutoDeployEvidence({
-      evidence: candidate,
-      approval,
-      now: '2026-10-09T12:10:00.000Z',
-    }), 'INVALID_AUTO_DEPLOY_EVIDENCE');
+    assertDenied(() => gate.verifyAutoDeployExpectation({
+      declaration: 'OFF',
+      policy: { ...policy.auto_deploy, ...patch },
+    }), 'INVALID_AUTO_DEPLOY_POLICY');
   }
 });
 
@@ -2907,17 +2858,18 @@ test('canonical workflow uses automatic Environment authorization without approv
   assert.doesNotMatch(deploy, /NELYON-APPROVE/);
 });
 
-test('release compares fresh auto-deploy evidence while gate proof does not require it', () => {
+test('protected gate consumes persistent OFF declaration without screenshot artifacts', () => {
   const text = workflowText();
   const plan = workflowJob(text, 'plan', 'deploy');
   const deploy = workflowJob(text, 'deploy');
-  assert.match(plan, /name: Fetch fresh auto-deploy-off evidence for release only\s*\n\s*if: inputs\.mode == 'release'/);
-  assert.match(plan, /cp release-input\/auto-deploy-evidence\.json release-artifact\/auto-deploy-evidence\.json/);
-  assert.match(deploy, /cmp --silent release-artifact\/auto-deploy-evidence\.json gate-evidence\/auto-deploy-evidence\.json/);
+  assert.match(deploy, /SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED:\s*\$\{\{ vars\.SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED \}\}/);
   const gateProofStep = deploy.slice(deploy.indexOf('name: Verify gate proof'), deploy.indexOf('name: Verify release gate'));
-  assert.doesNotMatch(gateProofStep, /auto-deploy-evidence/);
+  assert.match(gateProofStep, /--auto-deploy-expected "\$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED"/);
   const releaseGateStep = deploy.slice(deploy.indexOf('name: Verify release gate'), deploy.indexOf('name: Set up pinned Supabase CLI'));
-  assert.match(releaseGateStep, /--auto-deploy-evidence gate-evidence\/auto-deploy-evidence\.json/);
+  assert.match(releaseGateStep, /--auto-deploy-expected "\$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED"/);
+  assert.equal((deploy.match(/--auto-deploy-expected "\$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED"/g) ?? []).length, 3);
+  assert.doesNotMatch(plan, /NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64|auto-deploy-evidence\.json|base64 --decode/);
+  assert.doesNotMatch(deploy, /NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64|auto-deploy-evidence\.json|base64 --decode|auto_deploy_max_age_seconds/);
 });
 
 test('plan_only cannot schedule deploy and gate_proof contains no Supabase mutation', () => {
@@ -3053,14 +3005,12 @@ test('runbook covers the simplified single-owner release finance and recovery co
     'Allow administrators to bypass configured protection rules: `OFF`',
     'SUPABASE_ACCESS_TOKEN',
     'NELYON_RELEASE_POLICY_SHA256',
-    'NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64',
-    'does not require a policy commit',
-    '`gate_proof` does not require auto-deploy evidence',
+    'SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED',
+    'OWNER_PERSISTENT_DECLARATION',
+    'observed_state=UNAVAILABLE',
+    'not independently verified',
     'temporary `cli_login_postgres` role',
     'fresh completed physical backup',
-    'SHA-256 of `canonicalJson(evidenceWithoutSha256)`',
-    'base64-encode the complete canonical JSON including `sha256`',
-    '15 minutes',
     'Deploy to production',
     'no deployment approval comment',
     'current empty deployment approval history',
@@ -3072,6 +3022,6 @@ test('runbook covers the simplified single-owner release finance and recovery co
     'transactions confirmed after the pre-snapshot even when created before it',
   ]) assert.ok(text.includes(literal), `runbook missing ${literal}`);
   assert.doesNotMatch(text, /NELYON-APPROVE|Review deployments|paste the exact generated approval token/);
-  assert.doesNotMatch(text, /SUPABASE_READ_ONLY_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|Every renewed evidence record must also replace/);
+  assert.doesNotMatch(text, /SUPABASE_READ_ONLY_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|Every renewed evidence record must also replace|NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64|fresh screenshot|15 minutes/);
   assert.doesNotMatch(text, /SUPABASE_ACCESS_TOKEN\s*[=:]\s*[^`\s]+/);
 });
