@@ -141,7 +141,7 @@ function f2ManagedScopeManifest(overrides = {}) {
       config_changed: true,
       managed_scope_transition: {
         id: 'creator-premium-f2-bdag-ledger-enrollment-v1',
-        attested_source_sha: '93aca037d35dd683f2b0857fa9b343c36b7ffda5',
+        attested_source_sha: '97f6638acaa5be2af336b427184c11185e3d0fe1',
         approved_sha: 'a'.repeat(40),
         descendant_verified: true,
         migration_blob: 'fce8789a0c79251afbe962bd39f6bd81ae248296',
@@ -165,7 +165,7 @@ function f2ManagedScopeTransition() {
     from_classification: 'unmanaged',
     to_classification: 'managed',
     baseline_sha: '9b4a5d15a6746e11a27bc1d9edafeab10e7d421d',
-    attested_source_sha: '93aca037d35dd683f2b0857fa9b343c36b7ffda5',
+    attested_source_sha: '97f6638acaa5be2af336b427184c11185e3d0fe1',
     migration: '20261024173500_creator_premium_f2_complete_monetization',
     migration_blob: 'fce8789a0c79251afbe962bd39f6bd81ae248296',
     function_source_sha256: '06a7f77242df926411f7aae44eb808f8bb1ce1e88b8a342376911f1e6519e8fa',
