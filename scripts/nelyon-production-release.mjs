@@ -17,10 +17,6 @@ const C1_NEGATIVE_TEST_EVIDENCE_SHA256 = 'ca8588f28303eb27e251207a72a85a35b7c75c
 const C1_MIGRATION = '20261017193000_creator_premium_c1_submission_cancellation';
 const C1_MIGRATION_BLOB = '4605ac94221a52d47190b1575ab1a71e23c82fac';
 const C1_SOURCE_SHA = 'aa722ea6f1bb9aef6fc49da64c4c6dc8303b4e95';
-const F1_NEGATIVE_TEST_EVIDENCE_SHA256 = '59a8ca88804abd43416d157b7580d180884b905d0596e6b63a7441e06e999f46';
-const F1_MIGRATION = '20261018211327_creator_premium_qa_final_f1';
-const F1_MIGRATION_BLOB = '9052d0abd6df3fec7d49eed80285bce19f21051b';
-const F1_SOURCE_SHA = 'ed51307f9fc02ec04ca84478d905f608120e2b0e';
 const F1_C4_NEGATIVE_TEST_EVIDENCE_SHA256 = '88f4dd9874b57cc9235b2f86b391fa6b9a5884ebe722297d81fbffa289bdaf0f';
 const F1_C4_MIGRATION = '20261019023431_creator_premium_f1_c4_final_recovery';
 const F1_C4_MIGRATION_BLOB = '185fdfb7c0216776fa540fe5009afdee4f2b57bb';
@@ -67,7 +63,7 @@ const SECURITY_ADVISOR_RPC_EXCEPTIONS = [
   ['38f8cee50f0713a548ea30ea5d3d7cb5d9151bd97b4885da47cc2726b83706ca', 'admin_refund_creator_premium_purchase_v1', ['uuid', 'uuid', 'text'], 'p_receipt_id uuid, p_idempotency_key uuid, p_reason_code text', '13a0a7da560d681b0b04a8505bc09eb1fe12e31cf04779be984872f926ee6d45', A2_NEGATIVE_TEST_EVIDENCE_SHA256, B7_MIGRATION, B7_MIGRATION_BLOB, B7_SOURCE_SHA],
   ['053c9a441c11dc657382c6448b017d8fcf73c16fb5a3e4baf6275e24e2216129', 'cancel_my_creator_premium_submission_v1', ['uuid'], 'p_content_id uuid', '5be58f4d190e19a04ed32c7de88d1ace55778ac68c5c39d21cac5ad979f27a57', C1_NEGATIVE_TEST_EVIDENCE_SHA256, C1_MIGRATION, C1_MIGRATION_BLOB, C1_SOURCE_SHA],
   ['1c20753b55dcdb2d0a8e6a3365fcf45453495a74a49d76b9b51af4e51d7b923f', 'submit_my_creator_premium_content_with_plans_v1', ['uuid', 'uuid[]', 'uuid'], 'p_content_id uuid, p_plan_ids uuid[], p_client_request_id uuid', '00e9195a045185a65ca260a9abacc6916b289f7b1a2cf094cdaf9d4d86f55eff', F1_C6_NEGATIVE_TEST_EVIDENCE_SHA256, F1_C6_MIGRATION, F1_C6_MIGRATION_BLOB, F1_C6_SOURCE_SHA],
-  ['b0cdd5e8a440096ebc6bbd35fee9b785180d71ae6d06209ade7feaa6c0877c4d', 'retire_my_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', '10a91f4a47efeda414aa7ed7d1ceed81fff971f6eb5009e4f2bfc4f2acbb78d9', F1_NEGATIVE_TEST_EVIDENCE_SHA256, F1_MIGRATION, F1_MIGRATION_BLOB, F1_SOURCE_SHA],
+  ['b0cdd5e8a440096ebc6bbd35fee9b785180d71ae6d06209ade7feaa6c0877c4d', 'retire_my_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', 'ac6cd5a65b129c471184ffb080a5a80dcfb2c3283daf5fb2c2100a945e340580', F2_NEGATIVE_TEST_EVIDENCE_SHA256, F2_MIGRATION, F2_MIGRATION_BLOB, F2_SOURCE_SHA],
   ['5ceb93fa71004f64ba75a7bd251fadaf66d7ebdce81fb48904fd988ed9023fef', 'delete_my_creator_premium_plan_draft_v1', ['uuid', 'uuid'], 'p_plan_id uuid, p_client_request_id uuid', 'a7bab775b77a5230658cea58c7bcb9f139b4b6102c89c1095a5e3f5d8548d520', F1_C4_NEGATIVE_TEST_EVIDENCE_SHA256, F1_C4_MIGRATION, F1_C4_MIGRATION_BLOB, F1_C4_SOURCE_SHA],
   ['f6c527ed886225b79c3412747e8f8375e7552634febc03b37917123f02649109', 'search_admin_creator_premium_finance_v1', ['text', 'text', 'text', 'timestamp with time zone', 'uuid', 'integer'], 'p_source text, p_state text, p_query text, p_cursor_created_at timestamp with time zone, p_cursor_reference_id uuid, p_limit integer', '90d68ed26584e9994b1ff64fbf6e44eaa6b443368bfabe83eb1c0a73fce84cf7', F2_NEGATIVE_TEST_EVIDENCE_SHA256, F2_MIGRATION, F2_MIGRATION_BLOB, F2_SOURCE_SHA],
 ];
@@ -216,6 +212,36 @@ const EXPECTED_RECOVERY_SOURCES = [{
   ],
   premium_relation_security_sha256: '055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6',
   premium_legacy: { content_count: 7, pending_review_count: 1, deleted_count: 2 },
+}, {
+  run_id: '40139736749',
+  run_attempt: 1,
+  release_id: 'nelyon-creator-premium-f2-r1-release-20261024T224205Z',
+  source_sha: '238e987933c7198400534121e61fb3d2750ba5ba',
+  repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+  mutation_status: 'completed',
+  post_snapshot_status: 'success',
+  postcheck_status: 'failure',
+  gate_artifact: { id: '12577384242', name: 'nelyon-gate-evidence-40139736749-1', digest: 'sha256:3d42fb5d672e5d36012238ac4c46740f019c278977e8dd9c2b3085d5593775c7' },
+  release_artifact: { id: '12576994701', name: 'nelyon-release-40139736749-1', digest: 'sha256:8f0db1f147d42e6aed6fe1a0978c16fa0ebef37a7a53dbc8f7ac6600c0189e08' },
+  manifest_sha256: '4e798ee48a8d83d26c8608803b26099a6d22521d43a585d7735754969fe45a12',
+  pre_snapshot_evidence_sha256: '7d67a623ff91a8b583095950c402a111819690a7b028765eb4e1c85d6047b138',
+  post_snapshot_evidence_sha256: 'f2b3196e54f6ff9534c268afbfcc21c586182c883e929b3d6e4e8b32399c8c5a',
+  expected_migrations: [{ blob: F2_MIGRATION_BLOB, name: F2_MIGRATION }],
+  expected_migration_count: 351,
+  expected_latest_migration: F2_MIGRATION,
+  edge_functions: [{
+    name: 'bdag-ledger',
+    source_sha256: '0b0db8c46041127dac341dfaa9673a7da4b15747ac71639bdeed00e8097be002',
+    status: 'ACTIVE',
+    verify_jwt: true,
+    version: 45,
+  }],
+  productive_resources: [
+    `migration:${F2_MIGRATION}`,
+    'function:bdag-ledger',
+  ],
+  premium_relation_security_sha256: '055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6',
+  premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
 }];
 const REQUIRED_FINANCE_RECONCILIATIONS = [
   'account_balance_ledger_mismatch',

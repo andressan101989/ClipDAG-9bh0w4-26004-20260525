@@ -1323,7 +1323,7 @@ test('security advisor fingerprints bind semantic object identity, not mutable a
   assert.equal(first.items[0].resource_kind, lint.name);
 });
 
-test('phase-bound RPC attestations include F1 protected RPCs only after the manifest migration', async () => {
+test('phase-bound RPC attestations keep successor authorities stable for an older F1 manifest', async () => {
   const adapter = await loadAdapter();
   const controlledPolicy = structuredClone(policy);
   const controlledManifest = manifest();
@@ -1332,7 +1332,7 @@ test('phase-bound RPC attestations include F1 protected RPCs only after the mani
     version: '20261018211327',
   }];
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
-  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre')), 16);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre')), 17);
   assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post')), 17);
   assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery')), 17);
 });
@@ -1416,6 +1416,7 @@ test('phase-bound RPC attestations activate F2 projections only after the exact 
     ['get_creator_premium_commerce_v1', ['30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86', 'e96caaab2c8ad2cd24e508849c0a7fff15d0257ac7a55a035aaa59b8632ed5c0']],
     ['get_my_creator_premium_commercial_summary_v1', ['1a34a92abe226cdb66b3d8ba95b848d7576fe81e324839c9424582dc44610d05', 'e4f4cb3d311ba740bd9827b821c28ba2069be49adfad954b29ba790a6bd3dadb']],
     ['get_my_creator_premium_subscriptions_v1', ['dddaf6f218f2abe7a24d97dfdd4fc0cb125fed5b7e2088c510bd4f8368124685', '8cf06818806f7b82dc9773ef87821897c6c861f3921e0bfc2cd804855545dfb3']],
+    ['retire_my_creator_premium_content_v1', ['10a91f4a47efeda414aa7ed7d1ceed81fff971f6eb5009e4f2bfc4f2acbb78d9', 'ac6cd5a65b129c471184ffb080a5a80dcfb2c3283daf5fb2c2100a945e340580']],
   ]);
   for (const [name, [before, after]] of expected) {
     assert.equal(pre.find(item => item.object.name === name).attestation.definition_sha256, before);

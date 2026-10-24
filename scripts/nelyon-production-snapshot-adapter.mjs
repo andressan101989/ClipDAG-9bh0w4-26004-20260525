@@ -1106,6 +1106,7 @@ const RPC_REPLACEMENT_PREDECESSOR_ATTESTATIONS = new Map([
     ['f9c25bdf8e5c7f7ff7385410370dac9fe2ded1a0468f76d8bd2d265186718f32', '30c9a4a75712f74d3d62a39f962f87ce98f22269dd1b46b259b1d15ef89d7e86'],
     ['ed55682047d682b69c66430b68fc819fb781b7289539fa398fadf09ec0c064fc', '1a34a92abe226cdb66b3d8ba95b848d7576fe81e324839c9424582dc44610d05'],
     ['cf4b6520e9c96170ea5a5125f287b991d15c377e80cf3394f879dc1cbad0e6ae', 'dddaf6f218f2abe7a24d97dfdd4fc0cb125fed5b7e2088c510bd4f8368124685'],
+    ['b0cdd5e8a440096ebc6bbd35fee9b785180d71ae6d06209ade7feaa6c0877c4d', '10a91f4a47efeda414aa7ed7d1ceed81fff971f6eb5009e4f2bfc4f2acbb78d9'],
   ].map(([fingerprint, definition_sha256]) => [
     `20261024173500_creator_premium_f2_complete_monetization|${fingerprint}`,
     {

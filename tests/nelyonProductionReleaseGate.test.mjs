@@ -57,12 +57,12 @@ const A2_PREEXISTING_FINGERPRINTS = [
 ];
 const F1_EXCEPTION_FINGERPRINTS = [
   '1c20753b55dcdb2d0a8e6a3365fcf45453495a74a49d76b9b51af4e51d7b923f',
-  'b0cdd5e8a440096ebc6bbd35fee9b785180d71ae6d06209ade7feaa6c0877c4d',
 ];
 const F1_C4_EXCEPTION_FINGERPRINTS = [
   '5ceb93fa71004f64ba75a7bd251fadaf66d7ebdce81fb48904fd988ed9023fef',
 ];
 const F2_EXCEPTION_FINGERPRINTS = [
+  'b0cdd5e8a440096ebc6bbd35fee9b785180d71ae6d06209ade7feaa6c0877c4d',
   'b835139bebe4b813b730fca29d6eeec2a3e7d70a187e0c36b9169d7e84faba1d',
   'ed55682047d682b69c66430b68fc819fb781b7289539fa398fadf09ec0c064fc',
   'f6c527ed886225b79c3412747e8f8375e7552634febc03b37917123f02649109',
@@ -361,7 +361,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     'creator_premium_plan_contents', 'creator_premium_plans', 'creator_premium_purchase_receipts',
     'creator_premium_subscription_periods', 'creator_premium_subscriptions',
   ];
-  if (['39157300357', '39195966131'].includes(source.run_id)) {
+  if (['39157300357', '39195966131', '40139736749'].includes(source.run_id)) {
     relationNames.unshift('creator_premium_content_safety_context_evaluations');
   }
   const fetchImpl = async (url, options = {}) => {
@@ -707,7 +707,7 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
 
 test('recovery source is exact immutable failed-postcheck authority', async () => {
   const { gate, policy } = await loadGateAndPolicy();
-  assert.equal(policy.postcheck_recovery.approved_sources.length, 3);
+  assert.equal(policy.postcheck_recovery.approved_sources.length, 4);
   for (const source of policy.postcheck_recovery.approved_sources) {
     assert.equal(gate.validateRecoverySource(source), true);
     assert.ok(source.expected_migrations.length >= 1);
@@ -734,6 +734,15 @@ test('recovery source is exact immutable failed-postcheck authority', async () =
     'create-stream-upload',
     'video-semantic-index',
   ]);
+  const f2Source = policy.postcheck_recovery.approved_sources.find(item => item.run_id === '40139736749');
+  assert.ok(f2Source);
+  assert.equal(f2Source.release_id, 'nelyon-creator-premium-f2-r1-release-20261024T224205Z');
+  assert.equal(f2Source.source_sha, '238e987933c7198400534121e61fb3d2750ba5ba');
+  assert.equal(f2Source.manifest_sha256, '4e798ee48a8d83d26c8608803b26099a6d22521d43a585d7735754969fe45a12');
+  assert.equal(f2Source.expected_migration_count, 351);
+  assert.equal(f2Source.expected_latest_migration, '20261024173500_creator_premium_f2_complete_monetization');
+  assert.deepEqual(f2Source.edge_functions.map(item => item.name), ['bdag-ledger']);
+  assert.equal(f2Source.edge_functions[0].source_sha256, '0b0db8c46041127dac341dfaa9673a7da4b15747ac71639bdeed00e8097be002');
   for (const mutate of [
     candidate => { candidate.run_id = '39066492486'; },
     candidate => { candidate.postcheck_status = 'success'; },
@@ -1767,6 +1776,32 @@ test('postcheck recovery verifies the exact C4 migration and three deployed Edge
   ]);
   assert.deepEqual(result.premium_state.legacy, { content_count: 7, pending_review_count: 1, deleted_count: 2 });
   assert.equal(result.premium_state.relation_security.sha256, '055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6');
+});
+
+test('postcheck recovery verifies the exact F2 migration and deployed bdag-ledger authority', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = await recoveryStateFixture(t, gate, policy, 3);
+  const result = gate.verifyPostcheckRecovery({
+    policy: fixture.controlledPolicy,
+    recoveryRequest: fixture.recoveryRequest,
+    recoveryManifest: fixture.recoveryManifest,
+    sourceManifest: fixture.sourceManifest,
+    sourceObservation: fixture.sourceObservation,
+    currentEvidence: fixture.currentEvidence,
+    adapterSourceSha256: fixture.adapterSourceSha256,
+  });
+  assert.equal(result.result, 'POSTCHECK_RECOVERY_SUCCESS');
+  assert.equal(result.source_run_id, '40139736749');
+  assert.equal(result.migrations.count, 351);
+  assert.equal(`${result.migrations.latest.version}_${result.migrations.latest.name}`, '20261024173500_creator_premium_f2_complete_monetization');
+  assert.deepEqual(result.functions.items.map(item => [item.name, item.version, item.source_sha256]), [[
+    'bdag-ledger',
+    45,
+    '0b0db8c46041127dac341dfaa9673a7da4b15747ac71639bdeed00e8097be002',
+  ]]);
+  assert.deepEqual(result.premium_state.legacy, { content_count: 9, pending_review_count: 0, deleted_count: 5 });
+  assert.equal(result.premium_state.relation_security.sha256, '055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6');
+  assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
 });
 
 test('postcheck recovery fails closed on mutation requests and every protected-state drift', async t => {
