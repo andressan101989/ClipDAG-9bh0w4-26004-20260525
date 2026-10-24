@@ -206,6 +206,7 @@ test('Premium library uses canonical bounded pagination, deduplication, refresh,
   const library = read('app/my-premium-library.tsx');
   assert.match(library, /fetchMyCreatorPremiumLibrary/);
   assert.match(library, /fetchCreatorPremiumLibraryTeasers/);
+  assert.match(library, /fetchMyCreatorPremiumFinancialHistory\(\{\s*perspective:\s*['"]buyer['"]\s*,\s*limit:\s*30\s*\}\)/);
   assert.match(library, /limit:\s*24/);
   assert.match(library, /nextCursor/);
   assert.match(library, /new Map/);
@@ -213,7 +214,7 @@ test('Premium library uses canonical bounded pagination, deduplication, refresh,
   assert.match(library, /RefreshControl/);
   assert.match(library, /handlePaginationScroll/);
   assert.match(library, /Reintentar/);
-  assert.match(library, /Sin contenido Premium/);
+  assert.match(library, /Sin acceso Premium vigente/);
   assert.match(library, /Acceso vencido/);
   assert.match(library, /pathname:\s*['"]\/creator-premium-viewer\/\[contentId\]['"]/);
   assert.match(library, /params:\s*\{\s*contentId:\s*item\.id\s*\}/);
@@ -236,6 +237,8 @@ test('Premium library binds rows and cursors to the current account and clears t
   assert.ok(resetStart >= 0 && fetchStart > resetStart);
   assert.match(resetPath, /nextCursorRef\.current\s*=\s*null/);
   assert.match(resetPath, /loadingMoreRef\.current\s*=\s*false/);
+  assert.match(resetPath, /setLoadingHistory\(false\)/);
+  assert.match(resetPath, /setFinancialHistoryNextCursor\(null\)/);
 });
 
 test('library teaser hydration is canonical, public-projection-only, bounded, and fail-soft', () => {
@@ -265,12 +268,15 @@ test('consumer Premium entry and both B6 routes are registered without payment a
   }
 });
 
-test('locked consumer copy is truthful while Premium finance remains disabled', () => {
+test('locked consumer copy follows the authoritative server finance policy', () => {
   const profile = read('app/creator/[id].tsx');
   const library = read('app/my-premium-library.tsx');
   const service = read('services/creatorPremiumService.ts');
-  assert.match(profile, /compras.*no están habilitadas/i);
-  assert.match(library, /Las compras y suscripciones aún no están habilitadas/i);
-  assert.match(service, /CREATOR_PREMIUM_FINANCE_AVAILABLE:\s*boolean\s*=\s*false/);
-  assert.doesNotMatch(`${profile}\n${library}`, /Comprar ahora|Suscribirse ahora|Publicar ahora/i);
+  assert.match(profile, /política financiera vigente del servidor/i);
+  assert.match(library, /financePolicy\s*===\s*null[\s\S]*financePolicy\.purchase_enabled\s*\|\|\s*financePolicy\.subscription_enabled/);
+  assert.match(library, /Finance Premium está deshabilitado/i);
+  assert.match(library, /sin mover BDAG/i);
+  assert.doesNotMatch(service, /CREATOR_PREMIUM_FINANCE_AVAILABLE/);
+  assert.match(service, /CreatorPremiumFinancePolicy/);
+  assert.doesNotMatch(`${profile}\n${library}`, /Confirmar compra|Renovar periodo|Suscribirse ahora|Publicar ahora/i);
 });

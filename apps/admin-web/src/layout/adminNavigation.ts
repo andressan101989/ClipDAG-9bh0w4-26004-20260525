@@ -38,6 +38,7 @@ export const adminLinks:AdminLink[]=[
   {to:"/finance",label:"Finance",capability:"finance.ledger.read",icon:"finance",primary:true,end:true,group:"finance",sectionLabel:"Resumen"},
   {to:"/finance/accounts",label:"Finance · Cuentas",capability:"finance.ledger.read",icon:"finance",group:"finance",sectionLabel:"Cuentas"},
   {to:"/finance/transactions",label:"Finance · Transacciones",capability:"finance.ledger.read",icon:"finance",group:"finance",sectionLabel:"Transacciones"},
+  {to:"/finance/creator-premium",label:"Finance · Creator Premium",capability:"finance.ledger.read",icon:"finance",group:"finance",sectionLabel:"Creator Premium"},
   {to:"/finance/reconciliation",label:"Finance · Reconciliación",capability:"finance.reconciliation.read",icon:"finance",group:"finance",sectionLabel:"Reconciliación"},
   {to:"/finance/anomalies",label:"Finance · Anomalías",capability:"finance.anomalies.read",icon:"finance",group:"finance",sectionLabel:"Anomalías"},
   {to:"/finance/audit",label:"Finance · Auditoría",capability:"finance.audit.read",icon:"finance",group:"finance",sectionLabel:"Auditoría"},

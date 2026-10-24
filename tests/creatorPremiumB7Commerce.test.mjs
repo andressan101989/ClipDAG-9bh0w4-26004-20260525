@@ -176,15 +176,19 @@ test('ledgerClient accepts stable UUID retries for Premium without client moneta
   }
 });
 
-test('creator Premium service adds only canonical RPC clients and keeps finance disabled', () => {
-  assert.match(service, /CREATOR_PREMIUM_FINANCE_AVAILABLE:\s*boolean\s*=\s*false/i);
+test('creator Premium service uses canonical RPC clients and authoritative finance policy', () => {
+  assert.doesNotMatch(service, /CREATOR_PREMIUM_FINANCE_AVAILABLE/i);
   for (const rpc of [
     'get_creator_premium_commerce_v1',
     'get_my_creator_premium_subscriptions_v1',
     'get_my_creator_premium_commercial_summary_v1',
+    'get_my_creator_premium_financial_history_v1',
     'reopen_my_creator_premium_rejected_v1',
     'report_creator_premium_content_v1',
   ]) assert.match(service, new RegExp(`rpc\\(\\s*['"]${rpc}['"]`, 'i'));
+  assert.match(service, /parseCreatorPremiumCommercialSummary/i);
+  assert.match(service, /fetchMyCreatorPremiumCommercialSummary[\s\S]*parseCreatorPremiumCommercialSummary/i);
+  assert.match(service, /parseCreatorPremiumFinancialHistoryPage/i);
   assert.doesNotMatch(service, /\.from\(\s*['"]creator_premium_/i);
   assert.doesNotMatch(service, /platform_fee_bps\s*[:=]\s*(?:1000|10)/i);
 });

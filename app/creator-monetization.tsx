@@ -39,6 +39,7 @@ import {
   deleteMyCreatorPremiumPlan,
   fetchMyCreatorPremiumCommercialSummary,
   fetchMyCreatorPremiumContents,
+  fetchMyCreatorPremiumFinancialHistory,
   fetchMyCreatorPremiumPlans,
   normalizeCreatorPremiumPriceBdag,
   retireMyCreatorPremiumPlan,
@@ -47,6 +48,7 @@ import {
   updateMyCreatorPremiumPlanDraft,
   type CreatorPremiumCursor,
   type CreatorPremiumCommercialSummary,
+  type CreatorPremiumFinancialHistoryItem,
   type CreatorPremiumOwnerItem,
   type CreatorPremiumPlanItem,
 } from '@/services/creatorPremiumService';
@@ -105,9 +107,12 @@ function CreatorPremiumHubContent() {
   const [plans, setPlans] = useState<CreatorPremiumPlanItem[]>([]);
   const [summary, setSummary] = useState<CreatorPremiumCommercialSummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [financialHistory, setFinancialHistory] = useState<CreatorPremiumFinancialHistoryItem[]>([]);
+  const [financialHistoryError, setFinancialHistoryError] = useState<string | null>(null);
+  const [financialHistoryNextCursor, setFinancialHistoryNextCursor] = useState<CreatorPremiumCursor | null>(null);
   const [contentNextCursor, setContentNextCursor] = useState<CreatorPremiumCursor | null>(null);
   const [planNextCursor, setPlanNextCursor] = useState<CreatorPremiumCursor | null>(null);
-  const [loadingMore, setLoadingMore] = useState<'content' | 'plans' | null>(null);
+  const [loadingMore, setLoadingMore] = useState<'content' | 'plans' | 'history' | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -127,6 +132,7 @@ function CreatorPremiumHubContent() {
   const requestGeneration = useRef(0);
   const contentPageGeneration = useRef(0);
   const planPageGeneration = useRef(0);
+  const historyPageGeneration = useRef(0);
   const loadInFlight = useRef(false);
   const contextKey = user?.id ?? 'signed-out';
   const contextKeyRef = useRef(contextKey);
@@ -137,6 +143,7 @@ function CreatorPremiumHubContent() {
     requestGeneration.current += 1;
     contentPageGeneration.current += 1;
     planPageGeneration.current += 1;
+    historyPageGeneration.current += 1;
     loadInFlight.current = false;
     planCreateAttempt.current = null;
     planCloneAttempts.current.clear();
@@ -148,6 +155,9 @@ function CreatorPremiumHubContent() {
     setPlans([]);
     setSummary(null);
     setSummaryError(null);
+    setFinancialHistory([]);
+    setFinancialHistoryError(null);
+    setFinancialHistoryNextCursor(null);
     setContentNextCursor(null);
     setPlanNextCursor(null);
     setLoadingMore(null);
@@ -159,6 +169,7 @@ function CreatorPremiumHubContent() {
       requestGeneration.current += 1;
       contentPageGeneration.current += 1;
       planPageGeneration.current += 1;
+      historyPageGeneration.current += 1;
     };
   }, [contextKey]);
 
@@ -189,17 +200,27 @@ function CreatorPremiumHubContent() {
     loadInFlight.current = true;
     contentPageGeneration.current += 1;
     planPageGeneration.current += 1;
+    historyPageGeneration.current += 1;
     setLoadingMore(null);
     if (refresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
     setSummaryError(null);
+    setFinancialHistoryError(null);
     try {
+      const historyPromise = fetchMyCreatorPremiumFinancialHistory({
+        perspective: 'creator',
+        limit: 50,
+      }).then(
+        value => ({ value, error: null as unknown }),
+        historyError => ({ value: null, error: historyError as unknown }),
+      );
       const result = await settleCreatorPremiumHubLoad({
         content: () => fetchMyCreatorPremiumContents({ limit: 100 }),
         plans: () => fetchMyCreatorPremiumPlans({ limit: 100 }),
         summary: () => fetchMyCreatorPremiumCommercialSummary(),
       });
+      const historyResult = await historyPromise;
       if (generation !== contextGeneration.current || request !== requestGeneration.current) return false;
       if (result.content.value) {
         setContents(result.content.value.items);
@@ -212,6 +233,16 @@ function CreatorPremiumHubContent() {
       setSummary(result.summary.value);
       setSummaryError(result.summary.error
         ? creatorPremiumCommercialSummaryErrorMessage(result.summary.error)
+        : null);
+      if (historyResult.value) {
+        setFinancialHistory(historyResult.value.items);
+        setFinancialHistoryNextCursor(historyResult.value.nextCursor);
+      } else {
+        setFinancialHistory([]);
+        setFinancialHistoryNextCursor(null);
+      }
+      setFinancialHistoryError(historyResult.error
+        ? creatorPremiumCommercialSummaryErrorMessage(historyResult.error)
         : null);
       const coreError = result.content.error ?? result.plans.error;
       if (coreError) {
@@ -231,6 +262,34 @@ function CreatorPremiumHubContent() {
       }
     }
   }, []);
+
+  const loadMoreFinancialHistory = useCallback(async () => {
+    if (!financialHistoryNextCursor || loadingMore || loadInFlight.current) return;
+    const generation = contextGeneration.current;
+    const request = ++historyPageGeneration.current;
+    setLoadingMore('history');
+    try {
+      const page = await fetchMyCreatorPremiumFinancialHistory({
+        perspective: 'creator',
+        cursor: financialHistoryNextCursor,
+        limit: 50,
+      });
+      if (generation !== contextGeneration.current || request !== historyPageGeneration.current) return;
+      setFinancialHistory(current => {
+        const known = new Set(current.map(item => item.id));
+        return [...current, ...page.items.filter(item => !known.has(item.id))];
+      });
+      setFinancialHistoryNextCursor(page.nextCursor);
+      setFinancialHistoryError(null);
+    } catch (reason) {
+      if (generation !== contextGeneration.current || request !== historyPageGeneration.current) return;
+      setFinancialHistoryError(creatorPremiumCommercialSummaryErrorMessage(reason));
+    } finally {
+      if (generation === contextGeneration.current && request === historyPageGeneration.current) {
+        setLoadingMore(null);
+      }
+    }
+  }, [financialHistoryNextCursor, loadingMore]);
 
   const loadMoreContents = useCallback(async () => {
     if (!contentNextCursor || loadingMore || loadInFlight.current) return;
@@ -278,6 +337,7 @@ function CreatorPremiumHubContent() {
       requestGeneration.current += 1;
       contentPageGeneration.current += 1;
       planPageGeneration.current += 1;
+      historyPageGeneration.current += 1;
     };
   }, [contextKey, load]));
 
@@ -386,7 +446,7 @@ function CreatorPremiumHubContent() {
     Alert.alert(
       activate ? 'Activar plan' : deleting ? 'Eliminar plan' : 'Retirar plan',
       activate
-        ? 'El plan quedará listo para uso futuro. Las suscripciones siguen deshabilitadas.'
+        ? 'El plan quedará listo; su disponibilidad comercial dependerá de la política financiera del servidor.'
         : deleting
           ? plan.status === 'draft'
             ? 'El borrador desaparecerá de tu panel si no tiene dependencias. Esta acción no se puede deshacer.'
@@ -422,7 +482,7 @@ function CreatorPremiumHubContent() {
         </Pressable>
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Contenido Premium</Text>
-          <Text style={styles.subtitle}>Ventas y suscripciones aún no están habilitadas</Text>
+          <Text style={styles.subtitle}>Contenido, planes e ingresos verificados</Text>
         </View>
         <View style={styles.headerBadge}>
           <MaterialCommunityIcons name="shield-lock-outline" size={20} color={PREMIUM} />
@@ -639,6 +699,24 @@ function CreatorPremiumHubContent() {
                 <EmptyState icon="playlist-star" title="Sin resumen comercial" copy="No pudimos obtener los datos financieros canónicos." />
               ) : (
                 <>
+                  <View style={styles.notice}>
+                    <MaterialCommunityIcons name="shield-lock-outline" size={20} color={Colors.info} />
+                    <Text style={styles.noticeText}>
+                      {summary.policy.purchase_enabled || summary.policy.subscription_enabled
+                        ? 'El servidor habilitó operaciones Premium. Todos los importes se confirman con la autoridad financiera canónica.'
+                        : 'Finance Premium está deshabilitado por la política del servidor. Puedes consultar historial e ingresos verificados, pero no se moverá BDAG.'}
+                    </Text>
+                  </View>
+                  <View style={styles.card}>
+                    <Text style={styles.sectionTitle}>Autoridad financiera</Text>
+                    <View style={styles.metricRow}><Text style={styles.meta}>Periodo del informe</Text><Text style={styles.metricValue}>{new Intl.DateTimeFormat('es', { dateStyle: 'medium' }).format(new Date(summary.range.from))} – {new Intl.DateTimeFormat('es', { dateStyle: 'medium' }).format(new Date(summary.range.to))}</Text></View>
+                    <View style={styles.metricRow}><Text style={styles.meta}>Liquidación</Text><Text style={styles.metricValue}>Crédito directo inmediato</Text></View>
+                    <View style={styles.metricRow}><Text style={styles.meta}>Pendiente Premium</Text><Text style={styles.metricValue}>{formatCreatorPremiumBdag(summary.pending_bdag)}</Text></View>
+                    <View style={styles.metricRow}><Text style={styles.meta}>Saldo BDAG canónico · toda actividad</Text><Text style={styles.metricValue}>{formatCreatorPremiumBdag(summary.canonical_account_balance_bdag)}</Text></View>
+                    {summary.integrity_failure_count > 0 ? (
+                      <Text style={styles.integrityWarning}>Se detectaron {summary.integrity_failure_count} hechos financieros que no superaron la verificación. Los totales permanecen cerrados hasta reconciliarlos.</Text>
+                    ) : null}
+                  </View>
                   <View style={styles.earningsGrid}>
                     <View style={styles.earningCard}><Text style={styles.earningLabel}>Bruto</Text><Text style={styles.earningValue}>{formatCreatorPremiumBdag(summary.gross)}</Text></View>
                     <View style={styles.earningCard}><Text style={styles.earningLabel}>Comisión plataforma</Text><Text style={styles.earningValue}>{formatCreatorPremiumBdag(summary.platform_fee)}</Text></View>
@@ -656,18 +734,27 @@ function CreatorPremiumHubContent() {
                     <Text style={styles.analyticsNotice}>Las visualizaciones no se muestran porque aún no existe instrumentación canónica para esa métrica.</Text>
                   </View>
                   <View style={styles.planGroup}>
-                    <Text style={styles.sectionTitle}>Transacciones verificadas</Text>
-                    {summary.recent_transactions.length === 0 ? (
+                    <Text style={styles.sectionTitle}>Historial financiero verificado</Text>
+                    {financialHistoryError ? <Text style={styles.inlineWarning}>{financialHistoryError}</Text> : null}
+                    {!financialHistoryError && financialHistory.length === 0 ? (
                       <Text style={styles.emptyCopy}>Todavía no existen transacciones verificadas en este periodo.</Text>
-                    ) : summary.recent_transactions.map(transaction => (
-                      <View key={transaction.financial_transaction_id} style={styles.card}>
+                    ) : financialHistory.map(transaction => (
+                      <View key={transaction.id} style={styles.card}>
                         <View style={styles.metricRow}>
                           <Text style={styles.cardTitle}>{transaction.event_type === 'refund' ? 'Reembolso' : 'Cobro'} · {transaction.source === 'purchase' ? 'Compra' : 'Suscripción'}</Text>
-                          <Text style={styles.metricValue}>{formatCreatorPremiumBdag(transaction.creator_net_bdag)}</Text>
+                          <Text style={styles.metricValue}>{transaction.event_type === 'refund' ? '−' : '+'}{formatCreatorPremiumBdag(transaction.creator_net_bdag)}</Text>
                         </View>
-                        <Text style={styles.meta}>{new Intl.DateTimeFormat('es', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(transaction.created_at))}</Text>
+                        <Text style={styles.meta}>{transaction.content?.title ?? transaction.plan?.name ?? 'Operación Premium'}</Text>
+                        <Text style={styles.meta}>{new Intl.DateTimeFormat('es', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(transaction.occurred_at))}</Text>
                       </View>
                     ))}
+                    {financialHistoryNextCursor ? (
+                      <Pressable style={styles.secondaryButton} onPress={() => void loadMoreFinancialHistory()} disabled={loadingMore === 'history'}>
+                        {loadingMore === 'history'
+                          ? <ActivityIndicator color={PREMIUM} />
+                          : <Text style={styles.secondaryButtonText}>Cargar más historial</Text>}
+                      </Pressable>
+                    ) : null}
                   </View>
                   <View style={styles.planGroup}>
                     <Text style={styles.sectionTitle}>Rendimiento por contenido</Text>
@@ -695,7 +782,7 @@ function CreatorPremiumHubContent() {
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.modalTitle}>{editingPlan ? 'Editar plan' : 'Nuevo plan'}</Text>
-                <Text style={styles.modalSub}>Las suscripciones continúan deshabilitadas.</Text>
+                <Text style={styles.modalSub}>La disponibilidad comercial la decide la política del servidor.</Text>
               </View>
               <Pressable onPress={closePlan} hitSlop={10} disabled={savingPlan}>
                 <MaterialCommunityIcons name="close" size={24} color={Colors.textSecondary} />
@@ -799,6 +886,8 @@ const styles = StyleSheet.create({
   metricRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.md },
   metricValue: { color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
   analyticsNotice: { color: Colors.textSubtle, fontSize: FontSize.xs, lineHeight: 18, marginTop: Spacing.sm },
+  integrityWarning: { color: Colors.error, fontSize: FontSize.xs, lineHeight: 18, marginTop: Spacing.sm },
+  inlineWarning: { color: Colors.warning, fontSize: FontSize.xs, lineHeight: 18 },
   actionRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: Spacing.sm },
   smallButton: { minHeight: 40, paddingHorizontal: Spacing.md, borderRadius: Radius.md, borderWidth: 1, borderColor: `${PREMIUM}66`, alignItems: 'center', justifyContent: 'center' },
   smallButtonText: { color: PREMIUM, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },

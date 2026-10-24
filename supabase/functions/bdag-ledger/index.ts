@@ -32,8 +32,6 @@ const VELOCITY: Record<string, { maxOps: number; maxAmount: number; windowHours:
   transfer:  { maxOps: 20,  maxAmount: 50_000,  windowHours: 1 },
   gift:      { maxOps: 50,  maxAmount: 100_000, windowHours: 1 },
   boost:     { maxOps: 5,   maxAmount: 500_000, windowHours: 1 },
-  purchase:  { maxOps: 100, maxAmount: 0,       windowHours: 1 },
-  subscribe: { maxOps: 20,  maxAmount: 0,       windowHours: 24 },
   marketplace_checkout_pay: { maxOps: 20, maxAmount: 0, windowHours: 1 },
   marketplace_order_confirm_delivery: { maxOps: 20, maxAmount: 0, windowHours: 1 },
 };
@@ -65,6 +63,13 @@ function validatePremiumCommand(
 function premiumRpcError(message: string): string {
   const match = message.match(/creator_premium_[a-z0-9_]+/i);
   return match?.[0] ?? 'creator_premium_finance_operation_failed';
+}
+
+function premiumRpcStatus(code: string): number {
+  if (code === 'creator_premium_velocity_check_unavailable') return 503;
+  if (code === 'creator_premium_rate_limited') return 429;
+  if (code.endsWith('_not_found')) return 404;
+  return 409;
 }
 
 function ok(data: unknown, status = 200) {
@@ -143,7 +148,7 @@ Deno.serve(async (req) => {
       if (error) {
         const code = premiumRpcError(error.message);
         log('ERROR', 'creator_premium_purchase', { user_id: user.id, code });
-        return fail(code, code.endsWith('_not_found') ? 404 : 409);
+        return fail(code, premiumRpcStatus(code));
       }
       return ok(data);
     }
@@ -162,7 +167,7 @@ Deno.serve(async (req) => {
       if (error) {
         const code = premiumRpcError(error.message);
         log('ERROR', 'creator_premium_subscribe', { user_id: user.id, code });
-        return fail(code, code.endsWith('_not_found') ? 404 : 409);
+        return fail(code, premiumRpcStatus(code));
       }
       return ok(data);
     }
@@ -181,7 +186,7 @@ Deno.serve(async (req) => {
       if (error) {
         const code = premiumRpcError(error.message);
         log('ERROR', 'creator_premium_cancel_subscription', { user_id: user.id, code });
-        return fail(code, code.endsWith('_not_found') ? 404 : 409);
+        return fail(code, premiumRpcStatus(code));
       }
       return ok(data);
     }

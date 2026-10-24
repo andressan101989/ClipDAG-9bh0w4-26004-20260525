@@ -378,13 +378,13 @@ export default function CreatorProfileScreen() {
                       </Text>}
                 </Pressable>
 
-                {/* Premium finance is deliberately unavailable during B1. */}
+                {/* Premium catalog remains available; each offer reads the server policy. */}
                 <Pressable
                   style={[styles.actionBtn, { flex: 1 }]}
-                  onPress={() => showAlert('Premium en preparación', CREATOR_PREMIUM_FOUNDATION_MESSAGE)}
+                  onPress={() => setProfileTab('exclusive')}
                 >
-                  <MaterialIcons name="lock-clock" size={14} color={Colors.textSecondary} />
-                  <Text style={styles.actionBtnText}>Premium pronto</Text>
+                  <MaterialIcons name="workspace-premium" size={14} color={Colors.textSecondary} />
+                  <Text style={styles.actionBtnText}>Ver Premium</Text>
                 </Pressable>
 
                 {/* Message */}
@@ -487,7 +487,7 @@ export default function CreatorProfileScreen() {
               {isOwnProfile ? (
                 <Pressable style={styles.emptyActionBtn}
                   onPress={() => router.push('/creator-monetization')}>
-                  <Text style={styles.emptyActionText}>Ver base Premium segura</Text>
+                  <Text style={styles.emptyActionText}>Gestionar Premium</Text>
                 </Pressable>
               ) : null}
               <Text style={styles.premiumFoundationText}>
@@ -497,7 +497,7 @@ export default function CreatorProfileScreen() {
           ) : (
             <View>
               <Text style={[styles.premiumFoundationText, styles.premiumDisabledNotice]}>
-                El acceso comercial todavía no está disponible. Las compras y suscripciones no están habilitadas.
+                Cada oferta y cada acceso se validan con la política financiera vigente del servidor.
               </Text>
               <View style={styles.exclusiveGrid}>
                 {exclusive.map(item => {

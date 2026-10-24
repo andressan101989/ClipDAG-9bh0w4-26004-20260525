@@ -52,6 +52,45 @@ export const CREATOR_PREMIUM_BLOCKER_COPY: Readonly<Record<string, string>> = Ob
   creator_premium_plan_has_dependencies: 'Quita primero el contenido asociado a este borrador. Los planes con dependencias no se eliminan.',
   creator_premium_plan_draft_only: 'Solo se puede eliminar un plan que todavía sea borrador.',
   creator_premium_plan_retire_first: 'Retira primero este plan activo. Después podrás eliminarlo de tu panel conservando su historial.',
+  creator_premium_purchase_disabled: 'Las compras Premium siguen deshabilitadas por la política financiera del servidor.',
+  creator_premium_subscription_disabled: 'Las suscripciones Premium siguen deshabilitadas por la política financiera del servidor.',
+  creator_premium_refunds_disabled: 'Los reembolsos Premium siguen deshabilitados por la política financiera del servidor.',
+  creator_premium_rate_limited: 'Hay demasiados intentos financieros recientes. Espera un momento y vuelve a intentarlo.',
+  creator_premium_velocity_check_unavailable: 'No se ejecutó ningún movimiento porque el control financiero temporalmente no está disponible. Inténtalo más tarde.',
+  creator_premium_active_offer_not_found: 'La oferta ya no está activa. Actualiza la publicación antes de intentar comprarla.',
+  creator_premium_active_plan_not_found: 'El plan ya no está activo. Actualiza la oferta antes de continuar.',
+  creator_premium_plan_family_access_active: 'Ya tienes un periodo vigente de este plan. Espera a que termine antes de cambiar a otra versión.',
+  creator_premium_content_not_published: 'Este contenido ya no está publicado y no admite nuevas compras.',
+  creator_premium_purchase_access_mode_invalid: 'Esta publicación no admite compra individual.',
+  creator_premium_plan_has_no_valid_content: 'Este plan ya no contiene publicaciones Premium elegibles.',
+  creator_premium_self_purchase_forbidden: 'No puedes comprar tu propia publicación.',
+  creator_premium_self_subscription_forbidden: 'No puedes suscribirte a tu propio plan.',
+  creator_premium_blocked_relationship: 'Esta operación no está disponible para esta relación entre cuentas.',
+  creator_premium_buyer_account_restricted: 'Tu cuenta no puede realizar esta compra en este momento.',
+  creator_premium_subscriber_account_restricted: 'Tu cuenta no puede iniciar o renovar esta suscripción.',
+  creator_premium_creator_account_restricted: 'La cuenta del creador no puede recibir operaciones Premium en este momento.',
+  creator_premium_already_owned: 'Ya tienes acceso vigente a este contenido.',
+  creator_premium_already_subscribed: 'Este plan ya tiene un periodo pagado vigente.',
+  creator_premium_subscription_period_active: 'El periodo actual sigue vigente. Podrás renovar cuando termine.',
+  creator_premium_subscription_not_cancellable: 'Esta suscripción ya no admite cancelación.',
+  creator_premium_subscription_plan_retired: 'Este plan fue retirado y no admite nuevas renovaciones.',
+  creator_premium_subscription_renewal_not_available: 'La renovación manual no está disponible para este periodo.',
+  creator_premium_subscription_financial_binding_invalid: 'No pudimos verificar el vínculo financiero de esta suscripción. No se movió BDAG.',
+  creator_premium_purchase_financial_binding_invalid: 'No pudimos verificar el vínculo financiero de esta compra. No se movió BDAG.',
+  creator_premium_purchase_idempotency_conflict: 'Este intento de compra ya está asociado a otra operación. Actualiza e inténtalo otra vez.',
+  creator_premium_subscription_idempotency_conflict: 'Este intento de suscripción ya está asociado a otra operación. Actualiza e inténtalo otra vez.',
+  creator_premium_subscription_idempotency_in_progress: 'La suscripción todavía se está confirmando. Espera y actualiza antes de reintentar.',
+  creator_premium_financial_readback_stale: 'La pantalla cambió mientras confirmábamos la operación. Actualiza para ver el estado real.',
+  creator_premium_purchase_readback_pending: 'La compra respondió, pero el acceso todavía no pudo confirmarse. Actualiza antes de reintentar.',
+  creator_premium_subscription_readback_pending: 'La suscripción respondió, pero el periodo todavía no pudo confirmarse. Actualiza antes de reintentar.',
+  creator_premium_cancellation_readback_pending: 'La cancelación respondió, pero el estado todavía no pudo confirmarse. Actualiza antes de reintentar.',
+  creator_premium_refund_source_balance_insufficient: 'El reembolso no puede completarse hasta reconciliar los fondos de origen. No se aplicó una reversión parcial.',
+  creator_premium_financial_history_integrity_failed: 'No pudimos verificar el historial financiero. No se modificó ningún saldo.',
+  creator_premium_financial_integrity_failure: 'No pudimos verificar la integridad financiera. No se modificó ningún saldo.',
+  creator_premium_purchase_receipt_invalid: 'La respuesta financiera de la compra no pudo verificarse. Conservamos el intento para comprobarlo sin duplicar el cobro.',
+  creator_premium_subscription_receipt_invalid: 'La respuesta financiera de la suscripción no pudo verificarse. Conservamos el intento para comprobarlo sin duplicar el cobro.',
+  creator_premium_renewal_receipt_invalid: 'La respuesta financiera de la renovación no pudo verificarse. Conservamos el intento para comprobarlo sin duplicar el cobro.',
+  creator_premium_cancellation_receipt_invalid: 'La cancelación no pudo verificarse. Conservamos el intento para comprobarlo sin duplicar la operación.',
   creator_premium_legacy_reverification_required: 'Este contenido pendiente necesita iniciar la verificación B7 una vez.',
   content_safety_policy_not_configured: 'La verificación de seguridad todavía no está disponible. Tu contenido sigue privado.',
   content_safety_audio_policy_not_configured: 'La verificación de audio todavía no está disponible. Tu video sigue privado.',
@@ -77,14 +116,7 @@ export function creatorPremiumErrorMessage(error: unknown): string {
   const known = CREATOR_PREMIUM_BLOCKER_COPY[message];
   if (known) return known;
 
-  const code = errorField(error, 'code');
-  if (/^[a-z0-9]+(?:_[a-z0-9]+)+$/i.test(message)
-      || Boolean(code && (/^PGRST/i.test(code) || /^[0-9A-Z]{5}$/.test(code)))
-      || /schema cache|could not find the function|relation .+ does not exist/i.test(message)) {
-    return 'No pudimos completar la operación. Inténtalo de nuevo.';
-  }
-
-  return message;
+  return 'No pudimos completar la operación. Inténtalo de nuevo.';
 }
 
 export function creatorPremiumSubmissionBlockerMessage(
@@ -104,6 +136,8 @@ export function creatorPremiumSubmissionBlockerMessage(
 export function creatorPremiumCommercialSummaryErrorMessage(error: unknown): string {
   const code = errorField(error, 'code');
   const message = errorField(error, 'message') ?? '';
+  const known = CREATOR_PREMIUM_BLOCKER_COPY[message];
+  if (known) return known;
   if (code === 'PGRST202' || message.includes('get_my_creator_premium_commercial_summary_v1')) {
     return 'Ingresos todavía no está disponible en este backend. Contenido y planes siguen disponibles.';
   }

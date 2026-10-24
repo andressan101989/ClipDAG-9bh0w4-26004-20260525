@@ -107,6 +107,9 @@ function loadPremiumMetadataService(getUser) {
       if (specifier === '@/services/creatorPremiumMoney.mjs') return {
         normalizeCreatorPremiumPriceBdag,
       };
+      if (specifier === '@/services/creatorPremiumFinanceContracts.mjs') return {
+        parseCreatorPremiumFinancialHistoryPage: value => value,
+      };
       throw new Error(`Unexpected metadata module: ${specifier}`);
     },
   }, { filename: 'creatorPremiumService.js' });
@@ -627,14 +630,15 @@ test('canonical video service returns content identity in a validated signed gra
   assert.equal(grant.contentId, CONTENT_A);
 });
 
-test('viewer capability is explicit while finance and aggregate public launch remain disabled', async () => {
+test('viewer capability is explicit while commerce remains server-policy controlled', async () => {
   const service = loadPremiumMetadataService(async () => ({
     data: { user: { id: USER_A } },
     error: null,
   }));
   assert.equal(service.CREATOR_PREMIUM_VIEWER_AVAILABLE, true);
-  assert.equal(service.CREATOR_PREMIUM_FINANCE_AVAILABLE, false);
+  assert.equal(Object.hasOwn(service, 'CREATOR_PREMIUM_FINANCE_AVAILABLE'), false);
   assert.equal(service.CREATOR_PREMIUM_MEDIA_AVAILABLE, false);
   assert.doesNotMatch(service.CREATOR_PREMIUM_FOUNDATION_MESSAGE, /visor protegido todavía no/i);
+  assert.match(service.CREATOR_PREMIUM_FOUNDATION_MESSAGE, /política financiera vigente/i);
   assert.equal(await service.getCurrentCreatorPremiumUserId(), USER_A);
 });

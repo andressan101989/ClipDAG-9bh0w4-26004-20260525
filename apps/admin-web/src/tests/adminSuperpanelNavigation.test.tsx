@@ -31,7 +31,7 @@ describe("ADMIN-SUPERPANEL-FULL-F1 navigation",()=>{
     renderShell("/overview");
     const navigation=screen.getByRole("navigation",{name:"Administración global"});
     const expected={
-      finance:["Resumen","Cuentas","Transacciones","Reconciliación","Anomalías","Auditoría"],
+      finance:["Resumen","Cuentas","Transacciones","Creator Premium","Reconciliación","Anomalías","Auditoría"],
       marketplace:["Resumen","Pedidos","Disputas","Vendedores","Productos","Creator Commerce","Promociones","Ads","Salud","Actividad"],
       system:["Salud","Jobs","Auditoría"],
       content_safety:["Alertas","Reglas"],

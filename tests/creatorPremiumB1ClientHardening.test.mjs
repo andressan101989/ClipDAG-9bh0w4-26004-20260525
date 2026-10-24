@@ -47,13 +47,17 @@ test('Premium purchase, subscription, and DM clients cannot invoke legacy financ
   const bodies = files.map(read).join('\n');
   assert.doesNotMatch(bodies, /action:\s*['\"](?:content_purchase|subscribe|premium_dm_(?:config|send|release))['\"]/);
   assert.doesNotMatch(bodies, /rpc\(['\"](?:send_premium_dm|release_premium_dm|cancel_creator_subscription|upsert_subscription_plan)['\"]/);
-  assert.match(read('services/creatorPremiumService.ts'), /CREATOR_PREMIUM_FINANCE_AVAILABLE(?:\s*:\s*boolean)?\s*=\s*false/);
+  const premium = read('services/creatorPremiumService.ts');
+  assert.doesNotMatch(premium, /CREATOR_PREMIUM_FINANCE_AVAILABLE/);
+  assert.match(premium, /CreatorPremiumFinancePolicy/);
+  assert.match(premium, /get_my_creator_premium_financial_history_v1/);
 });
 
-test('creator profile keeps the Exclusive shell but states B1 limitations honestly', () => {
+test('creator profile keeps the Exclusive shell and delegates commerce to the server policy', () => {
   const profile = read('app/creator/[id].tsx');
   assert.match(profile, /Exclusivo/);
   assert.match(profile, /creatorPremiumService/);
-  assert.match(profile, /fundaci[oó]n|pr[oó]ximamente|todav[ií]a no est[aá] disponible/i);
+  assert.match(profile, /pol[ií]tica financiera vigente del servidor/i);
+  assert.match(profile, /creator-premium-offer|Ver Premium/i);
   assert.doesNotMatch(profile, /preview_url|content_url/);
 });

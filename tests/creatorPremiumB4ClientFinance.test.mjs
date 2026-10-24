@@ -24,7 +24,10 @@ function compile(source, filename) {
   }).outputText;
 }
 
-function loadLedgerEdge({ user = { id: userId }, rpcResult = { data: { money_moved: false }, error: null } } = {}) {
+function loadLedgerEdge({
+  user = { id: userId },
+  rpcResult = { data: { money_moved: false }, error: null },
+} = {}) {
   let handler;
   const rpcCalls = [];
   const admin = {
@@ -87,6 +90,31 @@ test('bdag-ledger routes only canonical Premium actions with JWT-derived identit
     const { response } = await post(harness.handler, { action, idempotency_key: idempotencyKey, [field]: value });
     assert.equal(response.status, 200);
     assert.deepEqual(harness.rpcCalls, [{ name: rpc, args }]);
+  }
+});
+
+test('Premium SQL velocity failures map to safe HTTP responses without Edge preflight', async () => {
+  for (const [expectedStatus, expectedCode] of [
+    [429, 'creator_premium_rate_limited'],
+    [503, 'creator_premium_velocity_check_unavailable'],
+  ]) {
+    for (const [action, field, value, rpc] of [
+      ['creator_premium_purchase', 'content_id', contentId, 'purchase_creator_premium_content_v1'],
+      ['creator_premium_subscribe', 'plan_id', planId, 'subscribe_creator_premium_plan_v1'],
+    ]) {
+      const harness = loadLedgerEdge({
+        rpcResult: { data: null, error: { message: `private SQL detail: ${expectedCode}` } },
+      });
+      const { response, payload } = await post(harness.handler, {
+        action,
+        idempotency_key: idempotencyKey,
+        [field]: value,
+      });
+      assert.equal(response.status, expectedStatus);
+      assert.equal(payload.error, expectedCode);
+      assert.deepEqual(harness.rpcCalls.map(call => call.name), [rpc]);
+      assert.equal(JSON.stringify(payload).includes('private SQL detail'), false);
+    }
   }
 });
 
@@ -162,6 +190,13 @@ function loadLedgerClient() {
     require(specifier) {
       if (specifier === '@/template') return { getSupabaseClient: () => client };
       if (specifier === '@/services/walletApi') return { getWithdrawalConfigFromBackend: async () => ({ minimumBdag: 1 }) };
+      if (specifier === '@/services/creatorPremiumFinanceContracts.mjs') {
+        return {
+          parseCreatorPremiumCancellationReceipt: value => value,
+          parseCreatorPremiumPurchaseReceipt: value => value,
+          parseCreatorPremiumSubscriptionReceipt: value => value,
+        };
+      }
       if (specifier === '@supabase/supabase-js') return { FunctionsHttpError: class FunctionsHttpError extends Error {} };
       throw new Error(`Unexpected ledgerClient module: ${specifier}`);
     },
@@ -187,12 +222,19 @@ test('canonical ledgerClient sends UUID identity only and no monetary authority'
   }
 });
 
-test('Premium client validates target UUIDs and finance remains product-disabled', async () => {
+test('Premium client validates target UUIDs and accepts only strict server receipts', async () => {
   const harness = loadLedgerClient();
   assert.equal((await harness.service.purchaseContent({ contentId: 'bad' })).success, false);
   assert.equal((await harness.service.subscribeToPlan({ planId: 'bad' })).success, false);
   assert.equal((await harness.service.cancelCreatorPremiumSubscription({ subscriptionId: 'bad' })).success, false);
   assert.equal(harness.invokes.length, 0);
-  assert.match(read('services/creatorPremiumService.ts'), /CREATOR_PREMIUM_FINANCE_AVAILABLE(?:\s*:\s*boolean)?\s*=\s*false/);
-  assert.equal(read('services/financial/ledgerClient.ts').includes('creatorPremiumFinanceClient'), false);
+  const serviceSource = read('services/creatorPremiumService.ts');
+  const ledgerSource = read('services/financial/ledgerClient.ts');
+  assert.doesNotMatch(serviceSource, /CREATOR_PREMIUM_FINANCE_AVAILABLE/);
+  assert.match(serviceSource, /policy:\s*CreatorPremiumFinancePolicy/);
+  assert.match(ledgerSource, /parseCreatorPremiumPurchaseReceipt/);
+  assert.match(ledgerSource, /parseCreatorPremiumSubscriptionReceipt/);
+  assert.match(ledgerSource, /parseCreatorPremiumCancellationReceipt/);
+  assert.match(ledgerSource, /creator_premium_(?:purchase|subscription|cancellation)_receipt_invalid/);
+  assert.equal(ledgerSource.includes('creatorPremiumFinanceClient'), false);
 });
