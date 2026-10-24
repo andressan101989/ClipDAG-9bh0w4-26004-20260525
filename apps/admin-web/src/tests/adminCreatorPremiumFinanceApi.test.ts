@@ -47,6 +47,33 @@ describe("Creator Premium Finance API contract",()=>{
     });
   });
 
+  it("preserves PostgreSQL microsecond order and exact cursor binding",async()=>{
+    const microsecondResponse={
+      ...response,
+      items:[
+        {...response.items[0],created_at:"2026-10-24T12:00:00.123900Z"},
+        {
+          ...response.items[0],
+          reference_id:"10000000-0000-4000-8000-000000000010",
+          financial_transaction_id:"10000000-0000-4000-8000-000000000011",
+          created_at:"2026-10-24T12:00:00.123100Z",
+        },
+      ],
+      next_cursor:{created_at:"2026-10-24T12:00:00.123100Z",reference_id:"10000000-0000-4000-8000-000000000010"},
+    };
+    rpcMock.mockResolvedValueOnce({data:microsecondResponse,error:null});
+    await expect(searchAdminCreatorPremiumFinance({p_source:null,p_state:null,p_query:null,p_cursor_created_at:null,p_cursor_reference_id:null,p_limit:100}))
+      .resolves.toEqual(microsecondResponse);
+
+    rpcMock.mockResolvedValueOnce({data:{
+      ...response,
+      items:[{...response.items[0],created_at:"2026-10-24T12:00:00.123900Z"}],
+      next_cursor:{created_at:"2026-10-24T12:00:00.123100Z",reference_id:response.items[0].reference_id},
+    },error:null});
+    await expect(searchAdminCreatorPremiumFinance({p_source:null,p_state:null,p_query:null,p_cursor_created_at:null,p_cursor_reference_id:null,p_limit:100}))
+      .rejects.toThrow(/Respuesta inválida/);
+  });
+
   it.each([
     ["numeric money",{...response,items:[{...response.items[0],gross_amount_bdag:2000}]}],
     ["decimal without canonical scale",{...response,items:[{...response.items[0],gross_amount_bdag:"2000"}]}],

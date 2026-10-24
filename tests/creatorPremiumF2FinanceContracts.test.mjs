@@ -434,6 +434,35 @@ test('financial history projections reject malformed policy, money, cursors and 
   }
 });
 
+test('financial history preserves PostgreSQL microsecond order and exact cursor binding', () => {
+  const page = structuredClone(financialHistoryPage);
+  page.items = [
+    {
+      ...page.items[0],
+      occurred_at: '2026-10-24T17:00:00.123900Z',
+    },
+    {
+      ...page.items[0],
+      id: otherTransactionId,
+      reference_id: '60000000-0000-4000-8000-000000000002',
+      occurred_at: '2026-10-24T17:00:00.123100Z',
+    },
+  ];
+  page.next_cursor = {
+    event_at: page.items[1].occurred_at,
+    id: page.items[1].id,
+  };
+  assert.deepEqual(parseCreatorPremiumFinancialHistoryPage(page), page);
+
+  const mismatchedCursor = structuredClone(financialHistoryPage);
+  mismatchedCursor.items[0].occurred_at = '2026-10-24T17:00:00.123900Z';
+  mismatchedCursor.next_cursor.event_at = '2026-10-24T17:00:00.123100Z';
+  assert.throws(
+    () => parseCreatorPremiumFinancialHistoryPage(mismatchedCursor),
+    /creator_premium_financial_history_invalid/,
+  );
+});
+
 test('commerce projections are exact, target-bound and preserve authoritative availability', () => {
   assert.deepEqual(
     parseCreatorPremiumCommerce(commerceProjection, contentId),
@@ -553,6 +582,26 @@ test('commercial summary projection is exact, balanced and authoritative', () =>
   assert.deepEqual(
     parseCreatorPremiumCommercialSummary(deletedPerformance),
     deletedPerformance,
+  );
+
+  const microsecondSummary = structuredClone(commercialSummaryProjection);
+  microsecondSummary.purchase_count = 2;
+  microsecondSummary.content_performance[0].purchase_sales = 2;
+  microsecondSummary.recent_transactions = [
+    {
+      ...microsecondSummary.recent_transactions[0],
+      created_at: '2026-10-24T17:00:00.123900Z',
+    },
+    {
+      ...microsecondSummary.recent_transactions[0],
+      reference_id: '60000000-0000-4000-8000-000000000002',
+      financial_transaction_id: otherTransactionId,
+      created_at: '2026-10-24T17:00:00.123100Z',
+    },
+  ];
+  assert.deepEqual(
+    parseCreatorPremiumCommercialSummary(microsecondSummary),
+    microsecondSummary,
   );
 });
 

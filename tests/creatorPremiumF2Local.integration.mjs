@@ -1,5 +1,6 @@
 // Real disposable PostgreSQL proof. Set RUN_CREATOR_PREMIUM_F2_LOCAL=1 to enable it.
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
@@ -35,7 +36,11 @@ const chain = phases.map(suffix => {
       : '',
   };
 });
-const f2MigrationBytes = readFileSync(new URL(`../supabase/migrations/${chain.at(-1).found[0]}`, import.meta.url));
+const f2MigrationBytes = Buffer.from(
+  readFileSync(new URL(`../supabase/migrations/${chain.at(-1).found[0]}`, import.meta.url), 'utf8')
+    .replace(/\r\n/g, '\n'),
+  'utf8',
+);
 const f2MigrationBlob = createHash('sha1')
   .update(`blob ${f2MigrationBytes.length}\0`)
   .update(f2MigrationBytes)
@@ -563,6 +568,7 @@ test('F2 manual renewal keeps one immutable relationship per paid period and ref
     assert.equal(expiredItem.plan.relationship.status, 'expired');
     assert.equal(expiredItem.period.access_state, 'expired');
     assert.equal(expiredItem.plan.relationship.access_state, 'expired');
+    assert.equal(expiredItem.ended_at, expiredItem.period.paid_through_at);
     assert.equal(expiredItem.access_active, false);
     assert.equal(expiredItem.renewal_available, true);
     assert.equal(expiredItem.renewal_blocker, null);
@@ -942,7 +948,7 @@ test('F2 manual renewal keeps one immutable relationship per paid period and ref
       result: 'PASS',
     };
     const evidenceBytes = canonicalJson(evidence);
-    assert.equal(evidence.migration_blob, '01468928aac3743245916157a6acf0bd9d7aab7f');
+    assert.equal(evidence.migration_blob, 'fce8789a0c79251afbe962bd39f6bd81ae248296');
     assert.equal(evidence.rpcs.length, 5);
     if (evidencePath) writeFileSync(evidencePath, evidenceBytes, { encoding: 'utf8', flag: 'w' });
     process.stdout.write(`# F2_GOVERNANCE_EVIDENCE_SHA256=${sha256Hex(evidenceBytes)}\n`);
