@@ -344,6 +344,56 @@
           "pending_review_count": 1,
           "deleted_count": 2
         }
+      },
+      {
+        "run_id": "40139736749",
+        "run_attempt": 1,
+        "release_id": "nelyon-creator-premium-f2-r1-release-20261024T224205Z",
+        "source_sha": "238e987933c7198400534121e61fb3d2750ba5ba",
+        "repository": "andressan101989/ClipDAG-9bh0w4-26004-20260525",
+        "mutation_status": "completed",
+        "post_snapshot_status": "success",
+        "postcheck_status": "failure",
+        "gate_artifact": {
+          "id": "12577384242",
+          "name": "nelyon-gate-evidence-40139736749-1",
+          "digest": "sha256:3d42fb5d672e5d36012238ac4c46740f019c278977e8dd9c2b3085d5593775c7"
+        },
+        "release_artifact": {
+          "id": "12576994701",
+          "name": "nelyon-release-40139736749-1",
+          "digest": "sha256:8f0db1f147d42e6aed6fe1a0978c16fa0ebef37a7a53dbc8f7ac6600c0189e08"
+        },
+        "manifest_sha256": "4e798ee48a8d83d26c8608803b26099a6d22521d43a585d7735754969fe45a12",
+        "pre_snapshot_evidence_sha256": "7d67a623ff91a8b583095950c402a111819690a7b028765eb4e1c85d6047b138",
+        "post_snapshot_evidence_sha256": "f2b3196e54f6ff9534c268afbfcc21c586182c883e929b3d6e4e8b32399c8c5a",
+        "expected_migrations": [
+          {
+            "blob": "fce8789a0c79251afbe962bd39f6bd81ae248296",
+            "name": "20261024173500_creator_premium_f2_complete_monetization"
+          }
+        ],
+        "expected_migration_count": 351,
+        "expected_latest_migration": "20261024173500_creator_premium_f2_complete_monetization",
+        "edge_functions": [
+          {
+            "name": "bdag-ledger",
+            "source_sha256": "0b0db8c46041127dac341dfaa9673a7da4b15747ac71639bdeed00e8097be002",
+            "status": "ACTIVE",
+            "verify_jwt": true,
+            "version": 45
+          }
+        ],
+        "productive_resources": [
+          "migration:20261024173500_creator_premium_f2_complete_monetization",
+          "function:bdag-ledger"
+        ],
+        "premium_relation_security_sha256": "055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6",
+        "premium_legacy": {
+          "content_count": 9,
+          "pending_review_count": 0,
+          "deleted_count": 5
+        }
       }
     ]
   },
@@ -1159,25 +1209,25 @@
             "public": false,
             "service_role": false
           },
-          "definition_sha256": "10a91f4a47efeda414aa7ed7d1ceed81fff971f6eb5009e4f2bfc4f2acbb78d9"
+          "definition_sha256": "ac6cd5a65b129c471184ffb080a5a80dcfb2c3283daf5fb2c2100a945e340580"
         },
         "authorization": {
-          "functional_reason": "Withdraws only caller-owned published content when no financial history exists, retaining private media, mappings, safety evidence, and audit history.",
+          "functional_reason": "Withdraws only caller-owned published content, retires new sales, and preserves verified access acquired before withdrawal.",
           "controls": [
             "authenticated_session",
             "canonical_lock_order",
-            "financial_history_guard",
+            "entitlement_preservation",
             "idempotent_replay",
             "negative_authorization_tests",
             "owner_scope",
             "plan_locking"
           ],
-          "negative_test_evidence_sha256": "59a8ca88804abd43416d157b7580d180884b905d0596e6b63a7441e06e999f46"
+          "negative_test_evidence_sha256": "222539db2b37c976322690504e9d7574d59343adf7aef9ab83262a88c665c2d8"
         },
         "origin": {
-          "migration": "20261018211327_creator_premium_qa_final_f1",
-          "migration_blob": "9052d0abd6df3fec7d49eed80285bce19f21051b",
-          "source_sha": "ed51307f9fc02ec04ca84478d905f608120e2b0e"
+          "migration": "20261024173500_creator_premium_f2_complete_monetization",
+          "migration_blob": "fce8789a0c79251afbe962bd39f6bd81ae248296",
+          "source_sha": "97f6638acaa5be2af336b427184c11185e3d0fe1"
         },
         "technical_approval": "verified"
       },
