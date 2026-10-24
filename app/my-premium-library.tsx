@@ -16,11 +16,15 @@ import { useFocusEffect, useRouter } from 'expo-router';
 
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/useAuth';
+import { formatCreatorPremiumBdag } from '@/services/creatorPremiumPresentation.mjs';
 import {
   fetchCreatorPremiumLibraryTeasers,
+  fetchMyCreatorPremiumFinancialHistory,
   fetchMyCreatorPremiumLibrary,
   getCurrentCreatorPremiumUserId,
   type CreatorPremiumCursor,
+  type CreatorPremiumFinancePolicy,
+  type CreatorPremiumFinancialHistoryItem,
   type CreatorPremiumLibraryItem,
 } from '@/services/creatorPremiumService';
 import { rememberCreatorPremiumContentKind } from '@/services/creatorPremiumViewerRuntime.mjs';
@@ -45,6 +49,11 @@ export default function MyPremiumLibraryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
+  const [financialHistory, setFinancialHistory] = useState<CreatorPremiumFinancialHistoryItem[]>([]);
+  const [financialHistoryNextCursor, setFinancialHistoryNextCursor] = useState<CreatorPremiumCursor | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [financePolicy, setFinancePolicy] = useState<CreatorPremiumFinancePolicy | null>(null);
+  const [historyError, setHistoryError] = useState(false);
   const nextCursorRef = useRef<CreatorPremiumCursor | null>(null);
   const requestGeneration = useRef(0);
   const loadingMoreRef = useRef(false);
@@ -66,17 +75,28 @@ export default function MyPremiumLibraryScreen() {
       setError(false);
       setLoading(true);
       setLoadingMore(false);
+      setLoadingHistory(false);
+      setFinancialHistoryNextCursor(null);
     } else {
       loadingMoreRef.current = true;
       setLoadingMore(true);
     }
 
     try {
+      const historyPromise = reset
+        ? fetchMyCreatorPremiumFinancialHistory({ perspective: 'buyer', limit: 30 }).then(
+          value => ({ value, error: null as unknown }),
+          historyFailure => ({ value: null, error: historyFailure as unknown }),
+        )
+        : Promise.resolve(null);
       const page = await fetchMyCreatorPremiumLibrary({
         limit: 24,
         cursor: reset ? null : nextCursorRef.current,
       });
-      const teasers = await fetchCreatorPremiumLibraryTeasers(page.items);
+      const [teasers, historyResult] = await Promise.all([
+        fetchCreatorPremiumLibraryTeasers(page.items),
+        historyPromise,
+      ]);
       if (
         requestGeneration.current !== generation
         || activeUserIdRef.current !== expectedUserId
@@ -89,6 +109,19 @@ export default function MyPremiumLibraryScreen() {
       setItemsOwnerId(expectedUserId);
       nextCursorRef.current = page.nextCursor;
       setError(false);
+      if (reset && historyResult) {
+        if (historyResult.value) {
+          setFinancialHistory(historyResult.value.items);
+          setFinancialHistoryNextCursor(historyResult.value.nextCursor);
+          setFinancePolicy(historyResult.value.policy);
+          setHistoryError(false);
+        } else {
+          setFinancialHistory([]);
+          setFinancialHistoryNextCursor(null);
+          setFinancePolicy(null);
+          setHistoryError(true);
+        }
+      }
     } catch {
       if (
         requestGeneration.current === generation
@@ -117,6 +150,11 @@ export default function MyPremiumLibraryScreen() {
     setRefreshing(false);
     setLoadingMore(false);
     setError(false);
+    setFinancialHistory([]);
+    setFinancialHistoryNextCursor(null);
+    setLoadingHistory(false);
+    setFinancePolicy(null);
+    setHistoryError(false);
   }, [user?.id]);
 
   useFocusEffect(useCallback(() => {
@@ -140,6 +178,37 @@ export default function MyPremiumLibraryScreen() {
     nextCursorRef.current = null;
     void loadPage(true);
   }, [loadPage]);
+
+  const loadMoreHistory = useCallback(async () => {
+    const cursor = financialHistoryNextCursor;
+    const expectedUserId = activeUserIdRef.current;
+    if (!cursor || !expectedUserId || loadingHistory) return;
+    const generation = requestGeneration.current;
+    setLoadingHistory(true);
+    try {
+      const page = await fetchMyCreatorPremiumFinancialHistory({
+        perspective: 'buyer',
+        cursor,
+        limit: 30,
+      });
+      if (requestGeneration.current !== generation || activeUserIdRef.current !== expectedUserId) return;
+      setFinancialHistory(current => {
+        const known = new Set(current.map(item => item.id));
+        return [...current, ...page.items.filter(item => !known.has(item.id))];
+      });
+      setFinancialHistoryNextCursor(page.nextCursor);
+      setFinancePolicy(page.policy);
+      setHistoryError(false);
+    } catch {
+      if (requestGeneration.current === generation && activeUserIdRef.current === expectedUserId) {
+        setHistoryError(true);
+      }
+    } finally {
+      if (requestGeneration.current === generation && activeUserIdRef.current === expectedUserId) {
+        setLoadingHistory(false);
+      }
+    }
+  }, [financialHistoryNextCursor, loadingHistory]);
 
   const openItem = useCallback(async (item: LibraryDisplayItem) => {
     if (item.entitlement_expires_at && Date.parse(item.entitlement_expires_at) <= Date.now()) return;
@@ -211,12 +280,18 @@ export default function MyPremiumLibraryScreen() {
       </View>
       <View style={styles.notice}>
         <Text style={styles.noticeIcon}>●</Text>
-        <Text style={styles.noticeText}>Las compras y suscripciones aún no están habilitadas.</Text>
+        <Text style={styles.noticeText}>
+          {financePolicy === null
+            ? 'No pudimos verificar la política financiera. Tu acceso vigente permanece disponible sin iniciar operaciones BDAG.'
+            : financePolicy.purchase_enabled || financePolicy.subscription_enabled
+              ? 'Las operaciones Premium dependen de la política financiera vigente del servidor.'
+              : 'Finance Premium está deshabilitado. Tu biblioteca y el historial se consultan en modo seguro, sin mover BDAG.'}
+        </Text>
       </View>
 
       {loading && visibleItems.length === 0 ? (
         <View style={styles.center}><ActivityIndicator size="large" color={Colors.purple} /></View>
-      ) : error && visibleItems.length === 0 ? (
+      ) : error && visibleItems.length === 0 && financialHistory.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyIcon}>⌁</Text>
           <Text style={styles.emptyTitle}>No pudimos cargar tu biblioteca</Text>
@@ -224,12 +299,6 @@ export default function MyPremiumLibraryScreen() {
           <Pressable accessibilityRole="button" onPress={() => { void loadPage(true); }} style={styles.retryButton}>
             <Text style={styles.retryText}>Reintentar</Text>
           </Pressable>
-        </View>
-      ) : visibleItems.length === 0 ? (
-        <View style={styles.center}>
-          <Text style={styles.emptyIcon}>▦</Text>
-          <Text style={styles.emptyTitle}>Sin contenido Premium</Text>
-          <Text style={styles.emptyBody}>Tu contenido con acceso vigente aparecerá aquí.</Text>
         </View>
       ) : (
         <ScrollView
@@ -239,10 +308,47 @@ export default function MyPremiumLibraryScreen() {
           scrollEventThrottle={200}
         >
           {error ? <Text style={styles.inlineError}>La actualización falló; conservamos la última vista segura.</Text> : null}
-          <View style={styles.grid}>
-            {visibleItems.map(item => <React.Fragment key={item.id}>{renderItem({ item })}</React.Fragment>)}
-          </View>
+          {visibleItems.length === 0 ? (
+            <View style={styles.emptyPanel}>
+              <Text style={styles.emptyIcon}>▦</Text>
+              <Text style={styles.emptyTitle}>Sin acceso Premium vigente</Text>
+              <Text style={styles.emptyBody}>Las compras activas y los periodos de suscripción vigentes aparecerán aquí.</Text>
+            </View>
+          ) : (
+            <View style={styles.grid}>
+              {visibleItems.map(item => <React.Fragment key={item.id}>{renderItem({ item })}</React.Fragment>)}
+            </View>
+          )}
           {loadingMore ? <ActivityIndicator color={Colors.purple} style={styles.footer} /> : null}
+          <View style={styles.historySection}>
+            <Text style={styles.historyTitle}>Historial Premium</Text>
+            <Text style={styles.historyCopy}>Compras, periodos y reembolsos confirmados por la autoridad financiera.</Text>
+            {historyError ? <Text style={styles.inlineError}>No pudimos verificar el historial financiero. La biblioteca vigente permanece disponible.</Text> : null}
+            {!historyError && financialHistory.length === 0 ? (
+              <Text style={styles.emptyBody}>Todavía no existen operaciones Premium verificadas.</Text>
+            ) : financialHistory.map(item => (
+              <View key={item.id} style={styles.historyCard}>
+                <View style={styles.historyHeading}>
+                  <Text style={styles.historyEvent}>{item.event_type === 'refund' ? 'Reembolso' : 'Cobro'} · {item.source === 'purchase' ? 'Compra' : 'Suscripción'}</Text>
+                  <Text style={styles.historyAmount}>{item.event_type === 'refund' ? '+' : '−'}{formatCreatorPremiumBdag(item.gross_amount_bdag)}</Text>
+                </View>
+                <Text style={styles.historySubject}>{item.content?.title ?? item.plan?.name ?? 'Operación Premium'}</Text>
+                <Text style={styles.source}>Acceso: {item.access_state} · {new Intl.DateTimeFormat('es', { dateStyle: 'medium' }).format(new Date(item.occurred_at))}</Text>
+              </View>
+            ))}
+            {financialHistoryNextCursor ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={loadingHistory}
+                onPress={() => { void loadMoreHistory(); }}
+                style={styles.historyMore}
+              >
+                {loadingHistory
+                  ? <ActivityIndicator color={Colors.purple} />
+                  : <Text style={styles.retryText}>Cargar más historial</Text>}
+              </Pressable>
+            ) : null}
+          </View>
         </ScrollView>
       )}
     </SafeAreaView>
@@ -260,6 +366,7 @@ const styles = StyleSheet.create({
   noticeIcon: { color: Colors.purple, fontSize: FontSize.xs },
   noticeText: { flex: 1, color: Colors.textSecondary, fontSize: FontSize.sm, lineHeight: 18 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.xl },
+  emptyPanel: { alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.xl, paddingHorizontal: Spacing.lg },
   emptyTitle: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold, textAlign: 'center' },
   emptyBody: { color: Colors.textSecondary, fontSize: FontSize.sm, lineHeight: 20, textAlign: 'center' },
   retryButton: { minHeight: 44, justifyContent: 'center', marginTop: Spacing.md, paddingHorizontal: Spacing.lg, borderRadius: Radius.full, backgroundColor: Colors.purple },
@@ -277,4 +384,13 @@ const styles = StyleSheet.create({
   inlineError: { marginBottom: Spacing.md, color: Colors.warning, fontSize: FontSize.xs, textAlign: 'center' },
   emptyIcon: { color: Colors.textSubtle, fontSize: 48 },
   footer: { marginVertical: Spacing.lg },
+  historySection: { gap: Spacing.sm, marginTop: Spacing.xl, paddingTop: Spacing.lg, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.border },
+  historyTitle: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: FontWeight.bold },
+  historyCopy: { color: Colors.textSecondary, fontSize: FontSize.xs, lineHeight: 18 },
+  historyCard: { gap: Spacing.xs, padding: Spacing.md, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.md, backgroundColor: Colors.surface },
+  historyHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.sm },
+  historyEvent: { flex: 1, color: Colors.textPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  historyAmount: { color: Colors.purple, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
+  historySubject: { color: Colors.textSecondary, fontSize: FontSize.sm },
+  historyMore: { minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.purple },
 });

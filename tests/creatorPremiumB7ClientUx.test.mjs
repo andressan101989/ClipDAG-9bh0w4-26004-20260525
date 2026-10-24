@@ -41,20 +41,29 @@ test('commerce screen receives only contentId and renders canonical offers/plans
   assert.doesNotMatch(offer, /Number\([^\n]*price|parseFloat\([^\n]*price/i);
 });
 
-test('purchase and subscription actions are double-gated and use stable in-memory UUID attempts', () => {
-  assert.match(offer, /CREATOR_PREMIUM_FINANCE_AVAILABLE/i);
+test('purchase and subscription actions are server-policy gated with stable UUID attempts and authoritative readback', () => {
+  assert.doesNotMatch(offer, /CREATOR_PREMIUM_FINANCE_AVAILABLE/i);
+  assert.match(offer, /commerce\?\.policy\.purchase_enabled/i);
   assert.match(offer, /operations\.purchase_available/i);
   assert.match(offer, /plan\.subscription_available/i);
-  assert.doesNotMatch(offer, /commerce\?*\.policy\.(?:purchase_enabled|subscription_enabled)/i);
+  assert.match(offer, /plan\?\.renewal_available/i);
+  assert.match(offer, /commerce\?\.policy\.subscription_enabled/i);
   assert.match(offer, /purchaseContent/i);
   assert.match(offer, /subscribeToPlan/i);
+  assert.match(offer, /readBackCommerce/i);
+  assert.match(offer, /confirmed\.entitlement\.source\s*!==\s*['"]purchase['"]/i);
+  assert.match(offer, /confirmedPlan\.relationship\.access_state\s*!==\s*['"]active['"]/i);
   assert.match(offer, /randomUUID/i);
   assert.match(offer, /useRef/i);
   assert.match(offer, /busy|inFlight|pending/i);
   assert.match(offer, /idempotencyKey/i);
+  assert.match(offer, /subscriptionAttempts\.current\.get\(planId\)\s*\?\?\s*randomUUID\(\)/i);
+  assert.match(offer, /subscriptionAttempts\.current\.delete\(planId\)/i);
   assert.doesNotMatch(offer, /\b(?:amount|fee|creator_account_id|platform_account_id)\s*:/i);
-  assert.match(service, /CREATOR_PREMIUM_FINANCE_AVAILABLE:\s*boolean\s*=\s*false/i);
+  assert.doesNotMatch(service, /CREATOR_PREMIUM_FINANCE_AVAILABLE/i);
   assert.match(ledger, /idempotencyKey/i);
+  assert.match(ledger, /parseCreatorPremiumPurchaseReceipt/i);
+  assert.match(ledger, /parseCreatorPremiumSubscriptionReceipt/i);
 });
 
 test('commerce and subscription requests are fenced to the active user and screen context', () => {
@@ -96,7 +105,12 @@ test('creator hub exposes real earnings and rejection recovery without client ac
   assert.match(hub, /refund|reembolso/i);
   assert.match(hub, /rejected|Rechazado/i);
   assert.match(hub, /reopenMyCreatorPremiumRejected/i);
-  assert.match(hub, /recent_transactions/i);
+  assert.match(hub, /fetchMyCreatorPremiumFinancialHistory/i);
+  assert.match(hub, /perspective:\s*['"]creator['"]/i);
+  assert.match(hub, /financialHistoryNextCursor/i);
+  assert.match(hub, /canonical_account_balance_bdag/i);
+  assert.match(hub, /integrity_failure_count/i);
+  assert.doesNotMatch(hub, /summary\.recent_transactions/i);
   assert.match(hub, /revoked_subscription_count/i);
   assert.match(hub, /useAuth/i);
   assert.match(hub, /contextGeneration/i);

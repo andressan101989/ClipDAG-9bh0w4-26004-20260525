@@ -226,11 +226,14 @@ test('Premium original grant validates HTTPS/future expiry and is never persiste
   assert.doesNotMatch(source, /setItem\(|writeAsStringAsync|copyAsync|saveToLibraryAsync/i);
 });
 
-test('B2 keeps complete media/finance disabled and adds only the image capability', () => {
+test('B2 keeps the aggregate media surface closed while finance is server-policy controlled', () => {
   const service = read('services/creatorPremiumService.ts');
   assert.match(service, /CREATOR_PREMIUM_IMAGE_MEDIA_AVAILABLE(?:\s*:\s*boolean)?\s*=\s*true/);
   assert.match(service, /CREATOR_PREMIUM_MEDIA_AVAILABLE(?:\s*:\s*boolean)?\s*=\s*false/);
-  assert.match(service, /CREATOR_PREMIUM_FINANCE_AVAILABLE(?:\s*:\s*boolean)?\s*=\s*false/);
+  assert.doesNotMatch(service, /CREATOR_PREMIUM_FINANCE_AVAILABLE/);
+  assert.match(service, /CreatorPremiumFinancePolicy/);
+  assert.match(service, /parseCreatorPremiumCommercialSummary/);
+  assert.match(service, /fetchMyCreatorPremiumCommercialSummary[\s\S]*parseCreatorPremiumCommercialSummary/);
   assert.match(service, /teaser_url:\s*string/);
   assert.match(service, /original_attached:\s*boolean/);
 });

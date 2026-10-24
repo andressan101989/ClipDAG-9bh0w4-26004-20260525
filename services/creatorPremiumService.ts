@@ -5,17 +5,22 @@
  * RPCs and never reads private tables or requests Premium media/finance data.
  */
 import { getSupabaseClient } from '@/template';
+import {
+  parseCreatorPremiumCommerce,
+  parseCreatorPremiumCommercialSummary,
+  parseCreatorPremiumFinancialHistoryPage,
+  parseCreatorPremiumSubscriptionsPage,
+} from '@/services/creatorPremiumFinanceContracts.mjs';
 import { normalizeCreatorPremiumPriceBdag } from '@/services/creatorPremiumMoney.mjs';
 
 export { normalizeCreatorPremiumPriceBdag } from '@/services/creatorPremiumMoney.mjs';
 
-export const CREATOR_PREMIUM_FINANCE_AVAILABLE: boolean = false;
 export const CREATOR_PREMIUM_MEDIA_AVAILABLE: boolean = false;
 export const CREATOR_PREMIUM_IMAGE_MEDIA_AVAILABLE: boolean = true;
 export const CREATOR_PREMIUM_VIDEO_MEDIA_AVAILABLE: boolean = true;
 export const CREATOR_PREMIUM_VIEWER_AVAILABLE: boolean = true;
 export const CREATOR_PREMIUM_FOUNDATION_MESSAGE =
-  'El visor protegido está disponible para usuarios con acceso vigente. Las compras y suscripciones todavía no están habilitadas.';
+  'El acceso Premium se valida en el servidor. Las operaciones comerciales dependen de la política financiera vigente.';
 export const CREATOR_PREMIUM_UNAVAILABLE_CODE = 'creator_premium_b1_foundation_only';
 
 export type CreatorPremiumContentKind = 'image' | 'video';
@@ -199,7 +204,7 @@ export interface CreatorPremiumCommercePlan {
   price_bdag: string;
   currency: 'BDAG';
   billing_period_days: number;
-  status: 'active';
+  status: CreatorPremiumPlanStatus;
   relationship: null | {
     id: string;
     status: 'pending' | 'active' | 'cancelled' | 'expired' | 'revoked';
@@ -209,6 +214,16 @@ export interface CreatorPremiumCommercePlan {
   };
   subscription_available: boolean;
   subscription_blocker: string | null;
+  renewal_available: boolean;
+  renewal_blocker: string | null;
+}
+
+export interface CreatorPremiumFinancePolicy {
+  purchase_enabled: boolean;
+  subscription_enabled: boolean;
+  refunds_enabled: boolean;
+  platform_fee_bps: number;
+  policy_version: string;
 }
 
 export interface CreatorPremiumCommerce {
@@ -218,17 +233,14 @@ export interface CreatorPremiumCommerce {
   creator: { id: string; username: string | null; display_name: string | null; avatar_url: string | null };
   offer: CreatorPremiumCommerceOffer | null;
   plans: CreatorPremiumCommercePlan[];
+  plan_count: number;
+  plans_truncated: boolean;
   entitlement: CreatorPremiumEntitlement;
   operations: {
     purchase_available: boolean;
     purchase_blocker: string | null;
   };
-  policy: {
-    purchase_enabled: boolean;
-    subscription_enabled: boolean;
-    refunds_enabled: boolean;
-    policy_version: string;
-  };
+  policy: CreatorPremiumFinancePolicy;
 }
 
 export interface CreatorPremiumSubscriptionItem {
@@ -248,9 +260,45 @@ export interface CreatorPremiumSubscriptionItem {
   };
   access_active: boolean;
   auto_renew: false;
-  renewal_supported: false;
+  renewal_supported: boolean;
+  renewal_available: boolean;
+  renewal_blocker: string | null;
+  is_latest_relationship: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export type CreatorPremiumFinancialHistoryPerspective = 'buyer' | 'creator';
+export type CreatorPremiumFinancialHistorySource = 'purchase' | 'subscription';
+export type CreatorPremiumFinancialHistoryEventType = 'charge' | 'refund';
+
+export interface CreatorPremiumFinancialHistoryItem {
+  id: string;
+  source: CreatorPremiumFinancialHistorySource;
+  event_type: CreatorPremiumFinancialHistoryEventType;
+  reference_id: string;
+  subscription_id: string | null;
+  content: null | { id: string; title: string; lifecycle_status: CreatorPremiumLifecycle };
+  plan: null | { id: string; name: string; version: number; status: CreatorPremiumPlanStatus };
+  gross_amount_bdag: string;
+  platform_fee_bdag: string;
+  creator_net_bdag: string;
+  access_state: 'active' | 'expired' | 'revoked' | 'refunded';
+  relationship_status: CreatorPremiumSubscriptionItem['status'] | null;
+  occurred_at: string;
+  starts_at: string | null;
+  paid_through_at: string | null;
+}
+
+export interface CreatorPremiumFinancialHistoryPage {
+  policy: CreatorPremiumFinancePolicy;
+  settlement_model: 'immediate_direct_credit';
+  items: CreatorPremiumFinancialHistoryItem[];
+  nextCursor: CreatorPremiumCursor | null;
+}
+
+export interface CreatorPremiumSubscriptionPage extends CreatorPremiumPage<CreatorPremiumSubscriptionItem> {
+  policy: CreatorPremiumFinancePolicy;
 }
 
 export interface CreatorPremiumCommercialSummary {
@@ -261,6 +309,12 @@ export interface CreatorPremiumCommercialSummary {
   creator_net: string;
   refund: string;
   net_retained: string;
+  pending_bdag: '0.00000000';
+  canonical_account_balance_bdag: string;
+  balance_scope: 'all_bdag_activity';
+  settlement_model: 'immediate_direct_credit';
+  integrity_failure_count: number;
+  policy: CreatorPremiumFinancePolicy;
   purchase_count: number;
   subscription_period_count: number;
   refund_count: number;
@@ -712,7 +766,7 @@ export async function submitMyCreatorPremiumContentForReview(contentId: string) 
 
 export async function fetchMyCreatorPremiumSubscriptions(
   options: { limit?: number; cursor?: CreatorPremiumCursor | null } = {},
-): Promise<CreatorPremiumPage<CreatorPremiumSubscriptionItem>> {
+): Promise<CreatorPremiumSubscriptionPage> {
   const limit = safeLimit(options.limit ?? 50);
   const cursor = cursorParams(options.cursor);
   const { data, error } = await db().rpc('get_my_creator_premium_subscriptions_v1', {
@@ -721,14 +775,69 @@ export async function fetchMyCreatorPremiumSubscriptions(
     p_limit: limit,
   });
   if (error) throw error;
-  const result = firstRow(data) as {
-    items?: CreatorPremiumSubscriptionItem[];
-    next_cursor?: { created_at: string; id: string } | null;
-  } | undefined;
+  const result = parseCreatorPremiumSubscriptionsPage(firstRow(data));
   return {
-    items: result?.items ?? [],
-    nextCursor: result?.next_cursor
+    policy: result.policy as CreatorPremiumFinancePolicy,
+    items: result.items as unknown as CreatorPremiumSubscriptionItem[],
+    nextCursor: result.next_cursor
       ? { timestamp: result.next_cursor.created_at, id: result.next_cursor.id }
+      : null,
+  };
+}
+
+export async function fetchMyCreatorPremiumSubscriptionsSnapshot(
+  minimumItems: number,
+): Promise<CreatorPremiumSubscriptionPage> {
+  if (!Number.isSafeInteger(minimumItems) || minimumItems < 1) {
+    throw new Error('creator_premium_subscription_readback_invalid');
+  }
+  const pageSize = 100;
+  const maxPages = Math.min(100, Math.max(1, Math.ceil(minimumItems / pageSize)));
+  const items: CreatorPremiumSubscriptionItem[] = [];
+  const seen = new Set<string>();
+  let cursor: CreatorPremiumCursor | null = null;
+  let policy: CreatorPremiumFinancePolicy | null = null;
+  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    const page = await fetchMyCreatorPremiumSubscriptions({ limit: pageSize, cursor });
+    policy = page.policy;
+    for (const item of page.items) {
+      if (!seen.has(item.id)) {
+        seen.add(item.id);
+        items.push(item);
+      }
+    }
+    cursor = page.nextCursor;
+    if (!cursor) break;
+  }
+  if (!policy) throw new Error('creator_premium_financial_readback_pending');
+  return { policy, items, nextCursor: cursor };
+}
+
+export async function fetchMyCreatorPremiumFinancialHistory(
+  options: {
+    perspective?: CreatorPremiumFinancialHistoryPerspective;
+    source?: CreatorPremiumFinancialHistorySource | null;
+    limit?: number;
+    cursor?: CreatorPremiumCursor | null;
+  } = {},
+): Promise<CreatorPremiumFinancialHistoryPage> {
+  const limit = safeLimit(options.limit ?? 50);
+  const cursor = cursorParams(options.cursor);
+  const { data, error } = await db().rpc('get_my_creator_premium_financial_history_v1', {
+    p_perspective: options.perspective ?? 'buyer',
+    p_source: options.source ?? null,
+    p_cursor_event_at: cursor.timestamp,
+    p_cursor_event_id: cursor.id,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  const result = parseCreatorPremiumFinancialHistoryPage(firstRow(data));
+  return {
+    policy: result.policy as CreatorPremiumFinancePolicy,
+    settlement_model: result.settlement_model,
+    items: result.items as unknown as CreatorPremiumFinancialHistoryItem[],
+    nextCursor: result.next_cursor
+      ? { timestamp: result.next_cursor.event_at, id: result.next_cursor.id }
       : null,
   };
 }
@@ -741,14 +850,11 @@ export async function fetchMyCreatorPremiumCommercialSummary(
     p_to: options.to ?? null,
   });
   if (error) throw error;
-  const result = firstRow(data) as CreatorPremiumCommercialSummary | undefined;
-  if (!result) throw new Error('creator_premium_summary_unavailable');
-  return {
-    ...result,
-    content_performance: result.content_performance.filter(
-      item => item.lifecycle_status !== 'deleted',
-    ),
-  };
+  const result = firstRow(data);
+  if (result === undefined) throw new Error('creator_premium_summary_unavailable');
+  return parseCreatorPremiumCommercialSummary(
+    result,
+  ) as unknown as CreatorPremiumCommercialSummary;
 }
 
 export async function reportCreatorPremiumContent(input: {
@@ -779,9 +885,12 @@ export async function fetchCreatorPremiumCommerce(
     p_content_id: contentId,
   });
   if (error) throw error;
-  const result = firstRow(data) as CreatorPremiumCommerce | undefined;
-  if (!result) throw new Error('creator_premium_content_not_found');
-  return result;
+  const result = firstRow(data);
+  if (result === undefined) throw new Error('creator_premium_content_not_found');
+  return parseCreatorPremiumCommerce(
+    result,
+    contentId,
+  ) as unknown as CreatorPremiumCommerce;
 }
 
 /**

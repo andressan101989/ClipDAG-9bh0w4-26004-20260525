@@ -537,7 +537,7 @@ test('Premium Stream service rejects coherent noncanonical URL mutations while a
 
 const otherContentId = '20000000-0000-4000-8000-000000000002';
 
-test('B3 client stores no signed grant and does not enable viewer, finance, replacement, or profile playback', () => {
+test('B3 client stores no signed grant and keeps finance server-policy controlled without replacement or profile playback', () => {
   assert.equal(existsSync(premiumServicePath), true);
   const source = read('services/creatorPremiumStreamService.ts');
   assert.doesNotMatch(source, /AsyncStorage|expo-file-system|FileSystem|MediaLibrary|expo-sharing|Share\.|prefetch|background.?download/i);
@@ -546,7 +546,10 @@ test('B3 client stores no signed grant and does not enable viewer, finance, repl
   const premium = read('services/creatorPremiumService.ts');
   assert.match(premium, /CREATOR_PREMIUM_VIDEO_MEDIA_AVAILABLE(?:\s*:\s*boolean)?\s*=\s*true/);
   assert.match(premium, /CREATOR_PREMIUM_MEDIA_AVAILABLE(?:\s*:\s*boolean)?\s*=\s*false/);
-  assert.match(premium, /CREATOR_PREMIUM_FINANCE_AVAILABLE(?:\s*:\s*boolean)?\s*=\s*false/);
+  assert.doesNotMatch(premium, /CREATOR_PREMIUM_FINANCE_AVAILABLE/);
+  assert.match(premium, /CreatorPremiumFinancePolicy/);
+  assert.match(premium, /parseCreatorPremiumCommercialSummary/);
+  assert.match(premium, /fetchMyCreatorPremiumCommercialSummary[\s\S]*parseCreatorPremiumCommercialSummary/);
   assert.match(premium, /video_attached:\s*boolean/);
   assert.match(premium, /video_media_ready:\s*boolean/);
   const profile = read('app/creator/[id].tsx');

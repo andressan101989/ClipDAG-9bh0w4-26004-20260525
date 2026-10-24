@@ -300,9 +300,6 @@ export default function ProfileScreen() {
   }
 
   const myVideos = profileVideos;
-  const totalLikes = myVideos.reduce((s, v) => s + (v.likes || 0), 0);
-  const totalViews = myVideos.reduce((s, v) => s + (v.viewsCount || 0), 0);
-  const dagEarned = (totalLikes * 0.01).toFixed(2);
   const avatarUri = user.avatar ||
     `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(user.username || user.email || 'user')}`;
   const userProfession = (user as any).profession || '';
@@ -618,7 +615,7 @@ export default function ProfileScreen() {
               sublabel="Premium DM, Suscripciones, Ganancias"
               gradient={['#A855F7', '#7C5CFF']}
               onPress={() => router.push('/creator-monetization')}
-              rightText={`${dagEarned} $DAG`}
+              rightText="Verificado"
             />
             <View style={styles.settingsDivider} />
             <SettingsItem

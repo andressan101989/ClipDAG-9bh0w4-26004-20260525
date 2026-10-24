@@ -13,8 +13,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/useAuth';
 import { formatCreatorPremiumBdag } from '@/services/creatorPremiumPresentation.mjs';
+import { creatorPremiumErrorMessage } from '@/services/creatorPremiumIntegrationState';
 import {
-  CREATOR_PREMIUM_FINANCE_AVAILABLE, CREATOR_PREMIUM_REPORT_REASONS,
+  CREATOR_PREMIUM_REPORT_REASONS,
   fetchCreatorPremiumCommerce, getCurrentCreatorPremiumUserId,
   reportCreatorPremiumContent, type CreatorPremiumCommerce,
   type CreatorPremiumReportReason,
@@ -22,8 +23,7 @@ import {
 import { rememberCreatorPremiumContentKind } from '@/services/creatorPremiumViewerRuntime.mjs';
 import { purchaseContent, subscribeToPlan } from '@/services/financial/ledgerClient';
 
-const message = (cause: unknown) => cause instanceof Error && cause.message
-  ? cause.message : 'No pudimos completar la operación.';
+const message = (cause: unknown) => creatorPremiumErrorMessage(cause);
 
 export default function CreatorPremiumOfferScreen() {
   const { contentId } = useLocalSearchParams<{ contentId?: string }>();
@@ -121,8 +121,19 @@ function CreatorPremiumOfferScreenContent() {
   }, [commerce, router, user?.id]);
 
   const purchaseAllowed = Boolean(
-    CREATOR_PREMIUM_FINANCE_AVAILABLE && commerce?.operations.purchase_available,
+    commerce?.policy.purchase_enabled && commerce?.operations.purchase_available,
   );
+  const readBackCommerce = useCallback(async (): Promise<CreatorPremiumCommerce> => {
+    if (!contentId) throw new Error('creator_premium_content_not_found');
+    const generation = contextGeneration.current;
+    const request = ++requestGeneration.current;
+    const next = await fetchCreatorPremiumCommerce(contentId);
+    if (generation !== contextGeneration.current || request !== requestGeneration.current) {
+      throw new Error('creator_premium_financial_readback_stale');
+    }
+    setCommerce(next);
+    return next;
+  }, [contentId]);
   const runPurchase = useCallback(async () => {
     if (!commerce?.offer || !purchaseAllowed || !user?.id || inFlight.current) return;
     const generation = contextGeneration.current;
@@ -133,8 +144,11 @@ function CreatorPremiumOfferScreenContent() {
       const result = await purchaseContent({ contentId: commerce.content.id, idempotencyKey: purchaseAttempt.current });
       if (generation !== contextGeneration.current) return;
       if (!result?.success) throw new Error(typeof result?.error === 'string' ? result.error : 'creator_premium_purchase_failed');
+      const confirmed = await readBackCommerce();
+      if (!confirmed.entitlement.allowed || confirmed.entitlement.source !== 'purchase') {
+        throw new Error('creator_premium_purchase_readback_pending');
+      }
       purchaseAttempt.current = randomUUID();
-      await load(true);
       if (generation === contextGeneration.current) {
         Alert.alert('Compra confirmada', 'Tu acceso se verificó en el servidor.');
       }
@@ -147,11 +161,12 @@ function CreatorPremiumOfferScreenContent() {
         if (generation === contextGeneration.current) setBusy(null);
       }
     }
-  }, [commerce, load, purchaseAllowed, user?.id]);
+  }, [commerce, purchaseAllowed, readBackCommerce, user?.id]);
 
   const runSubscription = useCallback(async (planId: string) => {
     const plan = commerce?.plans.find(item => item.id === planId);
-    if (!plan?.subscription_available || !CREATOR_PREMIUM_FINANCE_AVAILABLE || !user?.id || inFlight.current) return;
+    const operationAllowed = Boolean(plan?.subscription_available || plan?.renewal_available);
+    if (!plan || !operationAllowed || !commerce?.policy.subscription_enabled || !user?.id || inFlight.current) return;
     const generation = contextGeneration.current;
     const operationId = randomUUID();
     activeOperation.current = operationId;
@@ -162,10 +177,20 @@ function CreatorPremiumOfferScreenContent() {
       const result = await subscribeToPlan({ planId, idempotencyKey });
       if (generation !== contextGeneration.current) return;
       if (!result?.success) throw new Error(typeof result?.error === 'string' ? result.error : 'creator_premium_subscription_failed');
+      const confirmed = await readBackCommerce();
+      const confirmedPlan = confirmed.plans.find(item => item.id === planId);
+      if (!confirmedPlan?.relationship
+          || confirmedPlan.relationship.access_state !== 'active'
+          || !confirmedPlan.relationship.paid_through_at
+          || Date.parse(confirmedPlan.relationship.paid_through_at) <= Date.now()) {
+        throw new Error('creator_premium_subscription_readback_pending');
+      }
       subscriptionAttempts.current.delete(planId);
-      await load(true);
       if (generation === contextGeneration.current) {
-        Alert.alert('Suscripción confirmada', 'El periodo y el acceso se verificaron en el servidor.');
+        Alert.alert(
+          plan.renewal_available ? 'Renovación confirmada' : 'Suscripción confirmada',
+          'El periodo y el acceso se verificaron en el servidor.',
+        );
       }
     } catch (cause) {
       if (generation === contextGeneration.current) Alert.alert('Suscripción no completada', message(cause));
@@ -176,7 +201,7 @@ function CreatorPremiumOfferScreenContent() {
         if (generation === contextGeneration.current) setBusy(null);
       }
     }
-  }, [commerce, load, user?.id]);
+  }, [commerce, readBackCommerce, user?.id]);
 
   const sendReport = useCallback(async () => {
     const normalizedReason = reportReason.trim().toLowerCase();
@@ -203,9 +228,18 @@ function CreatorPremiumOfferScreenContent() {
     }
   }, [contentId, reportDetails, reportReason]);
 
-  const financeMessage = useMemo(() => !CREATOR_PREMIUM_FINANCE_AVAILABLE
-    ? 'Compras y suscripciones siguen deshabilitadas mientras se completa la activación comercial y de tiendas.'
-    : 'Esta opción no está habilitada por la autoridad comercial del servidor.', []);
+  const financeMessage = useMemo(() => {
+    if (!commerce) return 'La autoridad comercial no está disponible.';
+    if (!commerce.policy.purchase_enabled && !commerce.policy.subscription_enabled) {
+      return 'Compras y suscripciones están deshabilitadas por la política financiera del servidor.';
+    }
+    const blocker = commerce.operations.purchase_blocker
+      ?? commerce.plans.find(plan => plan.subscription_blocker || plan.renewal_blocker)?.subscription_blocker
+      ?? commerce.plans.find(plan => plan.renewal_blocker)?.renewal_blocker;
+    return blocker
+      ? creatorPremiumErrorMessage(new Error(blocker))
+      : 'El servidor habilita únicamente las operaciones que superan todos los controles financieros.';
+  }, [commerce]);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -289,7 +323,8 @@ function CreatorPremiumOfferScreenContent() {
               ) : null}
               {commerce.plans.map(plan => {
                 const allowed = Boolean(
-                  CREATOR_PREMIUM_FINANCE_AVAILABLE && plan.subscription_available,
+                  commerce.policy.subscription_enabled
+                  && (plan.subscription_available || plan.renewal_available),
                 );
                 return (
                   <View key={plan.id} style={styles.card}>
@@ -297,7 +332,7 @@ function CreatorPremiumOfferScreenContent() {
                       <View style={styles.flex}>
                         <Text style={styles.cardTitle}>{plan.name}</Text>
                         <Text style={styles.muted}>{plan.description || "Plan del creador"}</Text>
-                        <Text style={styles.period}>Cada {plan.billing_period_days} días · sin renovación automática</Text>
+                        <Text style={styles.period}>Cada {plan.billing_period_days} días · renovación manual</Text>
                         {plan.relationship ? (
                           <Text style={styles.period}>
                             Relación {plan.relationship.status} · acceso hasta {plan.relationship.paid_through_at ?? "sin periodo vigente"}
@@ -312,12 +347,20 @@ function CreatorPremiumOfferScreenContent() {
                       onPress={() => void runSubscription(plan.id)}
                     >
                       {busy === plan.id ? <ActivityIndicator color="#fff" /> : (
-                        <Text style={styles.primaryText}>{allowed ? "Suscribirse" : "Suscripción no habilitada"}</Text>
+                        <Text style={styles.primaryText}>{allowed ? (plan.renewal_available ? "Renovar periodo" : "Suscribirse") : "Suscripción no habilitada"}</Text>
                       )}
                     </Pressable>
                   </View>
                 );
               })}
+              {commerce.plans_truncated ? (
+                <View style={styles.notice}>
+                  <MaterialCommunityIcons name="alert-circle-outline" size={20} color={Colors.info} />
+                  <Text style={styles.noticeText}>
+                    No se muestran todos los planes. Refresca o gestiona tus opciones con el creador antes de continuar.
+                  </Text>
+                </View>
+              ) : null}
             </>
           )}
           <Pressable style={styles.reportLink} onPress={() => setReportOpen(true)}>

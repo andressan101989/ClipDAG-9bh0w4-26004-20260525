@@ -41,7 +41,10 @@ test('canonical Creator Premium client owns every B5 management RPC', () => {
     'delete_my_creator_premium_draft_v1',
     'get_my_creator_premium_content_v1',
   ]) assert.match(service, new RegExp(`['"]${rpc}['"]`));
-  assert.match(service, /CREATOR_PREMIUM_FINANCE_AVAILABLE:\s*boolean\s*=\s*false/);
+  assert.doesNotMatch(service, /CREATOR_PREMIUM_FINANCE_AVAILABLE/);
+  assert.match(service, /CreatorPremiumFinancePolicy/);
+  assert.match(service, /parseCreatorPremiumCommercialSummary/);
+  assert.match(service, /fetchMyCreatorPremiumCommercialSummary[\s\S]*parseCreatorPremiumCommercialSummary/);
 });
 
 test('commercial price input remains an exact canonical decimal string through PostgREST', () => {
@@ -67,7 +70,10 @@ test('video upload result stays safe while B5 replacement remains server-authori
 
 test('canonical Hub replaces legacy Premium DM and fake earnings UI', () => {
   assert.match(hub, /Contenido Premium/);
-  assert.match(hub, /Ventas y suscripciones aún no están habilitadas/);
+  assert.match(hub, /summary\.policy\.purchase_enabled\s*\|\|\s*summary\.policy\.subscription_enabled/);
+  assert.match(hub, /Finance Premium está deshabilitado por la política del servidor/);
+  assert.match(hub, /fetchMyCreatorPremiumFinancialHistory/);
+  assert.match(hub, /Historial financiero verificado/);
   assert.match(hub, /Contenido/);
   assert.match(hub, /Planes/);
   assert.match(hub, /fetchMyCreatorPremiumContents/);

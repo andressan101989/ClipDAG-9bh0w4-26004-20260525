@@ -9,11 +9,21 @@
  *   - FunctionsHttpError is always unpacked for human-readable messages
  *   - No amount calculation happens here — backend is single source of truth
  *   - All write operations go through bdag-ledger Edge Function
- *   - Detailed console.log before and after every invoke()
+ *   - Logs contain operation metadata only, never financial receipts or private targets
  */
 
 import { getSupabaseClient } from '@/template';
 import { getWithdrawalConfigFromBackend } from '@/services/walletApi';
+import {
+  parseCreatorPremiumCancellationReceipt,
+  parseCreatorPremiumPurchaseReceipt,
+  parseCreatorPremiumSubscriptionReceipt,
+} from '@/services/creatorPremiumFinanceContracts.mjs';
+import type {
+  CreatorPremiumCancellationReceipt,
+  CreatorPremiumPurchaseReceipt,
+  CreatorPremiumSubscriptionReceipt,
+} from '@/services/creatorPremiumFinanceContracts.mjs';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 
 const supabase = () => getSupabaseClient();
@@ -45,14 +55,14 @@ async function extractError(error: unknown): Promise<string> {
       let parsed: any;
       try { parsed = JSON.parse(text ?? '{}'); } catch { parsed = {}; }
       const msg = parsed?.error ?? parsed?.message ?? text ?? error.message;
-      console.error(`[ledgerClient] FunctionsHttpError [${statusCode}]:`, msg);
+      console.error(`[ledgerClient] FunctionsHttpError [${statusCode}]`);
       return `${msg}`;
     } catch {
       return error.message;
     }
   }
   const msg = error instanceof Error ? error.message : String(error);
-  console.error('[ledgerClient] error:', msg);
+  console.error('[ledgerClient] operation error');
   return msg;
 }
 
@@ -73,21 +83,20 @@ async function invokeLedger(
     idempotency_key: idempotencyKey,
   };
 
-  // Log payload before every invoke (idempotency key truncated for brevity)
+  // Never log target identifiers, monetary inputs, receipts, or provider payloads.
   console.log('[ledgerClient] invoke bdag-ledger', action, {
-    ...body,
-    idempotency_key: idempotencyKey.slice(0, 30) + '...',
+    idempotent: Boolean(idempotencyKey),
   });
 
   const { data, error } = await supabase().functions.invoke('bdag-ledger', { body });
 
   if (error) {
     const msg = await extractError(error);
-    console.error('[ledgerClient] bdag-ledger error', action, msg);
+    console.error('[ledgerClient] bdag-ledger error', action);
     return { success: false, error: msg };
   }
 
-  console.log('[ledgerClient] bdag-ledger response', action, data);
+  console.log('[ledgerClient] bdag-ledger response', action, { success: data?.success === true });
 
   if (!data?.success) return { success: false, error: data?.error ?? 'operation failed' };
   return { success: true, data: data.data ?? data };
@@ -234,38 +243,80 @@ export async function transferBDAG(params: {
 }
 
 /** Purchase canonical Creator Premium content. Price and split are server-derived. */
-export async function purchaseContent(params: { contentId: string; idempotencyKey?: string }) {
+export async function purchaseContent(params: {
+  contentId: string;
+  idempotencyKey?: string;
+}): Promise<
+  | { success: true; data: CreatorPremiumPurchaseReceipt }
+  | { success: false; error: string }
+> {
   if (!UUID_RE.test(params.contentId)) return { success: false, error: 'creator_premium_invalid_content_id' };
-  return invokeLedger(
+  const result = await invokeLedger(
     'creator_premium_purchase',
     { content_id: params.contentId },
     { uuidIdempotency: true, idempotencyKey: params.idempotencyKey },
   );
+  if (!result.success || !result.data) {
+    return { success: false, error: result.error ?? 'creator_premium_purchase_failed' };
+  }
+  try {
+    return { success: true, data: parseCreatorPremiumPurchaseReceipt(result.data, params.contentId) };
+  } catch {
+    return { success: false, error: 'creator_premium_purchase_receipt_invalid' };
+  }
 }
 
-/** Start the initial canonical Creator Premium plan period. */
-export async function subscribeToPlan(params: { planId: string; idempotencyKey?: string }) {
+/** Start or renew a canonical Creator Premium plan period. */
+export async function subscribeToPlan(params: {
+  planId: string;
+  idempotencyKey?: string;
+}): Promise<
+  | { success: true; data: CreatorPremiumSubscriptionReceipt }
+  | { success: false; error: string }
+> {
   if (!UUID_RE.test(params.planId)) return { success: false, error: 'creator_premium_invalid_plan_id' };
-  return invokeLedger(
+  const result = await invokeLedger(
     'creator_premium_subscribe',
     { plan_id: params.planId },
     { uuidIdempotency: true, idempotencyKey: params.idempotencyKey },
   );
+  if (!result.success || !result.data) {
+    return { success: false, error: result.error ?? 'creator_premium_subscription_failed' };
+  }
+  try {
+    return { success: true, data: parseCreatorPremiumSubscriptionReceipt(result.data, params.planId) };
+  } catch {
+    return { success: false, error: 'creator_premium_subscription_receipt_invalid' };
+  }
 }
 
 /** Cancel a Creator Premium relationship without moving money. */
 export async function cancelCreatorPremiumSubscription(params: {
   subscriptionId: string;
   idempotencyKey?: string;
-}) {
+}): Promise<
+  | { success: true; data: CreatorPremiumCancellationReceipt }
+  | { success: false; error: string }
+> {
   if (!UUID_RE.test(params.subscriptionId)) {
     return { success: false, error: 'creator_premium_invalid_subscription_id' };
   }
-  return invokeLedger(
+  const result = await invokeLedger(
     'creator_premium_cancel_subscription',
     { subscription_id: params.subscriptionId },
     { uuidIdempotency: true, idempotencyKey: params.idempotencyKey },
   );
+  if (!result.success || !result.data) {
+    return { success: false, error: result.error ?? 'creator_premium_cancellation_failed' };
+  }
+  try {
+    return {
+      success: true,
+      data: parseCreatorPremiumCancellationReceipt(result.data, params.subscriptionId),
+    };
+  } catch {
+    return { success: false, error: 'creator_premium_cancellation_receipt_invalid' };
+  }
 }
 
 /** Send a tip/gift to another user. Optional video attribution. 10% platform fee. */

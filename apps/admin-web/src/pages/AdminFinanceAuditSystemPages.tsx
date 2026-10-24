@@ -1,9 +1,9 @@
-import {useEffect,useRef,useState,type ReactNode} from "react";
+import {useEffect,useRef,useState,type FormEvent,type ReactNode} from "react";
 import {Link,useParams} from "react-router-dom";
 import {EmptyState,ErrorState,LoadingState} from "../components/PageState";
 import {AdminFact,AdminFactGrid,AdminIdentity,AdminStatusPanel,AdminTimeline,asRecord,asRows,humanDuration,humanValue,shortId} from "../components/AdminPresentation";
-import {formatAdminMoney,formatAdminUsd} from "../lib/adminMoney";
-import {getAdminFinanceOverview,getAdminFinanceReconciliation,getAdminFinancialTransactionDetail,getAdminPlatformRevenue,getAdminSystemHealth,getAdminSystemJobDetail,searchAdminFinanceAnomalies,searchAdminFinanceAudit,searchAdminFinancialTransactions,searchAdminGlobalAudit,searchAdminLedgerAccounts,searchAdminSystemAudit,searchAdminSystemJobs,type JsonRecord} from "../lib/adminObservabilityApi";
+import {formatAdminExactMoney,formatAdminMoney,formatAdminUsd} from "../lib/adminMoney";
+import {getAdminFinanceOverview,getAdminFinanceReconciliation,getAdminFinancialTransactionDetail,getAdminPlatformRevenue,getAdminSystemHealth,getAdminSystemJobDetail,searchAdminCreatorPremiumFinance,searchAdminFinanceAnomalies,searchAdminFinanceAudit,searchAdminFinancialTransactions,searchAdminGlobalAudit,searchAdminLedgerAccounts,searchAdminSystemAudit,searchAdminSystemJobs,type AdminCreatorPremiumFinanceResponse,type AdminCreatorPremiumFinanceSource,type AdminCreatorPremiumFinanceState,type JsonRecord} from "../lib/adminObservabilityApi";
 
 function useRead<T>(load:()=>Promise<T>,queryKey:string){const loadRef=useRef(load),[value,setValue]=useState<T|null>(null),[error,setError]=useState<string|null>(null),[nonce,setNonce]=useState(0);loadRef.current=load;useEffect(()=>{let active=true;setValue(null);setError(null);void loadRef.current().then((result)=>{if(active)setValue(result)}).catch((reason)=>{if(active)setError(reason instanceof Error?reason.message:"Error de consulta")});return()=>{active=false}},[nonce,queryKey]);return{value,error,retry:()=>setNonce((x)=>x+1)}}
 function Frame({eyebrow,title,detail,children}:{eyebrow:string;title:string;detail:string;children:ReactNode}){return <><div className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2><p>{detail}</p></div></div>{children}</>}
@@ -15,7 +15,7 @@ const financeFact=(key:string,value:unknown)=>/(^|_)(amount|balance|fee|revenue|
 function Distribution({title,value,labelKey="status"}:{title:string;value:unknown;labelKey?:string}){const items=rows(value);return <section className="detail-card"><h3>{title}</h3>{items.length===0?<p className="muted-text">Sin datos.</p>:<div className="status-list">{items.map((item,index)=>{const detail=[item.status&&labelKey!=="status"?humanValue(item.status):null,`${count(item.count??item.account_count)} registros`,item.balance_total!==undefined?`${formatAdminMoney(item.balance_total,item.currency)} de balance`:null].filter(Boolean).join(" · ");return <AdminStatusPanel key={`${humanValue(item[labelKey])}-${index}`} title={humanValue(item[labelKey],"Sin clasificar")} detail={detail} tone="neutral"/>})}</div>}</section>}
 
 type RevenuePeriod="today"|"month"|"year"|"all";
-const revenuePeriods:Array<{value:RevenuePeriod;label:string}>=[{value:"today",label:"Hoy"},{value:"month",label:"Mes"},{value:"year",label:"Año"},{value:"all",label:"Histórico"}];
+const revenuePeriods:{value:RevenuePeriod;label:string}[]=[{value:"today",label:"Hoy"},{value:"month",label:"Mes"},{value:"year",label:"Año"},{value:"all",label:"Histórico"}];
 function PlatformRevenue(){
   const [period,setPeriod]=useState<RevenuePeriod>("year"),state=useRead(()=>getAdminPlatformRevenue(period),period);
   return <section className="platform-revenue" aria-labelledby="platform-revenue-title"><Ready {...state}>{(value)=>{
@@ -37,6 +37,63 @@ function PlatformRevenue(){
 }
 
 export function AdminFinanceOverviewPage(){const state=useRead(getAdminFinanceOverview,"overview");return <Frame eyebrow="FINANCE · READ ONLY" title="Finanzas" detail="Resumen del ledger canónico sin acciones financieras."><PlatformRevenue/><Ready {...state}>{(value)=><><section className="detail-card"><h3>Resumen financiero</h3><AdminFactGrid><AdminFact label="Transacciones" value={count(value.financial_transaction_count)}/><AdminFact label="Cuentas ledger" value={count(value.ledger_account_count)}/><AdminFact label="Entradas ledger" value={count(value.ledger_entry_count)}/><AdminFact label="Cuentas congeladas" value={count(value.frozen_account_count)}/><AdminFact label="Settlements" value={count(value.marketplace_settlement_count)}/><AdminFact label="Refunds" value={count(value.marketplace_refund_count)}/></AdminFactGrid></section><section className="detail-grid"><Distribution title="Transacciones por estado" value={value.transactions_by_status}/><Distribution title="Transacciones por operación" value={value.transactions_by_operation} labelKey="operation_type"/><Distribution title="Cuentas por tipo" value={value.accounts_by_type} labelKey="account_type"/><Distribution title="Blockchain settlements" value={value.blockchain_settlements_by_status}/></section></>}</Ready></Frame>}
+
+const creatorPremiumFinanceCapability="finance.ledger.read";
+const creatorPremiumFinanceStates:{value:AdminCreatorPremiumFinanceState|"";label:string}[]=[
+  {value:"",label:"Todos los estados"},{value:"active",label:"Activo"},{value:"cancelled",label:"Cancelado"},
+  {value:"expired",label:"Expirado"},{value:"revoked",label:"Revocado"},{value:"refunded",label:"Reembolsado"},
+];
+const reconciliationLabel=(value:string)=>value.replaceAll("_"," ").replace(/^./,(letter)=>letter.toUpperCase());
+
+export function AdminCreatorPremiumFinancePage(){
+  const [source,setSource]=useState<AdminCreatorPremiumFinanceSource|"">(""),[statusFilter,setStatusFilter]=useState<AdminCreatorPremiumFinanceState|"">(""),[queryDraft,setQueryDraft]=useState(""),[query,setQuery]=useState("");
+  const [result,setResult]=useState<AdminCreatorPremiumFinanceResponse|null>(null),[error,setError]=useState<string|null>(null),[loadingMore,setLoadingMore]=useState(false),[nonce,setNonce]=useState(0);
+  const requestGeneration=useRef(0);
+  useEffect(()=>{
+    const generation=++requestGeneration.current;
+    setResult(null);setError(null);setLoadingMore(false);
+    void searchAdminCreatorPremiumFinance({p_source:source||null,p_state:statusFilter||null,p_query:query.trim()||null,p_cursor_created_at:null,p_cursor_reference_id:null,p_limit:100})
+      .then((value)=>{if(requestGeneration.current===generation)setResult(value)})
+      .catch((reason)=>{if(requestGeneration.current===generation)setError(reason instanceof Error?reason.message:"No se pudo consultar Creator Premium")});
+  },[source,statusFilter,query,nonce]);
+  const loadMore=async()=>{
+    const cursor=result?.next_cursor;
+    if(!cursor||loadingMore)return;
+    const generation=requestGeneration.current;
+    setLoadingMore(true);setError(null);
+    try{
+      const next=await searchAdminCreatorPremiumFinance({p_source:source||null,p_state:statusFilter||null,p_query:query.trim()||null,p_cursor_created_at:cursor.created_at,p_cursor_reference_id:cursor.reference_id,p_limit:100});
+      if(requestGeneration.current!==generation)return;
+      setResult((current)=>{
+        if(!current)return next;
+        const facts=new Map(current.items.map((item)=>[`${item.source}:${item.reference_id}`,item]));
+        next.items.forEach((item)=>facts.set(`${item.source}:${item.reference_id}`,item));
+        return{...next,items:[...facts.values()]};
+      });
+    }catch(reason){if(requestGeneration.current===generation)setError(reason instanceof Error?reason.message:"No se pudo cargar la página siguiente")}finally{if(requestGeneration.current===generation)setLoadingMore(false)}
+  };
+  const financeOff=result!==null&&!result.policy.purchase_enabled&&!result.policy.subscription_enabled&&!result.policy.refunds_enabled&&result.policy.platform_fee_bps===0;
+  const applySearch=(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();setQuery(queryDraft.trim())};
+  return <Frame eyebrow="CREATOR PREMIUM · READ ONLY" title="Finance · Creator Premium" detail="Compras, periodos, reembolsos y conciliación desde la autoridad financiera canónica.">
+    <div data-capability={creatorPremiumFinanceCapability}>
+      <form className="filters" onSubmit={applySearch}>
+        <select aria-label="Origen Premium" value={source} onChange={(event)=>setSource(event.target.value as AdminCreatorPremiumFinanceSource|"")}><option value="">Todos los orígenes</option><option value="purchase">Compras</option><option value="subscription">Suscripciones</option></select>
+        <select aria-label="Estado Premium" value={statusFilter} onChange={(event)=>setStatusFilter(event.target.value as AdminCreatorPremiumFinanceState|"")}>{creatorPremiumFinanceStates.map((item)=><option key={item.value||"all"} value={item.value}>{item.label}</option>)}</select>
+        <input type="search" aria-label="Buscar comercio Premium" placeholder="Contenido, plan o identidad" maxLength={120} value={queryDraft} onChange={(event)=>setQueryDraft(event.target.value)}/>
+        <button className="secondary" type="submit">Buscar</button>
+      </form>
+      {error&&result===null?<ErrorState message={error} onRetry={()=>setNonce((value)=>value+1)}/>:result===null?<LoadingState label="Consultando comercio Premium…"/>:<>
+        {error?<ErrorState message={error} onRetry={()=>void loadMore()}/>:null}
+        <section className="detail-grid">
+          <section className="detail-card"><h3>Política Finance Premium</h3><AdminStatusPanel title={financeOff?"Finance OFF":"Configuración financiera habilitada"} detail={financeOff?"Compras, suscripciones y reembolsos productivos permanecen deshabilitados.":"Esta proyección refleja la política server-side vigente."} tone={financeOff?"neutral":"warning"}/><AdminFactGrid><AdminFact label="Compras" value={result.policy.purchase_enabled?"Habilitadas":"Deshabilitadas"}/><AdminFact label="Suscripciones" value={result.policy.subscription_enabled?"Habilitadas":"Deshabilitadas"}/><AdminFact label="Reembolsos" value={result.policy.refunds_enabled?"Habilitados":"Deshabilitados"}/><AdminFact label="Comisión" value={`${result.policy.platform_fee_bps} bps`}/><AdminFact label="Versión" value={result.policy.policy_version}/></AdminFactGrid></section>
+          <section className="detail-card"><h3>Resumen Creator Premium</h3><AdminFactGrid><AdminFact label="Compras" value={count(result.counts.purchase_receipts)}/><AdminFact label="Relaciones" value={count(result.counts.subscription_relationships)}/><AdminFact label="Periodos" value={count(result.counts.subscription_periods)}/><AdminFact label="Reembolsos" value={count(result.counts.refunds)}/><AdminFact label="Fallos de integridad" value={count(result.counts.integrity_failures)}/></AdminFactGrid></section>
+          <section className="detail-card"><h3>Reconciliación</h3><div className="status-list">{Object.entries(result.reconciliation).length===0?<p className="muted-text">Sin contadores de reconciliación.</p>:Object.entries(result.reconciliation).map(([key,value])=><AdminStatusPanel key={key} title={reconciliationLabel(key)} detail={`${value} hallazgos`} tone={value===0?"success":"danger"}/>)}</div></section>
+        </section>
+        <section className="table-panel"><div className="orders-table human-table" role="table"><div className="table-head" role="row"><span>Tipo</span><span>Contenido / plan</span><span>Cliente</span><span>Creador</span><span>Importes</span><span>Estado / fecha</span></div>{result.items.length===0?<EmptyState title="Sin hechos financieros Premium" detail="No hay coincidencias para estos filtros."/>:result.items.map((item)=><div className="table-row" role="row" key={`${item.source}:${item.reference_id}`}><span>{item.source==="purchase"?"Compra":"Suscripción"}<small><code>{shortId(item.reference_id)}</code></small></span><span><strong>{item.content_title??item.plan_name??"Referencia histórica"}</strong><small>{item.content_id?`Contenido ${shortId(item.content_id)}`:`Plan ${shortId(item.plan_id)}`}</small></span><span><AdminIdentity value={item.customer} compact/></span><span><AdminIdentity value={item.creator} compact/></span><span><strong>{formatAdminExactMoney(item.gross_amount_bdag,item.currency)}</strong><small>Fee {formatAdminExactMoney(item.platform_fee_bdag,item.currency)} · Neto {formatAdminExactMoney(item.creator_net_bdag,item.currency)}</small></span><span><span className={`status ${item.verified?"success":"danger"}`}>{item.verified?"Íntegro":"Revisar integridad"}</span><small>{humanValue(item.subscription_status??item.access_state)} · {date(item.created_at)}</small>{item.refunded_at?<small>Reembolsado {date(item.refunded_at)}</small>:null}</span></div>)}</div>{result.next_cursor?<button className="secondary" type="button" disabled={loadingMore} onClick={()=>void loadMore()}>{loadingMore?"Cargando…":"Cargar más"}</button>:null}</section>
+      </>}
+    </div>
+  </Frame>;
+}
 
 export function AdminLedgerAccountsPage(){const [accountType,setAccountType]=useState(""),[currency,setCurrency]=useState("");const state=useRead(()=>searchAdminLedgerAccounts({p_account_type:accountType||null,p_currency:currency||null,p_limit:100}),`${accountType}|${currency}`);return <Frame eyebrow="CANONICAL LEDGER" title="Cuentas" detail="Balances y propietarios con identidad pública mínima."><div className="filters"><input aria-label="Tipo de cuenta" placeholder="Tipo de cuenta" value={accountType} onChange={(e)=>setAccountType(e.target.value)}/><input aria-label="Moneda" placeholder="Moneda" value={currency} onChange={(e)=>setCurrency(e.target.value)}/></div>{state.error?<ErrorState message={state.error} onRetry={state.retry}/>:!state.value?<LoadingState label="Consultando cuentas…"/>:<section className="table-panel"><div className="orders-table human-table" role="table"><div className="table-head" role="row"><span>Cuenta</span><span>Tipo</span><span>Propietario</span><span>Moneda</span><span>Balance</span><span>Estado</span></div>{state.value.items.length===0?<EmptyState title="Sin cuentas" detail="No hay coincidencias."/>:state.value.items.map((item)=><div className="table-row" role="row" key={String(item.id)}><span><code>{shortId(item.id)}</code></span><span>{humanValue(item.account_type)}</span><span><AdminIdentity value={asRecord(item.owner)} compact/></span><span>{humanValue(item.currency)}</span><span>{formatAdminMoney(item.balance,item.currency)}</span><span><span className={`status ${item.frozen===true?"warning":"success"}`}>{item.frozen===true?"Congelada":"Operativa"}</span></span></div>)}</div></section>}</Frame>}
 
