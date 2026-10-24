@@ -36,7 +36,7 @@ const P3_C2_SOURCE_SHA = 'd8fc23a8d823494df68af7aaf93314c30631b5aa';
 const F2_NEGATIVE_TEST_EVIDENCE_SHA256 = '222539db2b37c976322690504e9d7574d59343adf7aef9ab83262a88c665c2d8';
 const F2_MIGRATION = '20261024173500_creator_premium_f2_complete_monetization';
 const F2_MIGRATION_BLOB = 'fce8789a0c79251afbe962bd39f6bd81ae248296';
-const F2_SOURCE_SHA = '93aca037d35dd683f2b0857fa9b343c36b7ffda5';
+const F2_SOURCE_SHA = '97f6638acaa5be2af336b427184c11185e3d0fe1';
 const F2_MANAGED_SCOPE_TRANSITION = Object.freeze({
   id: 'creator-premium-f2-bdag-ledger-enrollment-v1',
   state: 'attested_one_time',
