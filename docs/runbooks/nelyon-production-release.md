@@ -10,7 +10,7 @@ agree.
 
 `finance_authority_transition` authorizes only the exact foundation delta from
 baseline `238e987933c7198400534121e61fb3d2750ba5ba`. The immutable reviewed source
-`27ff8b3861f901c548ee4c6abc054bc805d63f09` is an audit reference for the exact
+`a581c2dcfbabdfeed3a80e866b9d69a75b3f1d4e` is an audit reference for the exact
 productive blobs, rather than a required ancestor or available Git object after
 GitHub Rebase and merge. The final approved release SHA must preserve the verified
 chain `238e987933c7198400534121e61fb3d2750ba5ba` → stable pre-F3 protected-main
@@ -23,8 +23,8 @@ the entire productive diff from the verified baseline match the protected policy
 
 The entire productive closure is one new migration,
 `20261025011000_creator_premium_f3_bounded_financial_activation.sql` (Git blob
-`8338634c5341fcadd102cdeb34eb1f9dc701af6d`, SHA-256
-`1fea4ed72b0aaee90f066e24307547fb0305aa96e597d75c9eb21bb93384aec5`), and the
+`840497036e4ff8a0dbd99888de47337dcaea98ee`, SHA-256
+`a217445d138aeb3efe2a8d734ef28089c4f0f0f69378c05b392d1056fe772d53`), and the
 changed existing `bdag-ledger` source (bundle SHA-256
 `8a07c5887d4550e58f554530bcca3dcd84293c074854456fb1c666ad7a73f977`).
 The committed config blob is unchanged; config is not a productive resource in
@@ -32,6 +32,12 @@ this release. Additional migrations, functions, shared files or config changes,
 missing/extra attestations, wrong ancestors, altered bytes and transition reuse
 after baseline promotion fail closed. `bdag-ledger` is already managed; no
 second function is enrolled. Risk remains HIGH.
+
+This reviewed source includes the v1 subscription-history compatibility fix.
+The static private subscriptions projection authority digest is
+`2467cb611384255f07b87e46a6eedb3de22a7d70d0d0324bd4e02d6701e4fd33`.
+The earlier migration/projection bytes fail closed; public RPC definition/grant
+attestations, relation authority and the existing Edge bundle are unchanged.
 
 The separate versioned `finance_authority` evidence attests relation columns,
 constraints and validation, RESTRICT FKs, indexes and validity, enabled trigger

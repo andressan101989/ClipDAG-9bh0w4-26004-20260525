@@ -78,7 +78,13 @@ test('F3 disposable catalog verifies exact authority and detects real PostgreSQL
       execute pg_catalog.format('alter table %I.%I disable trigger %I',enforcement.schema_name,
         enforcement.relation_name,enforcement.trigger_name);
     end $$;`;
+    const projectionDefinition=rawPost.functions.find(row=>row.identity===
+      'private.creator_premium_subscriptions_projection_f3_v1(boolean, timestamp with time zone, uuid, integer)').authority.definition;
+    assert.match(projectionDefinition,/item\.access_active and not p_legacy/);
+    const staleProjection=projectionDefinition.replace('item.access_active and not p_legacy','item.access_active');
+    assert.notEqual(staleProjection,projectionDefinition);
     const mutations = [
+      ['stale pre-compatibility projection',`${staleProjection};`],
       ['disabled referencing FK enforcement trigger',disableForeignKeyTrigger('private.creator_premium_purchase_receipts','private.creator_premium_finance_authorizations','referencing')],
       ['disabled referenced FK enforcement trigger',disableForeignKeyTrigger('private.creator_premium_purchase_receipts','private.creator_premium_finance_authorizations','referenced')],
       ['disabled external referenced FK enforcement trigger',disableForeignKeyTrigger('private.creator_premium_finance_authorizations','auth.users','referenced')],
@@ -105,7 +111,11 @@ test('F3 disposable catalog verifies exact authority and detects real PostgreSQL
     ];
     for(const [label,mutation] of mutations) await t.test(label,()=>{
       const changed=JSON.parse(sql(`begin;${mutation}\n${adapter.FINANCE_AUTHORITY_SQL}\nrollback;`));
-      assert.throws(()=>adapter.validateFinanceAuthority(adapter.normalizeFinanceAuthority(changed,'f3_foundation'),policy,'f3_foundation'),/FINANCE_AUTHORITY/);
+      const normalized=adapter.normalizeFinanceAuthority(changed,'f3_foundation');
+      if(label==='stale pre-compatibility projection') assert.equal(normalized.functions.find(row=>row.identity===
+        'private.creator_premium_subscriptions_projection_f3_v1(boolean, timestamp with time zone, uuid, integer)').sha256,
+      'aa67c23015d3fd7c597459cef4eb816b25a5b8912329fc6c79b37d2c2b4e8be9');
+      assert.throws(()=>adapter.validateFinanceAuthority(normalized,policy,'f3_foundation'),/FINANCE_AUTHORITY/);
     });
     assert.equal(adapter.validateFinanceAuthority(adapter.normalizeFinanceAuthority(JSON.parse(sql(adapter.FINANCE_AUTHORITY_SQL)),'f3_foundation'),policy,'f3_foundation'),true);
   } finally { docker(['dropdb','-U','supabase_admin','--force','--if-exists',db]); }

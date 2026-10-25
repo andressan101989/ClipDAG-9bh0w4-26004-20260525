@@ -99,7 +99,7 @@ test('F3 foundation transition attests exact committed migration and sole existi
   const root = new URL('..', import.meta.url);
   const transition = policy.finance_authority_transition;
   assert.equal(transition?.phase, 'foundation_only');
-  const approvedSha = '27ff8b3861f901c548ee4c6abc054bc805d63f09';
+  const approvedSha = 'a581c2dcfbabdfeed3a80e866b9d69a75b3f1d4e';
   const changes = [
     { status: 'A', path: 'supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql' },
     { status: 'M', path: 'supabase/functions/bdag-ledger/index.ts' },
@@ -109,8 +109,8 @@ test('F3 foundation transition attests exact committed migration and sole existi
     migrations: [{ path: changes[0].path, version: '20261025011000' }], runGit };
   const result = gate.attestFinanceAuthorityTransition(input);
   assert.equal(result.attestation.approved_sha, approvedSha);
-  assert.equal(result.attestation.migration_blob, '8338634c5341fcadd102cdeb34eb1f9dc701af6d');
-  assert.equal(result.migrations[0].sha256, '1fea4ed72b0aaee90f066e24307547fb0305aa96e597d75c9eb21bb93384aec5');
+  assert.equal(result.attestation.migration_blob, '840497036e4ff8a0dbd99888de47337dcaea98ee');
+  assert.equal(result.migrations[0].sha256, 'a217445d138aeb3efe2a8d734ef28089c4f0f0f69378c05b392d1056fe772d53');
   const rootPath = decodeURIComponent(root.pathname.replace(/^\/([A-Za-z]:)/,'$1'));
   const sources = Object.fromEntries(Object.entries(collectFunctionSources(join(rootPath,'supabase','functions'),rootPath))
     .map(([path,source])=>[path,source.replace(/\r\n/g,'\n')]));
@@ -139,6 +139,7 @@ test('F3 foundation transition attests exact committed migration and sole existi
     {functionContracts:contracts.map(item=>({...item,source_sha256:'f'.repeat(64)}))},
   ]) assertDenied(()=>gate.buildManifest({...manifestInput,...patch}),'INVALID_FINANCE_AUTHORITY_TRANSITION');
   for (const patch of [
+    { approvedSha: '7ffe036f00d6e14b5ff1e2791867a6fcf3be921b' },
     { approvedSha: 'f'.repeat(40) }, { affectedFunctions: ['bdag-ledger', 'agora-token'] },
     { changes: [...changes, { status: 'M', path: 'supabase/config.toml' }] },
     { changes: [...changes, { status: 'A', path: 'supabase/migrations/20261025012000_extra.sql' }] },
@@ -179,6 +180,7 @@ test('F3 accepts rebase-merged commit identities only with baseline ancestry and
   git(['merge-base','--is-ancestor',transition.baseline_sha,integrationBase]);
   git(['merge-base','--is-ancestor',integrationBase,approvedSha]);
   assert.throws(()=>git(['merge-base','--is-ancestor','27ff8b3861f901c548ee4c6abc054bc805d63f09',approvedSha]));
+  assert.throws(()=>git(['merge-base','--is-ancestor','a581c2dcfbabdfeed3a80e866b9d69a75b3f1d4e',approvedSha]));
   git(['remote','set-url','origin',`https://github.com/${REPOSITORY}.git`]);
   git(['update-ref','refs/remotes/origin/main',approvedSha]);
   const state=gate.resolveGitState({cwd:repository,baselineSha:transition.baseline_sha,approvedSha,
@@ -189,10 +191,11 @@ test('F3 accepts rebase-merged commit identities only with baseline ancestry and
   assert.equal(result.attestation.approved_sha,approvedSha);
   assert.equal(result.attestation.integration_base_descendant_verified,true);
   assert.equal(result.attestation.baseline_descendant_verified,true);
-  assert.equal(result.migrations[0].blob,'8338634c5341fcadd102cdeb34eb1f9dc701af6d');
-  assert.equal(result.migrations[0].sha256,'1fea4ed72b0aaee90f066e24307547fb0305aa96e597d75c9eb21bb93384aec5');
+  assert.equal(result.migrations[0].blob,'840497036e4ff8a0dbd99888de47337dcaea98ee');
+  assert.equal(result.migrations[0].sha256,'a217445d138aeb3efe2a8d734ef28089c4f0f0f69378c05b392d1056fe772d53');
   const noReviewedBranchObjects=args=>{
-    if(args.some(argument=>argument.includes('27ff8b3861f901c548ee4c6abc054bc805d63f09'))) throw new Error('Original PR object unavailable after rebase merge');
+    if(args.some(argument=>['27ff8b3861f901c548ee4c6abc054bc805d63f09','a581c2dcfbabdfeed3a80e866b9d69a75b3f1d4e']
+      .some(source=>argument.includes(source)))) throw new Error('Original PR object unavailable after rebase merge');
     return git(args);
   };
   assert.equal(gate.attestFinanceAuthorityTransition({...input,runGit:noReviewedBranchObjects}).attestation.approved_sha,approvedSha);
