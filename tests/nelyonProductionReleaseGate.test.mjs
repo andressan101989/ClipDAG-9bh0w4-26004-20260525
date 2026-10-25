@@ -94,8 +94,17 @@ async function loadGateAndPolicy() {
   return { gate, policy };
 }
 
+function asF3TransitionPolicy(policy) {
+  const transitionPolicy = structuredClone(policy);
+  transitionPolicy.baseline.sha = policy.finance_authority_transition.baseline_sha;
+  transitionPolicy.baseline.migration_count = 351;
+  transitionPolicy.baseline.latest_migration = '20261024173500_creator_premium_f2_complete_monetization';
+  return transitionPolicy;
+}
+
 test('F3 foundation transition attests exact committed migration and sole existing Edge closure', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const { gate, policy: installedPolicy } = await loadGateAndPolicy();
+  const policy = asF3TransitionPolicy(installedPolicy);
   const root = new URL('..', import.meta.url);
   const transition = policy.finance_authority_transition;
   assert.equal(transition?.phase, 'foundation_only');
@@ -171,7 +180,8 @@ test('F3 foundation transition attests exact committed migration and sole existi
 });
 
 test('F3 accepts rebase-merged commit identities only with baseline ancestry and exact reviewed Git blobs', async t => {
-  const {gate,policy}=await loadGateAndPolicy();
+  const {gate,policy:installedPolicy}=await loadGateAndPolicy();
+  const policy=asF3TransitionPolicy(installedPolicy);
   const root=new URL('..',import.meta.url);
   const rootPath=decodeURIComponent(root.pathname.replace(/^\/([A-Za-z]:)/,'$1'));
   const temporary=mkdtempSync(join(tmpdir(),'nelyon-release-rebase-'));
@@ -419,7 +429,7 @@ function recoveryArtifactFixture(t, gate, policy, sourceIndex = 0) {
 
 async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
   const adapter = await import(`${adapterUrl.href}?recovery=${Date.now()}-${Math.random()}`);
-  const controlledPolicy = structuredClone(policy);
+  const controlledPolicy = asF3TransitionPolicy(policy);
   const recoveryRequest = request({
     mode: 'postcheck_recovery',
     scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
@@ -1137,6 +1147,50 @@ test('expanded managed scope has a verified static cutover control', async () =>
     mode: 'release',
     scopeConfirmation: 'RELEASE_STANDARD',
   }), policy).mode, 'release');
+});
+
+test('F3 production baseline is promoted from the exact successful recovery evidence', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  assert.equal(gate.validatePolicy(policy), true);
+  assert.deepEqual(policy.baseline, {
+    authority_source: 'owner-control-plane',
+    blocked_resources: [],
+    evidence: '0fed7fdbd3b8054fe9327ea25e04a335b0c2a8863d182e23acf0ee1b08a20b20',
+    evidence_digests: {
+      migrations: '2732c489ae10b887f72556ad92dd2694fba4fd51d94c6ad8c1449a4e48fb44a8',
+      managed_functions: 'a2e693b4083f343c2459cdb3e11cad295c9b084ecb6f8deeb457c71c91f0dd83',
+      unmanaged_functions: '26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc',
+      function_source_parity: '0980feb5ada4e589bc1b8ac9e4d0d6dcd4813420e573c8de726d78eb0f2ff917',
+      config_verify_jwt: '703749fce46f724c7c4e791f7a222915b166af0ded38f00f34f983798355ba15',
+      cron_security: '75f01b350823dbd47c20ad8e0d01a8b36add24029d5310bffac0983141085446',
+      finance: '0dfaec137cad5e9580a719845e34cd462c8e6b38577f5ca8882503610779d665',
+    },
+    latest_migration: '20261025011000_creator_premium_f3_bounded_financial_activation',
+    migration_count: 352,
+    prior_release: {
+      kind: 'post-release',
+      release_id: 'nelyon-creator-premium-f3-release-20261025T054152Z',
+      manifest_sha256: '7f329703901fbe8d6d3a38803b710e68780cb05c17c229ea091f01b5cff67a21',
+      postcheck_evidence_sha256: '44413b8f1c552a3c86eed3f8ebec4bf5958c814e77fb9dfa25d6b9b42fd3901d',
+    },
+    requires_separate_policy_commit: true,
+    reviewed_policy_sha256: '81b6e96aa2a9f97cf4581d7f1fea3cc5e3f6c2ec0933df0d421263b280fdef30',
+    sha: '8908c4f9e6b5d48614301e51b16793ed7ae6f895',
+    state: 'verified',
+    verified_at: '2026-10-25T06:58:41.304Z',
+    verified_by: OWNER,
+  });
+
+  const retired = gate.attestFinanceAuthorityTransition({
+    mode: 'plan_only',
+    policy,
+    approvedSha: MAIN_SHA,
+    changes: [{ status: 'M', path: policy.finance_authority_transition.function_path }],
+    migrations: [],
+    affectedFunctions: [policy.finance_authority_transition.function],
+    runGit: () => { throw new Error('promoted F3 baseline must not reuse transition attestation'); },
+  });
+  assert.deepEqual(retired, { migrations: [], attestation: null });
 });
 
 test('verified cutover requires a historical owner-bound control record', async () => {
