@@ -560,6 +560,17 @@ test('F2 managed-scope transition binds Git ancestry and the exact committed mig
     migration_blob: F2_MANAGED_SCOPE_TRANSITION.migration_blob,
   });
 
+  const recovery = gate.attestManagedScopeTransition({
+    cwd: 'C:/repo',
+    policy,
+    mode: 'postcheck_recovery',
+    approvedSha: 'a'.repeat(40),
+    migrations,
+    affectedFunctions: ['bdag-ledger'],
+    runGit: () => { throw new Error('recovery must not inspect transition Git evidence'); },
+  });
+  assert.deepEqual(recovery, { migrations, attestation: null });
+
   assertDenied(() => gate.attestManagedScopeTransition({
     cwd: 'C:/repo',
     policy,
@@ -1631,6 +1642,16 @@ test('postcheck recovery manifest strips every productive resource from the read
   assert.equal(manifest.result, 'NO PRODUCTIVE CHANGES');
   assert.equal(manifest.delta.productive_change_count, 0);
   assert.deepEqual(manifest.resources, { functions: [], function_contracts: [], migrations: [], config_changed: false });
+  assertDenied(() => gate.buildManifest({
+    ...input,
+    managedScopeTransition: {
+      id: F2_MANAGED_SCOPE_TRANSITION.id,
+      attested_source_sha: F2_MANAGED_SCOPE_TRANSITION.attested_source_sha,
+      approved_sha: MAIN_SHA,
+      descendant_verified: true,
+      migration_blob: F2_MANAGED_SCOPE_TRANSITION.migration_blob,
+    },
+  }), 'INVALID_MANAGED_SCOPE_TRANSITION');
 });
 
 test('one-byte manifest or digest alteration denies', async t => {
