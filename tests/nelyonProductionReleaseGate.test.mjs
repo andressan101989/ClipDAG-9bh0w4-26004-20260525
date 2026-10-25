@@ -94,6 +94,62 @@ async function loadGateAndPolicy() {
   return { gate, policy };
 }
 
+test('F3 foundation transition attests exact committed migration and sole existing Edge closure', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const root = new URL('..', import.meta.url);
+  const transition = policy.finance_authority_transition;
+  assert.equal(transition?.phase, 'foundation_only');
+  const approvedSha = '27ff8b3861f901c548ee4c6abc054bc805d63f09';
+  const changes = [
+    { status: 'A', path: 'supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql' },
+    { status: 'M', path: 'supabase/functions/bdag-ledger/index.ts' },
+  ];
+  const runGit = args => execFileSync('git', args, { cwd: root, encoding: args.includes('-z') ? 'buffer' : 'utf8', stdio: ['pipe','pipe','pipe'] });
+  const input = { policy, approvedSha, changes, affectedFunctions: ['bdag-ledger'],
+    migrations: [{ path: changes[0].path, version: '20261025011000' }], runGit };
+  const result = gate.attestFinanceAuthorityTransition(input);
+  assert.equal(result.attestation.approved_sha, approvedSha);
+  assert.equal(result.attestation.migration_blob, '8338634c5341fcadd102cdeb34eb1f9dc701af6d');
+  assert.equal(result.migrations[0].sha256, '1fea4ed72b0aaee90f066e24307547fb0305aa96e597d75c9eb21bb93384aec5');
+  const rootPath = decodeURIComponent(root.pathname.replace(/^\/([A-Za-z]:)/,'$1'));
+  const sources = Object.fromEntries(Object.entries(collectFunctionSources(join(rootPath,'supabase','functions'),rootPath))
+    .map(([path,source])=>[path,source.replace(/\r\n/g,'\n')]));
+  const graph = gate.buildFunctionGraph(sources);
+  const config = gate.parseFunctionConfig(readFileSync(join(rootPath,'supabase','config.toml'),'utf8'));
+  const contracts = gate.buildFunctionContracts({affectedFunctions:['bdag-ledger'],graph,configBefore:config,configAfter:config,changes});
+  assert.equal(contracts[0].source_sha256,'8a07c5887d4550e58f554530bcca3dcd84293c074854456fb1c666ad7a73f977');
+  const manifestInput = {request:request({approvedSha,mainSha:approvedSha}),policy,
+    gitState:{approvedSha,baselineSha:transition.baseline_sha,originMainSha:approvedSha},
+    classified:gate.classifyChangedPaths(changes),migrations:result.migrations,
+    financeAuthorityTransition:result.attestation,affectedFunctions:['bdag-ledger'],functionContracts:contracts,
+    reproducibility:gate.analyzeFunctionReproducibility({affectedFunctions:['bdag-ledger'],graph}),
+    risk:{level:'HIGH',findings:[]},compiler:{path:'scripts/nelyon-production-release.mjs',sha256:'a'.repeat(64),
+      snapshot_adapter_path:'scripts/nelyon-production-snapshot-adapter.mjs',snapshot_adapter_sha256:'b'.repeat(64)},
+    generatedAt:'2026-10-25T01:00:00.000Z'};
+  const plan = gate.buildManifest(manifestInput);
+  assert.equal(plan.result,'PLAN READY');
+  assert.equal(plan.risk.level,'HIGH');
+  assert.equal(plan.resources.config_changed,false);
+  assert.deepEqual(plan.resources.functions,['bdag-ledger']);
+  for (const patch of [{financeAuthorityTransition:null},
+    {financeAuthorityTransition:{...result.attestation,extraneous:true}},
+    {financeAuthorityTransition:{...result.attestation,approved_sha:'f'.repeat(40)}},
+    {gitState:{...manifestInput.gitState,approvedSha:'f'.repeat(40)}},
+    {migrations:result.migrations.map(item=>({...item,sha256:'f'.repeat(64)}))},
+    {functionContracts:contracts.map(item=>({...item,source_sha256:'f'.repeat(64)}))},
+  ]) assertDenied(()=>gate.buildManifest({...manifestInput,...patch}),'INVALID_FINANCE_AUTHORITY_TRANSITION');
+  for (const patch of [
+    { approvedSha: 'f'.repeat(40) }, { affectedFunctions: ['bdag-ledger', 'agora-token'] },
+    { changes: [...changes, { status: 'M', path: 'supabase/config.toml' }] },
+    { changes: [...changes, { status: 'A', path: 'supabase/migrations/20261025012000_extra.sql' }] },
+    { migrations: [{ path: 'supabase/migrations/20261025011000_wrong.sql', version: '20261025011000' }] },
+    { migrations: [] },
+    { policy: { ...policy, baseline: { ...policy.baseline, sha: approvedSha } } },
+    { runGit: args => args[0] === 'show' ? 'altered bytes' : runGit(args) },
+    { runGit: args => args[0] === 'rev-parse' ? 'f'.repeat(40) : runGit(args) },
+  ]) assert.throws(() => gate.attestFinanceAuthorityTransition({ ...input, ...patch }), error => error.code === 'INVALID_FINANCE_AUTHORITY_TRANSITION');
+});
+
 function asCandidatePolicy(policy) {
   const candidate = structuredClone(policy);
   candidate.baseline = {
@@ -1344,6 +1400,10 @@ test('F2 managed transition attests the canonical pinned bdag-ledger bundle', as
   const sources = Object.fromEntries(Object.entries(
     collectFunctionSources(join(rootPath, 'supabase', 'functions'), rootPath),
   ).map(([path, source]) => [path, source.replace(/\r\n/g, '\n')]));
+  // Keep the historical F2 proof bound to its immutable source, independently of later releases.
+  sources['supabase/functions/bdag-ledger/index.ts'] = execFileSync('git', [
+    'show', '97f6638acaa5be2af336b427184c11185e3d0fe1:supabase/functions/bdag-ledger/index.ts',
+  ], { cwd: rootPath, encoding: 'utf8' }).replace(/\r\n/g, '\n');
   const graph = gate.buildFunctionGraph(sources);
   const configBefore = gate.parseFunctionConfig(execFileSync(
     'git', ['show', 'f786f0d627f5a5dd330e503c531b05ba84c45daa:supabase/config.toml'],
