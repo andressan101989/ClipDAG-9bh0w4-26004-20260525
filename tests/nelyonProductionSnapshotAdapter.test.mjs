@@ -5,7 +5,13 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const adapterUrl = new URL('../scripts/nelyon-production-snapshot-adapter.mjs', import.meta.url);
-const policy = JSON.parse(readFileSync(new URL('../.github/nelyon-production-release-policy.json', import.meta.url), 'utf8'));
+const installedPolicy = JSON.parse(readFileSync(new URL('../.github/nelyon-production-release-policy.json', import.meta.url), 'utf8'));
+// Most adapter fixtures exercise the historical F3 transition itself. Keep those
+// fixtures anchored to the exact predecessor baseline after production promotion.
+const policy = structuredClone(installedPolicy);
+policy.baseline.sha = policy.finance_authority_transition.baseline_sha;
+policy.baseline.migration_count = 351;
+policy.baseline.latest_migration = '20261024173500_creator_premium_f2_complete_monetization';
 // Authority hashes bind the canonical Git LF bytes, independent of Windows checkout conversion.
 const gitSql = path => execFileSync('git', ['show', `HEAD:${path}`], {
   cwd: new URL('../', import.meta.url), encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
