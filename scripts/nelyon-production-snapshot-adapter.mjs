@@ -332,10 +332,8 @@ select pg_catalog.jsonb_build_object('schema_version',1,'complete',true,'phase',
     where kind='transactions' and (($1::text<>'' and pg_catalog.strpos(fact::text,$1::text)>0)
       or ($2::text<>'' and pg_catalog.strpos(fact::text,$2::text)>0)))::numeric(30,8))::text,
   'reconciliation',pg_catalog.jsonb_build_object(
-    'purchase_binding_mismatches',(select pg_catalog.count(*)::integer from private.creator_premium_purchase_receipts r
-      where not private.creator_premium_purchase_binding_is_valid_v1(r.id)),
-    'period_binding_mismatches',(select pg_catalog.count(*)::integer from private.creator_premium_subscription_periods p
-      where not private.creator_premium_period_binding_is_valid_v1(p.id)))) snapshot;`;
+    'purchase_binding_mismatches',(select pg_catalog.count(*)::integer from facts where kind='receipts'),
+    'period_binding_mismatches',(select pg_catalog.count(*)::integer from facts where kind='periods'))) snapshot;`;
 
 // Select the legacy query before parsing SQL: PostgreSQL must never resolve an absent F3 relation.
 const FINANCE_FACTS_LEGACY_SQL = FINANCE_FACTS_F3_SQL
