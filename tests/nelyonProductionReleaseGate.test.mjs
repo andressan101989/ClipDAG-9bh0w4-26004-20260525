@@ -102,6 +102,14 @@ function asF3TransitionPolicy(policy) {
   return transitionPolicy;
 }
 
+function asF3C2TransitionPolicy(policy) {
+  const transitionPolicy = structuredClone(policy);
+  transitionPolicy.baseline.sha = policy.finance_authority_c2_transition.baseline_sha;
+  transitionPolicy.baseline.migration_count = 352;
+  transitionPolicy.baseline.latest_migration = '20261025011000_creator_premium_f3_bounded_financial_activation';
+  return transitionPolicy;
+}
+
 test('F3 foundation transition attests exact committed migration and sole existing Edge closure', async () => {
   const { gate, policy: installedPolicy } = await loadGateAndPolicy();
   const policy = asF3TransitionPolicy(installedPolicy);
@@ -264,7 +272,8 @@ test('F3 accepts rebase-merged commit identities only with baseline ancestry and
 });
 
 test('F3-C2 attests the exact migration-only successor and rejects arbitrary finance transitions', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const { gate, policy: installedPolicy } = await loadGateAndPolicy();
+  const policy = asF3C2TransitionPolicy(installedPolicy);
   const transition = policy.finance_authority_c2_transition;
   assert.deepEqual(transition && {
     from_phase: transition.from_phase,
@@ -1231,35 +1240,35 @@ test('expanded managed scope has a verified static cutover control', async () =>
   }), policy).mode, 'release');
 });
 
-test('F3 production baseline is promoted from the exact successful recovery evidence', async () => {
+test('F3-C2 production baseline is promoted from the exact successful release evidence', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(gate.validatePolicy(policy), true);
   assert.deepEqual(policy.baseline, {
     authority_source: 'owner-control-plane',
     blocked_resources: [],
-    evidence: '0fed7fdbd3b8054fe9327ea25e04a335b0c2a8863d182e23acf0ee1b08a20b20',
+    evidence: '62cb517a8d8d0c57d37eb7bac13f2c1ae0bfdda99b711aaebb5b4e2e829f290d',
     evidence_digests: {
-      migrations: '2732c489ae10b887f72556ad92dd2694fba4fd51d94c6ad8c1449a4e48fb44a8',
+      migrations: '42be5d99539ac7ca8cfbf7fe3240c94ef7501f922c0f30d4a3d45e8a944236b7',
       managed_functions: 'a2e693b4083f343c2459cdb3e11cad295c9b084ecb6f8deeb457c71c91f0dd83',
       unmanaged_functions: '26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc',
       function_source_parity: '0980feb5ada4e589bc1b8ac9e4d0d6dcd4813420e573c8de726d78eb0f2ff917',
       config_verify_jwt: '703749fce46f724c7c4e791f7a222915b166af0ded38f00f34f983798355ba15',
-      cron_security: '75f01b350823dbd47c20ad8e0d01a8b36add24029d5310bffac0983141085446',
+      cron_security: 'caad94f091360c63c3e62a5439706a43b4b64e9502f60176ef5b22d45e22d497',
       finance: '0dfaec137cad5e9580a719845e34cd462c8e6b38577f5ca8882503610779d665',
     },
-    latest_migration: '20261025011000_creator_premium_f3_bounded_financial_activation',
-    migration_count: 352,
+    latest_migration: '20261025160452_creator_premium_f3_c2_isolated_canary_governance',
+    migration_count: 353,
     prior_release: {
       kind: 'post-release',
-      release_id: 'nelyon-creator-premium-f3-release-20261025T054152Z',
-      manifest_sha256: '7f329703901fbe8d6d3a38803b710e68780cb05c17c229ea091f01b5cff67a21',
-      postcheck_evidence_sha256: '44413b8f1c552a3c86eed3f8ebec4bf5958c814e77fb9dfa25d6b9b42fd3901d',
+      release_id: 'nelyon-f3-c2-g1-release-20261025T182324Z',
+      manifest_sha256: 'b0ee40ecce5e9a1b725889958d5693467697f6ab3090f8d660443561be3ec122',
+      postcheck_evidence_sha256: '5465a06af01396bc448e5e5e9bebfebb3b53384f381b919c567244f68bccd467',
     },
     requires_separate_policy_commit: true,
-    reviewed_policy_sha256: '81b6e96aa2a9f97cf4581d7f1fea3cc5e3f6c2ec0933df0d421263b280fdef30',
-    sha: '8908c4f9e6b5d48614301e51b16793ed7ae6f895',
+    reviewed_policy_sha256: '2cab148d99ea9c0334a3a968a68f9c92ac923434f3deb507d3276ef6eb0a9ce9',
+    sha: '05cdd2ecbeda6132fffb7edc0cf4e7ab2848625a',
     state: 'verified',
-    verified_at: '2026-10-25T06:58:41.304Z',
+    verified_at: '2026-10-25T18:38:04.508Z',
     verified_by: OWNER,
   });
 
@@ -1273,6 +1282,19 @@ test('F3 production baseline is promoted from the exact successful recovery evid
     runGit: () => { throw new Error('promoted F3 baseline must not reuse transition attestation'); },
   });
   assert.deepEqual(retired, { migrations: [], attestation: null });
+
+  assertDenied(() => gate.attestFinanceAuthorityTransition({
+    mode: 'plan_only',
+    policy,
+    approvedSha: MAIN_SHA,
+    changes: [{ status: 'M', path: policy.finance_authority_c2_transition.migration_path }],
+    migrations: [{
+      path: policy.finance_authority_c2_transition.migration_path,
+      version: '20261025160452',
+    }],
+    affectedFunctions: [],
+    runGit: () => { throw new Error('promoted F3-C2 baseline must not reuse transition attestation'); },
+  }), 'INVALID_FINANCE_AUTHORITY_TRANSITION');
 });
 
 test('verified cutover requires a historical owner-bound control record', async () => {

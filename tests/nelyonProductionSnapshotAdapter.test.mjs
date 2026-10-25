@@ -12,6 +12,10 @@ const policy = structuredClone(installedPolicy);
 policy.baseline.sha = policy.finance_authority_transition.baseline_sha;
 policy.baseline.migration_count = 351;
 policy.baseline.latest_migration = '20261024173500_creator_premium_f2_complete_monetization';
+const c2TransitionPolicy = structuredClone(installedPolicy);
+c2TransitionPolicy.baseline.sha = installedPolicy.finance_authority_c2_transition.baseline_sha;
+c2TransitionPolicy.baseline.migration_count = 352;
+c2TransitionPolicy.baseline.latest_migration = '20261025011000_creator_premium_f3_bounded_financial_activation';
 // Authority hashes bind the canonical Git LF bytes, independent of Windows checkout conversion.
 const gitSql = path => execFileSync('git', ['show', `HEAD:${path}`], {
   cwd: new URL('../', import.meta.url), encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
@@ -493,10 +497,10 @@ test('F3-C2 successor authority pins the new relation, changed Admin RPC, empty 
     attestations: [{ approval_digest_sha256: 'a'.repeat(64) }],
   }, 'f3_c2'), /FINANCE_FACTS/);
 
-  const transition = adapter.activeFinanceAuthorityTransition(installedPolicy, f3C2Manifest());
+  const transition = adapter.activeFinanceAuthorityTransition(c2TransitionPolicy, f3C2Manifest());
   assert.equal(transition.to_phase, 'f3_c2');
-  const pre = adapter.advisorExceptionsForPhase(installedPolicy, f3C2Manifest(), 'pre');
-  const post = adapter.advisorExceptionsForPhase(installedPolicy, f3C2Manifest(), 'post');
+  const pre = adapter.advisorExceptionsForPhase(c2TransitionPolicy, f3C2Manifest(), 'pre');
+  const post = adapter.advisorExceptionsForPhase(c2TransitionPolicy, f3C2Manifest(), 'post');
   assert.equal(pre.find(row => row.object.name === 'search_admin_creator_premium_finance_v1')
     .attestation.definition_sha256, predecessor.attestation.definition_sha256);
   assert.equal(post.find(row => row.object.name === 'search_admin_creator_premium_finance_v1')
@@ -1134,7 +1138,7 @@ test('F3 foundation complete snapshot pair binds catalog phase and rejects resig
 test('F3-C2 complete snapshot pair preserves foundation findings and permits only the exact C2 advisor delta', async () => {
   const adapter = await loadAdapter();
   const m = f3C2Manifest();
-  const controlled = structuredClone(installedPolicy);
+  const controlled = structuredClone(c2TransitionPolicy);
   controlled.baseline.migration_count = 2;
   controlled.supabase.expected_remote_function_count = 1;
   controlled.supabase.managed_functions = ['content-safety-scan'];
@@ -1505,7 +1509,7 @@ test('F3-C2 Premium transition permits only the owner-only attestation relation'
   const post = adapter.normalizePremiumPostcheckState(premiumPostcheckSnapshot({
     relations: [attestationRelation, originalRelation],
   }));
-  assert.equal(adapter.validatePremiumStateTransition(pre, post, f3C2Manifest(), installedPolicy), true);
+  assert.equal(adapter.validatePremiumStateTransition(pre, post, f3C2Manifest(), c2TransitionPolicy), true);
   for (const changed of [
     { ...attestationRelation, owner: 'supabase_admin' },
     { ...attestationRelation, rls_enabled: false },
@@ -1515,7 +1519,7 @@ test('F3-C2 Premium transition permits only the owner-only attestation relation'
     const invalid = adapter.normalizePremiumPostcheckState(premiumPostcheckSnapshot({
       relations: [changed, originalRelation],
     }));
-    assert.throws(() => adapter.validatePremiumStateTransition(pre, invalid, f3C2Manifest(), installedPolicy),
+    assert.throws(() => adapter.validatePremiumStateTransition(pre, invalid, f3C2Manifest(), c2TransitionPolicy),
       /PREMIUM_POSTCHECK_FAILED/);
   }
 });
