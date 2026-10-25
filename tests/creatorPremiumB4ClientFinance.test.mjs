@@ -9,6 +9,7 @@ const root = path.resolve(import.meta.dirname, '..');
 const read = relative => readFileSync(path.join(root, relative), 'utf8');
 const userId = '10000000-0000-4000-8000-000000000001';
 const contentId = '20000000-0000-4000-8000-000000000001';
+const offerId = '20000000-0000-4000-8000-000000000002';
 const planId = '30000000-0000-4000-8000-000000000001';
 const subscriptionId = '40000000-0000-4000-8000-000000000001';
 const idempotencyKey = '50000000-0000-4000-8000-000000000001';
@@ -68,7 +69,7 @@ async function post(handler, body, token = 'test-token') {
   const response = await handler(new Request('https://edge.test', {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(body?.action === 'creator_premium_purchase' ? { offer_version_id: offerId, ...body } : body),
   }));
   return { response, payload: await response.json() };
 }
@@ -76,7 +77,7 @@ async function post(handler, body, token = 'test-token') {
 test('bdag-ledger routes only canonical Premium actions with JWT-derived identity', async () => {
   const cases = [
     ['creator_premium_purchase', 'content_id', contentId, 'purchase_creator_premium_content_v1', {
-      p_buyer_id: userId, p_content_id: contentId, p_idempotency_key: idempotencyKey,
+      p_buyer_id: userId, p_content_id: contentId, p_offer_version_id: offerId, p_idempotency_key: idempotencyKey,
     }],
     ['creator_premium_subscribe', 'plan_id', planId, 'subscribe_creator_premium_plan_v1', {
       p_subscriber_id: userId, p_plan_id: planId, p_idempotency_key: idempotencyKey,
@@ -206,11 +207,11 @@ function loadLedgerClient() {
 
 test('canonical ledgerClient sends UUID identity only and no monetary authority', async () => {
   const harness = loadLedgerClient();
-  await harness.service.purchaseContent({ contentId });
+  await harness.service.purchaseContent({ contentId, offerVersionId: offerId });
   await harness.service.subscribeToPlan({ planId });
   await harness.service.cancelCreatorPremiumSubscription({ subscriptionId });
   assert.deepEqual(harness.invokes, [
-    { name: 'bdag-ledger', body: { action: 'creator_premium_purchase', idempotency_key: idempotencyKey, content_id: contentId } },
+    { name: 'bdag-ledger', body: { action: 'creator_premium_purchase', idempotency_key: idempotencyKey, content_id: contentId, offer_version_id: offerId } },
     { name: 'bdag-ledger', body: { action: 'creator_premium_subscribe', idempotency_key: idempotencyKey, plan_id: planId } },
     { name: 'bdag-ledger', body: { action: 'creator_premium_cancel_subscription', idempotency_key: idempotencyKey, subscription_id: subscriptionId } },
   ]);

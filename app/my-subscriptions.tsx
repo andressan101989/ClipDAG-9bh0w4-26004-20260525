@@ -37,6 +37,8 @@ function MySubscriptionsScreenContent(){
   const {user}=useAuth();
   const[items,setItems]=useState<CreatorPremiumSubscriptionItem[]>([]),[nextCursor,setNextCursor]=useState<CreatorPremiumCursor|null>(null),[loading,setLoading]=useState(true),[refreshing,setRefreshing]=useState(false),[loadingMore,setLoadingMore]=useState(false),[error,setError]=useState<string|null>(null),[busyId,setBusyId]=useState<string|null>(null);
   const[policy,setPolicy]=useState<CreatorPremiumFinancePolicy>({purchase_enabled:false,subscription_enabled:false,refunds_enabled:false,platform_fee_bps:0,policy_version:'unavailable'});
+  const itemsRef=useRef(items),policyRef=useRef(policy);
+  itemsRef.current=items;policyRef.current=policy;
   const cancelAttempts=useRef(new Map<string,string>());
   const renewalAttempts=useRef(new Map<string,string>());
   const activeCancellation=useRef<string|null>(null);
@@ -150,22 +152,26 @@ function MySubscriptionsScreenContent(){
 
   const renew=useCallback((subscription:CreatorPremiumSubscriptionItem)=>{
     const generation=contextGeneration.current;
-    Alert.alert('Renovar periodo','Se solicitará un periodo nuevo al precio vigente de esta versión del plan. No se habilita renovación automática.',[
+    const planId=subscription.plan.id,amount=subscription.plan.price_bdag,days=subscription.plan.billing_period_days;
+    const subscriptionId=subscription.id;
+    Alert.alert('Renovar periodo',`Renovar manualmente por ${amount} BDAG para un periodo de ${days} días. No hay renovación automática. Sujeto a autorización limitada del servidor, sin disponibilidad pública.`,[
       {text:'Volver',style:'cancel'},
       {text:'Renovar',onPress:()=>{
-        if(busyId||!user?.id||!policy.subscription_enabled||!subscription.renewal_available)return;
+        if(generation!==contextGeneration.current||busyId||!user?.id||!policy.subscription_enabled||!subscription.renewal_available)return;
+        const current=itemsRef.current.find(item=>item.id===subscriptionId);
+        if(!policyRef.current.subscription_enabled||!current?.renewal_available||current.plan.id!==planId||current.plan.price_bdag!==amount||current.plan.billing_period_days!==days)return;
         const operationId=randomUUID();
-        const idempotencyKey=renewalAttempts.current.get(subscription.plan.id)??randomUUID();
-        renewalAttempts.current.set(subscription.plan.id,idempotencyKey);
+        const idempotencyKey=renewalAttempts.current.get(planId)??randomUUID();
+        renewalAttempts.current.set(planId,idempotencyKey);
         activeCancellation.current=operationId;setBusyId(subscription.id);
-        void subscribeToPlan({planId:subscription.plan.id,idempotencyKey})
+        void subscribeToPlan({planId,idempotencyKey})
           .then(async result=>{
             if(generation!==contextGeneration.current)return;
             if(!result?.success)throw new Error(typeof result?.error==='string'?result.error:'creator_premium_subscription_failed');
             const confirmed=await readBackSubscriptions();
-            const renewed=confirmed.items.find(item=>item.plan.id===subscription.plan.id&&item.access_active&&item.id!==subscription.id);
+            const renewed=confirmed.items.find(item=>item.plan.id===planId&&item.access_active&&item.id!==subscriptionId);
             if(!renewed)throw new Error('creator_premium_subscription_readback_pending');
-            renewalAttempts.current.delete(subscription.plan.id);
+            renewalAttempts.current.delete(planId);
             if(generation===contextGeneration.current)Alert.alert('Renovación confirmada','El nuevo periodo y el acceso fueron verificados por el servidor.');
           })
           .catch(cause=>{if(generation===contextGeneration.current)Alert.alert('No se pudo renovar',creatorPremiumErrorMessage(cause))})

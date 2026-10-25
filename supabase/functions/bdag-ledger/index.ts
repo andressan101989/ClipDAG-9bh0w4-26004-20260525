@@ -50,11 +50,14 @@ function validatePremiumCommand(
     return 'creator_premium_client_financial_authority_forbidden';
   }
   const allowed = new Set(['action', 'idempotency_key', targetField]);
+  if (targetField === 'content_id') allowed.add('offer_version_id');
   if (Object.keys(body).some(key => !allowed.has(key))) {
     return 'creator_premium_request_fields_invalid';
   }
   if (typeof body.idempotency_key !== 'string' || !UUID_RE.test(body.idempotency_key)
-      || typeof body[targetField] !== 'string' || !UUID_RE.test(body[targetField])) {
+      || typeof body[targetField] !== 'string' || !UUID_RE.test(body[targetField])
+      || (targetField === 'content_id'
+        && (typeof body.offer_version_id !== 'string' || !UUID_RE.test(body.offer_version_id)))) {
     return 'creator_premium_invalid_uuid';
   }
   return null;
@@ -101,6 +104,7 @@ Deno.serve(async (req) => {
   let body: Record<string, unknown>;
   try { body = await req.json(); }
   catch { return fail('invalid JSON body'); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail('invalid JSON body');
 
   const { action, idempotency_key } = body;
   if (!action) return fail('action required');
@@ -143,6 +147,7 @@ Deno.serve(async (req) => {
       const { data, error } = await admin.rpc('purchase_creator_premium_content_v1', {
         p_buyer_id: user.id,
         p_content_id: body.content_id,
+        p_offer_version_id: body.offer_version_id,
         p_idempotency_key: body.idempotency_key,
       });
       if (error) {

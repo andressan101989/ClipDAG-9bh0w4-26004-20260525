@@ -1,7 +1,7 @@
 import {fireEvent,render,screen,waitFor,within} from "@testing-library/react";
 import {MemoryRouter} from "react-router-dom";
 import {beforeEach,describe,expect,it,vi} from "vitest";
-import {searchAdminCreatorPremiumFinance} from "../lib/adminObservabilityApi";
+import {getAdminCreatorPremiumFinanceActivation,searchAdminCreatorPremiumFinance} from "../lib/adminObservabilityApi";
 import {formatAdminExactMoney} from "../lib/adminMoney";
 import {AdminCreatorPremiumFinancePage} from "../pages/AdminFinanceAuditSystemPages";
 
@@ -10,7 +10,7 @@ vi.mock("../lib/adminObservabilityApi",()=>(
     getAdminFinanceOverview:vi.fn(),getAdminFinanceReconciliation:vi.fn(),getAdminFinancialTransactionDetail:vi.fn(),getAdminPlatformRevenue:vi.fn(),
     getAdminSystemHealth:vi.fn(),getAdminSystemJobDetail:vi.fn(),searchAdminFinanceAnomalies:vi.fn(),searchAdminFinanceAudit:vi.fn(),
     searchAdminFinancialTransactions:vi.fn(),searchAdminGlobalAudit:vi.fn(),searchAdminLedgerAccounts:vi.fn(),searchAdminSystemAudit:vi.fn(),
-    searchAdminSystemJobs:vi.fn(),searchAdminCreatorPremiumFinance:vi.fn(),
+    searchAdminSystemJobs:vi.fn(),searchAdminCreatorPremiumFinance:vi.fn(),getAdminCreatorPremiumFinanceActivation:vi.fn(),
   }
 ));
 vi.mock("../lib/adminApi",()=>({formatDate:(value:unknown)=>String(value??"—")}));
@@ -35,6 +35,41 @@ describe("F2 read-only Creator Premium finance console",()=>{
   beforeEach(()=>{
     vi.clearAllMocks();
     vi.mocked(searchAdminCreatorPremiumFinance).mockResolvedValue(baseResponse);
+    vi.mocked(getAdminCreatorPremiumFinanceActivation).mockResolvedValue({activation:{
+      mode:"off",authorization_id:null,charge_starts_at:null,charge_expires_at:null,refund_expires_at:null,
+      operations:{purchase_enabled:false,subscription_enabled:false,refunds_enabled:false},
+      limits:{purchase_count:0,subscription_count:0,refund_count:0,purchase_amount_bdag:"0.00000000",subscription_amount_bdag:"0.00000000",gross_bdag:"0.00000000"},
+      consumed:{purchase_count:0,subscription_count:0,refund_count:0,gross_bdag:"0.00000000"},
+      remaining:{purchase_count:0,subscription_count:0,refund_count:0,gross_bdag:"0.00000000"},
+    }});
+  });
+
+  it("does not infer OFF from legacy policy when activation is missing",async()=>{
+    vi.mocked(getAdminCreatorPremiumFinanceActivation).mockResolvedValue({activation:null});
+    render(<MemoryRouter><AdminCreatorPremiumFinancePage/></MemoryRouter>);
+    await screen.findByText("Curso seguro");
+    expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
+    expect(screen.queryByText("Finance OFF")).not.toBeInTheDocument();
+    expect(screen.getByText(/Sin activación pública/)).toBeInTheDocument();
+  });
+
+  it("shows only finite canary scope, exact exposure and permanent consumption without an activation control",async()=>{
+    vi.mocked(getAdminCreatorPremiumFinanceActivation).mockResolvedValue({activation:{
+      mode:"canary",authorization_id:"90000000-0000-4000-8000-000000000001",
+      charge_starts_at:"2026-10-25T00:00:00Z",charge_expires_at:"2026-10-25T00:30:00Z",refund_expires_at:"2026-10-25T01:00:00Z",
+      operations:{purchase_enabled:true,subscription_enabled:true,refunds_enabled:true},
+      limits:{purchase_count:1,subscription_count:1,refund_count:1,purchase_amount_bdag:"10.00000000",subscription_amount_bdag:"20.00000000",gross_bdag:"30.00000000"},
+      consumed:{purchase_count:1,subscription_count:0,refund_count:0,gross_bdag:"10.00000000"},
+      remaining:{purchase_count:0,subscription_count:1,refund_count:1,gross_bdag:"20.00000000"},
+    }});
+    render(<MemoryRouter><AdminCreatorPremiumFinancePage/></MemoryRouter>);
+    expect(await screen.findByText("Canary limitado")).toBeInTheDocument();
+    const scope=screen.getByRole("region",{name:"Activación Finance Premium"});
+    expect(within(scope).getByText("30.00000000 BDAG")).toBeInTheDocument();
+    expect(within(scope).getByText("Compras: límite 1 · consumidos 1 · restantes 0")).toBeInTheDocument();
+    expect(within(scope).getByText("Fin de cargos")).toBeInTheDocument();
+    expect(scope.textContent).not.toContain("90000000-0000-4000-8000-000000000001");
+    expect(within(scope).queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("shows authoritative Finance OFF policy, exact commerce facts and reconciliation without write controls",async()=>{

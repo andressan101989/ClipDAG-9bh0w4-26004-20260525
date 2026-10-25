@@ -245,15 +245,24 @@ export async function transferBDAG(params: {
 /** Purchase canonical Creator Premium content. Price and split are server-derived. */
 export async function purchaseContent(params: {
   contentId: string;
+  offerVersionId: string;
   idempotencyKey?: string;
 }): Promise<
   | { success: true; data: CreatorPremiumPurchaseReceipt }
   | { success: false; error: string }
 > {
   if (!UUID_RE.test(params.contentId)) return { success: false, error: 'creator_premium_invalid_content_id' };
+  if (!UUID_RE.test(params.offerVersionId)) return { success: false, error: 'creator_premium_invalid_offer_version_id' };
+  if (Object.keys(params).some(key => !['contentId', 'offerVersionId', 'idempotencyKey'].includes(key))) {
+    return { success: false, error: 'creator_premium_request_fields_invalid' };
+  }
+  if (params.idempotencyKey !== undefined
+      && (typeof params.idempotencyKey !== 'string' || !UUID_RE.test(params.idempotencyKey))) {
+    return { success: false, error: 'invalid idempotency key' };
+  }
   const result = await invokeLedger(
     'creator_premium_purchase',
-    { content_id: params.contentId },
+    { content_id: params.contentId, offer_version_id: params.offerVersionId },
     { uuidIdempotency: true, idempotencyKey: params.idempotencyKey },
   );
   if (!result.success || !result.data) {

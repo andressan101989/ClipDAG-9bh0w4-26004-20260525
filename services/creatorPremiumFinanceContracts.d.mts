@@ -263,3 +263,12 @@ export function parseCreatorPremiumCommerce(
 export function parseCreatorPremiumSubscriptionsPage(
   value: unknown,
 ): CreatorPremiumSubscriptionsProjection;
+
+export function parseCreatorPremiumCommerceV2(
+  value: unknown,
+  expectedContentId: string,
+): CreatorPremiumCommerceProjection;
+
+export function parseCreatorPremiumSubscriptionsPageV2(
+  value: unknown,
+): CreatorPremiumSubscriptionsProjection;

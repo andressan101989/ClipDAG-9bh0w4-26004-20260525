@@ -24,6 +24,12 @@ import { rememberCreatorPremiumContentKind } from '@/services/creatorPremiumView
 import { purchaseContent, subscribeToPlan } from '@/services/financial/ledgerClient';
 
 const message = (cause: unknown) => creatorPremiumErrorMessage(cause);
+const confirmCharge = (title: string, detail: string) => new Promise<boolean>(resolve => {
+  Alert.alert(title, detail, [
+    { text: 'Volver', style: 'cancel', onPress: () => resolve(false) },
+    { text: 'Confirmar', onPress: () => resolve(true) },
+  ], { cancelable: true, onDismiss: () => resolve(false) });
+});
 
 export default function CreatorPremiumOfferScreen() {
   const { contentId } = useLocalSearchParams<{ contentId?: string }>();
@@ -46,6 +52,9 @@ function CreatorPremiumOfferScreenContent() {
   const [reportReason, setReportReason] = useState('');
   const [reportDetails, setReportDetails] = useState('');
   const purchaseAttempt = useRef(randomUUID());
+  const purchaseTarget = useRef<string | null>(null);
+  const commerceRef = useRef(commerce);
+  commerceRef.current = commerce;
   const subscriptionAttempts = useRef(new Map<string, string>());
   const inFlight = useRef(false);
   const activeOperation = useRef<string | null>(null);
@@ -59,6 +68,7 @@ function CreatorPremiumOfferScreenContent() {
     contextGeneration.current += 1;
     requestGeneration.current += 1;
     purchaseAttempt.current = randomUUID();
+    purchaseTarget.current = null;
     subscriptionAttempts.current.clear();
     activeOperation.current = null;
     inFlight.current = false;
@@ -137,11 +147,25 @@ function CreatorPremiumOfferScreenContent() {
   const runPurchase = useCallback(async () => {
     if (!commerce?.offer || !purchaseAllowed || !user?.id || inFlight.current) return;
     const generation = contextGeneration.current;
+    const content = commerce.content.id;
+    const offer = commerce.offer.id;
+    const amount = commerce.offer.price_bdag;
     const operationId = randomUUID();
     activeOperation.current = operationId;
     inFlight.current = true; setBusy('purchase');
     try {
-      const result = await purchaseContent({ contentId: commerce.content.id, idempotencyKey: purchaseAttempt.current });
+      if (!await confirmCharge('Confirmar compra', `Comprar este contenido por ${amount} BDAG. Esta operación está sujeta a la autorización limitada del servidor; no implica disponibilidad pública.`)) return;
+      if (generation !== contextGeneration.current) return;
+      const current = commerceRef.current;
+      if (current?.content.id !== content || current.offer?.id !== offer
+          || current.offer.price_bdag !== amount || !current.operations.purchase_available) {
+        throw new Error('creator_premium_offer_changed');
+      }
+      if (purchaseTarget.current !== offer) {
+        if (purchaseTarget.current !== null) purchaseAttempt.current = randomUUID();
+        purchaseTarget.current = offer;
+      }
+      const result = await purchaseContent({ contentId: content, offerVersionId: offer, idempotencyKey: purchaseAttempt.current });
       if (generation !== contextGeneration.current) return;
       if (!result?.success) throw new Error(typeof result?.error === 'string' ? result.error : 'creator_premium_purchase_failed');
       const confirmed = await readBackCommerce();
@@ -153,7 +177,10 @@ function CreatorPremiumOfferScreenContent() {
         Alert.alert('Compra confirmada', 'Tu acceso se verificó en el servidor.');
       }
     } catch (cause) {
-      if (generation === contextGeneration.current) Alert.alert('Compra no completada', message(cause));
+      if (generation === contextGeneration.current) {
+        Alert.alert('Compra no completada', message(cause));
+        if (cause instanceof Error && cause.message === 'creator_premium_offer_changed') await load(true);
+      }
     } finally {
       if (activeOperation.current === operationId) {
         activeOperation.current = null;
@@ -161,19 +188,31 @@ function CreatorPremiumOfferScreenContent() {
         if (generation === contextGeneration.current) setBusy(null);
       }
     }
-  }, [commerce, purchaseAllowed, readBackCommerce, user?.id]);
+  }, [commerce, load, purchaseAllowed, readBackCommerce, user?.id]);
 
   const runSubscription = useCallback(async (planId: string) => {
     const plan = commerce?.plans.find(item => item.id === planId);
     const operationAllowed = Boolean(plan?.subscription_available || plan?.renewal_available);
     if (!plan || !operationAllowed || !commerce?.policy.subscription_enabled || !user?.id || inFlight.current) return;
     const generation = contextGeneration.current;
+    const amount = plan.price_bdag;
+    const days = plan.billing_period_days;
+    const renewing = plan.renewal_available;
     const operationId = randomUUID();
     activeOperation.current = operationId;
     inFlight.current = true; setBusy(planId);
     const idempotencyKey = subscriptionAttempts.current.get(planId) ?? randomUUID();
     subscriptionAttempts.current.set(planId, idempotencyKey);
     try {
+      if (!await confirmCharge(renewing ? 'Renovar periodo' : 'Confirmar suscripción',
+        `${renewing ? 'Renovar' : 'Iniciar'} un periodo de ${days} días por ${amount} BDAG. La renovación es manual; no hay renovación automática. Sujeto a autorización limitada del servidor, sin disponibilidad pública.`)) return;
+      if (generation !== contextGeneration.current) return;
+      const currentPlan = commerceRef.current?.plans.find(item => item.id === planId);
+      if (!commerceRef.current?.policy.subscription_enabled || currentPlan?.price_bdag !== amount
+          || currentPlan.billing_period_days !== days || currentPlan.renewal_available !== renewing
+          || !(currentPlan.subscription_available || currentPlan.renewal_available)) {
+        throw new Error('creator_premium_subscription_renewal_not_available');
+      }
       const result = await subscribeToPlan({ planId, idempotencyKey });
       if (generation !== contextGeneration.current) return;
       if (!result?.success) throw new Error(typeof result?.error === 'string' ? result.error : 'creator_premium_subscription_failed');
