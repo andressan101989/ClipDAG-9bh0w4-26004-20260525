@@ -16,6 +16,7 @@ import React, {
 } from 'react';
 import { getSupabaseClient } from '@/template';
 import { presentAuthError } from '@/services/authErrorPresentation';
+import { ensureOwnLedgerAccount } from '@/services/ledgerAccountProvisioning.mjs';
 import {
   createAuthStartupDeadline,
   deferAuthBootstrap,
@@ -107,6 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Supabase client — initialised once, stored in ref to avoid re-creating on re-renders.
   const supabaseRef = useRef<ReturnType<typeof getSupabaseClient> | null>(null);
   const supabaseOk  = useRef(true);
+  const ledgerProvisionedUserRef = useRef<string | null>(null);
 
   if (!supabaseRef.current) {
     try {
@@ -243,11 +245,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 if (session?.user) {
                   const profile = await loadProfile(session.user.id, session.user.email || '');
                   setUser(profile);
+                  if (
+                    profile &&
+                    (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') &&
+                    ledgerProvisionedUserRef.current !== session.user.id
+                  ) {
+                    const ledgerProvisioning = await ensureOwnLedgerAccount(supabase);
+                    if (ledgerProvisioning.ok) {
+                      ledgerProvisionedUserRef.current = session.user.id;
+                    } else {
+                      console.info('[AuthProvider] ledger_account_provisioning_failed', {
+                        code: ledgerProvisioning.code,
+                      });
+                    }
+                  }
                   if (profile) {
                     await loadFollows(session.user.id);
                     PresenceManager.initialize(session.user.id);
                   }
                 } else {
+                  ledgerProvisionedUserRef.current = null;
                   setUser(null);
                   setFollowedUsers(new Set());
                   await PresenceManager.destroy();
@@ -350,15 +367,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (data.user) {
         await supabase.from('user_profiles')
           .update({ username }).eq('id', data.user.id);
-        // Every user needs a ledger_accounts row before any BDAG operation
-        // (deposit/withdraw/transfer) can touch their balance. Non-fatal:
-        // it's also lazily created by ensure_ledger_account() inside those
-        // RPCs on first use, so a failure here shouldn't block registration.
-        try {
-          await supabase.rpc('ensure_ledger_account', { p_user_id: data.user.id });
-        } catch (e) {
-          console.log('[AuthProvider] ensure_ledger_account on signup failed (non-fatal):', e);
-        }
       }
       return { success: true, sessionActive: !!data.session };
     } catch (e: any) {

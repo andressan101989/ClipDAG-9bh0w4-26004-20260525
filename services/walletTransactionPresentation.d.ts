@@ -18,6 +18,7 @@ export type WalletTransactionKind =
   | "content_sale"
   | "subscription_payment"
   | "subscription_income"
+  | "creator_premium_refund"
   | "premium_dm_sent"
   | "premium_dm_received"
   | "fee"

@@ -19,6 +19,38 @@ const amount = (value) => {
   return parsed;
 };
 
+const premiumOperations = new Set([
+  "creator_premium_purchase",
+  "creator_premium_subscription",
+  "creator_premium_purchase_refund",
+  "creator_premium_subscription_refund",
+]);
+
+const premiumRefundOperations = new Set([
+  "creator_premium_purchase_refund",
+  "creator_premium_subscription_refund",
+]);
+
+const premiumFee = (value, grossAmount) => {
+  if (value === null || value === undefined || value === "")
+    throw new WalletTransactionPresentationError("wallet_transaction_fee_invalid");
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed >= grossAmount)
+    throw new WalletTransactionPresentationError("wallet_transaction_fee_invalid");
+  return parsed;
+};
+
+const premiumPresentationAmount = (value, operationType, direction, grossAmount) => {
+  if (!premiumOperations.has(operationType)) return grossAmount;
+  const fee = premiumFee(value.fee_amount, grossAmount);
+  const creatorPerspective = premiumRefundOperations.has(operationType)
+    ? direction === "debit"
+    : direction === "credit";
+  return creatorPerspective
+    ? Number((grossAmount - fee).toFixed(8))
+    : grossAmount;
+};
+
 const reference = (referenceType, referenceId) => {
   if (!referenceType || !referenceId) return null;
   const suffix = String(referenceId).replace(/[^a-z0-9]/gi, "").slice(-6).toUpperCase();
@@ -67,13 +99,20 @@ const classify = (operationType, direction) => {
     case "reward":
       return { kind: "reward", label: "Recompensa", description: "Crédito de recompensa" };
     case "content_purchase":
+    case "creator_premium_purchase":
       return incoming
         ? { kind: "content_sale", label: "Venta de contenido", description: "Contenido exclusivo" }
         : { kind: "content_purchase", label: "Compra de contenido", description: "Contenido exclusivo" };
     case "subscription":
+    case "creator_premium_subscription":
       return incoming
         ? { kind: "subscription_income", label: "Suscripción recibida", description: "Ingreso de suscripción" }
         : { kind: "subscription_payment", label: "Suscripción", description: "Pago de suscripción" };
+    case "creator_premium_purchase_refund":
+    case "creator_premium_subscription_refund":
+      return incoming
+        ? { kind: "creator_premium_refund", label: "Reembolso Premium", description: "Reembolso Creator Premium" }
+        : { kind: "creator_premium_refund", label: "Reversión Premium", description: "Reversión Creator Premium" };
     case "premium_dm":
       return incoming
         ? { kind: "premium_dm_received", label: "Ingreso Premium DM", description: "Mensaje Premium" }
@@ -98,18 +137,24 @@ export function presentLedgerTransaction(value, accountId) {
   if (isDebit === isCredit)
     throw new WalletTransactionPresentationError("wallet_transaction_direction_unknown");
   const direction = isCredit ? "credit" : "debit";
-  const canonicalAmount = amount(value.amount);
   const operationType = requiredString(
     value.operation_type,
     "wallet_transaction_operation_invalid",
+  );
+  const canonicalAmount = amount(value.amount);
+  const presentationAmount = premiumPresentationAmount(
+    value,
+    operationType,
+    direction,
+    canonicalAmount,
   );
   const presentation = classify(operationType, direction);
   const safeReference = reference(value.reference_type, value.reference_id);
   return {
     ...presentation,
     direction,
-    amount: canonicalAmount,
-    signedAmount: direction === "credit" ? canonicalAmount : -canonicalAmount,
+    amount: presentationAmount,
+    signedAmount: direction === "credit" ? presentationAmount : -presentationAmount,
     description: safeReference
       ? `${presentation.description} · ${safeReference}`
       : presentation.description,

@@ -35,6 +35,7 @@ assert.ok(!wslPid || /^\d+$/.test(wslPid));
 const dir = new URL('../supabase/migrations/', import.meta.url);
 const files = readdirSync(dir);
 const c2 = files.filter(name => name.includes('_creator_premium_f3_c2_'));
+const finalWallet = files.filter(name => name.endsWith('_creator_premium_f3_final_wallet_integration.sql'));
 function requireGovernance() {
   assert.equal(c2.length, 1, 'missing C2 governance: canonical attestation and monotonic close are required before canary activation');
   const source = readFileSync(new URL(c2[0], dir), 'utf8');
@@ -43,16 +44,23 @@ function requireGovernance() {
   assert.match(source, /create(?: or replace)? function private\.close_creator_premium_finance_authorization_f3_c2_v1\s*\(/i,
     'C2 monotonic closure authority is absent');
 }
+function requireFinalWalletIntegration() {
+  assert.equal(finalWallet.length, 1, 'missing F3 final Wallet integration migration');
+  const source = readFileSync(new URL(finalWallet[0], dir), 'utf8');
+  assert.match(source, /create or replace function public\.ensure_my_ledger_account\(\)/i);
+  assert.match(source, /create or replace function private\.get_admin_platform_revenue_projection_v1\(/i);
+}
 const suffixes = ['_creator_premium_b1_canonical_foundation.sql', '_creator_premium_b2_private_image_media.sql',
   '_creator_premium_b3_signed_stream_playback.sql', '_creator_premium_b4_atomic_finance_authority.sql',
   '_creator_premium_b4_c1_exact_fee_snapshot_binding.sql', '_creator_premium_b5_creator_management_ux.sql',
   '_creator_premium_b7_full_functional_commercial_completion.sql', '_creator_premium_f2_complete_monetization.sql',
   '_creator_premium_f3_bounded_financial_activation.sql'];
-const chain = suffixes.map(suffix => {
+const chainFiles = suffixes.map(suffix => {
   const found = files.filter(name => name.endsWith(suffix));
   assert.equal(found.length, 1, suffix);
-  return readFileSync(new URL(found[0], dir), 'utf8');
+  return found[0];
 });
+const chain = chainFiles.map(name => readFileSync(new URL(name, dir), 'utf8'));
 const literal = value => value === null ? 'null' : `'${String(value).replaceAll("'", "''")}'`;
 const jsonLiteral = value => `${literal(JSON.stringify(value))}::jsonb`;
 const contract = 'creator-premium-f3-v2';
@@ -103,8 +111,17 @@ function pgCommand(db) {
 }
 function sql(db, query, allowFailure = false) { return docker(pgCommand(db), query, allowFailure); }
 function json(db, query) { return JSON.parse(sql(db, query).stdout); }
+function applyMigrationIfMissing(db, index) {
+  const migrationsTable = sql(db,
+    `select to_regclass('supabase_migrations.schema_migrations') is not null`).stdout === 't';
+  const version = chainFiles[index].split('_', 1)[0];
+  const alreadyApplied = migrationsTable && sql(db,
+    `select exists(select 1 from supabase_migrations.schema_migrations where version='${version}')`).stdout === 't';
+  if (!alreadyApplied) sql(db, chain[index]);
+}
 const serviceSql = query => `begin;set local statement_timeout='15s';set local request.jwt.claim.role='service_role';set local role service_role;${query};commit;`;
 const ownerSql = query => `begin;set local statement_timeout='15s';set local role postgres;${query};commit;`;
+const authenticatedSql = (actor, query) => `begin;set local statement_timeout='15s';set local request.jwt.claim.sub='${actor}';set local request.jwt.claim.role='authenticated';set local role authenticated;${query};commit;`;
 function denied(result, expected = /creator_premium_|permission denied|violates|immutable/i) {
   assert.notEqual(result.status, 0, `unexpected successful command: ${result.stdout}`);
   assert.match(result.stderr, expected);
@@ -126,6 +143,7 @@ test('C2 origin-mode disposable canary proves 3000 BDAG lifecycle and governance
 }, async t => {
   // Assert the missing behavior explicitly, before invoking nonexistent helpers.
   requireGovernance();
+  requireFinalWalletIntegration();
   const base = `premium_f3_c2_base_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   const id = Object.fromEntries(['admin', 'buyer', 'outsider', 'creator', 'content', 'offer', 'plan',
     'buyerAccount', 'creatorAccount', 'platformAccount', 'outsiderAccount', 'authorization', 'scan'].map(name => [name, randomUUID()]));
@@ -166,6 +184,21 @@ test('C2 origin-mode disposable canary proves 3000 BDAG lifecycle and governance
       set local request.jwt.claim.role='authenticated';set local role authenticated;
       select public.search_admin_creator_premium_finance_v1(null,null,null,null,null,100);commit;`);
     return JSON.parse(result.stdout);
+  };
+  const platformRevenue = db => {
+    const result = sql(db, authenticatedSql(id.admin,
+      `select public.get_admin_platform_revenue('all')`));
+    return JSON.parse(result.stdout);
+  };
+  const premiumRevenue = db => {
+    const response = platformRevenue(db);
+    const source = response.sources.find(item => item.source_code === 'creator_premium' && item.currency === 'BDAG');
+    const reconciliationSource = response.reconciliation.sources.find(
+      item => item.source_code === 'creator_premium' && item.currency === 'BDAG',
+    );
+    assert.ok(source, 'Creator Premium revenue source is missing');
+    assert.ok(reconciliationSource, 'Creator Premium reconciliation source is missing');
+    return { response, source, reconciliationSource };
   };
   function reconciled(db) {
     const response = reconciliation(db);
@@ -258,9 +291,18 @@ test('C2 origin-mode disposable canary proves 3000 BDAG lifecycle and governance
       } finally { docker(`dropdb -U supabase_admin --force --if-exists ${db}`, '', true); }
     });
   }
+  function insertSyntheticAuthUsers(db, actorIds) {
+    const ageTriggerExists = sql(db, `select exists(select 1 from pg_trigger
+      where tgrelid='auth.users'::regclass and tgname='on_auth_user_age_eligibility')`).stdout === 't';
+    sql(db, `begin;set local statement_timeout='15s';
+      ${ageTriggerExists ? 'alter table auth.users disable trigger on_auth_user_age_eligibility;' : ''}
+      insert into auth.users(id,is_anonymous) values ${actorIds.map(actor => `('${actor}',false)`).join(',')};
+      ${ageTriggerExists ? 'alter table auth.users enable trigger on_auth_user_age_eligibility;' : ''}
+      commit;`);
+  }
   try {
     docker(`createdb -U supabase_admin -T ${template} ${base}`);
-    sql(base, chain.slice(0, 6).join('\n'));
+    for (let index = 0; index < 6; index += 1) applyMigrationIfMissing(base, index);
     sql(base, `insert into private.admin_roles(role_code,display_name,description,is_assignable,is_root,is_exclusive)
       values('MODERATOR','Moderator','Synthetic moderator',true,false,false) on conflict do nothing;
       insert into private.admin_capabilities(capability_code,domain,effect,description,is_sensitive)
@@ -269,17 +311,19 @@ test('C2 origin-mode disposable canary proves 3000 BDAG lifecycle and governance
       insert into private.admin_role_capabilities(role_code,capability_code)
       values('SUPER_ADMIN','content.items.moderate'),('SUPER_ADMIN','finance.ledger.read'),
         ('MODERATOR','content.items.moderate') on conflict do nothing;`);
-    sql(base, chain.slice(6, 8).join('\n'));
+    for (let index = 6; index < 8; index += 1) applyMigrationIfMissing(base, index);
     sql(base, 'truncate public.ledger_entries,public.financial_transactions,public.ledger_accounts cascade;');
     // The legacy compile template has supabase_admin-owned dependencies. Restore
     // only the trusted postgres owner's access, as in the F3 disposable harness.
     sql(base, `grant usage on schema public,private to postgres;
       grant all on all tables in schema public,private to postgres;
       grant execute on all functions in schema public,private to postgres;`);
-    sql(base, chain[8]);
+    applyMigrationIfMissing(base, 8);
     const beforeMigration = snapshot(base);
     sql(base, readFileSync(new URL(c2[0], dir), 'utf8'));
     assert.equal(snapshot(base), beforeMigration, 'applying C2 created economic facts or changed balances');
+    sql(base, readFileSync(new URL(finalWallet[0], dir), 'utf8'));
+    assert.equal(snapshot(base), beforeMigration, 'applying F3 final created economic facts or changed balances');
     assert.deepEqual(policy(base), ['off', false, false, false, 0, null]);
     assert.equal(sql(base, 'select count(*) from private.creator_premium_finance_authorizations').stdout, '0');
     assert.equal(sql(base, 'select count(*) from private.creator_premium_finance_owner_attestations_f3_c2').stdout, '0');
@@ -296,10 +340,8 @@ test('C2 origin-mode disposable canary proves 3000 BDAG lifecycle and governance
     // default row predates the current age-eligibility constraints. Disable
     // only that named fixture trigger while inserting synthetic auth users;
     // every financial trigger and the session replication role stay active.
-    sql(base, `alter table auth.users disable trigger on_auth_user_age_eligibility;
-      insert into auth.users(id,is_anonymous) values ${actors.map(actor => `('${actor}',false)`).join(',')};
-      alter table auth.users enable trigger on_auth_user_age_eligibility;
-      insert into public.user_profiles(id,username) values ${actors.map((actor, index) => `('${actor}','f3c2_synthetic_${index}')`).join(',')} on conflict(id) do nothing;
+    insertSyntheticAuthUsers(base, actors);
+    sql(base, `insert into public.user_profiles(id,username) values ${actors.map((actor, index) => `('${actor}','f3c2_synthetic_${index}')`).join(',')} on conflict(id) do nothing;
       insert into private.admin_user_roles(user_id,role_code,grant_actor_kind,grant_operator_reference,grant_reason)
       values('${id.admin}','SUPER_ADMIN','trusted_operator','f3-c2-disposable-proof','Synthetic local proof');
       insert into private.user_age_eligibility(user_id,status,minimum_age,policy_version,evaluated_at,source,age_band,birth_date)
@@ -331,6 +373,66 @@ test('C2 origin-mode disposable canary proves 3000 BDAG lifecycle and governance
         ('${id.buyerAccount}','${id.buyer}','user','BDAG',3000,false),
         ('${id.creatorAccount}','${id.creator}','user','BDAG',0,false),
         ('${id.outsiderAccount}','${id.outsider}','user','BDAG',0,false);`);
+
+    await scenario('self-only provisioning creates one zero-balance account and preserves existing financial state', async db => {
+      assert.equal(sql(db, `select p.prosecdef and p.proowner='postgres'::regrole
+        and coalesce(p.proconfig @> array['search_path=""'],false)
+        from pg_proc p where p.oid='public.ensure_my_ledger_account()'::regprocedure`).stdout, 't');
+      assert.equal(sql(db, `select has_function_privilege('authenticated','public.ensure_my_ledger_account()','execute')`).stdout, 't');
+      for (const role of ['anon', 'service_role']) {
+        assert.equal(sql(db, `select has_function_privilege('${role}','public.ensure_my_ledger_account()','execute')`).stdout, 'f');
+      }
+      assert.equal(sql(db, `select not exists(select 1 from pg_proc p,
+        lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) acl
+        where p.oid='public.ensure_my_ledger_account()'::regprocedure
+          and acl.grantee=0 and acl.privilege_type='EXECUTE')`).stdout, 't');
+      assert.equal(sql(db, `select has_function_privilege('authenticated','public.ensure_ledger_account(uuid)','execute')`).stdout, 'f');
+      denied(sql(db, `begin;set local role authenticated;select public.ensure_my_ledger_account();rollback;`, true),
+        /ledger_account_auth_required/);
+      denied(sql(db, `begin;set local role service_role;select public.ensure_my_ledger_account();rollback;`, true),
+        /permission denied/);
+
+      const financialActivity = () => sql(db, `select jsonb_build_object(
+        'transactions',(select count(*) from public.financial_transactions),
+        'entries',(select count(*) from public.ledger_entries),
+        'journal',(select count(*) from public.idempotency_keys),
+        'velocity',(select coalesce(sum(count),0) from public.velocity_counters),
+        'authorizations',(select count(*) from private.creator_premium_finance_authorizations))`).stdout;
+      const activityBefore = financialActivity();
+      sql(db, `delete from public.ledger_accounts where id='${id.creatorAccount}'`);
+      assert.equal(sql(db, `select count(*) from public.ledger_accounts where owner_id='${id.creator}' and account_type='user'`).stdout, '0');
+
+      denied(sql(db, authenticatedSql(id.creator,
+        `select public.ensure_ledger_account('${id.outsider}')`), true), /permission denied/);
+      denied(sql(db, `begin;set local role anon;select public.ensure_my_ledger_account();rollback;`, true), /permission denied/);
+
+      const calls = await Promise.all([1, 2].map(() => dockerAsync(
+        pgCommand(db), authenticatedSql(id.creator, 'select public.ensure_my_ledger_account()'),
+      )));
+      for (const result of calls) assert.equal(result.status, 0, result.stderr);
+      assert.equal(calls[0].stdout, calls[1].stdout, 'concurrent provisioning returned different accounts');
+      assert.equal(sql(db, `select count(*) from public.ledger_accounts where owner_id='${id.creator}' and account_type='user' and currency='BDAG'`).stdout, '1');
+      assert.deepEqual(json(db, `select jsonb_build_array(balance::numeric(38,8)::text,frozen)
+        from public.ledger_accounts where owner_id='${id.creator}' and account_type='user'`), ['0.00000000', false]);
+      assert.deepEqual(counts(db), [0, 0]);
+      assert.deepEqual(policy(db), ['off', false, false, false, 0, null]);
+
+      sql(db, `update public.ledger_accounts set balance=7.25,frozen=true
+        where owner_id='${id.creator}' and account_type='user'`);
+      const existing = sql(db, authenticatedSql(id.creator, 'select public.ensure_my_ledger_account()'));
+      assert.equal(existing.stdout, calls[0].stdout);
+      assert.deepEqual(json(db, `select jsonb_build_array(balance::numeric(38,8)::text,frozen)
+        from public.ledger_accounts where owner_id='${id.creator}' and account_type='user'`), ['7.25000000', true]);
+      assert.deepEqual(counts(db), [0, 0]);
+
+      const noProfile = randomUUID();
+      insertSyntheticAuthUsers(db, [noProfile]);
+      denied(sql(db, authenticatedSql(noProfile, 'select public.ensure_my_ledger_account()'), true),
+        /ledger_account_profile_required/);
+      assert.equal(sql(db, `select count(*) from public.ledger_accounts where owner_id='${noProfile}'`).stdout, '0');
+      assert.deepEqual(counts(db), [0, 0]);
+      assert.equal(financialActivity(), activityBefore, 'provisioning changed financial activity or authorization state');
+    }, null);
 
     await scenario('migration application remains OFF and foundation rejects activation and authorization INSERT', db => {
       assert.deepEqual(policy(db), ['off', false, false, false, 0, null]);
@@ -395,6 +497,12 @@ test('C2 origin-mode disposable canary proves 3000 BDAG lifecycle and governance
 
     await scenario('3000 funding → 1500 purchase + 1500 subscription → cancel → refund-only close → two reversals → final OFF', db => {
       assert.deepEqual(balances(db), ['3000.00000000', '0.00000000', '0.00000000']);
+      const emptyRevenue = premiumRevenue(db);
+      assert.deepEqual(
+        [emptyRevenue.source.gross_revenue, emptyRevenue.source.reversals,
+          emptyRevenue.source.net_revenue, emptyRevenue.source.event_count],
+        [0, 0, 0, 0],
+      );
       const purchaseKey = randomUUID(), subscriptionKey = randomUUID();
       const bought = step(db, () => success(db, purchase(purchaseKey)));
       const subscribed = step(db, () => success(db, subscribe(subscriptionKey)));
@@ -404,6 +512,25 @@ test('C2 origin-mode disposable canary proves 3000 BDAG lifecycle and governance
       }
       assert.deepEqual(balances(db), ['0.00000000', '2400.00000000', '600.00000000']);
       assert.deepEqual(counts(db), [2, 6]);
+      const chargedRevenue = premiumRevenue(db);
+      assert.deepEqual(
+        [chargedRevenue.source.gross_revenue, chargedRevenue.source.reversals,
+          chargedRevenue.source.net_revenue, chargedRevenue.source.event_count],
+        [600, 0, 600, 2],
+      );
+      assert.deepEqual(
+        [chargedRevenue.reconciliationSource.status,
+          chargedRevenue.reconciliationSource.primary_gross,
+          chargedRevenue.reconciliationSource.primary_reversals,
+          chargedRevenue.reconciliationSource.crosscheck_gross,
+          chargedRevenue.reconciliationSource.crosscheck_reversals,
+          chargedRevenue.reconciliationSource.primary_net,
+          chargedRevenue.reconciliationSource.crosscheck_net,
+          chargedRevenue.reconciliationSource.ledger_net,
+          chargedRevenue.reconciliationSource.difference,
+          chargedRevenue.reconciliationSource.mismatch_count],
+        ['pass', 600, 0, 600, 0, 600, 600, 600, 0, 0],
+      );
       const cancel = step(db, () => success(db, `select public.cancel_creator_premium_subscription_v1('${id.buyer}','${subscribed.subscription_id}','${randomUUID()}')`));
       assert.equal(cancel.money_moved, false); assert.deepEqual(counts(db), [2, 6]);
       step(db, () => owner(db, close()));
@@ -423,11 +550,39 @@ test('C2 origin-mode disposable canary proves 3000 BDAG lifecycle and governance
       assert.equal(snapshot(db), beforeReplay, 'double refund/replay wrote monetary or velocity state');
       assert.deepEqual(balances(db), ['3000.00000000', '0.00000000', '0.00000000']);
       assert.deepEqual(counts(db), [4, 12]);
+      const refundedRevenue = premiumRevenue(db);
+      assert.deepEqual(
+        [refundedRevenue.source.gross_revenue, refundedRevenue.source.reversals,
+          refundedRevenue.source.net_revenue, refundedRevenue.source.event_count],
+        [600, 600, 0, 4],
+      );
+      assert.deepEqual(
+        [refundedRevenue.reconciliationSource.status,
+          refundedRevenue.reconciliationSource.primary_gross,
+          refundedRevenue.reconciliationSource.primary_reversals,
+          refundedRevenue.reconciliationSource.crosscheck_gross,
+          refundedRevenue.reconciliationSource.crosscheck_reversals,
+          refundedRevenue.reconciliationSource.primary_net,
+          refundedRevenue.reconciliationSource.crosscheck_net,
+          refundedRevenue.reconciliationSource.ledger_net,
+          refundedRevenue.reconciliationSource.difference,
+          refundedRevenue.reconciliationSource.mismatch_count],
+        ['pass', 600, 600, 600, 600, 0, 0, 0, 0, 0],
+      );
       const usage = json(db, `select jsonb_build_array(purchase_count,subscription_count,refund_count,gross_bdag::numeric(38,8)::text)
         from private.creator_premium_finance_consumption_f3_v1('${id.authorization}')`);
       assert.deepEqual(usage, [1, 1, 2, '3000.00000000']);
       step(db, () => owner(db, finalize()));
       assert.deepEqual(policy(db), ['off', false, false, false, 0, null]);
+      const finalRevenue = premiumRevenue(db);
+      assert.deepEqual(
+        [finalRevenue.source.gross_revenue, finalRevenue.source.reversals,
+          finalRevenue.source.net_revenue, finalRevenue.source.event_count,
+          finalRevenue.reconciliationSource.status,
+          finalRevenue.reconciliationSource.mismatch_count],
+        [600, 600, 0, 4, 'pass', 0],
+        'Finance OFF must preserve validated historical Premium revenue and reversals',
+      );
       unchangedDenial(db, subscribe(), /disabled|not_open|limit_reached/);
       assert.equal(sql(db, `select count(*) from private.creator_premium_purchase_receipts where access_state='active'`).stdout, '0');
       assert.equal(sql(db, `select count(*) from private.creator_premium_subscription_periods where access_state='active'`).stdout, '0');
@@ -496,10 +651,19 @@ test('C2 origin-mode disposable canary proves 3000 BDAG lifecycle and governance
         from public.financial_transactions original where original.id='${bought.financial_transaction_id}';
         set local request.jwt.claim.sub='${id.admin}';set local request.jwt.claim.role='authenticated';
         set local role authenticated;
-        select public.search_admin_creator_premium_finance_v1(null,null,null,null,null,100);rollback;`);
+        select jsonb_build_object(
+          'finance',public.search_admin_creator_premium_finance_v1(null,null,null,null,null,100),
+          'revenue',public.get_admin_platform_revenue('all'));
+        rollback;`);
       const response = JSON.parse(probe.stdout);
-      assert.ok(response.reconciliation.orphan_creator_premium_transactions >= 1,
+      assert.ok(response.finance.reconciliation.orphan_creator_premium_transactions >= 1,
         'copied reference hid a transaction not named by the exact receipt original/reversal pair');
+      const premiumReconciliation = response.revenue.reconciliation.sources.find(
+        item => item.source_code === 'creator_premium' && item.currency === 'BDAG',
+      );
+      assert.ok(premiumReconciliation.mismatch_count >= 1,
+        'global platform revenue ignored the orphan Premium transaction');
+      assert.equal(premiumReconciliation.status, 'fail');
       assert.equal(snapshot(db), before, 'rollback left corrupted provenance behind');
     });
 
