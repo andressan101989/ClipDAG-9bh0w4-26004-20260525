@@ -7,6 +7,29 @@ import { pathToFileURL } from 'node:url';
 import { verifyProductionPreSnapshot, verifyProductionRecoverySnapshot, verifyProductionSnapshotPair } from './nelyon-production-snapshot-adapter.mjs';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
+export const F3_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
+  "id": "creator-premium-f3-foundation-v1",
+  "phase": "foundation_only",
+  "baseline_sha": "238e987933c7198400534121e61fb3d2750ba5ba",
+  "source_ancestor": "27ff8b3861f901c548ee4c6abc054bc805d63f09",
+  "migration_path": "supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql",
+  "migration_blob": "8338634c5341fcadd102cdeb34eb1f9dc701af6d",
+  "migration_sha256": "1fea4ed72b0aaee90f066e24307547fb0305aa96e597d75c9eb21bb93384aec5",
+  "function": "bdag-ledger",
+  "function_path": "supabase/functions/bdag-ledger/index.ts",
+  "function_blob": "4304dca929acf958667cc182218f7c91810fb808",
+  "function_source_sha256": "8a07c5887d4550e58f554530bcca3dcd84293c074854456fb1c666ad7a73f977",
+  "config_blob": "7c3ff52db72f9983aa4128f5c2e7e686bba31d5d",
+  "productive_paths": [
+    "supabase/functions/bdag-ledger/index.ts",
+    "supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql"
+  ],
+  "foundation_guards": [
+    "creator_premium_finance_policy_f3_foundation_off_check",
+    "creator_premium_finance_auth_f3_foundation_insert_guard"
+  ],
+  "requires_separate_baseline_promotion": true
+});
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
 const EXACT_MODES = ['plan_only', 'gate_proof', 'release', 'postcheck_recovery'];
 const A2_NEGATIVE_TEST_EVIDENCE_SHA256 = '47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e';
@@ -433,6 +456,11 @@ export function validatePolicy(policy) {
     deny('INVALID_POLICY', 'policy must be an object');
   }
   if (policy.schema_version !== 2) deny('INVALID_POLICY_SCHEMA', 'unsupported policy schema');
+  if (canonicalJson(policy.finance_authority_transition) !== canonicalJson(F3_FINANCE_AUTHORITY_TRANSITION)
+    || sha256Hex(canonicalJson(policy.finance_authority)) !== '1915725abb629c21505cd058532fddefca6f9ba2fdb03eae7b69c6abdcb5ac00'
+    || sha256Hex(canonicalJson(policy.finance_security_advisor)) !== '47fba40bc5736d8da22cda8409ef39538ea3dcc5187b17ce9d898544d2c815a3') {
+    deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'F3 foundation authority must match the exact audited contract');
+  }
   if (policy.owner !== 'andressan101989') deny('INVALID_POLICY_OWNER', 'unexpected policy owner');
   if (policy.repository !== 'andressan101989/ClipDAG-9bh0w4-26004-20260525') {
     deny('INVALID_POLICY_REPOSITORY', 'unexpected repository authority');
@@ -914,6 +942,48 @@ export function attestManagedScopeTransition({
       migration_blob: migrationBlob,
     },
   };
+}
+
+export function attestFinanceAuthorityTransition({ policy, approvedSha, changes, migrations, affectedFunctions, runGit, cwd }) {
+  const t = F3_FINANCE_AUTHORITY_TRANSITION;
+  const candidate = migrations?.some(item => item.version === '20261025011000' || item.path === t.migration_path)
+    || (policy?.baseline?.sha === t.baseline_sha && affectedFunctions?.includes(t.function));
+  if (!candidate) return { migrations, attestation: null };
+  const code = 'INVALID_FINANCE_AUTHORITY_TRANSITION';
+  if (canonicalJson(policy?.finance_authority_transition) !== canonicalJson(t)
+    || policy?.baseline?.sha !== t.baseline_sha || !SHA_PATTERN.test(approvedSha ?? '')
+    || canonicalJson(affectedFunctions) !== canonicalJson([t.function]) || migrations.length !== 1
+    || migrations[0].path !== t.migration_path || migrations[0].version !== '20261025011000'
+    || typeof runGit !== 'function') deny(code, 'foundation is inapplicable or its productive scope differs');
+  const productive = classifyChangedPaths(changes).productive;
+  if (canonicalJson(productive.map(item => item.path).sort()) !== canonicalJson(t.productive_paths)
+    || productive.some(item => item.status !== (item.path === t.migration_path ? 'A' : 'M'))) {
+    deny(code, 'foundation permits exactly its one migration and existing bdag-ledger source');
+  }
+  try {
+    runGit(['cat-file', '-e', `${t.source_ancestor}^{commit}`], { cwd });
+    runGit(['merge-base', '--is-ancestor', t.baseline_sha, t.source_ancestor], { cwd });
+    runGit(['merge-base', '--is-ancestor', t.source_ancestor, approvedSha], { cwd });
+    for (const [path, blob] of [[t.migration_path, t.migration_blob], [t.function_path, t.function_blob], ['supabase/config.toml', t.config_blob]]) {
+      if (gitText(runGit, ['rev-parse', `${approvedSha}:${path}`], cwd) !== blob
+        || fileTypeAtCommit(runGit, cwd, approvedSha, path) !== 'file') deny(code, 'foundation committed blob/path differs');
+    }
+    const migrationBytes = runGit(['show', `${approvedSha}:${t.migration_path}`], { cwd });
+    if (sha256Hex(migrationBytes) !== t.migration_sha256) deny(code, 'foundation migration bytes differ');
+    const actualChanges = parseNameStatusZ(runGit(['diff', '--name-status', '-z', t.baseline_sha, approvedSha, '--', 'supabase/'], { cwd }));
+    if (canonicalJson(actualChanges.map(item => ({ path: item.path, status: item.status })).sort((a,b) => a.path.localeCompare(b.path)))
+      !== canonicalJson(productive.map(item => ({ path: item.path, status: item.status })).sort((a,b) => a.path.localeCompare(b.path)))) {
+      deny(code, 'Git productive closure differs from supplied evidence');
+    }
+  } catch (error) {
+    if (error?.code === code) throw error;
+    deny(code, 'approved commit does not attest the exact foundation ancestry and bytes');
+  }
+  const attestation = { id: t.id, phase: t.phase, baseline_sha: t.baseline_sha,
+    source_ancestor: t.source_ancestor, approved_sha: approvedSha, descendant_verified: true,
+    migration_blob: t.migration_blob, migration_sha256: t.migration_sha256,
+    function_blob: t.function_blob, function_source_sha256: t.function_source_sha256, config_blob: t.config_blob };
+  return { migrations: migrations.map(item => ({ ...item, blob: t.migration_blob, sha256: t.migration_sha256 })), attestation };
 }
 
 export function verifyMigrationDryRun({ text, manifest }) {
@@ -1473,6 +1543,8 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     configAfter,
     changes: gitState.changes,
   });
+  const financeTransition = attestFinanceAuthorityTransition({ cwd, policy, approvedSha: request.approvedSha,
+    changes: gitState.changes, migrations: transitionEvidence.migrations, affectedFunctions, runGit });
   const risk = classifyRisk({
     affectedFunctions,
     changedPaths: gitState.changes.map(change => change.path),
@@ -1484,8 +1556,9 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   return {
     gitState,
     classified,
-    migrations: transitionEvidence.migrations,
+    migrations: financeTransition.migrations,
     managedScopeTransition: transitionEvidence.attestation,
+    financeAuthorityTransition: financeTransition.attestation,
     affectedFunctions,
     functionContracts,
     reproducibility,
@@ -1511,6 +1584,7 @@ export function buildManifest({
   classified,
   migrations,
   managedScopeTransition,
+  financeAuthorityTransition,
   affectedFunctions,
   functionContracts,
   reproducibility,
@@ -1573,6 +1647,26 @@ export function buildManifest({
   } else if (managedScopeTransition !== undefined && managedScopeTransition !== null) {
     deny('INVALID_MANAGED_SCOPE_TRANSITION', 'managed scope transition attestation is not applicable');
   }
+  const f3 = F3_FINANCE_AUTHORITY_TRANSITION;
+  const f3Candidate = migrations?.some(item => item.version === '20261025011000' || item.path === f3.migration_path)
+    || (policy.baseline.sha === f3.baseline_sha && functionNames.includes(f3.function));
+  if (f3Candidate) {
+    const expected = { id: f3.id, phase: f3.phase, baseline_sha: f3.baseline_sha,
+      source_ancestor: f3.source_ancestor, approved_sha: request.approvedSha, descendant_verified: true,
+      migration_blob: f3.migration_blob, migration_sha256: f3.migration_sha256,
+      function_blob: f3.function_blob, function_source_sha256: f3.function_source_sha256, config_blob: f3.config_blob };
+    if (recoveryMode || policy.baseline.sha !== f3.baseline_sha
+      || canonicalJson(financeAuthorityTransition ?? null) !== canonicalJson(expected)
+      || gitState.approvedSha !== request.approvedSha || gitState.originMainSha !== request.approvedSha
+      || gitState.baselineSha !== f3.baseline_sha
+      || canonicalJson(classified.productive.map(item => item.path).sort()) !== canonicalJson(f3.productive_paths)
+      || migrations.length !== 1 || migrations[0].path !== f3.migration_path
+      || migrations[0].blob !== f3.migration_blob || migrations[0].sha256 !== f3.migration_sha256
+      || canonicalJson(functionNames) !== canonicalJson([f3.function])
+      || contracts[0]?.source_sha256 !== f3.function_source_sha256 || classified.config.length !== 0) {
+      deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'manifest lacks the exact foundation ancestry/bytes/closure attestation');
+    }
+  } else if (financeAuthorityTransition != null) deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'foundation attestation is inapplicable');
   if (!generatedAt || Number.isNaN(Date.parse(generatedAt))) {
     deny('INVALID_MANIFEST_TIME', 'manifest generation time is invalid');
   }
@@ -1633,6 +1727,7 @@ export function buildManifest({
       migrations: (recoveryMode ? [] : [...migrations]).map(stableCopy).sort((left, right) => left.version.localeCompare(right.version)),
       config_changed: recoveryMode ? false : (classified?.config?.length ?? 0) > 0,
       ...(managedScopeTransition ? { managed_scope_transition: stableCopy(managedScopeTransition) } : {}),
+      ...(financeAuthorityTransition ? { finance_authority_transition: stableCopy(financeAuthorityTransition) } : {}),
     },
     risk: stableCopy(risk),
     blockers,

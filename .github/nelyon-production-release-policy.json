@@ -34,6 +34,656 @@
     "source": "owner-control-plane",
     "workflow_may_promote": false
   },
+  "finance_authority_transition": {
+    "id": "creator-premium-f3-foundation-v1",
+    "phase": "foundation_only",
+    "baseline_sha": "238e987933c7198400534121e61fb3d2750ba5ba",
+    "source_ancestor": "27ff8b3861f901c548ee4c6abc054bc805d63f09",
+    "migration_path": "supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql",
+    "migration_blob": "8338634c5341fcadd102cdeb34eb1f9dc701af6d",
+    "migration_sha256": "1fea4ed72b0aaee90f066e24307547fb0305aa96e597d75c9eb21bb93384aec5",
+    "function": "bdag-ledger",
+    "function_path": "supabase/functions/bdag-ledger/index.ts",
+    "function_blob": "4304dca929acf958667cc182218f7c91810fb808",
+    "function_source_sha256": "8a07c5887d4550e58f554530bcca3dcd84293c074854456fb1c666ad7a73f977",
+    "config_blob": "7c3ff52db72f9983aa4128f5c2e7e686bba31d5d",
+    "productive_paths": [
+      "supabase/functions/bdag-ledger/index.ts",
+      "supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql"
+    ],
+    "foundation_guards": [
+      "creator_premium_finance_policy_f3_foundation_off_check",
+      "creator_premium_finance_auth_f3_foundation_insert_guard"
+    ],
+    "requires_separate_baseline_promotion": true
+  },
+  "finance_authority": {
+    "schema_version": 1,
+    "legacy": {
+      "relations": [
+        {
+          "identity": "private.creator_premium_finance_policy",
+          "sha256": "001fc0a15d6a5dee2a707486612574422d841f95fd1c42c0fc9d2943608d5b02"
+        },
+        {
+          "identity": "private.creator_premium_purchase_receipts",
+          "sha256": "9a936d14a1877970146a9af0543740810abf140cad6a74d1a742d1b6a75f6384"
+        },
+        {
+          "identity": "private.creator_premium_subscription_periods",
+          "sha256": "e772d15b4f9ba8e1682c0e9bd34906897969060e09b9c2dfdcfa3a64b9435e30"
+        },
+        {
+          "identity": "private.creator_premium_subscriptions",
+          "sha256": "a3cdaa89b3263e6c85628898f23c1131c3491b3da3ba88f6d77dbcf80e5e85a8"
+        }
+      ],
+      "functions": [
+        {
+          "identity": "private.calculate_creator_premium_split_v1(numeric, integer)",
+          "sha256": "da87dcf5133c3dbf8b99278e75b1d20225fb94f07d794f8e0716ac1a5dc744e2"
+        },
+        {
+          "identity": "private.creator_premium_actor_is_age_eligible_v1(uuid)",
+          "sha256": "155b5ae7ffe79541c7e95f78ee5ffd443dfe98df455abde45f5a58f94c6e8b1d"
+        },
+        {
+          "identity": "private.creator_premium_actor_is_operational_v1(uuid)",
+          "sha256": "09ac3d4eaa285dfed19022893a212c210531606cc7d3e5ad97ef3a2b0e1410bb"
+        },
+        {
+          "identity": "private.creator_premium_financial_fact_is_valid_v1(uuid, uuid, text, uuid, uuid, uuid, uuid, uuid, text, uuid, text, text, uuid, uuid, numeric, numeric, numeric, integer)",
+          "sha256": "a82e6d87cb4949491d0fef8ac80528d08cbe6021f64585760d992dbba78514a4"
+        },
+        {
+          "identity": "private.creator_premium_image_is_ready_v1(uuid)",
+          "sha256": "427190dc81c9e26d8e2cfc054b48a1977ed267896437b20cdf9c0d7ac1c05a81"
+        },
+        {
+          "identity": "private.creator_premium_internal_finance_authority_v1()",
+          "sha256": "bd8ea70d9ce77208e905844eb352ca5ad5398cad98d3e3360be595b7f9786669"
+        },
+        {
+          "identity": "private.creator_premium_pair_is_unblocked_v1(uuid, uuid)",
+          "sha256": "38166b781b64e2f20a57b853be56aa9c4221de013c257798fa854b173daf9532"
+        },
+        {
+          "identity": "private.creator_premium_period_binding_is_valid_v1(uuid)",
+          "sha256": "d5630e1d68a8eb0c824a3ea5ebd4f021c17afb73c3e22d78ba47f56989916ea7"
+        },
+        {
+          "identity": "private.creator_premium_purchase_binding_is_valid_v1(uuid)",
+          "sha256": "c48a5acc4d8292fedf7348f9142ceb1ac9711cd5449d0d7b657ddcd83ae83363"
+        },
+        {
+          "identity": "private.creator_premium_request_fingerprint_v1(text, uuid, uuid, text)",
+          "sha256": "696a8fe5e87e6ed0ec01ad166dfbe7aeb49fdbf3fb1e1b66bee19c8022e25736"
+        },
+        {
+          "identity": "private.creator_premium_subscription_period_fact_is_valid_f2_v1(uuid)",
+          "sha256": "a2edd9f0392bf1063ff7b27aaa6941d6ae5ab35e22d8471a267f03b8f1eb7c4c"
+        },
+        {
+          "identity": "private.creator_premium_teaser_url_v1(uuid)",
+          "sha256": "6d9154062df4d3c58ccf9ae477bbc259bfcdc282f72726fecb0c8f8051e58b0e"
+        },
+        {
+          "identity": "private.creator_premium_video_is_ready_v1(uuid)",
+          "sha256": "dee401d23f1d35010fe738adcb0a6ed0101f5124a36073af2bf7a8a182c58ec8"
+        },
+        {
+          "identity": "private.current_user_is_creator_exclusive_age_eligible()",
+          "sha256": "591c8d110eeb481dd9a07be2f96ea077436e606367889561d9df84d7cea5ca9d"
+        },
+        {
+          "identity": "private.guard_creator_premium_offer_financial_identity_v1()",
+          "sha256": "438d30bab38f1a3b298e3067146ca5457b7ec1a62685c8dc572f420caaf1697b"
+        },
+        {
+          "identity": "private.guard_creator_premium_period_snapshot_v1()",
+          "sha256": "e2c7e9d627b3046b87871465aff7105f41c5c90f6eaac0bd7fc05d1819e5d0dd"
+        },
+        {
+          "identity": "private.guard_creator_premium_plan_financial_identity_v1()",
+          "sha256": "158e50dd2f03d6c936179c6d8c421b12ea71fca375533ca0a45b9b06ab9f1698"
+        },
+        {
+          "identity": "private.guard_creator_premium_purchase_snapshot_v1()",
+          "sha256": "d5df76688e9909f0232b6d9b243b7ca44fc7f268c1170e4712a6e16cc8b46329"
+        },
+        {
+          "identity": "private.post_creator_premium_charge_v1(uuid, uuid, text, text, uuid, uuid, numeric, integer)",
+          "sha256": "19c39215186619a7df5119d121a665e56874d4fb014e7a1951280d25b2721f3f"
+        },
+        {
+          "identity": "private.post_creator_premium_refund_v1(uuid, uuid, uuid, uuid, uuid, text, text, uuid, uuid, numeric, numeric, numeric)",
+          "sha256": "0de24aab7b852da70eae850fac141b4807252ead3a348134704dbd05cc01c457"
+        },
+        {
+          "identity": "private.resolve_creator_premium_entitlement_v1(uuid)",
+          "sha256": "f0c961c49868a628568b2cd6002a203446102e5ea341a01daccecb21191522bf"
+        },
+        {
+          "identity": "private.resolve_creator_premium_platform_account_v1()",
+          "sha256": "7f6ccb488d9c816187181d326898528f8398c5361f66ce99f87e9b5734475cbc"
+        },
+        {
+          "identity": "private.validate_creator_premium_refund_reason_v1(text)",
+          "sha256": "e293f1d1df20f7463da9550fa6a5c30c85c3f0c94929bd92974ba126be297d99"
+        },
+        {
+          "identity": "public.admin_refund_creator_premium_purchase_v1(uuid, uuid, text)",
+          "sha256": "1f8bc804ca3f929d358489bf13b96fc8feed6e3da9eba96aec3841b407933faa"
+        },
+        {
+          "identity": "public.admin_refund_creator_premium_subscription_period_v1(uuid, uuid, text)",
+          "sha256": "38274285aa5bf96b5c1890467d89fd9a6a5e3593647a4b04505838a97e8e36c7"
+        },
+        {
+          "identity": "public.cancel_creator_premium_subscription_v1(uuid, uuid, uuid)",
+          "sha256": "7f18db2956355762a411f8a16d9e120e774d3dbde7c2d79e0bd96e9950f47536"
+        },
+        {
+          "identity": "public.get_admin_creator_premium_refund_candidates_v1(uuid)",
+          "sha256": "694bc670c213f1d9bf742107f3ab749905b1feee2f29da5738283fbf99eea29d"
+        },
+        {
+          "identity": "public.get_creator_premium_commerce_v1(uuid)",
+          "sha256": "1443fdbe17b27dd98935c89e29073a16efdbe8127030134c18a586a0dc0446ff"
+        },
+        {
+          "identity": "public.get_my_creator_premium_commercial_summary_v1(timestamp with time zone, timestamp with time zone)",
+          "sha256": "b1e9e19503d90d8b0755bb67e62a257a076295d332584662aba51522d35b1d0b"
+        },
+        {
+          "identity": "public.get_my_creator_premium_financial_history_v1(text, text, timestamp with time zone, uuid, integer)",
+          "sha256": "4c5a1bd2f197a844915ae0d8fdb891313b5cd8a3041cecf586ea54f62de45a66"
+        },
+        {
+          "identity": "public.get_my_creator_premium_subscriptions_v1(timestamp with time zone, uuid, integer)",
+          "sha256": "c57f97f30358be91558ac7de75b437f6cb68db1ce68ebda1c733833e187690e0"
+        },
+        {
+          "identity": "public.purchase_creator_premium_content_v1(uuid, uuid, uuid)",
+          "sha256": "e2be8afa790e995d77b9f5d317c3eac5d54112fb61be320319d941055122eb19"
+        },
+        {
+          "identity": "public.refund_creator_premium_purchase_v1(uuid, uuid, text)",
+          "sha256": "2056a2622a6d6a7cf28b2ddd84da39e8ce09ec15a19db1017c232e3c78f60f73"
+        },
+        {
+          "identity": "public.refund_creator_premium_subscription_period_v1(uuid, uuid, text)",
+          "sha256": "0a49095ea5cbe9b8e403166ce7cacef788c0331dee6ff20bc7e877edcb1416b6"
+        },
+        {
+          "identity": "public.search_admin_creator_premium_finance_v1(text, text, text, timestamp with time zone, uuid, integer)",
+          "sha256": "d56c7a2db9f51fcf31aca4e4dbc1d1369484d2406c881ffa480165c5729f65bd"
+        },
+        {
+          "identity": "public.subscribe_creator_premium_plan_v1(uuid, uuid, uuid)",
+          "sha256": "5b20c9457974acad196034ec06e123d6906febe6117b998a754825019676044d"
+        }
+      ],
+      "schema_sha256": "b36a6f74df747eb710dffaf6d7c2411a1d5402aaf373d2774d5e6e9cc0edbc97",
+      "legacy_function_identities": [
+        "private.admin_active_role_codes(uuid)",
+        "private.admin_effective_capabilities(uuid)",
+        "private.admin_request_fingerprint(jsonb)",
+        "private.admin_role_set_is_valid(text[])",
+        "public.admin_actor_has_capability(text)",
+        "public.admin_require_capability(text)",
+        "public.check_velocity_limit(uuid, text, numeric, integer, numeric, integer)",
+        "public.ensure_ledger_account(uuid)",
+        "public.ledger_credit(uuid, uuid, numeric, text, jsonb)",
+        "public.ledger_debit(uuid, uuid, numeric, text, jsonb)"
+      ]
+    },
+    "f3_foundation": {
+      "relations": [
+        {
+          "identity": "private.creator_premium_finance_authorizations",
+          "sha256": "248f7d34cf0e8bdaa48bea8d77599bae9a872a002ab778113ba3074812d1fc0d"
+        },
+        {
+          "identity": "private.creator_premium_finance_policy",
+          "sha256": "2b29bc356af85cbd03c927fd17da35884fe94bc817454e5759f8cdb8d7b29c4a"
+        },
+        {
+          "identity": "private.creator_premium_purchase_receipts",
+          "sha256": "a36e29bc8d8e2df1b9df71d7a001f43346e799f0773e25c63289a05aab7b7e26"
+        },
+        {
+          "identity": "private.creator_premium_subscription_periods",
+          "sha256": "1997144c76dc893e6c27b0f79cdcb94c0de6ca6b0b12076198b416d90630396c"
+        },
+        {
+          "identity": "private.creator_premium_subscriptions",
+          "sha256": "a3cdaa89b3263e6c85628898f23c1131c3491b3da3ba88f6d77dbcf80e5e85a8"
+        }
+      ],
+      "functions": [
+        {
+          "identity": "private.admit_creator_premium_charge_f3_v1(text, uuid, uuid, uuid, uuid, numeric)",
+          "sha256": "74c18e663e620c07bbb75d5a37291093b126791496387f693ee644f81373b840"
+        },
+        {
+          "identity": "private.admit_creator_premium_refund_f3_v1(uuid)",
+          "sha256": "209fbf3911676968679061f1f92feaaf9b458da715187b0a320dede32551a5a0"
+        },
+        {
+          "identity": "private.assert_creator_premium_finance_deadline_f3_v1(uuid, text)",
+          "sha256": "dbec2590e6ffe26552a18c676df0283c4a17ed1cfe28a82626bfcf8f844cbc56"
+        },
+        {
+          "identity": "private.calculate_creator_premium_split_v1(numeric, integer)",
+          "sha256": "da87dcf5133c3dbf8b99278e75b1d20225fb94f07d794f8e0716ac1a5dc744e2"
+        },
+        {
+          "identity": "private.creator_premium_actor_is_age_eligible_v1(uuid)",
+          "sha256": "155b5ae7ffe79541c7e95f78ee5ffd443dfe98df455abde45f5a58f94c6e8b1d"
+        },
+        {
+          "identity": "private.creator_premium_actor_is_operational_v1(uuid)",
+          "sha256": "09ac3d4eaa285dfed19022893a212c210531606cc7d3e5ad97ef3a2b0e1410bb"
+        },
+        {
+          "identity": "private.creator_premium_authorization_binding_f3_v1(uuid, text, uuid, uuid, uuid, uuid, numeric, integer, uuid, uuid, uuid)",
+          "sha256": "04aa7ed868a8a67f5c855ba0bde43c4bb9a3698e78760f48a5fd0016f9eb4dfb"
+        },
+        {
+          "identity": "private.creator_premium_charge_blocker_f3_v1(text, uuid, uuid, uuid, uuid, numeric)",
+          "sha256": "667bcf981be0ff0026855e04e5db382c3496180395e44f76aeb02ef906e3eda8"
+        },
+        {
+          "identity": "private.creator_premium_commerce_projection_f3_v1(uuid, boolean)",
+          "sha256": "445718a8f2fdf8bf7997f8cfb73e8bef25d4f19e79d57115b898492d04e91bb2"
+        },
+        {
+          "identity": "private.creator_premium_finance_consumption_f3_v1(uuid)",
+          "sha256": "8b032450f83617c67e9f408fa8428a52b20b35c7c94c09c7508e78e31826bd48"
+        },
+        {
+          "identity": "private.creator_premium_financial_fact_is_valid_v1(uuid, uuid, text, uuid, uuid, uuid, uuid, uuid, text, uuid, text, text, uuid, uuid, numeric, numeric, numeric, integer)",
+          "sha256": "a82e6d87cb4949491d0fef8ac80528d08cbe6021f64585760d992dbba78514a4"
+        },
+        {
+          "identity": "private.creator_premium_image_is_ready_v1(uuid)",
+          "sha256": "427190dc81c9e26d8e2cfc054b48a1977ed267896437b20cdf9c0d7ac1c05a81"
+        },
+        {
+          "identity": "private.creator_premium_internal_finance_authority_v1()",
+          "sha256": "bd8ea70d9ce77208e905844eb352ca5ad5398cad98d3e3360be595b7f9786669"
+        },
+        {
+          "identity": "private.creator_premium_pair_is_unblocked_v1(uuid, uuid)",
+          "sha256": "38166b781b64e2f20a57b853be56aa9c4221de013c257798fa854b173daf9532"
+        },
+        {
+          "identity": "private.creator_premium_period_binding_is_valid_v1(uuid)",
+          "sha256": "5cf66a4294e54c576516e80533a038ac203e84ff707c2e50cfc869d8e77ff0e1"
+        },
+        {
+          "identity": "private.creator_premium_purchase_binding_is_valid_v1(uuid)",
+          "sha256": "2e16154a0dcb324540d633ed18c8fcfe9c8e1af2878ee166a35486c616b982dd"
+        },
+        {
+          "identity": "private.creator_premium_request_fingerprint_v1(text, uuid, uuid, text)",
+          "sha256": "696a8fe5e87e6ed0ec01ad166dfbe7aeb49fdbf3fb1e1b66bee19c8022e25736"
+        },
+        {
+          "identity": "private.creator_premium_subscription_period_fact_is_valid_f2_v1(uuid)",
+          "sha256": "b23e2bc0e96760901ad81fe8e5f5349a15aa9298a52c4dbce2262b5c5667fc7b"
+        },
+        {
+          "identity": "private.creator_premium_subscriptions_projection_f3_v1(boolean, timestamp with time zone, uuid, integer)",
+          "sha256": "aa67c23015d3fd7c597459cef4eb816b25a5b8912329fc6c79b37d2c2b4e8be9"
+        },
+        {
+          "identity": "private.creator_premium_teaser_url_v1(uuid)",
+          "sha256": "6d9154062df4d3c58ccf9ae477bbc259bfcdc282f72726fecb0c8f8051e58b0e"
+        },
+        {
+          "identity": "private.creator_premium_video_is_ready_v1(uuid)",
+          "sha256": "dee401d23f1d35010fe738adcb0a6ed0101f5124a36073af2bf7a8a182c58ec8"
+        },
+        {
+          "identity": "private.current_user_is_creator_exclusive_age_eligible()",
+          "sha256": "591c8d110eeb481dd9a07be2f96ea077436e606367889561d9df84d7cea5ca9d"
+        },
+        {
+          "identity": "private.guard_creator_premium_finance_authorization_f3_v1()",
+          "sha256": "444cae2d179206be08f6e294dc021bdb85bbeffb9a96e5936eba22f68f7d16a1"
+        },
+        {
+          "identity": "private.guard_creator_premium_offer_financial_identity_v1()",
+          "sha256": "438d30bab38f1a3b298e3067146ca5457b7ec1a62685c8dc572f420caaf1697b"
+        },
+        {
+          "identity": "private.guard_creator_premium_period_snapshot_v1()",
+          "sha256": "8caa8c867151ab8fbbaf09504eb6cf08f6beddc2b5c8bc2bc1ce81bcb41186c3"
+        },
+        {
+          "identity": "private.guard_creator_premium_plan_financial_identity_v1()",
+          "sha256": "158e50dd2f03d6c936179c6d8c421b12ea71fca375533ca0a45b9b06ab9f1698"
+        },
+        {
+          "identity": "private.guard_creator_premium_purchase_snapshot_v1()",
+          "sha256": "865358acbd891ef333d2d55f3f18783b32e14df3811738c56ce99aecbefb3741"
+        },
+        {
+          "identity": "private.lock_creator_premium_finance_f3_v1()",
+          "sha256": "8790cc5466c63856e4c2183cb9b0dbefb45b57ef308b39de833c25b4b07e35f0"
+        },
+        {
+          "identity": "private.post_creator_premium_charge_v1(uuid, uuid, text, text, uuid, uuid, numeric, integer)",
+          "sha256": "19c39215186619a7df5119d121a665e56874d4fb014e7a1951280d25b2721f3f"
+        },
+        {
+          "identity": "private.post_creator_premium_refund_v1(uuid, uuid, uuid, uuid, uuid, text, text, uuid, uuid, numeric, numeric, numeric)",
+          "sha256": "0de24aab7b852da70eae850fac141b4807252ead3a348134704dbd05cc01c457"
+        },
+        {
+          "identity": "private.resolve_creator_premium_entitlement_v1(uuid)",
+          "sha256": "f0c961c49868a628568b2cd6002a203446102e5ea341a01daccecb21191522bf"
+        },
+        {
+          "identity": "private.resolve_creator_premium_platform_account_v1()",
+          "sha256": "7f6ccb488d9c816187181d326898528f8398c5361f66ce99f87e9b5734475cbc"
+        },
+        {
+          "identity": "private.validate_creator_premium_refund_reason_v1(text)",
+          "sha256": "e293f1d1df20f7463da9550fa6a5c30c85c3f0c94929bd92974ba126be297d99"
+        },
+        {
+          "identity": "public.admin_refund_creator_premium_purchase_v1(uuid, uuid, text)",
+          "sha256": "1f8bc804ca3f929d358489bf13b96fc8feed6e3da9eba96aec3841b407933faa"
+        },
+        {
+          "identity": "public.admin_refund_creator_premium_subscription_period_v1(uuid, uuid, text)",
+          "sha256": "38274285aa5bf96b5c1890467d89fd9a6a5e3593647a4b04505838a97e8e36c7"
+        },
+        {
+          "identity": "public.cancel_creator_premium_subscription_v1(uuid, uuid, uuid)",
+          "sha256": "7f18db2956355762a411f8a16d9e120e774d3dbde7c2d79e0bd96e9950f47536"
+        },
+        {
+          "identity": "public.get_admin_creator_premium_finance_activation_v1()",
+          "sha256": "8dbf0dcbbaf04226fb0c9468379fd39e2f83a8f3212ed0793e1a66ad6b145ee0"
+        },
+        {
+          "identity": "public.get_admin_creator_premium_refund_candidates_v1(uuid)",
+          "sha256": "694bc670c213f1d9bf742107f3ab749905b1feee2f29da5738283fbf99eea29d"
+        },
+        {
+          "identity": "public.get_creator_premium_commerce_v1(uuid)",
+          "sha256": "ef2dcdbeb9eb84cebad47302aa87590fa6cc45f0c43dcd35cde13db0ab328abe"
+        },
+        {
+          "identity": "public.get_creator_premium_commerce_v2(uuid)",
+          "sha256": "5a80a60381dd9684a8cfae9b92561ed1dacec27059fe41ce6af903f4bd0e9ebd"
+        },
+        {
+          "identity": "public.get_my_creator_premium_commercial_summary_v1(timestamp with time zone, timestamp with time zone)",
+          "sha256": "b1e9e19503d90d8b0755bb67e62a257a076295d332584662aba51522d35b1d0b"
+        },
+        {
+          "identity": "public.get_my_creator_premium_financial_history_v1(text, text, timestamp with time zone, uuid, integer)",
+          "sha256": "4c5a1bd2f197a844915ae0d8fdb891313b5cd8a3041cecf586ea54f62de45a66"
+        },
+        {
+          "identity": "public.get_my_creator_premium_subscriptions_v1(timestamp with time zone, uuid, integer)",
+          "sha256": "1f58128177cd7809cfe34caecbe0f2144eaed1e0373d2fcc8be52817df987335"
+        },
+        {
+          "identity": "public.get_my_creator_premium_subscriptions_v2(timestamp with time zone, uuid, integer)",
+          "sha256": "12cc8424cf5f2d35ae87161f29f60463767b5cb16dfdbe0335aaa4bd59229e50"
+        },
+        {
+          "identity": "public.purchase_creator_premium_content_v1(uuid, uuid, uuid, uuid)",
+          "sha256": "2d01b4052c0555a1440548eddfa17411de5d1d12b5b141332737ea3e7efb2b72"
+        },
+        {
+          "identity": "public.refund_creator_premium_purchase_v1(uuid, uuid, text)",
+          "sha256": "a7658673f1299286179b66aa7be35c07fea19891deb3007716015f8721abe65b"
+        },
+        {
+          "identity": "public.refund_creator_premium_subscription_period_v1(uuid, uuid, text)",
+          "sha256": "9de846dd659663d9c5a38906bc65461c691e6066add5a02eb3c63e6e0c431656"
+        },
+        {
+          "identity": "public.search_admin_creator_premium_finance_v1(text, text, text, timestamp with time zone, uuid, integer)",
+          "sha256": "d56c7a2db9f51fcf31aca4e4dbc1d1369484d2406c881ffa480165c5729f65bd"
+        },
+        {
+          "identity": "public.subscribe_creator_premium_plan_v1(uuid, uuid, uuid)",
+          "sha256": "696b365a0d634d9377aa07f28f42353f7c81c485751ff8e4f2ebf903f7af81de"
+        }
+      ],
+      "schema_sha256": "781c180183bfe0c5d70f2782c2badad779e716539a1ea4cc0bc50966eeacc7be",
+      "legacy_function_identities": [
+        "private.admin_active_role_codes(uuid)",
+        "private.admin_effective_capabilities(uuid)",
+        "private.admin_request_fingerprint(jsonb)",
+        "private.admin_role_set_is_valid(text[])",
+        "public.admin_actor_has_capability(text)",
+        "public.admin_require_capability(text)",
+        "public.check_velocity_limit(uuid, text, numeric, integer, numeric, integer)",
+        "public.ensure_ledger_account(uuid)",
+        "public.ledger_credit(uuid, uuid, numeric, text, jsonb)",
+        "public.ledger_debit(uuid, uuid, numeric, text, jsonb)"
+      ]
+    }
+  },
+  "finance_security_advisor": {
+    "rpc_attestations": [
+      {
+        "advisor_fingerprint": "2818544a84b6844679779d5b23a03199e75c18d5d36d6d160aca9c8191c41097",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": {
+          "name": "get_admin_creator_premium_finance_activation_v1",
+          "schema": "public",
+          "argument_types": [],
+          "identity_arguments": ""
+        },
+        "attestation": {
+          "security_definer": true,
+          "owner": "postgres",
+          "search_path": [
+            "search_path=\"\""
+          ],
+          "acl": [
+            {
+              "grantee": "authenticated",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            },
+            {
+              "grantee": "postgres",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            }
+          ],
+          "execute": {
+            "anon": false,
+            "public": false,
+            "service_role": false,
+            "authenticated": true
+          },
+          "definition_sha256": "1b33026301062223a91c4e35000a44f8299b639d7a728834150fb32d23d6309a"
+        }
+      },
+      {
+        "advisor_fingerprint": "339d435525f93706824b968958882e6616e3b4cb19728a5c1c425e8503f4df2e",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": {
+          "name": "get_creator_premium_commerce_v1",
+          "schema": "public",
+          "argument_types": [
+            "uuid"
+          ],
+          "identity_arguments": "p_content_id uuid"
+        },
+        "attestation": {
+          "security_definer": true,
+          "owner": "postgres",
+          "search_path": [
+            "search_path=\"\""
+          ],
+          "acl": [
+            {
+              "grantee": "authenticated",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            },
+            {
+              "grantee": "postgres",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            }
+          ],
+          "execute": {
+            "anon": false,
+            "public": false,
+            "service_role": false,
+            "authenticated": true
+          },
+          "definition_sha256": "16bfbc3bb13e8fedc69ae444dfac0e24ef02fb5285e775b72df1e3e36f2ce3b4"
+        }
+      },
+      {
+        "advisor_fingerprint": "c2a6553b159b0dec4de6f19f47302f1594bba7c4be05b77c34319fae433be07c",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": {
+          "name": "get_creator_premium_commerce_v2",
+          "schema": "public",
+          "argument_types": [
+            "uuid"
+          ],
+          "identity_arguments": "p_content_id uuid"
+        },
+        "attestation": {
+          "security_definer": true,
+          "owner": "postgres",
+          "search_path": [
+            "search_path=\"\""
+          ],
+          "acl": [
+            {
+              "grantee": "authenticated",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            },
+            {
+              "grantee": "postgres",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            }
+          ],
+          "execute": {
+            "anon": false,
+            "public": false,
+            "service_role": false,
+            "authenticated": true
+          },
+          "definition_sha256": "15f9385d66319a9901759e35fd00c27836f80db1f04d5922e191b282b5b6b530"
+        }
+      },
+      {
+        "advisor_fingerprint": "f8947b5a77fa93ff7dc019508d54eb859dffe9fcc0526d925e2d85d05a37f284",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": {
+          "name": "get_my_creator_premium_subscriptions_v1",
+          "schema": "public",
+          "argument_types": [
+            "timestamp with time zone",
+            "uuid",
+            "integer"
+          ],
+          "identity_arguments": "p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_limit integer"
+        },
+        "attestation": {
+          "security_definer": true,
+          "owner": "postgres",
+          "search_path": [
+            "search_path=\"\""
+          ],
+          "acl": [
+            {
+              "grantee": "authenticated",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            },
+            {
+              "grantee": "postgres",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            }
+          ],
+          "execute": {
+            "anon": false,
+            "public": false,
+            "service_role": false,
+            "authenticated": true
+          },
+          "definition_sha256": "e4181c867706a3b726624c6bcedc5ef1e4331d4c6e7a456ea9035caa726fe91c"
+        }
+      },
+      {
+        "advisor_fingerprint": "3da775663b576889fd8c250ade795a244518cb9a8385c4002153b1adf67b37d0",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": {
+          "name": "get_my_creator_premium_subscriptions_v2",
+          "schema": "public",
+          "argument_types": [
+            "timestamp with time zone",
+            "uuid",
+            "integer"
+          ],
+          "identity_arguments": "p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_limit integer"
+        },
+        "attestation": {
+          "security_definer": true,
+          "owner": "postgres",
+          "search_path": [
+            "search_path=\"\""
+          ],
+          "acl": [
+            {
+              "grantee": "authenticated",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            },
+            {
+              "grantee": "postgres",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            }
+          ],
+          "execute": {
+            "anon": false,
+            "public": false,
+            "service_role": false,
+            "authenticated": true
+          },
+          "definition_sha256": "307938b5ec832f0bdc2c4ad4009180c6a1b3ae28a7cc1f617c5b856fa13210a9"
+        }
+      }
+    ],
+    "relation_exception": {
+      "advisor_fingerprint": "93e9b80ea54177b945f93b8f6b72a207d0d02dbc8cfa1c463211fe1992e3339d",
+      "advisor_type": "table",
+      "advisor_severity": "INFO",
+      "object": {
+        "schema": "private",
+        "name": "creator_premium_finance_authorizations"
+      }
+    }
+  },
   "managed_scope_transitions": [
     {
       "id": "creator-premium-f2-bdag-ledger-enrollment-v1",

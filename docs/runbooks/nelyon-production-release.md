@@ -6,6 +6,90 @@ authority by itself. The policy file, GitHub Environment, exact workflow run,
 persistent owner declaration, dispatch authorization, and postchecks must all
 agree.
 
+## Dormant Creator Premium F3 foundation
+
+`finance_authority_transition` authorizes only the exact foundation delta from
+baseline `238e987933c7198400534121e61fb3d2750ba5ba`, descended from immutable
+source `27ff8b3861f901c548ee4c6abc054bc805d63f09`. The final approved release SHA
+is supplied by the request, must equal fetched protected `main`, and is bound
+into the manifest/artifact with the protected policy digest and compiler/adapter
+bytes. There is no self-referential future commit pin.
+
+The entire productive closure is one new migration,
+`20261025011000_creator_premium_f3_bounded_financial_activation.sql` (Git blob
+`8338634c5341fcadd102cdeb34eb1f9dc701af6d`, SHA-256
+`1fea4ed72b0aaee90f066e24307547fb0305aa96e597d75c9eb21bb93384aec5`), and the
+changed existing `bdag-ledger` source (bundle SHA-256
+`8a07c5887d4550e58f554530bcca3dcd84293c074854456fb1c666ad7a73f977`).
+The committed config blob is unchanged; config is not a productive resource in
+this release. Additional migrations, functions, shared files or config changes,
+missing/extra attestations, wrong ancestors, altered bytes and transition reuse
+after baseline promotion fail closed. `bdag-ledger` is already managed; no
+second function is enrolled. Risk remains HIGH.
+
+The separate versioned `finance_authority` evidence attests relation columns,
+constraints and validation, RESTRICT FKs, indexes and validity, enabled trigger
+definitions, RLS/FORCE RLS, owners and ACLs, and the canonical function call
+closure including every overload, definition, owner, path and ACL. The two
+foundation guards must remain exactly installed:
+`creator_premium_finance_policy_f3_foundation_off_check` and
+`creator_premium_finance_auth_f3_foundation_insert_guard`. Both v1 read
+projections have exact predecessor/successor attestations; the two v2 reads and
+separate Admin read are authenticated-only. Purchase has exactly four UUID
+arguments; purchase/subscribe/refunds remain service-only and private helpers
+remain owner-only. The existing authenticated RPC verifier remains strict.
+
+The adapter selects legacy/F3 fact SQL from the validated migration inventory
+before SQL parsing, so the legacy query never references the absent
+authorization table. Legacy policy normalization uses `to_jsonb`; installed F3
+must contain both activation fields. Query bytes, selection, schema/catalog
+phase and snapshot identity are attested. Mutable rows do not enter the static
+authority baseline, and the historical owner-reviewed baseline digest is not
+reinterpreted. Existing ledger/Admin dependency authority is observed freshly
+and must remain byte-for-byte identical across the release; a local fixture's
+legacy grants are never an allowlist.
+
+`finance_facts` retains one-way identity hashes, full-row binding digests, exact
+decimal strings, targets/accounts/fees/transaction bindings, status/timestamps,
+historical gross acquisition exposure and actual binding reconciliation.
+Exposure includes refunded, reversed, expired and cancelled history. This
+foundation accepts only empty authorization/receipt/period/subscription/Premium
+transaction inventories, clean reconciliation and zero release movement, with
+Finance false/false/false/0, `activation_mode=off` and null active authorization.
+Generic ledger growth remains subject to the existing full finance classifier;
+no release-attributed movement is accepted.
+
+Security Advisor permits only the exact phase-approved projection changes and
+new owner-only private authorization relation. Every unrelated finding,
+exception, relation and cron identity is preserved. P3 and MEDIA-C1 controls are
+unchanged. Local clone evidence verifies the catalog contract but is not a
+production observation or release authorization. Real pre/post snapshots remain
+mandatory, including backup, concurrency, SHA, manifest and policy controls.
+
+Public mode, canary arming, activation and disarm are not accepted by this
+foundation policy. A later exact owner-approved activation requires a separate
+protected policy/migration replacing both guards. After dormant release, promote
+the baseline separately through the protected process and obtain a fresh
+`NO PRODUCTIVE CHANGES` plan. No workflow dispatch, protected-variable update,
+participant selection or BDAG movement is authorized by these instructions.
+
+G1 remains the persistent owner declaration
+`SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED=OFF`, with observed state `UNAVAILABLE`
+and `independently_verified=false`. No screenshot freshness or automatic
+observation claim is restored.
+
+Local governance verification:
+
+```powershell
+$env:RUN_F3_GOVERNANCE_LOCAL='1'
+node --test tests/nelyonProductionReleaseGate.test.mjs tests/nelyonProductionSnapshotAdapter.test.mjs
+```
+
+The opt-in local catalog test clones only the existing
+`premium_f2_governance_20261024` fixture in `nelyon-ads-v2-d-compile`, applies the
+unchanged F3 migration and tests rolled-back SQL security mutations. It drops
+only its generated `premium_f3_governance_<pid>_<time>` database in `finally`.
+
 ## Single-owner security model
 
 The only authorized human account is `andressan101989`. A scoped owner prompt
@@ -369,8 +453,7 @@ Stop before mutation if any of these occurs:
   differs;
 - deployment approval history is non-empty, incomplete, historical, or from
   another attempt;
-- automatic-deploy evidence is stale, future-dated, mismatched, or not
-  bound to the owner-dashboard observation;
+- the persistent owner declaration is missing or differs from expected OFF;
 - another production release is active;
 - the manifest, artifact, compiler, dependency graph, or source provenance is
   ambiguous;
