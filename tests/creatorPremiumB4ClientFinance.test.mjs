@@ -13,6 +13,10 @@ const offerId = '20000000-0000-4000-8000-000000000002';
 const planId = '30000000-0000-4000-8000-000000000001';
 const subscriptionId = '40000000-0000-4000-8000-000000000001';
 const idempotencyKey = '50000000-0000-4000-8000-000000000001';
+const F3_CLIENT_CONTRACT = 'creator-premium-f3-v2';
+const upgraded = (action, body) => ['creator_premium_purchase', 'creator_premium_subscribe'].includes(action)
+  ? { ...body, client_contract: F3_CLIENT_CONTRACT }
+  : body;
 
 function compile(source, filename) {
   return ts.transpileModule(source, {
@@ -77,10 +81,12 @@ async function post(handler, body, token = 'test-token') {
 test('bdag-ledger routes only canonical Premium actions with JWT-derived identity', async () => {
   const cases = [
     ['creator_premium_purchase', 'content_id', contentId, 'purchase_creator_premium_content_v1', {
-      p_buyer_id: userId, p_content_id: contentId, p_offer_version_id: offerId, p_idempotency_key: idempotencyKey,
+      p_buyer_id: userId, p_content_id: contentId, p_offer_version_id: offerId,
+      p_idempotency_key: idempotencyKey, p_client_contract: F3_CLIENT_CONTRACT,
     }],
     ['creator_premium_subscribe', 'plan_id', planId, 'subscribe_creator_premium_plan_v1', {
-      p_subscriber_id: userId, p_plan_id: planId, p_idempotency_key: idempotencyKey,
+      p_subscriber_id: userId, p_plan_id: planId,
+      p_idempotency_key: idempotencyKey, p_client_contract: F3_CLIENT_CONTRACT,
     }],
     ['creator_premium_cancel_subscription', 'subscription_id', subscriptionId, 'cancel_creator_premium_subscription_v1', {
       p_subscriber_id: userId, p_subscription_id: subscriptionId, p_idempotency_key: idempotencyKey,
@@ -88,7 +94,9 @@ test('bdag-ledger routes only canonical Premium actions with JWT-derived identit
   ];
   for (const [action, field, value, rpc, args] of cases) {
     const harness = loadLedgerEdge();
-    const { response } = await post(harness.handler, { action, idempotency_key: idempotencyKey, [field]: value });
+    const { response } = await post(harness.handler, upgraded(action, {
+      action, idempotency_key: idempotencyKey, [field]: value,
+    }));
     assert.equal(response.status, 200);
     assert.deepEqual(harness.rpcCalls, [{ name: rpc, args }]);
   }
@@ -106,11 +114,11 @@ test('Premium SQL velocity failures map to safe HTTP responses without Edge pref
       const harness = loadLedgerEdge({
         rpcResult: { data: null, error: { message: `private SQL detail: ${expectedCode}` } },
       });
-      const { response, payload } = await post(harness.handler, {
+      const { response, payload } = await post(harness.handler, upgraded(action, {
         action,
         idempotency_key: idempotencyKey,
         [field]: value,
-      });
+      }));
       assert.equal(response.status, expectedStatus);
       assert.equal(payload.error, expectedCode);
       assert.deepEqual(harness.rpcCalls.map(call => call.name), [rpc]);
@@ -139,11 +147,35 @@ test('Premium Edge actions reject malformed UUIDs and every client financial aut
       { action, idempotency_key: idempotencyKey, [field]: value, subscriber_id: userId },
     ]) {
       const harness = loadLedgerEdge();
-      const { response } = await post(harness.handler, body);
+      const { response } = await post(harness.handler, upgraded(action, body));
       assert.equal(response.status, 400);
       assert.equal(harness.rpcCalls.length, 0);
     }
   }
+});
+
+test('Premium charge actions require the upgraded client contract before any RPC', async () => {
+  for (const [action, field, value] of [
+    ['creator_premium_purchase', 'content_id', contentId],
+    ['creator_premium_subscribe', 'plan_id', planId],
+  ]) {
+    for (const clientContract of [undefined, 'creator-premium-f2-v1']) {
+      const harness = loadLedgerEdge();
+      const body = { action, idempotency_key: idempotencyKey, [field]: value };
+      if (clientContract !== undefined) body.client_contract = clientContract;
+      const { response, payload } = await post(harness.handler, body);
+      assert.equal(response.status, 426);
+      assert.equal(payload.error, 'creator_premium_client_upgrade_required');
+      assert.equal(harness.rpcCalls.length, 0);
+    }
+  }
+  const cancellation = loadLedgerEdge();
+  const { response } = await post(cancellation.handler, {
+    action: 'creator_premium_cancel_subscription', idempotency_key: idempotencyKey,
+    subscription_id: subscriptionId,
+  });
+  assert.equal(response.status, 200);
+  assert.equal(Object.hasOwn(cancellation.rpcCalls[0].args, 'p_client_contract'), false);
 });
 
 test('legacy purchase/subscribe remain stably disabled and never call missing RPCs', async () => {
@@ -162,12 +194,14 @@ test('legacy purchase/subscribe remain stably disabled and never call missing RP
 test('bdag-ledger still requires a valid JWT before any Premium RPC', async () => {
   const missing = loadLedgerEdge();
   assert.equal((await post(missing.handler, {
-    action: 'creator_premium_purchase', idempotency_key: idempotencyKey, content_id: contentId,
+    action: 'creator_premium_purchase', idempotency_key: idempotencyKey,
+    content_id: contentId, client_contract: F3_CLIENT_CONTRACT,
   }, '')).response.status, 401);
   assert.equal(missing.rpcCalls.length, 0);
   const invalid = loadLedgerEdge({ user: null });
   assert.equal((await post(invalid.handler, {
-    action: 'creator_premium_purchase', idempotency_key: idempotencyKey, content_id: contentId,
+    action: 'creator_premium_purchase', idempotency_key: idempotencyKey,
+    content_id: contentId, client_contract: F3_CLIENT_CONTRACT,
   })).response.status, 401);
   assert.equal(invalid.rpcCalls.length, 0);
 });
@@ -211,8 +245,10 @@ test('canonical ledgerClient sends UUID identity only and no monetary authority'
   await harness.service.subscribeToPlan({ planId });
   await harness.service.cancelCreatorPremiumSubscription({ subscriptionId });
   assert.deepEqual(harness.invokes, [
-    { name: 'bdag-ledger', body: { action: 'creator_premium_purchase', idempotency_key: idempotencyKey, content_id: contentId, offer_version_id: offerId } },
-    { name: 'bdag-ledger', body: { action: 'creator_premium_subscribe', idempotency_key: idempotencyKey, plan_id: planId } },
+    { name: 'bdag-ledger', body: { action: 'creator_premium_purchase', idempotency_key: idempotencyKey,
+      content_id: contentId, offer_version_id: offerId, client_contract: F3_CLIENT_CONTRACT } },
+    { name: 'bdag-ledger', body: { action: 'creator_premium_subscribe', idempotency_key: idempotencyKey,
+      plan_id: planId, client_contract: F3_CLIENT_CONTRACT } },
     { name: 'bdag-ledger', body: { action: 'creator_premium_cancel_subscription', idempotency_key: idempotencyKey, subscription_id: subscriptionId } },
   ]);
   for (const call of harness.invokes) {

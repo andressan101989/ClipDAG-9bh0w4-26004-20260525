@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -8,6 +10,7 @@ import * as finance from '../services/creatorPremiumFinanceContracts.mjs';
 const read = file => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
 const uuid = n => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const id = { buyer: uuid(1), content: uuid(2), offer: uuid(3), key: uuid(4), creator: uuid(5), plan: uuid(6) };
+const F3_CLIENT_CONTRACT = 'creator-premium-f3-v2';
 const policy = {
   purchase_enabled: true, subscription_enabled: true, refunds_enabled: true,
   platform_fee_bps: 1000, policy_version: 'creator-premium-f3-v1',
@@ -37,6 +40,19 @@ function load(file, require, globals = {}, suffix = '') {
   vm.runInNewContext(source, { module, exports: module.exports, require, console, ...globals }, { filename: file });
   return module.exports;
 }
+
+async function loadFrozenF2FinanceContracts() {
+  const commit = '2d8bf717a011f3afe54af1df5cd0f991f94811f3';
+  const file = 'services/creatorPremiumFinanceContracts.mjs';
+  const expectedBlob = '40e7fd7809ca61570b9c8c00d438f5e83021be45';
+  const cwd = new URL('..', import.meta.url);
+  const blob = execFileSync('git', ['rev-parse', `${commit}:${file}`], { cwd, encoding: 'utf8' }).trim();
+  assert.equal(blob, expectedBlob, 'frozen F2 parser blob changed or is unavailable');
+  const source = execFileSync('git', ['cat-file', 'blob', expectedBlob], { cwd, encoding: 'utf8' });
+  return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+}
+
+const frozenF2Finance = await loadFrozenF2FinanceContracts();
 
 // Preserve hook slots and dependency-driven cleanup across real screen renders.
 // Only native rendering, identity and remote I/O are replaced here.
@@ -311,7 +327,7 @@ test('F3 v2 parser accepts safe canary blockers without weakening the installed 
   assert.throws(() => finance.parseCreatorPremiumCommerceV2(unknown, id.content), /creator_premium_commerce_invalid/);
 });
 
-test('F3 v2 subscription parser accepts capped renewal while v1 remains strict', () => {
+test('current parsers preserve truthful acquired rights while exact frozen F2 bytes reject every mapping', () => {
   assert.equal(typeof finance.parseCreatorPremiumSubscriptionsPageV2, 'function', 'versioned subscription parser is missing');
   const relationship = { id: uuid(30), status: 'cancelled', cancelled_at: '2026-10-25T00:00:00Z',
     paid_through_at: '2026-10-26T00:00:00Z', access_state: 'expired' };
@@ -334,13 +350,22 @@ test('F3 v2 subscription parser accepts capped renewal while v1 remains strict',
   acquired.items[0].plan.relationship.access_state = 'active';
   acquired.items[0].plan.subscription_blocker = 'creator_premium_already_subscribed';
   assert.deepEqual(finance.parseCreatorPremiumSubscriptionsPageV2(acquired), acquired);
-  const legacyAcquired = structuredClone(acquired);
-  legacyAcquired.policy = { ...policy, purchase_enabled: false, subscription_enabled: false,
+  const currentV1Acquired = structuredClone(acquired);
+  currentV1Acquired.policy = { ...policy, purchase_enabled: false, subscription_enabled: false,
     refunds_enabled: false, platform_fee_bps: 0 };
-  legacyAcquired.items[0].plan.subscription_blocker = 'creator_premium_renewal_required';
-  legacyAcquired.items[0].plan.renewal_blocker = 'creator_premium_subscription_disabled';
-  legacyAcquired.items[0].renewal_blocker = 'creator_premium_subscription_disabled';
-  assert.deepEqual(finance.parseCreatorPremiumSubscriptionsPage(legacyAcquired), legacyAcquired);
+  currentV1Acquired.items[0].plan.renewal_blocker = 'creator_premium_subscription_disabled';
+  currentV1Acquired.items[0].renewal_blocker = 'creator_premium_subscription_disabled';
+  assert.deepEqual(finance.parseCreatorPremiumSubscriptionsPage(currentV1Acquired), currentV1Acquired);
+  assert.throws(
+    () => frozenF2Finance.parseCreatorPremiumSubscriptionsPage(currentV1Acquired),
+    /creator_premium_subscriptions_invalid/,
+  );
+  const mappedForFrozenF2 = structuredClone(currentV1Acquired);
+  mappedForFrozenF2.items[0].plan.subscription_blocker = 'creator_premium_renewal_required';
+  assert.throws(
+    () => frozenF2Finance.parseCreatorPremiumSubscriptionsPage(mappedForFrozenF2),
+    /creator_premium_subscriptions_invalid/,
+  );
   assert.throws(() => finance.parseCreatorPremiumSubscriptionsPage(projection), /creator_premium_subscriptions_invalid/);
   const unknown = structuredClone(projection);
   unknown.items[0].renewal_blocker = 'private_debug_unknown';
@@ -367,6 +392,7 @@ test('purchase client preserves the displayed immutable offer version in the gat
   assert.deepEqual(invokes, [{ name: 'bdag-ledger', body: {
     action: 'creator_premium_purchase', content_id: id.content,
     offer_version_id: id.offer, idempotency_key: id.key,
+    client_contract: F3_CLIENT_CONTRACT,
   } }]);
   for (const change of [{ offerVersionId: undefined }, { offerVersionId: 'bad' },
     { idempotencyKey: '' }, { idempotencyKey: null }, { idempotencyKey: 'bad' }, { price_bdag: '10.00000000' }]) {
@@ -398,17 +424,41 @@ function gateway() {
 test('gateway forwards the expected offer UUID and server-derived actor only', async () => {
   const api = gateway();
   const response = await api.request({ action: 'creator_premium_purchase', content_id: id.content,
-    offer_version_id: id.offer, idempotency_key: id.key });
+    offer_version_id: id.offer, idempotency_key: id.key, client_contract: F3_CLIENT_CONTRACT });
   assert.equal(response.status, 200);
   assert.deepEqual(api.calls, [{ name: 'purchase_creator_premium_content_v1', args: {
     p_buyer_id: id.buyer, p_content_id: id.content,
     p_offer_version_id: id.offer, p_idempotency_key: id.key,
+    p_client_contract: F3_CLIENT_CONTRACT,
   } }]);
+});
+
+test('gateway requires the upgraded F3 contract for charges but keeps cancellation available', async () => {
+  for (const action of ['creator_premium_purchase', 'creator_premium_subscribe']) {
+    for (const clientContract of [undefined, 'creator-premium-f2-v1']) {
+      const api = gateway();
+      const target = action === 'creator_premium_purchase'
+        ? { content_id: id.content, offer_version_id: id.offer }
+        : { plan_id: id.plan };
+      const response = await api.request({ action, ...target, idempotency_key: id.key,
+        ...(clientContract === undefined ? {} : { client_contract: clientContract }) });
+      assert.equal(response.status, 426);
+      assert.equal(response.body.error, 'creator_premium_client_upgrade_required');
+      assert.equal(api.calls.length, 0);
+    }
+  }
+  const api = gateway();
+  const response = await api.request({ action: 'creator_premium_cancel_subscription',
+    subscription_id: uuid(30), idempotency_key: id.key });
+  assert.equal(response.status, 200);
+  assert.equal(api.calls[0].name, 'cancel_creator_premium_subscription_v1');
+  assert.equal(Object.hasOwn(api.calls[0].args, 'p_client_contract'), false);
 });
 
 test('gateway rejects a missing displayed offer before calling a money-moving RPC', async () => {
   const api = gateway();
-  const response = await api.request({ action: 'creator_premium_purchase', content_id: id.content, idempotency_key: id.key });
+  const response = await api.request({ action: 'creator_premium_purchase', content_id: id.content,
+    idempotency_key: id.key, client_contract: F3_CLIENT_CONTRACT });
   assert.equal(response.status, 400);
   assert.equal(api.calls.length, 0);
 });
@@ -420,7 +470,8 @@ test('gateway rejects malformed offer identities and all client money/account au
   ]) {
     const api = gateway();
     const response = await api.request({ action: 'creator_premium_purchase', content_id: id.content,
-      offer_version_id: id.offer, idempotency_key: id.key, ...fields });
+      offer_version_id: id.offer, idempotency_key: id.key,
+      client_contract: F3_CLIENT_CONTRACT, ...fields });
     assert.equal(response.status, 400);
     assert.equal(api.calls.length, 0);
   }

@@ -22,6 +22,7 @@ const suffixes = [
   '_creator_premium_b7_full_functional_commercial_completion.sql', '_creator_premium_f2_complete_monetization.sql',
 ];
 const migrationFiles = readdirSync(migrationDir);
+const F3_CLIENT_CONTRACT = 'creator-premium-f3-v2';
 const chain = suffixes.map(suffix => {
   const found = migrationFiles.filter(name => name.endsWith(suffix));
   assert.equal(found.length, 1, suffix);
@@ -106,12 +107,18 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
     'foreignContent', 'offer', 'otherOffer', 'foreignOffer', 'replacementOffer', 'plan', 'otherPlan',
     'buyerAccount', 'creatorAccount', 'platformAccount', 'authorization', 'teaserAsset', 'originalAsset'];
   const id = Object.fromEntries(names.map(name => [name, randomUUID()]));
-  let hasF3 = false, fourArgumentPurchase = false;
-  const purchaseSql = (actor = id.buyer, content = id.content, offer = id.offer, key = randomUUID()) =>
-    `select public.purchase_creator_premium_content_v1(${[actor, content,
-      ...(fourArgumentPurchase ? [offer] : []), key].map(literal).join(',')})`;
-  const subscribeSql = (actor = id.buyer, plan = id.plan, key = randomUUID()) =>
-    `select public.subscribe_creator_premium_plan_v1(${[actor, plan, key].map(literal).join(',')})`;
+  let hasF3 = false, contractPurchase = false, contractSubscribe = false;
+  const contractLiteral = value => value === null ? 'null' : literal(value);
+  const purchaseSql = (actor = id.buyer, content = id.content, offer = id.offer,
+    key = randomUUID(), clientContract = F3_CLIENT_CONTRACT) =>
+    `select public.purchase_creator_premium_content_v1(${contractPurchase
+      ? [literal(actor), literal(content), literal(offer), literal(key), contractLiteral(clientContract)]
+      : [literal(actor), literal(content), literal(key)].join(',')})`;
+  const subscribeSql = (actor = id.buyer, plan = id.plan, key = randomUUID(),
+    clientContract = F3_CLIENT_CONTRACT) =>
+    `select public.subscribe_creator_premium_plan_v1(${contractSubscribe
+      ? [literal(actor), literal(plan), literal(key), contractLiteral(clientContract)].join(',')
+      : [literal(actor), literal(plan), literal(key)].join(',')})`;
   const command = (db, query) => sql(db, serviceSql(query), true);
   const success = (db, query) => {
     const result = command(db, query);
@@ -150,6 +157,7 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
       buyer_id: id.buyer, creator_id: id.creator, buyer_account_id: id.buyerAccount,
       creator_account_id: id.creatorAccount, platform_account_id: id.platformAccount,
       purchase_content_id: id.content, purchase_offer_version_id: id.offer, subscription_plan_id: id.plan,
+      client_contract: F3_CLIENT_CONTRACT,
       purchase_amount_bdag: '10.00000000', subscription_amount_bdag: '20.00000000',
       max_purchase_count: 1, max_subscription_count: 1, max_refund_count: 1,
       max_gross_bdag: '30.00000000', platform_fee_bps: 1000,
@@ -232,7 +240,8 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
       end; $$;`);
     for (const migration of f3) sql(base, readFileSync(new URL(migration, migrationDir), 'utf8'));
     hasF3 = sql(base, "select to_regclass('private.creator_premium_finance_authorizations') is not null").stdout === 't';
-    fourArgumentPurchase = sql(base, "select to_regprocedure('public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid)') is not null").stdout === 't';
+    contractPurchase = sql(base, "select to_regprocedure('public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid,text)') is not null").stdout === 't';
+    contractSubscribe = sql(base, "select to_regprocedure('public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid,text)') is not null").stdout === 't';
     if (hasF3) {
       assert.equal(sql(base, `select not exists(
         select 1 from pg_proc proc join pg_namespace namespace on namespace.oid=proc.pronamespace
@@ -266,7 +275,7 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
           or has_function_privilege('anon',proc.oid,'execute')
           or has_function_privilege('authenticated',proc.oid,'execute')))`).stdout, 't');
     }
-    process.stdout.write(`# F3_BASELINE has_authorization=${hasF3} purchase_offer_precondition=${fourArgumentPurchase}\n`);
+    process.stdout.write(`# F3_BASELINE has_authorization=${hasF3} contract_purchase=${contractPurchase} contract_subscribe=${contractSubscribe}\n`);
     const actors = [id.admin, id.buyer, id.outsider, id.creator, id.otherCreator];
     sql(base, `set session_replication_role=replica;
       insert into auth.users(id,is_anonymous) values ${actors.map(actor => `(${literal(actor)},false)`).join(',')};
@@ -347,14 +356,32 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
       assert.match(insert.stderr, /creator_premium_.*foundation/);
     }, null);
 
-    await scenario('old three-UUID purchase authority has no callable service-role debit path', db => {
-      const signature = "public.purchase_creator_premium_content_v1(uuid,uuid,uuid)";
-      const exists = sql(db, `select to_regprocedure('${signature}') is not null`).stdout === 't';
-      if (exists) {
-        assert.equal(sql(db, `select has_function_privilege('service_role','${signature}','execute')`).stdout, 'f');
-        unchangedDenial(db, `select public.purchase_creator_premium_content_v1('${id.buyer}','${id.content}','${randomUUID()}')`, /permission denied|creator_premium_.*(?:disabled|offer|required)/);
+    await scenario('pre-F3 charge signatures have no callable service-role debit path', db => {
+      for (const [signature, query] of [
+        ["public.purchase_creator_premium_content_v1(uuid,uuid,uuid)",
+          `select public.purchase_creator_premium_content_v1('${id.buyer}','${id.content}','${randomUUID()}')`],
+        ["public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid)",
+          `select public.purchase_creator_premium_content_v1('${id.buyer}','${id.content}','${id.offer}','${randomUUID()}')`],
+        ["public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid)",
+          `select public.subscribe_creator_premium_plan_v1('${id.buyer}','${id.plan}','${randomUUID()}')`],
+      ]) {
+        const exists = sql(db, `select to_regprocedure('${signature}') is not null`).stdout === 't';
+        if (exists) {
+          assert.equal(sql(db, `select has_function_privilege('service_role','${signature}','execute')`).stdout, 'f');
+          unchangedDenial(db, query, /permission denied|creator_premium_.*(?:disabled|offer|required|upgrade)/);
+        }
       }
-      assert.equal(fourArgumentPurchase, true, 'expected-offer purchase authority is missing');
+      assert.equal(contractPurchase, true, 'contract-bound purchase authority is missing');
+      assert.equal(contractSubscribe, true, 'contract-bound subscription authority is missing');
+    });
+
+    await scenario('missing or stale client contracts reject atomically before either charge', db => {
+      for (const query of [
+        purchaseSql(id.buyer, id.content, id.offer, randomUUID(), null),
+        purchaseSql(id.buyer, id.content, id.offer, randomUUID(), 'creator-premium-f2-v1'),
+        subscribeSql(id.buyer, id.plan, randomUUID(), null),
+        subscribeSql(id.buyer, id.plan, randomUUID(), 'creator-premium-f2-v1'),
+      ]) unchangedDenial(db, query, /creator_premium_client_upgrade_required/);
     });
 
     for (const [name, query] of [
@@ -408,8 +435,10 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
       const period = json(db, `select to_jsonb(period) from private.creator_premium_subscription_periods period where id='${subscription.period_id}'`);
       assert.equal(fact.finance_authorization_id, id.authorization);
       assert.equal(fact.request_fingerprint, createHash('sha256')
-        .update(`creator_premium_purchase|${id.buyer}|${id.content}|${id.offer}`).digest('hex'));
+        .update(`creator_premium_purchase|${id.buyer}|${id.content}|${id.offer}|${F3_CLIENT_CONTRACT}`).digest('hex'));
       assert.equal(period.finance_authorization_id, id.authorization);
+      assert.equal(period.request_fingerprint, createHash('sha256')
+        .update(`creator_premium_subscription|${id.buyer}|${id.plan}|${F3_CLIENT_CONTRACT}`).digest('hex'));
       for (const [table, factId] of [['creator_premium_purchase_receipts', purchase.receipt_id], ['creator_premium_subscription_periods', subscription.period_id]]) {
         const result = sql(db, `update private.${table} set finance_authorization_id=null where id='${factId}'`, true);
         assert.notEqual(result.status, 0, 'immutable authorization binding was editable');
@@ -634,7 +663,7 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
       assert.equal(projection.policy.platform_fee_bps, 0);
       assert.deepEqual(parseCreatorPremiumCommerce(projection, id.content), projection);
     });
-    await scenario('v1 subscription history remains parseable across paid cancellation, disarm and expiry', db => {
+    await scenario('current v1 history remains truthful across paid cancellation, disarm and expiry', db => {
       const subscription = success(db, subscribeSql());
       const readLegacy = () => JSON.parse(authenticated(db, id.buyer,
         'select public.get_my_creator_premium_subscriptions_v1(null,null,50)').stdout);
@@ -645,7 +674,9 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
         assert.equal(item.status, status);
         assert.equal(item.access_active, accessActive);
         assert.equal(item.period.access_state, periodAccessState);
-        assert.equal(item.plan.subscription_blocker, 'creator_premium_renewal_required');
+        assert.equal(item.plan.subscription_blocker, accessActive
+          ? 'creator_premium_already_subscribed'
+          : 'creator_premium_renewal_required');
         assert.deepEqual(parseCreatorPremiumSubscriptionsPage(projection), projection);
       };
 

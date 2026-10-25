@@ -28,6 +28,7 @@ import { FunctionsHttpError } from '@supabase/supabase-js';
 
 const supabase = () => getSupabaseClient();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CREATOR_PREMIUM_FINANCE_CLIENT_CONTRACT = 'creator-premium-f3-v2';
 
 // ── Idempotency key factory ───────────────────────────────────────────────
 // Uses crypto.randomUUID() when available (modern RN), falls back to Math.random()
@@ -262,7 +263,11 @@ export async function purchaseContent(params: {
   }
   const result = await invokeLedger(
     'creator_premium_purchase',
-    { content_id: params.contentId, offer_version_id: params.offerVersionId },
+    {
+      content_id: params.contentId,
+      offer_version_id: params.offerVersionId,
+      client_contract: CREATOR_PREMIUM_FINANCE_CLIENT_CONTRACT,
+    },
     { uuidIdempotency: true, idempotencyKey: params.idempotencyKey },
   );
   if (!result.success || !result.data) {
@@ -286,7 +291,7 @@ export async function subscribeToPlan(params: {
   if (!UUID_RE.test(params.planId)) return { success: false, error: 'creator_premium_invalid_plan_id' };
   const result = await invokeLedger(
     'creator_premium_subscribe',
-    { plan_id: params.planId },
+    { plan_id: params.planId, client_contract: CREATOR_PREMIUM_FINANCE_CLIENT_CONTRACT },
     { uuidIdempotency: true, idempotencyKey: params.idempotencyKey },
   );
   if (!result.success || !result.data) {

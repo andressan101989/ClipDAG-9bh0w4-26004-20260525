@@ -3,11 +3,17 @@ begin;
 -- F3 extends the canonical finance policy and facts. This foundation cannot
 -- be armed: a separately reviewed activation migration must replace BOTH
 -- named foundation guards. No participant, envelope or movement is added.
+-- The verified pre-F3 production baseline had Finance false/false/false/0 and
+-- zero Premium purchase, subscription and refund facts. The deployed F2
+-- subscription parser cannot represent a truthful active paid right; therefore
+-- every F3 charge is bound to the upgraded client contract below. Public mode
+-- remains structurally unavailable until a separately reviewed client rollout.
 create table private.creator_premium_finance_authorizations (
   id uuid primary key default gen_random_uuid(),
   status text not null check (status in ('OPEN','CLOSED')),
   approval_digest text not null check (approval_digest ~ '^[0-9a-f]{64}$'),
   configuration_digest text not null check (configuration_digest ~ '^[0-9a-f]{64}$'),
+  client_contract text not null check (client_contract='creator-premium-f3-v2'),
   buyer_id uuid not null references auth.users(id) on update restrict on delete restrict,
   creator_id uuid not null references auth.users(id) on update restrict on delete restrict,
   buyer_account_id uuid not null references public.ledger_accounts(id) on update restrict on delete restrict,
@@ -129,7 +135,8 @@ $$;
 -- Shared read-only eligibility: NULL means eligible; all denials are sanitized.
 -- Account identity is server-resolved without creating or locking accounts.
 create function private.creator_premium_charge_blocker_f3_v1(
-  p_operation text,p_buyer_id uuid,p_creator_id uuid,p_target_id uuid,p_offer_id uuid,p_amount numeric
+  p_operation text,p_buyer_id uuid,p_creator_id uuid,p_target_id uuid,p_offer_id uuid,p_amount numeric,
+  p_client_contract text
 ) returns text language plpgsql stable security definer set search_path = '' as $$
 declare
   v_policy private.creator_premium_finance_policy;
@@ -146,6 +153,9 @@ begin
   select envelope.* into v_authorization from private.creator_premium_finance_authorizations envelope
     where id=v_policy.active_authorization_id;
   if not found or v_authorization.status<>'OPEN' then return 'creator_premium_canary_not_open'; end if;
+  if p_client_contract is distinct from v_authorization.client_contract then
+    return 'creator_premium_client_upgrade_required';
+  end if;
   if p_operation not in ('purchase','subscription') or p_buyer_id is distinct from v_authorization.buyer_id
     or p_creator_id is distinct from v_authorization.creator_id
     or v_policy.platform_fee_bps<>v_authorization.platform_fee_bps
@@ -176,12 +186,15 @@ end;
 $$;
 
 create function private.admit_creator_premium_charge_f3_v1(
-  p_operation text,p_buyer_id uuid,p_creator_id uuid,p_target_id uuid,p_offer_id uuid,p_amount numeric
+  p_operation text,p_buyer_id uuid,p_creator_id uuid,p_target_id uuid,p_offer_id uuid,p_amount numeric,
+  p_client_contract text
 ) returns uuid language plpgsql security definer set search_path = '' as $$
 declare v_policy private.creator_premium_finance_policy; v_blocker text;
 begin
   v_policy := private.lock_creator_premium_finance_f3_v1();
-  v_blocker := private.creator_premium_charge_blocker_f3_v1(p_operation,p_buyer_id,p_creator_id,p_target_id,p_offer_id,p_amount);
+  v_blocker := private.creator_premium_charge_blocker_f3_v1(
+    p_operation,p_buyer_id,p_creator_id,p_target_id,p_offer_id,p_amount,p_client_contract
+  );
   if v_blocker is not null then raise exception using errcode='55000',message=v_blocker; end if;
   return v_policy.active_authorization_id;
 end;
@@ -531,7 +544,8 @@ create or replace function public.purchase_creator_premium_content_v1(
   p_buyer_id uuid,
   p_content_id uuid,
   p_offer_version_id uuid,
-  p_idempotency_key uuid
+  p_idempotency_key uuid,
+  p_client_contract text
 ) returns jsonb
 language plpgsql
 security definer
@@ -557,9 +571,13 @@ begin
   if p_buyer_id is null or p_content_id is null or p_offer_version_id is null or p_idempotency_key is null then
     raise exception using errcode='22023',message='creator_premium_purchase_invalid_input';
   end if;
+  if p_client_contract is distinct from 'creator-premium-f3-v2' then
+    raise exception using errcode='55000',message='creator_premium_client_upgrade_required';
+  end if;
 
   v_fingerprint := private.creator_premium_request_fingerprint_v1(
-    'creator_premium_purchase',p_buyer_id,p_content_id,p_offer_version_id::text
+    'creator_premium_purchase',p_buyer_id,p_content_id,
+    p_offer_version_id::text||'|'||p_client_contract
   );
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
     'creator-premium-purchase|'||p_buyer_id::text||'|'||p_idempotency_key::text,
@@ -700,7 +718,8 @@ begin
   end if;
 
   v_authorization_id := private.admit_creator_premium_charge_f3_v1(
-    'purchase',p_buyer_id,v_content.creator_id,v_content.id,v_offer.id,v_offer.price_bdag
+    'purchase',p_buyer_id,v_content.creator_id,v_content.id,v_offer.id,v_offer.price_bdag,
+    p_client_contract
   );
   v_now := pg_catalog.clock_timestamp();
 
@@ -781,10 +800,13 @@ begin
 end;
 $$;
 
+drop function public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid);
+
 create or replace function public.subscribe_creator_premium_plan_v1(
   p_subscriber_id uuid,
   p_plan_id uuid,
-  p_idempotency_key uuid
+  p_idempotency_key uuid,
+  p_client_contract text
 ) returns jsonb
 language plpgsql
 security definer
@@ -813,9 +835,12 @@ begin
   if p_subscriber_id is null or p_plan_id is null or p_idempotency_key is null then
     raise exception using errcode='22023',message='creator_premium_subscription_invalid_input';
   end if;
+  if p_client_contract is distinct from 'creator-premium-f3-v2' then
+    raise exception using errcode='55000',message='creator_premium_client_upgrade_required';
+  end if;
 
   v_fingerprint := private.creator_premium_request_fingerprint_v1(
-    'creator_premium_subscription',p_subscriber_id,p_plan_id
+    'creator_premium_subscription',p_subscriber_id,p_plan_id,p_client_contract
   );
 
   -- The request lock and canonical command journal make every result durable,
@@ -853,7 +878,12 @@ begin
     and period.idempotency_key=p_idempotency_key;
   if found then
     if v_existing_period.plan_id<>p_plan_id
-       or v_existing_period.request_fingerprint<>v_fingerprint then
+       or (v_existing_period.request_fingerprint<>v_fingerprint and not (
+         v_existing_period.finance_authorization_id is null
+         and v_existing_period.request_fingerprint=private.creator_premium_request_fingerprint_v1(
+           'creator_premium_subscription',p_subscriber_id,p_plan_id
+         )
+       )) then
       raise exception using errcode='23505',message='creator_premium_subscription_idempotency_conflict';
     end if;
     if not private.creator_premium_subscription_period_fact_is_valid_f2_v1(v_existing_period.id) then
@@ -1068,7 +1098,8 @@ begin
   end if;
 
   v_authorization_id := private.admit_creator_premium_charge_f3_v1(
-    'subscription',p_subscriber_id,v_plan.creator_id,v_plan.id,null,v_plan.price_bdag
+    'subscription',p_subscriber_id,v_plan.creator_id,v_plan.id,null,v_plan.price_bdag,
+    p_client_contract
   );
   v_now := pg_catalog.clock_timestamp();
 
@@ -1479,7 +1510,8 @@ begin
     v_policy.platform_fee_bps := 0;
   end if;
   select private.creator_premium_charge_blocker_f3_v1(
-    'purchase',v_actor,v_content.creator_id,v_content.id,offer.id,offer.price_bdag
+    'purchase',v_actor,v_content.creator_id,v_content.id,offer.id,offer.price_bdag,
+    case when p_legacy then null::text else 'creator-premium-f3-v2' end
   ) into v_f3_purchase_blocker
   from private.creator_premium_offer_versions offer
   where offer.content_id=v_content.id and offer.creator_id=v_content.creator_id and offer.status='active';
@@ -1564,7 +1596,11 @@ begin
       ) order by plan.price_bdag,plan.id)
       from (
         select active_plan.*,
-          private.creator_premium_charge_blocker_f3_v1('subscription',v_actor,active_plan.creator_id,active_plan.id,null,active_plan.price_bdag) as f3_blocker,
+          private.creator_premium_charge_blocker_f3_v1(
+            'subscription',v_actor,active_plan.creator_id,active_plan.id,null,
+            active_plan.price_bdag,
+            case when p_legacy then null::text else 'creator-premium-f3-v2' end
+          ) as f3_blocker,
           relationship.id as relationship_id,
           relationship.plan_id as relationship_plan_id,
           case when relationship.status in ('active','cancelled')
@@ -1741,7 +1777,10 @@ begin
         plan.version as plan_version,plan.billing_period_days,
         plan.price_bdag::text as plan_price_bdag,plan.currency,
         plan.status as plan_status,
-        private.creator_premium_charge_blocker_f3_v1('subscription',v_actor,plan.creator_id,plan.id,null,plan.price_bdag) as f3_blocker,
+        private.creator_premium_charge_blocker_f3_v1(
+          'subscription',v_actor,plan.creator_id,plan.id,null,plan.price_bdag,
+          case when p_legacy then null::text else 'creator-premium-f3-v2' end
+        ) as f3_blocker,
         profile.username,profile.display_name,profile.avatar_url,
         period.id as period_id,period.starts_at,period.paid_through_at,
         period.access_state,period.gross_amount_bdag::text as gross_amount_bdag,
@@ -1837,7 +1876,7 @@ begin
               'access_state',item.effective_access_state
             ),
             'subscription_available',false,
-            'subscription_blocker',case when item.access_active and not p_legacy
+            'subscription_blocker',case when item.access_active
               then 'creator_premium_already_subscribed'
               else 'creator_premium_renewal_required' end,
             'renewal_available',item.renewal_available,
@@ -1973,16 +2012,16 @@ begin
 end;
 $$;
 
-alter function public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid) owner to postgres;
-alter function public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid) owner to postgres;
+alter function public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid,text) owner to postgres;
+alter function public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid,text) owner to postgres;
 alter function public.refund_creator_premium_purchase_v1(uuid,uuid,text) owner to postgres;
 alter function public.refund_creator_premium_subscription_period_v1(uuid,uuid,text) owner to postgres;
-revoke all on function public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid) from public,anon,authenticated,service_role;
-revoke all on function public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid) from public,anon,authenticated,service_role;
+revoke all on function public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid,text) from public,anon,authenticated,service_role;
+revoke all on function public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid,text) from public,anon,authenticated,service_role;
 revoke all on function public.refund_creator_premium_purchase_v1(uuid,uuid,text) from public,anon,authenticated,service_role;
 revoke all on function public.refund_creator_premium_subscription_period_v1(uuid,uuid,text) from public,anon,authenticated,service_role;
-grant execute on function public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid) to service_role;
-grant execute on function public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid) to service_role;
+grant execute on function public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid,text) to service_role;
+grant execute on function public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid,text) to service_role;
 grant execute on function public.refund_creator_premium_purchase_v1(uuid,uuid,text) to service_role;
 grant execute on function public.refund_creator_premium_subscription_period_v1(uuid,uuid,text) to service_role;
 
