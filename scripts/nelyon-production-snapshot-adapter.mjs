@@ -211,10 +211,15 @@ select pg_catalog.jsonb_build_object(
 from clk,tx_inventory,le_inventory,account_inventory,purchase_digest,period_digest,schema_digest,recon;`;
 
 // Catalog-only: safe on either side of F3. No mutable row or count enters this authority.
-export const FINANCE_AUTHORITY_SQL = `with recursive relations as (
+// PostgreSQL deparsers consult search_path. Pin it inside the statement so identical
+// catalogs cannot hash differently between Management API and disposable replay roles.
+export const FINANCE_AUTHORITY_SQL = `with recursive authority_context as materialized (
+  select pg_catalog.set_config('search_path','pg_catalog, public, extensions',true) search_path
+), relations as (
   select c.oid,c.relowner,n.nspname schema,c.relname name,c.relrowsecurity rls,c.relforcerowsecurity force_rls
-  from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
-  where c.relkind in ('r','p') and ((n.nspname='private' and c.relname in (
+  from authority_context context
+  cross join pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+  where context.search_path is not null and c.relkind in ('r','p') and ((n.nspname='private' and c.relname in (
     'creator_premium_finance_policy','creator_premium_finance_authorizations',
     'creator_premium_purchase_receipts','creator_premium_subscription_periods','creator_premium_subscriptions'))
     or (n.nspname='public' and c.relname in ('financial_transactions','ledger_accounts','ledger_entries')))
@@ -725,7 +730,7 @@ function validateManifestAdapterIdentity(manifest, adapterSourceSha256) {
 
 function validateFinancePolicyAuthority(policy) {
   if (sha256(canonicalJson(policy?.finance_authority_transition ?? null)) !== '18ba08389686a15aea9df1c7b4f974202e147167e5aa1d0f83412e1065ebc882'
-    || sha256(canonicalJson(policy?.finance_authority ?? null)) !== '40c43f292efb7c736e83f283f920269f6902620d14e026e757c11e7e5c0eb77f'
+    || sha256(canonicalJson(policy?.finance_authority ?? null)) !== 'e1e1b356dae743bb89e16fe4526bd161d34b4caf607e7597bfc142f093b92f45'
     || sha256(canonicalJson(policy?.finance_security_advisor ?? null)) !== '47fba40bc5736d8da22cda8409ef39538ea3dcc5187b17ce9d898544d2c815a3') {
     fail('FINANCE_AUTHORITY_TRANSITION_REJECTED', 'foundation policy differs from exact reviewed authority');
   }
@@ -863,7 +868,16 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   if (requireFinanceAuthority) {
     validateFinancePolicyAuthority(policy);
     const expectedPhase = financeTransition ? (phase === 'pre' ? 'legacy' : 'f3_foundation') : 'f3_foundation';
+    const recoverySource = phase === 'recovery' && request?.mode === 'postcheck_recovery'
+      ? policy?.postcheck_recovery?.approved_sources?.find(item => (
+        item.run_id === String(request.recoverySourceRunId ?? '')
+        && item.expected_latest_migration === '20261025011000_creator_premium_f3_bounded_financial_activation'
+        && item.expected_migration_count === evidence.migrations.count
+        && `${evidence.migrations.latest.version}_${evidence.migrations.latest.name}` === item.expected_latest_migration
+      ))
+      : null;
     if (financeQueries.phase !== expectedPhase || (!financeTransition
+      && !recoverySource
       && policy.baseline.latest_migration < '20261025011000_creator_premium_f3_bounded_financial_activation')) {
       fail('FINANCE_AUTHORITY_MISMATCH', 'migration/catalog/release phase differs');
     }

@@ -122,6 +122,22 @@ test('F3 disposable catalog verifies exact authority and detects real PostgreSQL
     const rawPost=JSON.parse(sql(adapter.FINANCE_AUTHORITY_SQL));
     const post=adapter.normalizeFinanceAuthority(rawPost,'f3_foundation');
     assert.equal(adapter.validateFinanceAuthority(post,policy,'f3_foundation'),true);
+    const authorityAtSearchPath = searchPath => JSON.parse(sql(`begin;
+      set local search_path = ${searchPath};
+      ${adapter.FINANCE_AUTHORITY_SQL}
+      rollback;`));
+    const replayPathAuthority = authorityAtSearchPath('"$user", public, auth, extensions');
+    const productionPathAuthority = authorityAtSearchPath('"$user", public, extensions');
+    assert.deepEqual(replayPathAuthority, productionPathAuthority,
+      'finance authority must not inherit the caller search_path');
+    const authorizationConstraints = productionPathAuthority.relations.find(row =>
+      row.identity === 'private.creator_premium_finance_authorizations').authority.constraints;
+    assert.match(authorizationConstraints.find(row =>
+      row[0] === 'creator_premium_finance_authorizations_buyer_id_fkey')[5],
+    /REFERENCES auth\.users\(id\)/);
+    assert.match(authorizationConstraints.find(row =>
+      row[0] === 'creator_premium_finance_authorizations_creator_id_fkey')[5],
+    /REFERENCES auth\.users\(id\)/);
     assert.deepEqual(pre.legacy_relations,post.legacy_relations);
     assert.deepEqual(pre.legacy_functions,post.legacy_functions);
     await captureActualAuthority('post');

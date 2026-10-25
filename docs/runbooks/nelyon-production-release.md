@@ -79,6 +79,14 @@ reinterpreted. Existing ledger/Admin dependency authority is observed freshly
 and must remain byte-for-byte identical across the release; a local fixture's
 legacy grants are never an allowlist.
 
+PostgreSQL deparsers such as `pg_get_constraintdef` consult the session
+`search_path`. The static finance-authority query therefore pins its own
+transaction-local path to `pg_catalog, public, extensions` before catalog
+deparsing. This prevents an otherwise identical foreign key from being rendered
+as either `REFERENCES users(id)` or `REFERENCES auth.users(id)` solely because a
+Management API or disposable test role inherited a different path. The pinned
+query is exercised under both ambient paths and must produce identical evidence.
+
 `finance_facts` retains one-way identity hashes, full-row binding digests, exact
 decimal strings, targets/accounts/fees/transaction bindings, status/timestamps,
 historical gross acquisition exposure and actual binding reconciliation.
@@ -425,8 +433,14 @@ listed in `postcheck_recovery.approved_sources`. Every source is bound to its
 run attempt, release ID, source SHA, full artifact IDs and digests, canonical
 manifest digest, pre/post evidence digests, migration inventory, Edge
 attestations, Premium relation-security digest, and legacy counts. A source is
-eligible only when every mutation step and the post-snapshot succeeded and only
-the ordinary postcheck failed. Historical artifacts contain sanitized
+normally eligible only when every mutation step and the post-snapshot succeeded
+and only the ordinary postcheck failed. The sole reviewed exception is F3 run
+`40166468648`: its pre-snapshot, verification, dry-run, migration, and Edge steps
+succeeded; its post-snapshot failed before emitting post evidence because the
+un-pinned PostgreSQL deparser rendered two already-correct `auth.users` foreign
+keys differently, and its postcheck was consequently skipped. Recovery for that
+exact immutable source may attest the already-applied state read-only; it cannot
+repeat SQL or Edge deployment. Historical artifacts contain sanitized
 verification records and evidence digests; they do not contain credentials or
 private rows.
 

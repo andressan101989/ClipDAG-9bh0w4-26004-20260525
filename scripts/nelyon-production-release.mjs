@@ -286,6 +286,39 @@ const EXPECTED_RECOVERY_SOURCES = [{
   ],
   premium_relation_security_sha256: '055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6',
   premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
+}, {
+  run_id: '40166468648',
+  run_attempt: 1,
+  release_id: 'nelyon-creator-premium-f3-release-20261025T054152Z',
+  source_sha: '8908c4f9e6b5d48614301e51b16793ed7ae6f895',
+  repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+  mutation_status: 'completed',
+  post_snapshot_status: 'failure',
+  postcheck_status: 'skipped',
+  gate_artifact: { id: '12588777217', name: 'nelyon-gate-evidence-40166468648-1', digest: 'sha256:f7326c1aca51583a4666d21b66f1a722bed8a758fd8043a8948041cbc35c6aa5' },
+  release_artifact: { id: '12587718942', name: 'nelyon-release-40166468648-1', digest: 'sha256:4a5928c1505e63f24d6873cb70dab02361627c7115cdfd5a301790846cd671a7' },
+  manifest_sha256: '7f329703901fbe8d6d3a38803b710e68780cb05c17c229ea091f01b5cff67a21',
+  pre_snapshot_evidence_sha256: 'e89dcb035fcc61493c9f0703beb666a9eea62a12297142a3675b05479cb983ea',
+  post_snapshot_evidence_sha256: null,
+  expected_migrations: [{
+    blob: F3_FINANCE_AUTHORITY_TRANSITION.migration_blob,
+    name: '20261025011000_creator_premium_f3_bounded_financial_activation',
+  }],
+  expected_migration_count: 352,
+  expected_latest_migration: '20261025011000_creator_premium_f3_bounded_financial_activation',
+  edge_functions: [{
+    name: 'bdag-ledger',
+    source_sha256: F3_FINANCE_AUTHORITY_TRANSITION.function_source_sha256,
+    status: 'ACTIVE',
+    verify_jwt: true,
+    version: 46,
+  }],
+  productive_resources: [
+    'migration:20261025011000_creator_premium_f3_bounded_financial_activation',
+    'function:bdag-ledger',
+  ],
+  premium_relation_security_sha256: '34e13339d4627b7684699288f789780267d7340afbd1c3de33029624e60a2f6a',
+  premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
 }];
 const REQUIRED_FINANCE_RECONCILIATIONS = [
   'account_balance_ledger_mismatch',
@@ -478,7 +511,7 @@ export function validatePolicy(policy) {
   }
   if (policy.schema_version !== 2) deny('INVALID_POLICY_SCHEMA', 'unsupported policy schema');
   if (canonicalJson(policy.finance_authority_transition) !== canonicalJson(F3_FINANCE_AUTHORITY_TRANSITION)
-    || sha256Hex(canonicalJson(policy.finance_authority)) !== '40c43f292efb7c736e83f283f920269f6902620d14e026e757c11e7e5c0eb77f'
+    || sha256Hex(canonicalJson(policy.finance_authority)) !== 'e1e1b356dae743bb89e16fe4526bd161d34b4caf607e7597bfc142f093b92f45'
     || sha256Hex(canonicalJson(policy.finance_security_advisor)) !== '47fba40bc5736d8da22cda8409ef39538ea3dcc5187b17ce9d898544d2c815a3') {
     deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'F3 foundation authority must match the exact audited contract');
   }
@@ -1936,6 +1969,18 @@ function readFixedJson(directory, name, code) {
   return body;
 }
 
+function expectedRecoverySourceSteps(source) {
+  return {
+    pre_snapshot: 'success',
+    pre_verification: 'success',
+    migration_dry_run: 'success',
+    migrations: 'success',
+    functions: 'success',
+    post_snapshot: source.post_snapshot_status,
+    postcheck: source.postcheck_status,
+  };
+}
+
 export function verifyRecoveryArtifactProvenance({ source, run, artifacts, releaseBundle, gateEvidence }) {
   const code = 'RECOVERY_SOURCE_PROVENANCE_MISMATCH';
   if (!source || !run || String(run.id) !== source.run_id || run.run_attempt !== source.run_attempt
@@ -1996,15 +2041,7 @@ export function verifyRecoveryArtifactProvenance({ source, run, artifacts, relea
     || canonicalJson(manifest.resources?.functions) !== canonicalJson(expectedFunctions)) {
     deny(code, 'source manifest productive resources do not match the approved failed release');
   }
-  const expectedSteps = {
-    pre_snapshot: 'success',
-    pre_verification: 'success',
-    migration_dry_run: 'success',
-    migrations: 'success',
-    functions: 'success',
-    post_snapshot: 'success',
-    postcheck: 'failure',
-  };
+  const expectedSteps = expectedRecoverySourceSteps(source);
   if (observation.schema_version !== 1 || observation.result !== 'INCOMPLETE_OR_FAILED'
     || canonicalJson(observation.steps) !== canonicalJson(expectedSteps)
     || observation.pre_evidence_sha256 !== source.pre_snapshot_evidence_sha256
@@ -2058,15 +2095,7 @@ export function verifyPostcheckRecovery({
     })) {
     deny('RECOVERY_MUTATION_FORBIDDEN', 'postcheck recovery cannot carry productive resources');
   }
-  const expectedSourceSteps = {
-    pre_snapshot: 'success',
-    pre_verification: 'success',
-    migration_dry_run: 'success',
-    migrations: 'success',
-    functions: 'success',
-    post_snapshot: 'success',
-    postcheck: 'failure',
-  };
+  const expectedSourceSteps = expectedRecoverySourceSteps(source);
   if (sourceManifest?.identity?.approved_sha !== source.source_sha
     || sourceManifest?.identity?.release_id !== source.release_id
     || String(sourceManifest?.identity?.run_id) !== source.run_id
