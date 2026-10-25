@@ -725,7 +725,7 @@ function validateManifestAdapterIdentity(manifest, adapterSourceSha256) {
 
 function validateFinancePolicyAuthority(policy) {
   if (sha256(canonicalJson(policy?.finance_authority_transition ?? null)) !== '18ba08389686a15aea9df1c7b4f974202e147167e5aa1d0f83412e1065ebc882'
-    || sha256(canonicalJson(policy?.finance_authority ?? null)) !== '59b45c55766c82a6e90ca526fc00e9759cd3be9560fbe60759c552836ec9d78c'
+    || sha256(canonicalJson(policy?.finance_authority ?? null)) !== '40c43f292efb7c736e83f283f920269f6902620d14e026e757c11e7e5c0eb77f'
     || sha256(canonicalJson(policy?.finance_security_advisor ?? null)) !== '47fba40bc5736d8da22cda8409ef39538ea3dcc5187b17ce9d898544d2c815a3') {
     fail('FINANCE_AUTHORITY_TRANSITION_REJECTED', 'foundation policy differs from exact reviewed authority');
   }
