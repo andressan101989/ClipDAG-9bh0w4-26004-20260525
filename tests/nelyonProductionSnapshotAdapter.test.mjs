@@ -592,8 +592,8 @@ test('F3 recovery authorities require the exact approved source and installed mi
     'recovery',
     { request: recoveryRequest, migrations },
   );
-  assert.equal(selected.length, 22);
-  assert.equal(selected.filter(item => Array.isArray(item.object.argument_types)).length, 20);
+  assert.equal(selected.length, 23);
+  assert.equal(selected.filter(item => Array.isArray(item.object.argument_types)).length, 21);
   assert.equal(selected.some(item => item.object.name === 'get_admin_creator_premium_finance_activation_v1'), true);
   assert.equal(selected.some(item => item.object.name === 'get_creator_premium_commerce_v2'), true);
   assert.equal(selected.some(item => item.object.name === 'get_my_creator_premium_subscriptions_v2'), true);
@@ -681,7 +681,7 @@ test('F3 recovery capture requests only the successor RPC authority set', async 
     observedAt: '2026-10-12T12:00:01.000Z',
     adapterSourceSha256: '6'.repeat(64),
   }), /REMOTE_READ_FAILED: RPC security attestation request failed/);
-  assert.equal(requestedRpcIdentities.length, 20);
+  assert.equal(requestedRpcIdentities.length, 21);
   assert.equal(requestedRpcIdentities.some(item => item.name === 'get_admin_creator_premium_finance_activation_v1'), true);
   assert.equal(requestedRpcIdentities.some(item => item.name === 'get_creator_premium_commerce_v2'), true);
   assert.equal(requestedRpcIdentities.some(item => item.name === 'get_my_creator_premium_subscriptions_v2'), true);
@@ -942,6 +942,7 @@ const PROTECTED_TEST_RPC_IDENTITIES = [
   ['submit_my_creator_premium_content_with_plans_v1', ['uuid', 'uuid[]', 'uuid']],
   ['retire_my_creator_premium_content_v1', ['uuid']],
   ['delete_my_creator_premium_plan_draft_v1', ['uuid', 'uuid']],
+  ['ensure_my_ledger_account', []],
 ];
 
 function rpcSecurityRows(overrides = {}) {
@@ -1352,8 +1353,8 @@ test('RPC security normalization preserves overload identity hashes definitions 
   const raw = rpcSecurityRows();
   const snapshot = adapter.normalizeRpcSecurityAttestations(raw);
   assert.equal(snapshot.complete, true);
-  assert.equal(snapshot.count, 17);
-  assert.equal(snapshot.items.length, 17);
+  assert.equal(snapshot.count, 18);
+  assert.equal(snapshot.items.length, 18);
   assert.deepEqual(snapshot.items.map(item => item.name), [...snapshot.items.map(item => item.name)].sort());
   const firstRaw = raw.find(item => item.name === snapshot.items[0].name);
   assert.equal(
@@ -1533,7 +1534,7 @@ test('fixed documented recovery capture uses four read-only SQL requests and red
     observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
   });
   assert.equal(result.phase, 'recovery');
-  assert.equal(result.rpc_security.count, 17);
+  assert.equal(result.rpc_security.count, 18);
   assert.equal(result.premium_state.complete, true);
   assert.equal(calls.length, 9);
   const sqlCalls = calls.filter(call => (call.options.method ?? 'GET') === 'POST');
@@ -2186,6 +2187,21 @@ test('security advisor fingerprints bind semantic object identity, not mutable a
   assert.equal(first.items[0].fingerprint, proseOnly.items[0].fingerprint);
   assert.notEqual(first.items[0].fingerprint, changedIdentity.items[0].fingerprint);
   assert.equal(first.items[0].resource_kind, lint.name);
+  const noArgumentLint = {
+    ...lint,
+    cache_key: 'authenticated_security_definer_function_executable_public_ensure_my_ledger_account_',
+    metadata: {
+      arguments: '',
+      language: 'plpgsql',
+      name: 'ensure_my_ledger_account',
+      schema: 'public',
+      security_definer: true,
+    },
+  };
+  assert.equal(
+    adapter.normalizeSecurityAdvisors({ lints: [noArgumentLint] }).items[0].fingerprint,
+    'acc6db2023e39518a9407ac3dada47063023550ae9f275eb058b6f6aff32753e',
+  );
 });
 
 test('phase-bound RPC attestations keep successor authorities stable for an older F1 manifest', async () => {
@@ -2197,9 +2213,46 @@ test('phase-bound RPC attestations keep successor authorities stable for an olde
     version: '20261018211327',
   }];
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
-  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre')), 17);
-  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post')), 17);
-  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery')), 17);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre')), 18);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post')), 18);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery')), 18);
+});
+
+test('phase-bound RPC attestations introduce self-only Wallet provisioning only after F3-FINAL', async () => {
+  const adapter = await loadAdapter();
+  const controlledPolicy = structuredClone(installedPolicy);
+  const controlledManifest = manifest();
+  controlledManifest.resources.migrations = [{
+    path: 'supabase/migrations/20261025231500_creator_premium_f3_final_wallet_integration.sql',
+    version: '20261025231500',
+  }];
+  const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
+  const pre = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre');
+  const post = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post');
+  const recovery = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery');
+  assert.equal(pre.length, 23);
+  assert.equal(post.length, 24);
+  assert.equal(recovery.length, 24);
+  assert.equal(rpcCount(pre), 20);
+  assert.equal(rpcCount(post), 21);
+  assert.equal(rpcCount(recovery), 21);
+  assert.equal(pre.some(item => item.object.name === 'ensure_my_ledger_account'), false);
+  assert.equal(post.some(item => item.object.name === 'ensure_my_ledger_account'), true);
+  assert.equal(recovery.some(item => item.object.name === 'ensure_my_ledger_account'), true);
+  const preFingerprints = new Set(pre.map(item => item.advisor_fingerprint));
+  const introduced = post.filter(item => !preFingerprints.has(item.advisor_fingerprint));
+  assert.deepEqual(introduced.map(item => item.advisor_fingerprint), [
+    'acc6db2023e39518a9407ac3dada47063023550ae9f275eb058b6f6aff32753e',
+  ]);
+  const advisorRows = items => items.map(item => ({
+    fingerprint: item.advisor_fingerprint,
+    level: item.advisor_severity,
+    resource_kind: item.advisor_type,
+  }));
+  assert.equal(
+    adapter.validateSecurityAdvisorDelta(advisorRows(pre), advisorRows(post), introduced),
+    true,
+  );
 });
 
 test('phase-bound RPC attestations activate the revised plan deletion definition only after C4', async () => {
@@ -2213,8 +2266,8 @@ test('phase-bound RPC attestations activate the revised plan deletion definition
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
   const pre = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre');
   const post = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post');
-  assert.equal(rpcCount(pre), 17);
-  assert.equal(rpcCount(post), 17);
+  assert.equal(rpcCount(pre), 18);
+  assert.equal(rpcCount(post), 18);
   const preDeletePlan = pre.find(item => item.object.name === 'delete_my_creator_premium_plan_draft_v1');
   const postDeletePlan = post.find(item => item.object.name === 'delete_my_creator_premium_plan_draft_v1');
   assert.equal(preDeletePlan.attestation.definition_sha256, '40cbc02821cceb68cdd5a31cfd531d9ec8f537d36c47acb1fc7fcafd0df42ed3');
@@ -2232,8 +2285,8 @@ test('phase-bound RPC attestations activate the repaired submit definition only 
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
   const pre = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre');
   const post = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post');
-  assert.equal(rpcCount(pre), 17);
-  assert.equal(rpcCount(post), 17);
+  assert.equal(rpcCount(pre), 18);
+  assert.equal(rpcCount(post), 18);
   const preSubmit = pre.find(item => item.object.name === 'submit_my_creator_premium_content_with_plans_v1');
   const postSubmit = post.find(item => item.object.name === 'submit_my_creator_premium_content_with_plans_v1');
   assert.equal(preSubmit.attestation.definition_sha256, '7e3e9f176c216fd35bd9dc4fe00b7d577558265afe2f884630d53747737f02ee');
@@ -2252,9 +2305,9 @@ test('phase-bound RPC attestations activate P3-C2 recovery readiness only after 
   const pre = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre');
   const post = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post');
   const recovery = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery');
-  assert.equal(rpcCount(pre), 17);
-  assert.equal(rpcCount(post), 17);
-  assert.equal(rpcCount(recovery), 17);
+  assert.equal(rpcCount(pre), 18);
+  assert.equal(rpcCount(post), 18);
+  assert.equal(rpcCount(recovery), 18);
   const preDetail = pre.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
   const postDetail = post.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
   const recoveryDetail = recovery.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
@@ -2273,8 +2326,8 @@ test('phase-bound RPC attestations activate F2 projections only after the exact 
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
   const pre = adapter.advisorExceptionsForPhase(policy, controlledManifest, 'pre');
   const post = adapter.advisorExceptionsForPhase(policy, controlledManifest, 'post');
-  assert.equal(rpcCount(pre), 15);
-  assert.equal(rpcCount(post), 17);
+  assert.equal(rpcCount(pre), 16);
+  assert.equal(rpcCount(post), 18);
   assert.equal(pre.some(item => item.object.name === 'get_my_creator_premium_financial_history_v1'), false);
   assert.equal(pre.some(item => item.object.name === 'search_admin_creator_premium_finance_v1'), false);
   const expected = new Map([

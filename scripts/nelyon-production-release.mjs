@@ -94,6 +94,32 @@ export const F3_C2_ADMIN_FINANCE_NEGATIVE_AUTHORIZATION_EVIDENCE = Object.freeze
 export const F3_C2_ADMIN_FINANCE_NEGATIVE_AUTHORIZATION_EVIDENCE_SHA256 = sha256Hex(
   canonicalJson(F3_C2_ADMIN_FINANCE_NEGATIVE_AUTHORIZATION_EVIDENCE),
 );
+export const F3_FINAL_WALLET_MIGRATION =
+  '20261025231500_creator_premium_f3_final_wallet_integration';
+export const F3_FINAL_WALLET_MIGRATION_BLOB =
+  'cdcb1e2bd4db2e2e61c7e5815d62daf27cf15fba';
+export const F3_FINAL_WALLET_SOURCE_SHA =
+  '8d1dac4a132c612f394ca470d4b4e2cd7b16adb2';
+export const F3_FINAL_LEDGER_PROVISIONING_NEGATIVE_AUTHORIZATION_EVIDENCE = Object.freeze({
+  version: 'creator-premium-f3-final-ledger-provisioning-negative-authorization-v1',
+  migration_path: `supabase/migrations/${F3_FINAL_WALLET_MIGRATION}.sql`,
+  test_path: 'tests/creatorPremiumF3C2Local.integration.mjs',
+  rpc: 'public.ensure_my_ledger_account()',
+  cases: Object.freeze([
+    Object.freeze({ actor: 'anon', expected: 'acl_denied' }),
+    Object.freeze({ actor: 'service_role', expected: 'acl_denied' }),
+    Object.freeze({ actor: 'authenticated_without_jwt_sub', expected: 'ledger_account_auth_required' }),
+    Object.freeze({ actor: 'authenticated_without_profile', expected: 'ledger_account_profile_required' }),
+    Object.freeze({ actor: 'authenticated_attempting_other_owner', expected: 'parameterized_authority_acl_denied' }),
+    Object.freeze({ actor: 'authenticated_profile_owner', expected: 'own_zero_balance_account_only' }),
+    Object.freeze({ actor: 'authenticated_profile_owner_concurrent_replay', expected: 'single_account_same_id' }),
+    Object.freeze({ actor: 'authenticated_existing_account', expected: 'identity_balance_and_frozen_state_preserved' }),
+    Object.freeze({ actor: 'authenticated_profile_owner_no_finance_side_effects', expected: 'transactions_entries_journal_velocity_authorizations_policy_unchanged' }),
+  ]),
+});
+export const F3_FINAL_LEDGER_PROVISIONING_NEGATIVE_AUTHORIZATION_EVIDENCE_SHA256 = sha256Hex(
+  canonicalJson(F3_FINAL_LEDGER_PROVISIONING_NEGATIVE_AUTHORIZATION_EVIDENCE),
+);
 export const F3_REMOTE_BDAG_LEDGER_EZBR_SHA256 =
   'd039819170e2c347ac8a6c88f77fa4461dfae4091a9e937ed47897b2c115e56c';
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
@@ -155,6 +181,7 @@ const SECURITY_ADVISOR_RPC_EXCEPTIONS = [
   ['b0cdd5e8a440096ebc6bbd35fee9b785180d71ae6d06209ade7feaa6c0877c4d', 'retire_my_creator_premium_content_v1', ['uuid'], 'p_content_id uuid', 'ac6cd5a65b129c471184ffb080a5a80dcfb2c3283daf5fb2c2100a945e340580', F2_NEGATIVE_TEST_EVIDENCE_SHA256, F2_MIGRATION, F2_MIGRATION_BLOB, F2_SOURCE_SHA],
   ['5ceb93fa71004f64ba75a7bd251fadaf66d7ebdce81fb48904fd988ed9023fef', 'delete_my_creator_premium_plan_draft_v1', ['uuid', 'uuid'], 'p_plan_id uuid, p_client_request_id uuid', 'a7bab775b77a5230658cea58c7bcb9f139b4b6102c89c1095a5e3f5d8548d520', F1_C4_NEGATIVE_TEST_EVIDENCE_SHA256, F1_C4_MIGRATION, F1_C4_MIGRATION_BLOB, F1_C4_SOURCE_SHA],
   ['f6c527ed886225b79c3412747e8f8375e7552634febc03b37917123f02649109', 'search_admin_creator_premium_finance_v1', ['text', 'text', 'text', 'timestamp with time zone', 'uuid', 'integer'], 'p_source text, p_state text, p_query text, p_cursor_created_at timestamp with time zone, p_cursor_reference_id uuid, p_limit integer', '90d68ed26584e9994b1ff64fbf6e44eaa6b443368bfabe83eb1c0a73fce84cf7', F2_NEGATIVE_TEST_EVIDENCE_SHA256, F2_MIGRATION, F2_MIGRATION_BLOB, F2_SOURCE_SHA],
+  ['acc6db2023e39518a9407ac3dada47063023550ae9f275eb058b6f6aff32753e', 'ensure_my_ledger_account', [], '', '6c0980c34a5e058b1ebda227fb64c87ff74fc69f874c9144742c9197fd6a9190', F3_FINAL_LEDGER_PROVISIONING_NEGATIVE_AUTHORIZATION_EVIDENCE_SHA256, F3_FINAL_WALLET_MIGRATION, F3_FINAL_WALLET_MIGRATION_BLOB, F3_FINAL_WALLET_SOURCE_SHA],
 ];
 const B7_EDGE_ATTESTATIONS = [
   ['ads-v2-delivery', 10, true, '4510ecc897a50a2f9e23d0b326f9bdfc630ce88e5f7bcea0c59e9476233d0536'],

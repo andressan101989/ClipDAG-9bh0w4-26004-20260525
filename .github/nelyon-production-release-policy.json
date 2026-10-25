@@ -2339,6 +2339,63 @@
         "technical_approval": "verified"
       },
       {
+        "advisor_fingerprint": "acc6db2023e39518a9407ac3dada47063023550ae9f275eb058b6f6aff32753e",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": {
+          "schema": "public",
+          "name": "ensure_my_ledger_account",
+          "argument_types": [],
+          "identity_arguments": ""
+        },
+        "attestation": {
+          "security_definer": true,
+          "owner": "postgres",
+          "search_path": [
+            "search_path=\"\""
+          ],
+          "acl": [
+            {
+              "grantee": "authenticated",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            },
+            {
+              "grantee": "postgres",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            }
+          ],
+          "execute": {
+            "anon": false,
+            "authenticated": true,
+            "public": false,
+            "service_role": false
+          },
+          "definition_sha256": "6c0980c34a5e058b1ebda227fb64c87ff74fc69f874c9144742c9197fd6a9190"
+        },
+        "authorization": {
+          "functional_reason": "Allows an authenticated profile owner to provision only their own canonical zero-balance BDAG account without accepting an owner id or posting money.",
+          "controls": [
+            "authenticated_session",
+            "canonical_account_authority",
+            "concurrent_idempotency",
+            "finance_off_preservation",
+            "negative_authorization_tests",
+            "profile_fk_precondition",
+            "self_only_identity",
+            "zero_balance_only"
+          ],
+          "negative_test_evidence_sha256": "41b939a1513d04567c1d0d7acf5371c5e74d8807b7fa0d0058cd15b7fd0fdd03"
+        },
+        "origin": {
+          "migration": "20261025231500_creator_premium_f3_final_wallet_integration",
+          "migration_blob": "cdcb1e2bd4db2e2e61c7e5815d62daf27cf15fba",
+          "source_sha": "8d1dac4a132c612f394ca470d4b4e2cd7b16adb2"
+        },
+        "technical_approval": "verified"
+      },
+      {
         "advisor_fingerprint": "8088d6be7ca6bd32b041ed429091a56f26d26ac0d7148eb5bf15f9e3c5e70bd6",
         "advisor_type": "table",
         "advisor_severity": "INFO",
