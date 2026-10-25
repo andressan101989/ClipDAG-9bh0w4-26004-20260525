@@ -2,7 +2,7 @@
 // Baseline compatibility deliberately calls F2's three-UUID purchase signature when
 // F3 is absent, so RED exposes actual unwanted debits rather than undefined-function errors.
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
@@ -54,6 +54,22 @@ function dockerAsync(command, input) {
     child.on('close', status => resolve({ status, stdout: stdout.trim(), stderr: stderr.trim() }));
     child.stdin.end(input);
   });
+}
+// A holder commits only after the test has observed the blocked command and
+// the real PostgreSQL deadline. No fixed sleep decides lock-release ordering.
+function dockerHolder(command, input) {
+  const [executable, args] = dockerArgs(command);
+  const child = spawn(executable, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stdout = '', stderr = '';
+  child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const result = new Promise((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', status => resolve({ status, stdout: stdout.trim(), stderr: stderr.trim() }));
+  });
+  child.stdin.write(input+'\n');
+  return { result, release() { child.stdin.end('commit;\n'); } };
 }
 function pgCommand(db) {
   assert.match(db, /^premium_f3_[a-z0-9_]+$/);
@@ -146,7 +162,7 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
     if (hasF3) sql(db, `
       -- Simulate the later protected activation migration ONLY in this disposable clone.
       alter table private.creator_premium_finance_policy drop constraint creator_premium_finance_policy_f3_foundation_off_check;
-      alter table private.creator_premium_finance_authorizations disable trigger creator_premium_finance_authorizations_f3_foundation_insert_guard;
+      alter table private.creator_premium_finance_authorizations disable trigger creator_premium_finance_auth_f3_foundation_insert_guard;
       set session_replication_role=replica;
       insert into private.creator_premium_finance_authorizations(
         id,status,approval_digest,configuration_digest,${entries.map(([key]) => key).join(',')}
@@ -184,13 +200,75 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
       values('SUPER_ADMIN','content.items.moderate'),('SUPER_ADMIN','finance.ledger.read'),
         ('MODERATOR','content.items.moderate') on conflict do nothing;`);
     sql(base, chain.slice(-2).join('\n'));
+    // Clear ledger fixtures before F3 introduces restrictive authorization FKs.
+    // TRUNCATE CASCADE after F3 would also erase the canonical policy singleton.
+    sql(base, 'truncate public.ledger_entries,public.financial_transactions,public.ledger_accounts cascade;');
+    // This disposable template compiles older migrations as supabase_admin.
+    // Deployed canonical objects belong to postgres; give that trusted owner
+    // its equivalent dependency access without granting any client role.
+    sql(base, `grant usage on schema public,private to postgres;
+      grant select,update on private.creator_premium_finance_policy,
+        private.creator_premium_contents,private.creator_premium_offer_versions,
+        private.creator_premium_plans to postgres;
+      grant select,insert,update on private.creator_premium_purchase_receipts,
+        private.creator_premium_subscriptions,private.creator_premium_subscription_periods,
+        public.idempotency_keys to postgres;
+      grant select on private.creator_premium_plan_contents,public.ledger_accounts,
+        public.ledger_entries,public.public_user_profiles to postgres;
+      grant select,update on public.financial_transactions to postgres;
+      do $$ declare dependency record; begin
+        for dependency in select proc.oid::regprocedure as signature
+          from pg_proc proc join pg_namespace namespace on namespace.oid=proc.pronamespace
+          where (namespace.nspname='private' and proc.proname in (
+            'creator_premium_internal_finance_authority_v1','creator_premium_request_fingerprint_v1',
+            'creator_premium_actor_is_age_eligible_v1','creator_premium_actor_is_operational_v1',
+            'creator_premium_pair_is_unblocked_v1','post_creator_premium_charge_v1',
+            'post_creator_premium_refund_v1','validate_creator_premium_refund_reason_v1',
+            'current_user_is_creator_exclusive_age_eligible','resolve_creator_premium_entitlement_v1',
+            'creator_premium_image_is_ready_v1','creator_premium_video_is_ready_v1',
+            'creator_premium_teaser_url_v1','creator_premium_financial_fact_is_valid_v1'))
+            or (namespace.nspname='public' and proc.proname in ('check_velocity_limit','admin_require_capability'))
+        loop execute format('grant execute on function %s to postgres',dependency.signature); end loop;
+      end; $$;`);
     for (const migration of f3) sql(base, readFileSync(new URL(migration, migrationDir), 'utf8'));
     hasF3 = sql(base, "select to_regclass('private.creator_premium_finance_authorizations') is not null").stdout === 't';
     fourArgumentPurchase = sql(base, "select to_regprocedure('public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid)') is not null").stdout === 't';
+    if (hasF3) {
+      assert.equal(sql(base, `select not exists(
+        select 1 from pg_proc proc join pg_namespace namespace on namespace.oid=proc.pronamespace
+        where namespace.nspname='private' and proc.proname like '%creator_premium%f3_v1'
+        and (proc.proowner<>'postgres'::regrole or not proc.prosecdef
+          or not coalesce(proc.proconfig @> array['search_path=""'],false)
+          or exists(select 1 from (values('anon'),('authenticated'),('service_role')) roles(name)
+            where has_function_privilege(roles.name,proc.oid,'execute'))))`).stdout, 't');
+      assert.equal(sql(base, `select not exists(
+        select 1 from (values('anon'),('authenticated'),('service_role')) roles(name)
+        where has_table_privilege(roles.name,'private.creator_premium_finance_authorizations',
+          'select,insert,update,delete,truncate,references,trigger'))`).stdout, 't');
+      assert.equal(sql(base, `select not exists(select 1 from pg_policy
+        where polrelid='private.creator_premium_finance_authorizations'::regclass)`).stdout, 't');
+      assert.equal(sql(base, `select not exists(
+        select 1 from pg_class relation join pg_namespace namespace on namespace.oid=relation.relnamespace
+        where namespace.nspname='private' and relation.relname in (
+          'creator_premium_finance_policy','creator_premium_finance_authorizations',
+          'creator_premium_purchase_receipts','creator_premium_subscription_periods')
+        and (not relation.relrowsecurity or not relation.relforcerowsecurity
+          or exists(select 1 from (values('anon'),('authenticated'),('service_role')) roles(name)
+            where has_table_privilege(roles.name,relation.oid,'select,insert,update,delete,truncate,references,trigger'))))`).stdout, 't');
+      assert.equal(sql(base, `select not exists(
+        select 1 from pg_proc proc join pg_namespace namespace on namespace.oid=proc.pronamespace
+        where namespace.nspname='public' and proc.proname in (
+          'purchase_creator_premium_content_v1','subscribe_creator_premium_plan_v1',
+          'refund_creator_premium_purchase_v1','refund_creator_premium_subscription_period_v1')
+        and (proc.proowner<>'postgres'::regrole or not proc.prosecdef
+          or not coalesce(proc.proconfig @> array['search_path=""'],false)
+          or not has_function_privilege('service_role',proc.oid,'execute')
+          or has_function_privilege('anon',proc.oid,'execute')
+          or has_function_privilege('authenticated',proc.oid,'execute')))`).stdout, 't');
+    }
     process.stdout.write(`# F3_BASELINE has_authorization=${hasF3} purchase_offer_precondition=${fourArgumentPurchase}\n`);
     const actors = [id.admin, id.buyer, id.outsider, id.creator, id.otherCreator];
-    sql(base, `truncate public.ledger_entries,public.financial_transactions,public.ledger_accounts cascade;
-      set session_replication_role=replica;
+    sql(base, `set session_replication_role=replica;
       insert into auth.users(id,is_anonymous) values ${actors.map(actor => `(${literal(actor)},false)`).join(',')};
       insert into public.user_profiles(id,username) values ${actors.map((actor, i) => `(${literal(actor)},'f3_synthetic_${i}')`).join(',')};
       insert into private.admin_user_roles(user_id,role_code,grant_actor_kind,grant_operator_reference,grant_reason)
@@ -262,7 +340,7 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
       assert.equal(hasF3, true);
       assert.equal(sql(db, `select exists(select 1 from pg_trigger where
         tgrelid='private.creator_premium_finance_authorizations'::regclass
-        and tgname='creator_premium_finance_authorizations_f3_foundation_insert_guard'
+        and tgname='creator_premium_finance_auth_f3_foundation_insert_guard'
         and tgenabled<>'D' and not tgisinternal)`).stdout, 't');
       const insert = sql(db, `insert into private.creator_premium_finance_authorizations default values`, true);
       assert.notEqual(insert.status, 0);
@@ -329,6 +407,8 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
       const fact = json(db, `select to_jsonb(receipt) from private.creator_premium_purchase_receipts receipt where id='${purchase.receipt_id}'`);
       const period = json(db, `select to_jsonb(period) from private.creator_premium_subscription_periods period where id='${subscription.period_id}'`);
       assert.equal(fact.finance_authorization_id, id.authorization);
+      assert.equal(fact.request_fingerprint, createHash('sha256')
+        .update(`creator_premium_purchase|${id.buyer}|${id.content}|${id.offer}`).digest('hex'));
       assert.equal(period.finance_authorization_id, id.authorization);
       for (const [table, factId] of [['creator_premium_purchase_receipts', purchase.receipt_id], ['creator_premium_subscription_periods', subscription.period_id]]) {
         const result = sql(db, `update private.${table} set finance_authorization_id=null where id='${factId}'`, true);
@@ -414,6 +494,121 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
       denied(results.find(result => result.status !== 0));
       assert.ok(Number(sql(db, "select coalesce(sum(amount),0) from public.financial_transactions where operation_type in ('creator_premium_purchase','creator_premium_subscription')").stdout) <= 20);
     }, { max_gross_bdag: '20.00000000' });
+
+    for (const operation of ['purchase', 'subscription']) {
+      for (const boundary of ['velocity', 'ledger']) {
+        await scenario(`${operation} expiry during ${boundary} wait rejects atomically`, async db => {
+          sql(db, `set session_replication_role=replica;
+            update private.creator_premium_finance_authorizations set charge_expires_at=clock_timestamp()+interval '5 seconds'
+            where id='${id.authorization}';set session_replication_role=origin;`);
+          const before = snapshot(db);
+          const marker = Math.floor(Math.random()*1_000_000_000)+1;
+          const application = `f3_expiry_${marker}`;
+          const lock = boundary === 'ledger'
+            ? `select id from public.ledger_accounts where id='${id.buyerAccount}' for update;`
+            : `select pg_advisory_xact_lock(hashtextextended('creator-premium-velocity|creator_premium_${operation === 'purchase' ? 'purchase' : 'subscribe'}|${id.buyer}',0));`;
+          const holder = dockerHolder(pgCommand(db), `begin;${lock}select pg_advisory_xact_lock(${marker});`);
+          let pending, result;
+          try {
+            await waitForLock(db, `select exists(select 1 from pg_locks where locktype='advisory' and objid=${marker} and granted)`);
+            pending = dockerAsync(pgCommand(db), serviceSql(`set local application_name='${application}';${operation === 'purchase' ? purchaseSql() : subscribeSql()}`));
+            await waitForLock(db, `select exists(select 1 from pg_stat_activity where datname=current_database()
+              and application_name='${application}' and wait_event_type='Lock')`);
+            assert.equal(sql(db, `select clock_timestamp()<charge_expires_at from private.creator_premium_finance_authorizations where id='${id.authorization}'`).stdout, 't', 'command did not reach the held boundary before expiry');
+            await waitForLock(db, `select clock_timestamp()>=charge_expires_at from private.creator_premium_finance_authorizations where id='${id.authorization}'`);
+          } finally {
+            holder.release();
+            const held = await holder.result;
+            if (pending) result = await pending;
+            assert.equal(held.status, 0, held.stderr);
+          }
+          denied(result, /creator_premium_canary_expired/);
+          assert.equal(snapshot(db), before, 'expiry after lock wait leaked provisional charge state');
+        });
+      }
+      for (const boundary of ['original transaction', 'ledger']) {
+        await scenario(`${operation} refund expiry during ${boundary} wait rejects atomically`, async db => {
+          const fact = success(db, operation === 'purchase' ? purchaseSql() : subscribeSql());
+          sql(db, `set session_replication_role=replica;
+            update private.creator_premium_finance_authorizations set charge_expires_at=clock_timestamp()+interval '1 second',
+              refund_expires_at=clock_timestamp()+interval '5 seconds' where id='${id.authorization}';
+            set session_replication_role=origin;`);
+          const before = snapshot(db);
+          const marker = Math.floor(Math.random()*1_000_000_000)+1;
+          const application = `f3_refund_expiry_${marker}`;
+          const lock = boundary === 'ledger'
+            ? `select id from public.ledger_accounts where id='${id.buyerAccount}' for update;`
+            : `select id from public.financial_transactions where id='${fact.financial_transaction_id}' for update;`;
+          const holder = dockerHolder(pgCommand(db), `begin;${lock}select pg_advisory_xact_lock(${marker});`);
+          let pending, result;
+          try {
+            await waitForLock(db, `select exists(select 1 from pg_locks where locktype='advisory' and objid=${marker} and granted)`);
+            const rpc = operation === 'purchase' ? 'refund_creator_premium_purchase_v1' : 'refund_creator_premium_subscription_period_v1';
+            const factId = operation === 'purchase' ? fact.receipt_id : fact.period_id;
+            pending = dockerAsync(pgCommand(db), serviceSql(`set local application_name='${application}';select public.${rpc}('${factId}','${randomUUID()}','owner_approved')`));
+            await waitForLock(db, `select exists(select 1 from pg_stat_activity where datname=current_database()
+              and application_name='${application}' and wait_event_type='Lock')`);
+            assert.equal(sql(db, `select clock_timestamp()<refund_expires_at from private.creator_premium_finance_authorizations where id='${id.authorization}'`).stdout, 't', 'refund did not reach the held boundary before expiry');
+            await waitForLock(db, `select clock_timestamp()>=refund_expires_at from private.creator_premium_finance_authorizations where id='${id.authorization}'`);
+          } finally {
+            holder.release();
+            const held = await holder.result;
+            if (pending) result = await pending;
+            assert.equal(held.status, 0, held.stderr);
+          }
+          denied(result, /creator_premium_canary_expired/);
+          assert.equal(snapshot(db), before, 'expiry after lock wait leaked provisional reversal state');
+        });
+      }
+    }
+    await scenario('purchase no-op key remains no-money after original purchase refund', db => {
+      const firstKey = randomUUID(), noOpKey = randomUUID();
+      const purchase = success(db, purchaseSql(id.buyer,id.content,id.offer,firstKey));
+      const noOp = success(db, purchaseSql(id.buyer,id.content,id.offer,noOpKey));
+      assert.equal(noOp.already_owned,true); assert.equal(noOp.money_moved,false);
+      success(db, `select public.refund_creator_premium_purchase_v1('${purchase.receipt_id}','${randomUUID()}','owner_approved')`);
+      const before = snapshot(db);
+      const replay = success(db,purchaseSql(id.buyer,id.content,id.offer,noOpKey));
+      assert.equal(replay.money_moved,false); assert.equal(replay.replayed,true);
+      assert.equal(replay.receipt_id,purchase.receipt_id);
+      assert.equal(snapshot(db),before,'successful no-op key was converted into a second debit');
+      unchangedDenial(db,purchaseSql(id.buyer,id.content,id.otherOffer,noOpKey),/creator_premium_purchase_idempotency_conflict/);
+    }, { max_purchase_count:2,max_gross_bdag:'40.00000000' });
+    await scenario('legacy receipt replay accepts only its stored offer and original fingerprint', db => {
+      const key=randomUUID();
+      const purchase=success(db,purchaseSql(id.buyer,id.content,id.offer,key));
+      sql(db, `set session_replication_role=replica;
+        update private.creator_premium_purchase_receipts set finance_authorization_id=null,
+          request_fingerprint=private.creator_premium_request_fingerprint_v1('creator_premium_purchase','${id.buyer}','${id.content}')
+          where id='${purchase.receipt_id}';
+        delete from public.idempotency_keys where operation_type='creator_premium_purchase_command'
+          and user_id='${id.buyer}' and idempotency_key='${key}';set session_replication_role=origin;`);
+      // Exercise the receipt fallback before its valid replay backfills a journal.
+      unchangedDenial(db,purchaseSql(id.buyer,id.content,id.otherOffer,key),/creator_premium_purchase_idempotency_conflict/);
+      sql(db, `set session_replication_role=replica;
+        update private.creator_premium_purchase_receipts set request_fingerprint=repeat('c',64)
+          where id='${purchase.receipt_id}';set session_replication_role=origin;`);
+      unchangedDenial(db,purchaseSql(id.buyer,id.content,id.offer,key),/creator_premium_purchase_idempotency_conflict/);
+      sql(db, `set session_replication_role=replica;
+        update private.creator_premium_purchase_receipts set request_fingerprint=
+          private.creator_premium_request_fingerprint_v1('creator_premium_purchase','${id.buyer}','${id.content}')
+          where id='${purchase.receipt_id}';set session_replication_role=origin;`);
+      const before=JSON.parse(snapshot(db));
+      const replay=success(db,purchaseSql(id.buyer,id.content,id.offer,key));
+      assert.equal(replay.replayed,true);assert.equal(replay.money_moved,false);assert.equal(replay.receipt_id,purchase.receipt_id);
+      const after=JSON.parse(snapshot(db));delete before.journal;delete after.journal;assert.deepEqual(after,before);
+      unchangedDenial(db,purchaseSql(id.buyer,id.content,id.otherOffer,key),/creator_premium_purchase_idempotency_conflict/);
+    });
+    await scenario('legacy fingerprint is rejected on an authorization-stamped receipt', db => {
+      const key=randomUUID();const purchase=success(db,purchaseSql(id.buyer,id.content,id.offer,key));
+      sql(db, `set session_replication_role=replica;
+        update private.creator_premium_purchase_receipts set request_fingerprint=
+          private.creator_premium_request_fingerprint_v1('creator_premium_purchase','${id.buyer}','${id.content}')
+          where id='${purchase.receipt_id}';
+        delete from public.idempotency_keys where operation_type='creator_premium_purchase_command'
+          and user_id='${id.buyer}' and idempotency_key='${key}';set session_replication_role=origin;`);
+      unchangedDenial(db,purchaseSql(id.buyer,id.content,id.offer,key),/creator_premium_purchase_idempotency_conflict/);
+    });
 
     await scenario('non-cohort projection hides acquisition through installed-client safe blockers', db => {
       const projection = JSON.parse(authenticated(db, id.outsider, `select public.get_creator_premium_commerce_v1('${id.content}')`).stdout);
