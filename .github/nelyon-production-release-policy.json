@@ -267,7 +267,7 @@
       "relations": [
         {
           "identity": "private.creator_premium_finance_authorizations",
-          "sha256": "05b8fdb713ecd89eb9524684fa4c3725f522533d0cd175342d3422db1ac59490"
+          "sha256": "2a61a1b65c024fce1a71fc9c54a2ebf333091c6abe52c2ac7231810cee55adab"
         },
         {
           "identity": "private.creator_premium_finance_policy",
@@ -1068,6 +1068,56 @@
           "function:bdag-ledger"
         ],
         "premium_relation_security_sha256": "055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6",
+        "premium_legacy": {
+          "content_count": 9,
+          "pending_review_count": 0,
+          "deleted_count": 5
+        }
+      },
+      {
+        "run_id": "40166468648",
+        "run_attempt": 1,
+        "release_id": "nelyon-creator-premium-f3-release-20261025T054152Z",
+        "source_sha": "8908c4f9e6b5d48614301e51b16793ed7ae6f895",
+        "repository": "andressan101989/ClipDAG-9bh0w4-26004-20260525",
+        "mutation_status": "completed",
+        "post_snapshot_status": "failure",
+        "postcheck_status": "skipped",
+        "gate_artifact": {
+          "id": "12588777217",
+          "name": "nelyon-gate-evidence-40166468648-1",
+          "digest": "sha256:f7326c1aca51583a4666d21b66f1a722bed8a758fd8043a8948041cbc35c6aa5"
+        },
+        "release_artifact": {
+          "id": "12587718942",
+          "name": "nelyon-release-40166468648-1",
+          "digest": "sha256:4a5928c1505e63f24d6873cb70dab02361627c7115cdfd5a301790846cd671a7"
+        },
+        "manifest_sha256": "7f329703901fbe8d6d3a38803b710e68780cb05c17c229ea091f01b5cff67a21",
+        "pre_snapshot_evidence_sha256": "e89dcb035fcc61493c9f0703beb666a9eea62a12297142a3675b05479cb983ea",
+        "post_snapshot_evidence_sha256": null,
+        "expected_migrations": [
+          {
+            "blob": "8d3e57ccf78de470c951fa4f43d2aeb6fd2233da",
+            "name": "20261025011000_creator_premium_f3_bounded_financial_activation"
+          }
+        ],
+        "expected_migration_count": 352,
+        "expected_latest_migration": "20261025011000_creator_premium_f3_bounded_financial_activation",
+        "edge_functions": [
+          {
+            "name": "bdag-ledger",
+            "source_sha256": "79e79bd31a62920401b8d55d48e1754ce58149294c8960c7995a070078b796f9",
+            "status": "ACTIVE",
+            "verify_jwt": true,
+            "version": 46
+          }
+        ],
+        "productive_resources": [
+          "migration:20261025011000_creator_premium_f3_bounded_financial_activation",
+          "function:bdag-ledger"
+        ],
+        "premium_relation_security_sha256": "34e13339d4627b7684699288f789780267d7340afbd1c3de33029624e60a2f6a",
         "premium_legacy": {
           "content_count": 9,
           "pending_review_count": 0,

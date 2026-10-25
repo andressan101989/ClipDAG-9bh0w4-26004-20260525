@@ -388,8 +388,8 @@ function recoveryArtifactFixture(t, gate, policy, sourceIndex = 0) {
       migration_dry_run: 'success',
       migrations: 'success',
       functions: 'success',
-      post_snapshot: 'success',
-      postcheck: 'failure',
+      post_snapshot: source.post_snapshot_status,
+      postcheck: source.postcheck_status,
     },
     pre_evidence_sha256: source.pre_snapshot_evidence_sha256,
     post_evidence_sha256: source.post_snapshot_evidence_sha256,
@@ -518,16 +518,18 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     'creator_premium_plan_contents', 'creator_premium_plans', 'creator_premium_purchase_receipts',
     'creator_premium_subscription_periods', 'creator_premium_subscriptions',
   ];
-  if (['39157300357', '39195966131', '40139736749'].includes(source.run_id)) {
+  if (['39157300357', '39195966131', '40139736749', '40166468648'].includes(source.run_id)) {
     relationNames.unshift('creator_premium_content_safety_context_evaluations');
   }
+  if (source.run_id === '40166468648') relationNames.push('creator_premium_finance_authorizations');
+  const captureMigrationRows = source.run_id === '40166468648' ? migrationRows.slice(0, -1) : migrationRows;
   const fetchImpl = async (url, options = {}) => {
     const pathname = new URL(url).pathname;
     const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
     if (pathname.endsWith('/health')) {
       return json(['auth', 'db', 'pooler', 'realtime', 'rest', 'storage'].map(name => ({ name, healthy: true, status: 'ACTIVE_HEALTHY' })));
     }
-    if (pathname.endsWith('/database/migrations')) return json(migrationRows);
+    if (pathname.endsWith('/database/migrations')) return json(captureMigrationRows);
     if (pathname.endsWith('/functions')) return json(functionRows);
     if (pathname.endsWith('/advisors/security')) return json({ lints: [] });
     if (pathname.endsWith('/database/backups')) {
@@ -584,6 +586,62 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     observedAt: '2026-10-17T22:00:01.000Z',
     adapterSourceSha256,
   });
+  if (source.run_id === '40166468648') {
+    currentEvidence.migrations = {
+      complete: true,
+      count: migrationRows.length,
+      items: migrationRows,
+      latest: migrationRows.at(-1),
+      sha256: gate.sha256Hex(gate.canonicalJson(migrationRows)),
+    };
+    const financeQueries = adapter.selectFinanceSnapshotQueries(currentEvidence.migrations);
+    const expectedAuthority = controlledPolicy.finance_authority.f3_foundation;
+    const unsignedAuthority = {
+      schema_version: 1,
+      complete: true,
+      phase: 'f3_foundation',
+      relations: expectedAuthority.relations,
+      functions: expectedAuthority.functions,
+      legacy_relations: ['public.financial_transactions', 'public.ledger_accounts', 'public.ledger_entries']
+        .map(identity => ({ identity, sha256: 'a'.repeat(64) })),
+      legacy_functions: expectedAuthority.legacy_function_identities
+        .map(identity => ({ identity, sha256: 'a'.repeat(64) })),
+    };
+    currentEvidence.finance_authority = {
+      ...unsignedAuthority,
+      sha256: gate.sha256Hex(gate.canonicalJson(unsignedAuthority)),
+    };
+    currentEvidence.finance_facts = {
+      schema_version: 1,
+      complete: true,
+      phase: 'f3_foundation',
+      policy: {
+        activation_mode: 'off',
+        active_authorization_id: null,
+        purchase_enabled: false,
+        subscription_enabled: false,
+        refunds_enabled: false,
+        platform_fee_bps: 0,
+      },
+      authorizations: [],
+      receipts: [],
+      periods: [],
+      subscriptions: [],
+      transactions: [],
+      acquisition_exposure_bdag: '0.00000000',
+      release_movement_bdag: '0.00000000',
+      reconciliation: { purchase_binding_mismatches: 0, period_binding_mismatches: 0 },
+    };
+    currentEvidence.finance.schema_sha256 = expectedAuthority.schema_sha256;
+    currentEvidence.adapter.queries.push(
+      { id: 'nelyon-finance-authority-v1', sha256: gate.sha256Hex(financeQueries.authority) },
+      { id: 'nelyon-finance-facts-f3_foundation-v1', sha256: gate.sha256Hex(financeQueries.facts) },
+    );
+    currentEvidence.requests.push(
+      { method: 'POST', path: `/v1/projects/${PROJECT_REF}/database/query/read-only`, status: 201, response_sha256: 'a'.repeat(64) },
+      { method: 'POST', path: `/v1/projects/${PROJECT_REF}/database/query/read-only`, status: 201, response_sha256: 'b'.repeat(64) },
+    );
+  }
   const rpcItems = controlledPolicy.security_advisor.exceptions
     .filter(exception => Array.isArray(exception.object.argument_types))
     .map(exception => ({
@@ -634,7 +692,15 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
   };
   const sourceObservation = {
     result: 'INCOMPLETE_OR_FAILED',
-    steps: { pre_snapshot: 'success', pre_verification: 'success', migration_dry_run: 'success', migrations: 'success', functions: 'success', post_snapshot: 'success', postcheck: 'failure' },
+    steps: {
+      pre_snapshot: 'success',
+      pre_verification: 'success',
+      migration_dry_run: 'success',
+      migrations: 'success',
+      functions: 'success',
+      post_snapshot: source.post_snapshot_status,
+      postcheck: source.postcheck_status,
+    },
     pre_evidence_sha256: source.pre_snapshot_evidence_sha256,
     post_evidence_sha256: source.post_snapshot_evidence_sha256,
   };
@@ -888,7 +954,7 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
 
 test('recovery source is exact immutable failed-postcheck authority', async () => {
   const { gate, policy } = await loadGateAndPolicy();
-  assert.equal(policy.postcheck_recovery.approved_sources.length, 4);
+  assert.equal(policy.postcheck_recovery.approved_sources.length, 5);
   for (const source of policy.postcheck_recovery.approved_sources) {
     assert.equal(gate.validateRecoverySource(source), true);
     assert.ok(source.expected_migrations.length >= 1);
@@ -924,6 +990,21 @@ test('recovery source is exact immutable failed-postcheck authority', async () =
   assert.equal(f2Source.expected_latest_migration, '20261024173500_creator_premium_f2_complete_monetization');
   assert.deepEqual(f2Source.edge_functions.map(item => item.name), ['bdag-ledger']);
   assert.equal(f2Source.edge_functions[0].source_sha256, '0b0db8c46041127dac341dfaa9673a7da4b15747ac71639bdeed00e8097be002');
+  const f3Source = policy.postcheck_recovery.approved_sources.find(item => item.run_id === '40166468648');
+  assert.ok(f3Source);
+  assert.equal(f3Source.release_id, 'nelyon-creator-premium-f3-release-20261025T054152Z');
+  assert.equal(f3Source.source_sha, '8908c4f9e6b5d48614301e51b16793ed7ae6f895');
+  assert.equal(f3Source.manifest_sha256, '7f329703901fbe8d6d3a38803b710e68780cb05c17c229ea091f01b5cff67a21');
+  assert.equal(f3Source.post_snapshot_status, 'failure');
+  assert.equal(f3Source.postcheck_status, 'skipped');
+  assert.equal(f3Source.post_snapshot_evidence_sha256, null);
+  assert.equal(f3Source.expected_migration_count, 352);
+  assert.equal(f3Source.expected_latest_migration, '20261025011000_creator_premium_f3_bounded_financial_activation');
+  assert.deepEqual(f3Source.edge_functions.map(item => [item.name, item.version, item.source_sha256]), [[
+    'bdag-ledger',
+    46,
+    '79e79bd31a62920401b8d55d48e1754ce58149294c8960c7995a070078b796f9',
+  ]]);
   for (const mutate of [
     candidate => { candidate.run_id = '39066492486'; },
     candidate => { candidate.postcheck_status = 'success'; },
@@ -1886,6 +1967,16 @@ test('source artifact recovery provenance binds the exact failed release and imm
   assertDenied(() => gate.verifyRecoveryArtifactProvenance(fixture), 'RECOVERY_SOURCE_PROVENANCE_MISMATCH');
 });
 
+test('F3 post-snapshot failure is an exact recoverable read-only source', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = recoveryArtifactFixture(t, gate, policy, 4);
+  const verified = gate.verifyRecoveryArtifactProvenance(fixture);
+  assert.equal(verified.source_run_id, '40166468648');
+  assert.equal(verified.source_observation.steps.post_snapshot, 'failure');
+  assert.equal(verified.source_observation.steps.postcheck, 'skipped');
+  assert.equal(verified.source_observation.post_evidence_sha256, null);
+});
+
 test('source artifact recovery rejects unsafe entries missing files and non-postcheck failures', async t => {
   const { gate, policy } = await loadGateAndPolicy();
   const unsafe = recoveryArtifactFixture(t, gate, policy);
@@ -1996,6 +2087,35 @@ test('postcheck recovery verifies the exact F2 migration and deployed bdag-ledge
   ]]);
   assert.deepEqual(result.premium_state.legacy, { content_count: 9, pending_review_count: 0, deleted_count: 5 });
   assert.equal(result.premium_state.relation_security.sha256, '055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6');
+  assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
+});
+
+test('postcheck recovery verifies the exact F3 applied state after a snapshot-only failure', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = await recoveryStateFixture(t, gate, policy, 4);
+  const result = gate.verifyPostcheckRecovery({
+    policy: fixture.controlledPolicy,
+    recoveryRequest: fixture.recoveryRequest,
+    recoveryManifest: fixture.recoveryManifest,
+    sourceManifest: fixture.sourceManifest,
+    sourceObservation: fixture.sourceObservation,
+    currentEvidence: fixture.currentEvidence,
+    adapterSourceSha256: fixture.adapterSourceSha256,
+  });
+  assert.equal(result.result, 'POSTCHECK_RECOVERY_SUCCESS');
+  assert.equal(result.source_run_id, '40166468648');
+  assert.equal(result.migrations.count, 352);
+  assert.equal(`${result.migrations.latest.version}_${result.migrations.latest.name}`,
+    '20261025011000_creator_premium_f3_bounded_financial_activation');
+  assert.deepEqual(result.functions.items.map(item => [item.name, item.version, item.source_sha256]), [[
+    'bdag-ledger',
+    46,
+    '79e79bd31a62920401b8d55d48e1754ce58149294c8960c7995a070078b796f9',
+  ]]);
+  assert.equal(result.premium_state.relation_security.sha256,
+    '34e13339d4627b7684699288f789780267d7340afbd1c3de33029624e60a2f6a');
+  assert.deepEqual(result.premium_state.legacy,
+    { content_count: 9, pending_review_count: 0, deleted_count: 5 });
   assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
 });
 
