@@ -2,29 +2,29 @@
   "baseline": {
     "authority_source": "owner-control-plane",
     "blocked_resources": [],
-    "evidence": "53fd458b63513dee909aa09823e205b895ac388fc0f6475166f001c2d7a99074",
+    "evidence": "c1564b8b35809452c3419b722ab69c2258bf6c9a30467f4da38494714fe1368f",
     "evidence_digests": {
-      "migrations": "b77007fc8eb9e8f86d97c38fa6ee397b4341fe58b713ed554ad5454c12370706",
-      "managed_functions": "48ab460adcd4ad0e16387df6a8f4625547feaa70f0615764ffd3725cff6397fa",
-      "unmanaged_functions": "e56ae5b19eb2158499e33128470663eab37cf2c6be03b3732a7d09a4d80213aa",
-      "function_source_parity": "514f9a711e8d130d1e063dfd507a05bde1533b49ebca92e731c6c783b60d0548",
-      "config_verify_jwt": "9f7f6b42cccd5086f862b1f40e659935d8a44f14943eeed80c8d7928e84f9fb9",
+      "migrations": "aa0f14626d5d5b214b47cdb16aaaafc84f49f5922c54dd63faeec766c3ed89a0",
+      "managed_functions": "f6c72350dbf8e23711d44e7866f974d07519bf502a7815a904a0d4d94d291875",
+      "unmanaged_functions": "26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc",
+      "function_source_parity": "ec287e3563b86a27047f418fea3fa886bd31d17aac02dbc0f3e13db9272cbabb",
+      "config_verify_jwt": "703749fce46f724c7c4e791f7a222915b166af0ded38f00f34f983798355ba15",
       "cron_security": "2dd76dccc8b348eb932fee5c8ada572f57243287f3ca96bf851a75a2e9244846",
       "finance": "94c297fb891f7c13beb92f2cfaec3145ba1ca3b23bbcd74ce39e084a8365b566"
     },
-    "latest_migration": "20261023141630_creator_premium_media_lifecycle_c1",
-    "migration_count": 350,
+    "latest_migration": "20261024173500_creator_premium_f2_complete_monetization",
+    "migration_count": 351,
     "prior_release": {
       "kind": "post-release",
-      "release_id": "nelyon-media-c1-r2-release-20261024T141909Z",
-      "manifest_sha256": "2bec695d06c81820f710ea5a147a7a212f6271891f9f29aed4f8c522b574ae19",
-      "postcheck_evidence_sha256": "e534c49f0c857a53812081091452d4fd959388c8c518a9c863055ba9b5b6af6f"
+      "release_id": "nelyon-creator-premium-f2-r1-release-20261024T224205Z",
+      "manifest_sha256": "4e798ee48a8d83d26c8608803b26099a6d22521d43a585d7735754969fe45a12",
+      "postcheck_evidence_sha256": "2599f327fa748961a579dd149aedf32bcba1b204be0285d3bb6d21df451a0799"
     },
     "requires_separate_policy_commit": true,
-    "reviewed_policy_sha256": "354f240eeca44dde77206a076c0f6d482acb610b646be9ea0932b6b0750240fd",
-    "sha": "9b4a5d15a6746e11a27bc1d9edafeab10e7d421d",
+    "reviewed_policy_sha256": "b425889591df68a10564b9e58d90c32bdea27df163d23ec7aefa85fe5b6d9711",
+    "sha": "238e987933c7198400534121e61fb3d2750ba5ba",
     "state": "verified",
-    "verified_at": "2026-10-24T15:29:09.489Z",
+    "verified_at": "2026-10-25T00:19:20.059Z",
     "verified_by": "andressan101989"
   },
   "baseline_authority": {
