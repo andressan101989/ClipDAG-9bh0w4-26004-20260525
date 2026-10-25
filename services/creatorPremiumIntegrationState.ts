@@ -58,6 +58,7 @@ export const CREATOR_PREMIUM_BLOCKER_COPY: Readonly<Record<string, string>> = Ob
   creator_premium_rate_limited: 'Hay demasiados intentos financieros recientes. Espera un momento y vuelve a intentarlo.',
   creator_premium_velocity_check_unavailable: 'No se ejecutó ningún movimiento porque el control financiero temporalmente no está disponible. Inténtalo más tarde.',
   creator_premium_active_offer_not_found: 'La oferta ya no está activa. Actualiza la publicación antes de intentar comprarla.',
+  creator_premium_offer_changed: 'La oferta cambió. Revisa el precio actualizado y confirma de nuevo antes de comprar.',
   creator_premium_active_plan_not_found: 'El plan ya no está activo. Actualiza la oferta antes de continuar.',
   creator_premium_plan_family_access_active: 'Ya tienes un periodo vigente de este plan. Espera a que termine antes de cambiar a otra versión.',
   creator_premium_content_not_published: 'Este contenido ya no está publicado y no admite nuevas compras.',

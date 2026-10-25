@@ -85,6 +85,62 @@ const financeIdentity=(value:unknown,name:string):AdminCreatorPremiumFinanceIden
   return{id:requiredUuid(parsed.id,`${name}.id`),username:nullableString(parsed.username,`${name}.username`),display_name:nullableString(parsed.display_name,`${name}.display_name`),avatar_url:avatar};
 };
 
+type ActivationCounts={purchase_count:number;subscription_count:number;refund_count:number;gross_bdag:string};
+export type AdminCreatorPremiumFinanceActivation={
+  mode:"off"|"canary";authorization_id:string|null;
+  charge_starts_at:string|null;charge_expires_at:string|null;refund_expires_at:string|null;
+  operations:{purchase_enabled:boolean;subscription_enabled:boolean;refunds_enabled:boolean};
+  limits:ActivationCounts&{purchase_amount_bdag:string;subscription_amount_bdag:string};
+  consumed:ActivationCounts;remaining:ActivationCounts;
+};
+export function parseAdminCreatorPremiumFinanceActivation(value:unknown):{activation:AdminCreatorPremiumFinanceActivation|null}{
+  const name="creator_premium_finance.activation",outer=record(value,name);
+  if(Object.keys(outer).length===0)return{activation:null};
+  const root=exactRecord(outer,name,["activation"]);
+  const raw=exactRecord(root.activation,name,["mode","authorization_id","charge_starts_at","charge_expires_at","refund_expires_at","operations","limits","consumed","remaining"]);
+  const mode=enumValue(raw.mode,name,["off","canary"] as const);
+  const authorizationId=nullableUuid(raw.authorization_id,name);
+  const starts=nullableTimestamp(raw.charge_starts_at,name),expires=nullableTimestamp(raw.charge_expires_at,name),refundExpires=nullableTimestamp(raw.refund_expires_at,name);
+  const operationsRecord=exactRecord(raw.operations,name,["purchase_enabled","subscription_enabled","refunds_enabled"]);
+  const operations={purchase_enabled:booleanValue(operationsRecord.purchase_enabled,name),subscription_enabled:booleanValue(operationsRecord.subscription_enabled,name),refunds_enabled:booleanValue(operationsRecord.refunds_enabled,name)};
+  const countKeys=["purchase_count","subscription_count","refund_count"] as const;
+  const parseCounts=(candidate:unknown,limits=false)=>{
+    const item=exactRecord(candidate,name,[...countKeys,"gross_bdag",...(limits?["purchase_amount_bdag","subscription_amount_bdag"]:[])]);
+    const counts={purchase_count:nonNegativeInteger(item.purchase_count,name),subscription_count:nonNegativeInteger(item.subscription_count,name),refund_count:nonNegativeInteger(item.refund_count,name),gross_bdag:money(item.gross_bdag,name)};
+    if(countKeys.some(key=>!Number.isSafeInteger(counts[key])))throw new Error(`Respuesta inválida: ${name}.counts`);
+    return counts;
+  };
+  const limitsRecord=record(raw.limits,name);
+  const limits={...parseCounts(raw.limits,true),purchase_amount_bdag:money(limitsRecord.purchase_amount_bdag,name),subscription_amount_bdag:money(limitsRecord.subscription_amount_bdag,name)};
+  const consumed=parseCounts(raw.consumed),remaining=parseCounts(raw.remaining);
+  const units=(amount:string)=>BigInt(amount.replace(".",""));
+  if(countKeys.some(key=>consumed[key]>limits[key]||remaining[key]!==limits[key]-consumed[key])
+    ||units(consumed.gross_bdag)>units(limits.gross_bdag)
+    ||units(remaining.gross_bdag)!==units(limits.gross_bdag)-units(consumed.gross_bdag)
+    ||units(consumed.gross_bdag)!==BigInt(consumed.purchase_count)*units(limits.purchase_amount_bdag)+BigInt(consumed.subscription_count)*units(limits.subscription_amount_bdag)
+    ||consumed.refund_count>consumed.purchase_count+consumed.subscription_count)throw new Error(`Respuesta inválida: ${name}.consumption`);
+  if(mode==="off"){
+    if(authorizationId!==null||starts!==null||expires!==null||refundExpires!==null
+      ||Object.values(operations).some(Boolean)||countKeys.some(key=>limits[key]!==0)
+      ||[limits.gross_bdag,limits.purchase_amount_bdag,limits.subscription_amount_bdag].some(amount=>units(amount)!==0n))throw new Error(`Respuesta inválida: ${name}.off`);
+  }else{
+    if(authorizationId===null||starts===null||expires===null||refundExpires===null)throw new Error(`Respuesta inválida: ${name}.authorization`);
+    const startTime=timestampMicros(starts,name),expiryTime=timestampMicros(expires,name),refundTime=timestampMicros(refundExpires,name);
+    if(expiryTime<=startTime||expiryTime-startTime>3_600_000_000n||refundTime<expiryTime||refundTime-expiryTime>86_400_000_000n
+      ||limits.purchase_count<1||limits.purchase_count>100||limits.subscription_count<1||limits.subscription_count>100
+      ||limits.refund_count<1||limits.refund_count>limits.purchase_count+limits.subscription_count
+      ||[limits.purchase_amount_bdag,limits.subscription_amount_bdag].some(amount=>units(amount)<=0n||units(amount)>100_000_000_000_000_000_000n)
+      ||units(limits.gross_bdag)<units(limits.purchase_amount_bdag)||units(limits.gross_bdag)<units(limits.subscription_amount_bdag)
+      ||units(limits.gross_bdag)>BigInt(limits.purchase_count)*units(limits.purchase_amount_bdag)+BigInt(limits.subscription_count)*units(limits.subscription_amount_bdag))throw new Error(`Respuesta inválida: ${name}.canary`);
+  }
+  return{activation:{mode,authorization_id:authorizationId,charge_starts_at:starts,charge_expires_at:expires,refund_expires_at:refundExpires,operations,limits,consumed,remaining}};
+}
+
+export async function getAdminCreatorPremiumFinanceActivation(){
+  try{return parseAdminCreatorPremiumFinanceActivation(await rpc("get_admin_creator_premium_finance_activation_v1"))}
+  catch{return{activation:null}}
+}
+
 export function parseAdminCreatorPremiumFinance(value:unknown):AdminCreatorPremiumFinanceResponse{
   const parsed=exactRecord(value,"creator_premium_finance",["policy","counts","reconciliation","items","next_cursor"]);
   const policy=exactRecord(parsed.policy,"creator_premium_finance.policy",["purchase_enabled","subscription_enabled","refunds_enabled","platform_fee_bps","policy_version"]);

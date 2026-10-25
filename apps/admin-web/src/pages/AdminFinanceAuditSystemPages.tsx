@@ -3,6 +3,7 @@ import {Link,useParams} from "react-router-dom";
 import {EmptyState,ErrorState,LoadingState} from "../components/PageState";
 import {AdminFact,AdminFactGrid,AdminIdentity,AdminStatusPanel,AdminTimeline,asRecord,asRows,humanDuration,humanValue,shortId} from "../components/AdminPresentation";
 import {formatAdminExactMoney,formatAdminMoney,formatAdminUsd} from "../lib/adminMoney";
+import {getAdminCreatorPremiumFinanceActivation} from "../lib/adminObservabilityApi";
 import {getAdminFinanceOverview,getAdminFinanceReconciliation,getAdminFinancialTransactionDetail,getAdminPlatformRevenue,getAdminSystemHealth,getAdminSystemJobDetail,searchAdminCreatorPremiumFinance,searchAdminFinanceAnomalies,searchAdminFinanceAudit,searchAdminFinancialTransactions,searchAdminGlobalAudit,searchAdminLedgerAccounts,searchAdminSystemAudit,searchAdminSystemJobs,type AdminCreatorPremiumFinanceResponse,type AdminCreatorPremiumFinanceSource,type AdminCreatorPremiumFinanceState,type JsonRecord} from "../lib/adminObservabilityApi";
 
 function useRead<T>(load:()=>Promise<T>,queryKey:string){const loadRef=useRef(load),[value,setValue]=useState<T|null>(null),[error,setError]=useState<string|null>(null),[nonce,setNonce]=useState(0);loadRef.current=load;useEffect(()=>{let active=true;setValue(null);setError(null);void loadRef.current().then((result)=>{if(active)setValue(result)}).catch((reason)=>{if(active)setError(reason instanceof Error?reason.message:"Error de consulta")});return()=>{active=false}},[nonce,queryKey]);return{value,error,retry:()=>setNonce((x)=>x+1)}}
@@ -49,6 +50,8 @@ export function AdminCreatorPremiumFinancePage(){
   const [source,setSource]=useState<AdminCreatorPremiumFinanceSource|"">(""),[statusFilter,setStatusFilter]=useState<AdminCreatorPremiumFinanceState|"">(""),[queryDraft,setQueryDraft]=useState(""),[query,setQuery]=useState("");
   const [result,setResult]=useState<AdminCreatorPremiumFinanceResponse|null>(null),[error,setError]=useState<string|null>(null),[loadingMore,setLoadingMore]=useState(false),[nonce,setNonce]=useState(0);
   const requestGeneration=useRef(0);
+  const activationRead=useRead(getAdminCreatorPremiumFinanceActivation,String(nonce));
+  const activation=activationRead.value?.activation??null;
   useEffect(()=>{
     const generation=++requestGeneration.current;
     setResult(null);setError(null);setLoadingMore(false);
@@ -72,10 +75,21 @@ export function AdminCreatorPremiumFinancePage(){
       });
     }catch(reason){if(requestGeneration.current===generation)setError(reason instanceof Error?reason.message:"No se pudo cargar la página siguiente")}finally{if(requestGeneration.current===generation)setLoadingMore(false)}
   };
-  const financeOff=result!==null&&!result.policy.purchase_enabled&&!result.policy.subscription_enabled&&!result.policy.refunds_enabled&&result.policy.platform_fee_bps===0;
+  const financeOff=activation?.mode==="off";
   const applySearch=(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();setQuery(queryDraft.trim())};
   return <Frame eyebrow="CREATOR PREMIUM · READ ONLY" title="Finance · Creator Premium" detail="Compras, periodos, reembolsos y conciliación desde la autoridad financiera canónica.">
     <div data-capability={creatorPremiumFinanceCapability}>
+      <section className="detail-card" aria-label="Activación Finance Premium">
+        <AdminStatusPanel title={financeOff?"Finance OFF":activation?.mode==="canary"?"Canary limitado":"UNKNOWN"} detail={activation===null?"No se pudo verificar la proyección de activación.":financeOff?"Las operaciones financieras están deshabilitadas.":"Autorización finita y limitada, aplicada por el servidor."} tone={activation?.mode==="canary"?"warning":"neutral"}/>
+        <p>Sin activación pública. Esta vista es de solo lectura.</p>
+        {activation?.mode==="canary"?<>
+          <AdminFactGrid><AdminFact label="Inicio de cargos" value={date(activation.charge_starts_at)}/><AdminFact label="Fin de cargos" value={date(activation.charge_expires_at)}/><AdminFact label="Fin de reembolsos" value={date(activation.refund_expires_at)}/>
+          <AdminFact label="Compras autorizadas" value={activation.operations.purchase_enabled?"Sí":"No"}/><AdminFact label="Suscripciones autorizadas" value={activation.operations.subscription_enabled?"Sí":"No"}/><AdminFact label="Reembolsos autorizados" value={activation.operations.refunds_enabled?"Sí":"No"}/>
+          <AdminFact label="Importe por compra" value={formatAdminExactMoney(activation.limits.purchase_amount_bdag,"BDAG")}/><AdminFact label="Importe por suscripción" value={formatAdminExactMoney(activation.limits.subscription_amount_bdag,"BDAG")}/>
+          <AdminFact label="Exposición máxima" value={formatAdminExactMoney(activation.limits.gross_bdag,"BDAG")}/><AdminFact label="Exposición consumida" value={formatAdminExactMoney(activation.consumed.gross_bdag,"BDAG")}/><AdminFact label="Exposición restante" value={formatAdminExactMoney(activation.remaining.gross_bdag,"BDAG")}/></AdminFactGrid>
+          {(["purchase_count","subscription_count","refund_count"] as const).map((key,index)=><p key={key}>{["Compras","Suscripciones","Reembolsos"][index]}: límite {activation.limits[key]} · consumidos {activation.consumed[key]} · restantes {activation.remaining[key]}</p>)}
+        </>:null}
+      </section>
       <form className="filters" onSubmit={applySearch}>
         <select aria-label="Origen Premium" value={source} onChange={(event)=>setSource(event.target.value as AdminCreatorPremiumFinanceSource|"")}><option value="">Todos los orígenes</option><option value="purchase">Compras</option><option value="subscription">Suscripciones</option></select>
         <select aria-label="Estado Premium" value={statusFilter} onChange={(event)=>setStatusFilter(event.target.value as AdminCreatorPremiumFinanceState|"")}>{creatorPremiumFinanceStates.map((item)=><option key={item.value||"all"} value={item.value}>{item.label}</option>)}</select>
@@ -85,7 +99,7 @@ export function AdminCreatorPremiumFinancePage(){
       {error&&result===null?<ErrorState message={error} onRetry={()=>setNonce((value)=>value+1)}/>:result===null?<LoadingState label="Consultando comercio Premium…"/>:<>
         {error?<ErrorState message={error} onRetry={()=>void loadMore()}/>:null}
         <section className="detail-grid">
-          <section className="detail-card"><h3>Política Finance Premium</h3><AdminStatusPanel title={financeOff?"Finance OFF":"Configuración financiera habilitada"} detail={financeOff?"Compras, suscripciones y reembolsos productivos permanecen deshabilitados.":"Esta proyección refleja la política server-side vigente."} tone={financeOff?"neutral":"warning"}/><AdminFactGrid><AdminFact label="Compras" value={result.policy.purchase_enabled?"Habilitadas":"Deshabilitadas"}/><AdminFact label="Suscripciones" value={result.policy.subscription_enabled?"Habilitadas":"Deshabilitadas"}/><AdminFact label="Reembolsos" value={result.policy.refunds_enabled?"Habilitados":"Deshabilitados"}/><AdminFact label="Comisión" value={`${result.policy.platform_fee_bps} bps`}/><AdminFact label="Versión" value={result.policy.policy_version}/></AdminFactGrid></section>
+          <section className="detail-card"><h3>Política Finance Premium</h3><AdminFactGrid><AdminFact label="Compras" value={result.policy.purchase_enabled?"Habilitadas":"Deshabilitadas"}/><AdminFact label="Suscripciones" value={result.policy.subscription_enabled?"Habilitadas":"Deshabilitadas"}/><AdminFact label="Reembolsos" value={result.policy.refunds_enabled?"Habilitados":"Deshabilitados"}/><AdminFact label="Comisión" value={`${result.policy.platform_fee_bps} bps`}/><AdminFact label="Versión" value={result.policy.policy_version}/></AdminFactGrid></section>
           <section className="detail-card"><h3>Resumen Creator Premium</h3><AdminFactGrid><AdminFact label="Compras" value={count(result.counts.purchase_receipts)}/><AdminFact label="Relaciones" value={count(result.counts.subscription_relationships)}/><AdminFact label="Periodos" value={count(result.counts.subscription_periods)}/><AdminFact label="Reembolsos" value={count(result.counts.refunds)}/><AdminFact label="Fallos de integridad" value={count(result.counts.integrity_failures)}/></AdminFactGrid></section>
           <section className="detail-card"><h3>Reconciliación</h3><div className="status-list">{Object.entries(result.reconciliation).length===0?<p className="muted-text">Sin contadores de reconciliación.</p>:Object.entries(result.reconciliation).map(([key,value])=><AdminStatusPanel key={key} title={reconciliationLabel(key)} detail={`${value} hallazgos`} tone={value===0?"success":"danger"}/>)}</div></section>
         </section>

@@ -237,6 +237,20 @@ const RENEWAL_BLOCKERS = Object.freeze([
   'creator_premium_active_plan_not_found',
   'creator_premium_plan_family_access_active',
 ]);
+const CANARY_BLOCKERS = Object.freeze([
+  'creator_premium_canary_denied',
+  'creator_premium_canary_not_open',
+  'creator_premium_canary_expired',
+  'creator_premium_canary_limit_reached',
+]);
+const V1_BLOCKERS = Object.freeze({
+  purchase: PURCHASE_BLOCKERS, subscription: SUBSCRIPTION_BLOCKERS, renewal: RENEWAL_BLOCKERS,
+});
+const V2_BLOCKERS = Object.freeze({
+  purchase: [...PURCHASE_BLOCKERS, ...CANARY_BLOCKERS],
+  subscription: [...SUBSCRIPTION_BLOCKERS, 'creator_premium_already_subscribed', ...CANARY_BLOCKERS],
+  renewal: [...RENEWAL_BLOCKERS, ...CANARY_BLOCKERS],
+});
 
 function invalid(code) {
   throw new Error(code);
@@ -651,7 +665,7 @@ function parseRelationship(value, code) {
   return Object.freeze(relationship);
 }
 
-function parsePlan(value, code, requireActive) {
+function parsePlan(value, code, requireActive, blockers) {
   const record = exactRecord(value, PLAN_KEYS, code);
   const relationship = parseRelationship(record.relationship, code);
   const plan = {
@@ -665,9 +679,9 @@ function parsePlan(value, code, requireActive) {
     status: exactEnum(record.status, PLAN_STATUSES, code),
     relationship,
     subscription_available: exactBoolean(record.subscription_available, code),
-    subscription_blocker: exactNullableEnum(record.subscription_blocker, SUBSCRIPTION_BLOCKERS, code),
+    subscription_blocker: exactNullableEnum(record.subscription_blocker, blockers.subscription, code),
     renewal_available: exactBoolean(record.renewal_available, code),
-    renewal_blocker: exactNullableEnum(record.renewal_blocker, RENEWAL_BLOCKERS, code),
+    renewal_blocker: exactNullableEnum(record.renewal_blocker, blockers.renewal, code),
   };
   if (bdagAtomicUnits(plan.price_bdag) <= 0n) invalid(code);
   if (requireActive && plan.status !== 'active') invalid(code);
@@ -718,6 +732,14 @@ function parseEntitlement(value, code) {
 }
 
 export function parseCreatorPremiumCommerce(value, expectedContentId) {
+  return parseCommerce(value, expectedContentId, V1_BLOCKERS);
+}
+
+export function parseCreatorPremiumCommerceV2(value, expectedContentId) {
+  return parseCommerce(value, expectedContentId, V2_BLOCKERS);
+}
+
+function parseCommerce(value, expectedContentId, blockers) {
   const code = 'creator_premium_commerce_invalid';
   const record = exactRecord(value, COMMERCE_KEYS, code);
   const contentRecord = exactRecord(record.content, CONTENT_KEYS, code);
@@ -748,7 +770,7 @@ export function parseCreatorPremiumCommerce(value, expectedContentId) {
   }
 
   if (!Array.isArray(record.plans) || record.plans.length > 100) invalid(code);
-  const plans = record.plans.map(valuePlan => parsePlan(valuePlan, code, true));
+  const plans = record.plans.map(valuePlan => parsePlan(valuePlan, code, true, blockers));
   if (new Set(plans.map(plan => plan.id)).size !== plans.length) invalid(code);
 
   const planCount = exactInteger(record.plan_count, code, 0, Number.MAX_SAFE_INTEGER);
@@ -761,7 +783,7 @@ export function parseCreatorPremiumCommerce(value, expectedContentId) {
   const operationsRecord = exactRecord(record.operations, OPERATIONS_KEYS, code);
   const operations = Object.freeze({
     purchase_available: exactBoolean(operationsRecord.purchase_available, code),
-    purchase_blocker: exactNullableEnum(operationsRecord.purchase_blocker, PURCHASE_BLOCKERS, code),
+    purchase_blocker: exactNullableEnum(operationsRecord.purchase_blocker, blockers.purchase, code),
   });
   const policy = parseFinancePolicy(record.policy, code);
   if (operations.purchase_available !== (operations.purchase_blocker === null)
@@ -803,6 +825,14 @@ function parseSubscriptionPeriod(value, code) {
 }
 
 export function parseCreatorPremiumSubscriptionsPage(value) {
+  return parseSubscriptionsPage(value, V1_BLOCKERS);
+}
+
+export function parseCreatorPremiumSubscriptionsPageV2(value) {
+  return parseSubscriptionsPage(value, V2_BLOCKERS);
+}
+
+function parseSubscriptionsPage(value, blockers) {
   const code = 'creator_premium_subscriptions_invalid';
   const record = exactRecord(value, SUBSCRIPTIONS_PAGE_KEYS, code);
   const policy = parseFinancePolicy(record.policy, code);
@@ -812,7 +842,7 @@ export function parseCreatorPremiumSubscriptionsPage(value) {
     const itemRecord = exactRecord(valueItem, SUBSCRIPTION_ITEM_KEYS, code);
     const id = exactUuid(itemRecord.id, code);
     const creator = parseProfile(itemRecord.creator, code);
-    const plan = parsePlan(itemRecord.plan, code, false);
+    const plan = parsePlan(itemRecord.plan, code, false, blockers);
     const status = exactEnum(itemRecord.status, RELATIONSHIP_STATUSES, code);
     const startedAt = exactNullableTimestamp(itemRecord.started_at, code);
     const cancelledAt = exactNullableTimestamp(itemRecord.cancelled_at, code);
@@ -822,7 +852,7 @@ export function parseCreatorPremiumSubscriptionsPage(value) {
     const autoRenew = exactBoolean(itemRecord.auto_renew, code);
     const renewalSupported = exactBoolean(itemRecord.renewal_supported, code);
     const renewalAvailable = exactBoolean(itemRecord.renewal_available, code);
-    const renewalBlocker = exactNullableEnum(itemRecord.renewal_blocker, RENEWAL_BLOCKERS, code);
+    const renewalBlocker = exactNullableEnum(itemRecord.renewal_blocker, blockers.renewal, code);
     const isLatestRelationship = exactBoolean(itemRecord.is_latest_relationship, code);
     const createdAt = exactTimestamp(itemRecord.created_at, code);
     const updatedAt = exactTimestamp(itemRecord.updated_at, code);
@@ -870,7 +900,9 @@ export function parseCreatorPremiumSubscriptionsPage(value) {
         ? 'creator_premium_active_plan_not_found'
         : !policy.subscription_enabled
           ? 'creator_premium_subscription_disabled'
-          : status === 'pending'
+          : blockers === V2_BLOCKERS && CANARY_BLOCKERS.includes(renewalBlocker)
+            ? renewalBlocker
+            : status === 'pending'
             ? 'creator_premium_subscription_state_invalid'
             : period === null
               ? 'creator_premium_subscription_financial_binding_invalid'

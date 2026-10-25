@@ -6,10 +6,10 @@
  */
 import { getSupabaseClient } from '@/template';
 import {
-  parseCreatorPremiumCommerce,
+  parseCreatorPremiumCommerceV2,
   parseCreatorPremiumCommercialSummary,
   parseCreatorPremiumFinancialHistoryPage,
-  parseCreatorPremiumSubscriptionsPage,
+  parseCreatorPremiumSubscriptionsPageV2,
 } from '@/services/creatorPremiumFinanceContracts.mjs';
 import { normalizeCreatorPremiumPriceBdag } from '@/services/creatorPremiumMoney.mjs';
 
@@ -769,13 +769,13 @@ export async function fetchMyCreatorPremiumSubscriptions(
 ): Promise<CreatorPremiumSubscriptionPage> {
   const limit = safeLimit(options.limit ?? 50);
   const cursor = cursorParams(options.cursor);
-  const { data, error } = await db().rpc('get_my_creator_premium_subscriptions_v1', {
+  const { data, error } = await db().rpc('get_my_creator_premium_subscriptions_v2', {
     p_cursor_created_at: cursor.timestamp,
     p_cursor_id: cursor.id,
     p_limit: limit,
   });
   if (error) throw error;
-  const result = parseCreatorPremiumSubscriptionsPage(firstRow(data));
+  const result = parseCreatorPremiumSubscriptionsPageV2(firstRow(data));
   return {
     policy: result.policy as CreatorPremiumFinancePolicy,
     items: result.items as unknown as CreatorPremiumSubscriptionItem[],
@@ -881,13 +881,13 @@ export async function fetchCreatorPremiumCommerce(
   contentId: string,
 ): Promise<CreatorPremiumCommerce> {
   if (!contentId) throw new Error('creator_premium_invalid_content');
-  const { data, error } = await db().rpc('get_creator_premium_commerce_v1', {
+  const { data, error } = await db().rpc('get_creator_premium_commerce_v2', {
     p_content_id: contentId,
   });
   if (error) throw error;
   const result = firstRow(data);
   if (result === undefined) throw new Error('creator_premium_content_not_found');
-  return parseCreatorPremiumCommerce(
+  return parseCreatorPremiumCommerceV2(
     result,
     contentId,
   ) as unknown as CreatorPremiumCommerce;

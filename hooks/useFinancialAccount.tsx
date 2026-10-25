@@ -81,7 +81,7 @@ export interface FinancialAccountState {
 
   // Operations
   transfer:  (toUserId: string, amount: number) => Promise<OpResult>;
-  purchase:  (contentId: string) => Promise<OpResult>;
+  purchase:  (contentId: string, offerVersionId: string) => Promise<OpResult>;
   subscribe: (planId: string) => Promise<OpResult>;
   gift:      (toUserId: string, amount: number, giftType?: string, videoId?: string) => Promise<OpResult>;
   boost:     (params: BoostParams) => Promise<OpResult>;
@@ -184,8 +184,8 @@ export function useFinancialAccount(): FinancialAccountState {
     transfer: (toUserId, amount) =>
       withBalanceRefresh(() => transferBDAG({ toUserId, amount })),
 
-    purchase: (contentId) =>
-      withBalanceRefresh(() => purchaseContent({ contentId })),
+    purchase: (contentId, offerVersionId) =>
+      withBalanceRefresh(() => purchaseContent({ contentId, offerVersionId })),
 
     subscribe: (planId) =>
       withBalanceRefresh(() => subscribeToPlan({ planId })),

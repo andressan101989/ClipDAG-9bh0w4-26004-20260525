@@ -8,10 +8,12 @@ import ts from 'typescript';
 import {
   parseCreatorPremiumCancellationReceipt,
   parseCreatorPremiumCommerce,
+  parseCreatorPremiumCommerceV2,
   parseCreatorPremiumCommercialSummary,
   parseCreatorPremiumFinancePolicy,
   parseCreatorPremiumFinancialHistoryPage,
   parseCreatorPremiumSubscriptionsPage,
+  parseCreatorPremiumSubscriptionsPageV2,
   parseCreatorPremiumPurchaseReceipt,
   parseCreatorPremiumSignedBdagText,
   parseCreatorPremiumSubscriptionReceipt,
@@ -669,6 +671,7 @@ test('commercial summary rejects malformed money, identities, counts and nested 
 });
 
 test('Premium finance errors expose approved domain copy and sanitize unknown backend detail', () => {
+  assert.match(creatorPremiumErrorMessage(new Error('creator_premium_offer_changed')), /oferta.*cambi[oó]/i);
   assert.match(
     creatorPremiumErrorMessage(new Error('creator_premium_purchase_readback_pending')),
     /acceso todav[ií]a no pudo confirmarse/i,
@@ -721,11 +724,13 @@ function loadCreatorPremiumService(rpcResponses) {
       if (specifier === '@/services/creatorPremiumFinanceContracts.mjs') {
         return {
           parseCreatorPremiumCommerce,
+          parseCreatorPremiumCommerceV2,
           parseCreatorPremiumCommercialSummary,
           parseCreatorPremiumFinancePolicy,
           parseCreatorPremiumFinancialHistoryPage,
           parseCreatorPremiumSignedBdagText,
           parseCreatorPremiumSubscriptionsPage,
+          parseCreatorPremiumSubscriptionsPageV2,
         };
       }
       if (specifier === '@/services/creatorPremiumMoney.mjs') {
@@ -742,9 +747,9 @@ test('Premium service fetchers return only strictly parsed commerce, summary and
   const summaryWithDeletedPerformance = structuredClone(commercialSummaryProjection);
   summaryWithDeletedPerformance.content_performance[0].lifecycle_status = 'deleted';
   const service = loadCreatorPremiumService({
-    get_creator_premium_commerce_v1: commerceProjection,
+    get_creator_premium_commerce_v2: commerceProjection,
     get_my_creator_premium_commercial_summary_v1: summaryWithDeletedPerformance,
-    get_my_creator_premium_subscriptions_v1: subscriptionsProjection,
+    get_my_creator_premium_subscriptions_v2: subscriptionsProjection,
   });
   assert.deepEqual(
     structuredClone(await service.fetchMyCreatorPremiumCommercialSummary()),
@@ -767,7 +772,7 @@ test('Premium service fetchers return only strictly parsed commerce, summary and
   );
 
   const malformed = loadCreatorPremiumService({
-    get_creator_premium_commerce_v1: {
+    get_creator_premium_commerce_v2: {
       ...commerceProjection,
       content: { ...commerceProjection.content, id: otherContentId },
     },
@@ -778,7 +783,7 @@ test('Premium service fetchers return only strictly parsed commerce, summary and
         creator_net_bdag: '1999.00000000',
       }],
     },
-    get_my_creator_premium_subscriptions_v1: {
+    get_my_creator_premium_subscriptions_v2: {
       ...subscriptionsProjection,
       items: [{ ...subscriptionsProjection.items[0], auto_renew: true }],
     },
@@ -811,7 +816,7 @@ test('Premium subscription readback follows bounded canonical pagination beyond 
     next_cursor: null,
   };
   const service = loadCreatorPremiumService({
-    get_my_creator_premium_subscriptions_v1: [firstPage, secondPage],
+    get_my_creator_premium_subscriptions_v2: [firstPage, secondPage],
   });
 
   const snapshot = await service.fetchMyCreatorPremiumSubscriptionsSnapshot(101);
@@ -822,14 +827,14 @@ test('Premium subscription readback follows bounded canonical pagination beyond 
   );
   assert.equal(snapshot.nextCursor, null);
   assert.deepEqual(structuredClone(service.__testRpcCalls), [{
-    name: 'get_my_creator_premium_subscriptions_v1',
+    name: 'get_my_creator_premium_subscriptions_v2',
     args: {
       p_cursor_created_at: null,
       p_cursor_id: null,
       p_limit: 100,
     },
   }, {
-    name: 'get_my_creator_premium_subscriptions_v1',
+    name: 'get_my_creator_premium_subscriptions_v2',
     args: {
       p_cursor_created_at: subscriptionsProjection.next_cursor.created_at,
       p_cursor_id: subscriptionsProjection.next_cursor.id,
@@ -892,7 +897,7 @@ test('Premium ledger helpers return sanitized typed receipts and send identity-o
   });
 
   assert.deepEqual(
-    structuredClone(await harness.service.purchaseContent({ contentId, idempotencyKey })),
+    structuredClone(await harness.service.purchaseContent({ contentId, offerVersionId: offerId, idempotencyKey })),
     { success: true, data: purchaseReceipt },
   );
   assert.deepEqual(
@@ -906,7 +911,7 @@ test('Premium ledger helpers return sanitized typed receipts and send identity-o
   assert.deepEqual(harness.invokes, [
     {
       name: 'bdag-ledger',
-      body: { action: 'creator_premium_purchase', idempotency_key: idempotencyKey, content_id: contentId },
+      body: { action: 'creator_premium_purchase', idempotency_key: idempotencyKey, content_id: contentId, offer_version_id: offerId },
     },
     {
       name: 'bdag-ledger',
@@ -936,7 +941,7 @@ test('Premium ledger helpers fail closed on malformed or target-mismatched respo
   });
 
   assert.deepEqual(
-    structuredClone(await harness.service.purchaseContent({ contentId, idempotencyKey })),
+    structuredClone(await harness.service.purchaseContent({ contentId, offerVersionId: offerId, idempotencyKey })),
     { success: false, error: 'creator_premium_purchase_receipt_invalid' },
   );
   assert.deepEqual(

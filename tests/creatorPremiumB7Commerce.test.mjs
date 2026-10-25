@@ -179,8 +179,8 @@ test('ledgerClient accepts stable UUID retries for Premium without client moneta
 test('creator Premium service uses canonical RPC clients and authoritative finance policy', () => {
   assert.doesNotMatch(service, /CREATOR_PREMIUM_FINANCE_AVAILABLE/i);
   for (const rpc of [
-    'get_creator_premium_commerce_v1',
-    'get_my_creator_premium_subscriptions_v1',
+    'get_creator_premium_commerce_v2',
+    'get_my_creator_premium_subscriptions_v2',
     'get_my_creator_premium_commercial_summary_v1',
     'get_my_creator_premium_financial_history_v1',
     'reopen_my_creator_premium_rejected_v1',
