@@ -99,7 +99,7 @@ export const F3_FINAL_WALLET_MIGRATION =
 export const F3_FINAL_WALLET_MIGRATION_BLOB =
   'cdcb1e2bd4db2e2e61c7e5815d62daf27cf15fba';
 export const F3_FINAL_WALLET_SOURCE_SHA =
-  '8d1dac4a132c612f394ca470d4b4e2cd7b16adb2';
+  '584c29978bd903e44b436db4417d458946bc2119';
 export const F3_FINAL_LEDGER_PROVISIONING_NEGATIVE_AUTHORIZATION_EVIDENCE = Object.freeze({
   version: 'creator-premium-f3-final-ledger-provisioning-negative-authorization-v1',
   migration_path: `supabase/migrations/${F3_FINAL_WALLET_MIGRATION}.sql`,

@@ -2391,7 +2391,7 @@
         "origin": {
           "migration": "20261025231500_creator_premium_f3_final_wallet_integration",
           "migration_blob": "cdcb1e2bd4db2e2e61c7e5815d62daf27cf15fba",
-          "source_sha": "8d1dac4a132c612f394ca470d4b4e2cd7b16adb2"
+          "source_sha": "584c29978bd903e44b436db4417d458946bc2119"
         },
         "technical_approval": "verified"
       },

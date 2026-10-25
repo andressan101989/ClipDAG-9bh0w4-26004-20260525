@@ -2234,7 +2234,7 @@ test('phase-bound RPC attestations introduce self-only Wallet provisioning only 
   controlledManifest.resources.migrations = [{
     blob: 'cdcb1e2bd4db2e2e61c7e5815d62daf27cf15fba',
     path: 'supabase/migrations/20261025231500_creator_premium_f3_final_wallet_integration.sql',
-    source_sha: '8d1dac4a132c612f394ca470d4b4e2cd7b16adb2',
+    source_sha: '584c29978bd903e44b436db4417d458946bc2119',
     version: '20261025231500',
   }];
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;

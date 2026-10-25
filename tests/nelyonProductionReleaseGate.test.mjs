@@ -1053,7 +1053,7 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
       assert.equal(exception.attestation.definition_sha256, '6c0980c34a5e058b1ebda227fb64c87ff74fc69f874c9144742c9197fd6a9190');
       assert.equal(exception.origin.migration, '20261025231500_creator_premium_f3_final_wallet_integration');
       assert.equal(exception.origin.migration_blob, 'cdcb1e2bd4db2e2e61c7e5815d62daf27cf15fba');
-      assert.equal(exception.origin.source_sha, '8d1dac4a132c612f394ca470d4b4e2cd7b16adb2');
+      assert.equal(exception.origin.source_sha, '584c29978bd903e44b436db4417d458946bc2119');
       assert.equal(exception.authorization.negative_test_evidence_sha256, '41b939a1513d04567c1d0d7acf5371c5e74d8807b7fa0d0058cd15b7fd0fdd03');
       assert.deepEqual(exception.authorization.controls, [
         'authenticated_session',
@@ -1180,7 +1180,7 @@ test('phase-bound migration omission is bound to the exact reviewed blob and sou
     version: '20261025231500',
   };
   const exactBlob = 'cdcb1e2bd4db2e2e61c7e5815d62daf27cf15fba';
-  const exactSource = '8d1dac4a132c612f394ca470d4b4e2cd7b16adb2';
+  const exactSource = '584c29978bd903e44b436db4417d458946bc2119';
   const observedCommands = [];
   const runGit = args => {
     observedCommands.push(args);
