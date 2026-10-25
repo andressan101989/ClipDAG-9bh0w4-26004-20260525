@@ -16,6 +16,10 @@ const c2TransitionPolicy = structuredClone(installedPolicy);
 c2TransitionPolicy.baseline.sha = installedPolicy.finance_authority_c2_transition.baseline_sha;
 c2TransitionPolicy.baseline.migration_count = 352;
 c2TransitionPolicy.baseline.latest_migration = '20261025011000_creator_premium_f3_bounded_financial_activation';
+const walletTransitionPolicy = structuredClone(installedPolicy);
+walletTransitionPolicy.baseline.sha = '05cdd2ecbeda6132fffb7edc0cf4e7ab2848625a';
+walletTransitionPolicy.baseline.migration_count = 353;
+walletTransitionPolicy.baseline.latest_migration = '20261025160452_creator_premium_f3_c2_isolated_canary_governance';
 // Authority hashes bind the canonical Git LF bytes, independent of Windows checkout conversion.
 const gitSql = path => execFileSync('git', ['show', `HEAD:${path}`], {
   cwd: new URL('../', import.meta.url), encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
@@ -2229,7 +2233,7 @@ test('phase-bound RPC attestations keep successor authorities stable for an olde
 
 test('phase-bound RPC attestations introduce self-only Wallet provisioning only after F3-FINAL', async () => {
   const adapter = await loadAdapter();
-  const controlledPolicy = structuredClone(installedPolicy);
+  const controlledPolicy = structuredClone(walletTransitionPolicy);
   const controlledManifest = manifest();
   controlledManifest.resources.migrations = [{
     blob: 'cdcb1e2bd4db2e2e61c7e5815d62daf27cf15fba',

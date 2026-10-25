@@ -1373,15 +1373,15 @@ test('expanded managed scope has a verified static cutover control', async () =>
   }), policy).mode, 'release');
 });
 
-test('F3-C2 production baseline is promoted from the exact successful release evidence', async () => {
+test('F3-FINAL Wallet production baseline is promoted from the exact successful release evidence', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(gate.validatePolicy(policy), true);
   assert.deepEqual(policy.baseline, {
     authority_source: 'owner-control-plane',
     blocked_resources: [],
-    evidence: '62cb517a8d8d0c57d37eb7bac13f2c1ae0bfdda99b711aaebb5b4e2e829f290d',
+    evidence: '9380542a20c0de7a2782c0544a6ec4fb5134f871567b691a32ff1dbb9a304197',
     evidence_digests: {
-      migrations: '42be5d99539ac7ca8cfbf7fe3240c94ef7501f922c0f30d4a3d45e8a944236b7',
+      migrations: '5b3c40f204058d87698ad10abccde756296775b7d5a9a9df2cf65c9776f02bef',
       managed_functions: 'a2e693b4083f343c2459cdb3e11cad295c9b084ecb6f8deeb457c71c91f0dd83',
       unmanaged_functions: '26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc',
       function_source_parity: '0980feb5ada4e589bc1b8ac9e4d0d6dcd4813420e573c8de726d78eb0f2ff917',
@@ -1389,19 +1389,19 @@ test('F3-C2 production baseline is promoted from the exact successful release ev
       cron_security: 'caad94f091360c63c3e62a5439706a43b4b64e9502f60176ef5b22d45e22d497',
       finance: '0dfaec137cad5e9580a719845e34cd462c8e6b38577f5ca8882503610779d665',
     },
-    latest_migration: '20261025160452_creator_premium_f3_c2_isolated_canary_governance',
-    migration_count: 353,
+    latest_migration: '20261025231500_creator_premium_f3_final_wallet_integration',
+    migration_count: 354,
     prior_release: {
       kind: 'post-release',
-      release_id: 'nelyon-f3-c2-g1-release-20261025T182324Z',
-      manifest_sha256: 'b0ee40ecce5e9a1b725889958d5693467697f6ab3090f8d660443561be3ec122',
-      postcheck_evidence_sha256: '5465a06af01396bc448e5e5e9bebfebb3b53384f381b919c567244f68bccd467',
+      release_id: 'nelyon-f3-final-wallet-release-20261025T205015Z',
+      manifest_sha256: 'c36a654aba1e66238a7bc9e6fda1290d5b13e81e715f534d40a7be73a85c5698',
+      postcheck_evidence_sha256: '9380542a20c0de7a2782c0544a6ec4fb5134f871567b691a32ff1dbb9a304197',
     },
     requires_separate_policy_commit: true,
-    reviewed_policy_sha256: '2cab148d99ea9c0334a3a968a68f9c92ac923434f3deb507d3276ef6eb0a9ce9',
-    sha: '05cdd2ecbeda6132fffb7edc0cf4e7ab2848625a',
+    reviewed_policy_sha256: '8f1476459169808ee653f2c67c2a6937e1c2c76cf8a678e6a7c67046dd683c6b',
+    sha: '7721b50dafa6a54a131dd44ddad83ece250fe9e3',
     state: 'verified',
-    verified_at: '2026-10-25T18:38:04.508Z',
+    verified_at: '2026-10-25T20:51:54.890Z',
     verified_by: OWNER,
   });
 
