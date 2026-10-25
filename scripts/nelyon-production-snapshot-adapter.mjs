@@ -1669,6 +1669,18 @@ function isExactF3RecoveryAuthority(policy, manifest, phase, { request, migratio
   )).length === 1);
 }
 
+function phaseBoundRpcExceptions(exceptions, manifest, phase) {
+  if (phase !== 'pre') return [...exceptions];
+  const pendingMigrations = new Set((manifest?.resources?.migrations ?? []).map(migrationIdentity).filter(Boolean));
+  return exceptions.flatMap(exception => {
+    if (!pendingMigrations.has(exception?.origin?.migration)) return [exception];
+    const predecessor = RPC_REPLACEMENT_PREDECESSOR_ATTESTATIONS.get(
+      `${exception.origin.migration}|${exception.advisor_fingerprint}`,
+    );
+    return predecessor ? [{ ...exception, attestation: predecessor }] : [];
+  });
+}
+
 export function advisorExceptionsForPhase(policy, manifest, phase, context = {}) {
   if (!['pre', 'post', 'recovery'].includes(phase)) fail('INVALID_SNAPSHOT_IDENTITY', 'phase must be pre, post, or recovery');
   const exceptions = policy?.security_advisor?.exceptions;
@@ -1687,17 +1699,9 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
       result = [...result.filter(exception => !replacements.some(item => item.object.name === exception.object.name)),
         ...replacements, policy.finance_security_advisor.c2_relation_exception];
     }
-    return result;
+    return phaseBoundRpcExceptions(result, manifest, phase);
   }
-  if (phase !== 'pre') return [...exceptions];
-  const pendingMigrations = new Set((manifest?.resources?.migrations ?? []).map(migrationIdentity).filter(Boolean));
-  return exceptions.flatMap(exception => {
-    if (!pendingMigrations.has(exception?.origin?.migration)) return [exception];
-    const predecessor = RPC_REPLACEMENT_PREDECESSOR_ATTESTATIONS.get(
-      `${exception.origin.migration}|${exception.advisor_fingerprint}`,
-    );
-    return predecessor ? [{ ...exception, attestation: predecessor }] : [];
-  });
+  return phaseBoundRpcExceptions(exceptions, manifest, phase);
 }
 
 function rpcIdentitiesFromExceptions(exceptions) {

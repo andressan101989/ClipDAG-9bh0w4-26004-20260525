@@ -51,6 +51,7 @@ const A2_EXCEPTION_FINGERPRINTS = [
   'f9c25bdf8e5c7f7ff7385410370dac9fe2ded1a0468f76d8bd2d265186718f32',
 ];
 const P3_C2_EXCEPTION_FINGERPRINT = 'b5ca8be9cf9433a21ee7f19906d8a23340ef629d6cedd414c196b431ab5dfaf1';
+const F3_FINAL_WALLET_EXCEPTION_FINGERPRINT = 'acc6db2023e39518a9407ac3dada47063023550ae9f275eb058b6f6aff32753e';
 const A2_PREEXISTING_FINGERPRINTS = [
   '44c69807ea7e06dadbd8f841ec50a8911c25a76b28ed8096ec6fea66d129b55b',
   '92d3ea284e4ee4c77be88f4a3cade83460caa098dbbc3028587388cf0158933b',
@@ -303,7 +304,7 @@ test('F3-C2 attests the exact migration-only successor and rejects arbitrary fin
     .authorization.negative_test_evidence_sha256, negativeAuthorizationEvidenceSha256);
 
   const root = new URL('..', import.meta.url);
-  const approvedSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  const approvedSha = transition.reviewed_source_sha;
   const runGit = args => execFileSync('git', args, {
     cwd: root,
     encoding: args.includes('-z') ? 'buffer' : 'utf8',
@@ -994,18 +995,38 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
   assert.equal(policy.security_advisor.baseline.count, 554);
   assert.equal(policy.security_advisor.baseline.cron_security_sha256, '2dd76dccc8b348eb932fee5c8ada572f57243287f3ca96bf851a75a2e9244846');
   const exceptions = policy.security_advisor.exceptions;
-  assert.equal(exceptions.length, 18);
-  assert.deepEqual(exceptions.map(item => item.advisor_fingerprint).sort(), [...new Set([...A2_EXCEPTION_FINGERPRINTS, ...F2_EXCEPTION_FINGERPRINTS]), P3_C2_EXCEPTION_FINGERPRINT, ...F1_EXCEPTION_FINGERPRINTS, ...F1_C4_EXCEPTION_FINGERPRINTS, P2_RELATION_ADVISOR_FINGERPRINT].sort());
+  assert.equal(
+    gate.F3_FINAL_LEDGER_PROVISIONING_NEGATIVE_AUTHORIZATION_EVIDENCE_SHA256,
+    gate.sha256Hex(gate.canonicalJson(
+      gate.F3_FINAL_LEDGER_PROVISIONING_NEGATIVE_AUTHORIZATION_EVIDENCE,
+    )),
+  );
+  assert.deepEqual(gate.F3_FINAL_LEDGER_PROVISIONING_NEGATIVE_AUTHORIZATION_EVIDENCE.cases, [
+    { actor: 'anon', expected: 'acl_denied' },
+    { actor: 'service_role', expected: 'acl_denied' },
+    { actor: 'authenticated_without_jwt_sub', expected: 'ledger_account_auth_required' },
+    { actor: 'authenticated_without_profile', expected: 'ledger_account_profile_required' },
+    { actor: 'authenticated_attempting_other_owner', expected: 'parameterized_authority_acl_denied' },
+    { actor: 'authenticated_profile_owner', expected: 'own_zero_balance_account_only' },
+    { actor: 'authenticated_profile_owner_concurrent_replay', expected: 'single_account_same_id' },
+    { actor: 'authenticated_existing_account', expected: 'identity_balance_and_frozen_state_preserved' },
+    { actor: 'authenticated_profile_owner_no_finance_side_effects', expected: 'transactions_entries_journal_velocity_authorizations_policy_unchanged' },
+  ]);
+  assert.equal(exceptions.length, 19);
+  assert.deepEqual(exceptions.map(item => item.advisor_fingerprint).sort(), [...new Set([...A2_EXCEPTION_FINGERPRINTS, ...F2_EXCEPTION_FINGERPRINTS]), P3_C2_EXCEPTION_FINGERPRINT, F3_FINAL_WALLET_EXCEPTION_FINGERPRINT, ...F1_EXCEPTION_FINGERPRINTS, ...F1_C4_EXCEPTION_FINGERPRINTS, P2_RELATION_ADVISOR_FINGERPRINT].sort());
   assert.equal(exceptions.some(item => A2_PREEXISTING_FINGERPRINTS.includes(item.advisor_fingerprint)), false);
   const rpcExceptions = exceptions.filter(item => item.advisor_type === 'authenticated_security_definer_function_executable');
-  assert.equal(rpcExceptions.length, 17);
+  assert.equal(rpcExceptions.length, 18);
   for (const exception of rpcExceptions) {
     assert.equal(exception.advisor_type, 'authenticated_security_definer_function_executable');
     assert.equal(exception.advisor_severity, 'WARN');
     assert.equal(exception.object.schema, 'public');
     assert.ok(exception.object.name.length > 0);
-    assert.ok(exception.object.argument_types.length > 0);
-    assert.ok(exception.object.identity_arguments.length > 0);
+    assert.equal(
+      exception.object.argument_types.length === 0,
+      exception.object.identity_arguments === '',
+      'zero-argument identities must use an empty identity-argument string',
+    );
     assert.equal(exception.attestation.security_definer, true);
     assert.equal(exception.attestation.owner, 'postgres');
     assert.deepEqual(exception.attestation.search_path, ['search_path=""']);
@@ -1019,7 +1040,26 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
     assert.ok(exception.authorization.functional_reason.length > 0);
     assert.deepEqual([...exception.authorization.controls].sort(), exception.authorization.controls);
     assert.match(exception.authorization.negative_test_evidence_sha256, /^[0-9a-f]{64}$/);
-    if (exception.advisor_fingerprint === P3_C2_EXCEPTION_FINGERPRINT) {
+    if (exception.advisor_fingerprint === F3_FINAL_WALLET_EXCEPTION_FINGERPRINT) {
+      assert.equal(exception.object.name, 'ensure_my_ledger_account');
+      assert.deepEqual(exception.object.argument_types, []);
+      assert.equal(exception.object.identity_arguments, '');
+      assert.equal(exception.attestation.definition_sha256, '6c0980c34a5e058b1ebda227fb64c87ff74fc69f874c9144742c9197fd6a9190');
+      assert.equal(exception.origin.migration, '20261025231500_creator_premium_f3_final_wallet_integration');
+      assert.equal(exception.origin.migration_blob, 'cdcb1e2bd4db2e2e61c7e5815d62daf27cf15fba');
+      assert.equal(exception.origin.source_sha, '8d1dac4a132c612f394ca470d4b4e2cd7b16adb2');
+      assert.equal(exception.authorization.negative_test_evidence_sha256, '41b939a1513d04567c1d0d7acf5371c5e74d8807b7fa0d0058cd15b7fd0fdd03');
+      assert.deepEqual(exception.authorization.controls, [
+        'authenticated_session',
+        'canonical_account_authority',
+        'concurrent_idempotency',
+        'finance_off_preservation',
+        'negative_authorization_tests',
+        'profile_fk_precondition',
+        'self_only_identity',
+        'zero_balance_only',
+      ]);
+    } else if (exception.advisor_fingerprint === P3_C2_EXCEPTION_FINGERPRINT) {
       assert.equal(exception.object.name, 'get_admin_creator_premium_content_v1');
       assert.equal(exception.attestation.definition_sha256, 'da4ae0e4416fc032f0b0cb3dfad00b6e1c5b95592bfa6b7ae926964b696f79bc');
       assert.equal(exception.origin.migration, '20261020030515_creator_premium_p3_c2_admin_restriction_recovery');
@@ -1107,6 +1147,22 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
   ]) {
     const candidate = structuredClone(policy.security_advisor);
     mutate(candidate);
+    assertDenied(() => gate.validateSecurityAdvisorPolicy(candidate), 'INVALID_SECURITY_ADVISOR_POLICY');
+  }
+  for (const mutate of [
+    candidate => { candidate.object.argument_types = ['uuid']; },
+    candidate => { candidate.object.identity_arguments = 'p_user_id uuid'; },
+    candidate => { candidate.attestation.acl = []; },
+    candidate => { candidate.attestation.definition_sha256 = '0'.repeat(64); },
+    candidate => { candidate.authorization.negative_test_evidence_sha256 = '0'.repeat(64); },
+    candidate => { candidate.origin.migration_blob = '0'.repeat(40); },
+    candidate => { candidate.origin.source_sha = '0'.repeat(40); },
+  ]) {
+    const candidate = structuredClone(policy.security_advisor);
+    const walletException = candidate.exceptions.find(item => (
+      item.advisor_fingerprint === F3_FINAL_WALLET_EXCEPTION_FINGERPRINT
+    ));
+    mutate(walletException);
     assertDenied(() => gate.validateSecurityAdvisorPolicy(candidate), 'INVALID_SECURITY_ADVISOR_POLICY');
   }
 });
@@ -2282,7 +2338,7 @@ test('postcheck recovery verifies B7 current state without productive resources'
   assert.equal(result.migrations.count, 337);
   assert.equal(result.functions.items.length, 12);
   assert.equal(result.security_advisor.baseline_count, 554);
-  assert.equal(result.security_advisor.exception_count, 18);
+  assert.equal(result.security_advisor.exception_count, 19);
   assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
   assert.equal(result.premium_state.legacy.content_count, 2);
   assert.doesNotMatch(JSON.stringify(result), /fixture-token|authorization/i);
