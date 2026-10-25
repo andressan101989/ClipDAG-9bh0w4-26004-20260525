@@ -196,7 +196,9 @@ test('F3 accepts rebase-merged commit identities only with baseline ancestry and
   const transition=policy.finance_authority_transition;
   const integrationBase='2d8bf717a011f3afe54af1df5cd0f991f94811f3';
   assert.equal(transition.integration_base_sha,integrationBase);
-  const originalHead=value(['rev-parse','HEAD']);
+  // Keep this historical F3 proof anchored to its reviewed source. A later
+  // finance-authority successor must not expand the historical productive set.
+  const originalHead=value(['rev-parse',transition.reviewed_source_sha]);
   let parent=value(['commit-tree',value(['rev-parse',`${integrationBase}^{tree}`]),'-p',integrationBase,'-m','New upstream main commit']);
   // Preserve already-main history and replay only feature commits over advanced main.
   // This is the identical-tree
@@ -259,6 +261,86 @@ test('F3 accepts rebase-merged commit identities only with baseline ancestry and
     changedCommit('supabase/functions/_shared/unreviewed.ts','extra shared dependency\n'),
     changedCommit('supabase/migrations/20261025012000_unreviewed.sql','select 1;\n'),
   ]) assertDenied(()=>gate.attestFinanceAuthorityTransition({...input,approvedSha:hostile}),'INVALID_FINANCE_AUTHORITY_TRANSITION');
+});
+
+test('F3-C2 attests the exact migration-only successor and rejects arbitrary finance transitions', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.finance_authority_c2_transition;
+  assert.deepEqual(transition && {
+    from_phase: transition.from_phase,
+    to_phase: transition.to_phase,
+    migration_path: transition.migration_path,
+    productive_paths: transition.productive_paths,
+  }, {
+    from_phase: 'f3_foundation',
+    to_phase: 'f3_c2',
+    migration_path: 'supabase/migrations/20261025160452_creator_premium_f3_c2_isolated_canary_governance.sql',
+    productive_paths: ['supabase/migrations/20261025160452_creator_premium_f3_c2_isolated_canary_governance.sql'],
+  });
+  assert.deepEqual(gate.F3_C2_FINANCE_AUTHORITY_TRANSITION, transition);
+  assert.deepEqual(gate.F3_C2_ADMIN_FINANCE_NEGATIVE_AUTHORIZATION_EVIDENCE.cases, [
+    { actor: 'anon', expected: 'acl_denied' },
+    { actor: 'service_role', expected: 'acl_denied' },
+    { actor: 'authenticated_without_admin_role', expected: 'admin_capability_forbidden' },
+    { actor: 'authenticated_moderator_without_finance_ledger_read', expected: 'admin_capability_forbidden' },
+    { actor: 'authenticated_super_admin_with_finance_ledger_read', expected: 'allowed' },
+  ]);
+  const negativeAuthorizationEvidenceSha256 = gate.sha256Hex(gate.canonicalJson(
+    gate.F3_C2_ADMIN_FINANCE_NEGATIVE_AUTHORIZATION_EVIDENCE,
+  ));
+  assert.equal(gate.F3_C2_ADMIN_FINANCE_NEGATIVE_AUTHORIZATION_EVIDENCE_SHA256,
+    negativeAuthorizationEvidenceSha256);
+  assert.equal(policy.finance_security_advisor.c2_rpc_replacements[0]
+    .authorization.negative_test_evidence_sha256, negativeAuthorizationEvidenceSha256);
+
+  const root = new URL('..', import.meta.url);
+  const approvedSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  const runGit = args => execFileSync('git', args, {
+    cwd: root,
+    encoding: args.includes('-z') ? 'buffer' : 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const changes = [{ status: 'A', path: transition.migration_path }];
+  const input = {
+    mode: 'plan_only', policy, approvedSha, changes, affectedFunctions: [], runGit,
+    migrations: [{ path: transition.migration_path, version: '20261025160452' }],
+  };
+  const result = gate.attestFinanceAuthorityTransition(input);
+  assert.equal(result.attestation.approved_sha, approvedSha);
+  assert.equal(result.attestation.from_phase, 'f3_foundation');
+  assert.equal(result.attestation.to_phase, 'f3_c2');
+  assert.equal(result.migrations[0].blob, transition.migration_blob);
+  assert.equal(result.migrations[0].sha256, transition.migration_sha256);
+
+  const classified = gate.classifyChangedPaths(changes);
+  const manifest = gate.buildManifest(manifestInput(policy, {
+    request: request({ approvedSha, mainSha: approvedSha }),
+    gitState: { approvedSha, baselineSha: transition.baseline_sha, originMainSha: approvedSha },
+    classified,
+    migrations: result.migrations,
+    financeAuthorityTransition: result.attestation,
+    affectedFunctions: [],
+    functionContracts: [],
+    risk: { level: 'HIGH', findings: [] },
+  }));
+  assert.equal(manifest.result, 'PLAN READY');
+  assert.equal(manifest.risk.level, 'HIGH');
+  assert.deepEqual(manifest.resources.functions, []);
+  assert.deepEqual(manifest.resources.function_contracts, []);
+  assert.equal(manifest.resources.config_changed, false);
+  assert.deepEqual(manifest.resources.migrations, result.migrations);
+
+  for (const patch of [
+    { affectedFunctions: ['bdag-ledger'] },
+    { migrations: [] },
+    { changes: [...changes, { status: 'A', path: 'supabase/migrations/20261025160453_unreviewed.sql' }] },
+    { policy: { ...policy, finance_authority_c2_transition: { ...transition, to_phase: 'arbitrary' } } },
+    { runGit: args => args[0] === 'show' ? 'altered migration bytes' : runGit(args) },
+  ]) {
+    assert.throws(() => gate.attestFinanceAuthorityTransition({ ...input, ...patch }), error => (
+      error.code === 'INVALID_FINANCE_AUTHORITY_TRANSITION'
+    ));
+  }
 });
 
 function asCandidatePolicy(policy) {
