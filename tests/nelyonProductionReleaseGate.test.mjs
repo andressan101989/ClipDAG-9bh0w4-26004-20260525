@@ -1181,8 +1181,22 @@ test('phase-bound migration omission is bound to the exact reviewed blob and sou
   };
   const exactBlob = 'cdcb1e2bd4db2e2e61c7e5815d62daf27cf15fba';
   const exactSource = '8d1dac4a132c612f394ca470d4b4e2cd7b16adb2';
+  const observedCommands = [];
   const runGit = args => {
-    assert.deepEqual(args, ['rev-parse', `6636b50e43bedf08b62ba7d929976d73a692b9b9:${migration.path}`]);
+    observedCommands.push(args);
+    if (args[0] === 'cat-file') {
+      assert.deepEqual(args, ['cat-file', '-e', `${exactSource}^{commit}`]);
+      return '';
+    }
+    if (args[0] === 'merge-base') {
+      assert.deepEqual(args, ['merge-base', '--is-ancestor', exactSource, '6636b50e43bedf08b62ba7d929976d73a692b9b9']);
+      return '';
+    }
+    assert.deepEqual(args.slice(0, 1), ['rev-parse']);
+    assert.ok([
+      ['rev-parse', `${exactSource}:${migration.path}`],
+      ['rev-parse', `6636b50e43bedf08b62ba7d929976d73a692b9b9:${migration.path}`],
+    ].some(expected => JSON.stringify(expected) === JSON.stringify(args)));
     return `${exactBlob}\n`;
   };
   assert.deepEqual(
@@ -1195,6 +1209,12 @@ test('phase-bound migration omission is bound to the exact reviewed blob and sou
     }),
     [{ ...migration, blob: exactBlob, source_sha: exactSource }],
   );
+  assert.deepEqual(observedCommands, [
+    ['cat-file', '-e', `${exactSource}^{commit}`],
+    ['merge-base', '--is-ancestor', exactSource, '6636b50e43bedf08b62ba7d929976d73a692b9b9'],
+    ['rev-parse', `${exactSource}:${migration.path}`],
+    ['rev-parse', `6636b50e43bedf08b62ba7d929976d73a692b9b9:${migration.path}`],
+  ]);
   assertDenied(
     () => gate.attestPhaseBoundMigrationOrigins({
       approvedSha: '6636b50e43bedf08b62ba7d929976d73a692b9b9',
@@ -1205,6 +1225,23 @@ test('phase-bound migration omission is bound to the exact reviewed blob and sou
     }),
     'INVALID_RPC_PHASE_ATTESTATION',
   );
+  for (const hostileRunGit of [
+    args => args[0] === 'cat-file' ? (() => { throw new Error('missing source'); })() : runGit(args),
+    args => args[0] === 'merge-base' ? (() => { throw new Error('unrelated source'); })() : runGit(args),
+    args => args[0] === 'rev-parse' && args[1].startsWith(`${exactSource}:`)
+      ? `${'1'.repeat(40)}\n` : runGit(args),
+  ]) {
+    assertDenied(
+      () => gate.attestPhaseBoundMigrationOrigins({
+        approvedSha: '6636b50e43bedf08b62ba7d929976d73a692b9b9',
+        cwd: '.',
+        migrations: [migration],
+        policy,
+        runGit: hostileRunGit,
+      }),
+      'INVALID_RPC_PHASE_ATTESTATION',
+    );
+  }
 });
 
 test('recovery source is exact immutable failed-postcheck authority', async () => {
