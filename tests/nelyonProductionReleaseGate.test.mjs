@@ -450,6 +450,16 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     })),
     { version: latestMigration.slice(0, 14), name: latestMigration.slice(15) },
   ];
+  const sourceFunctionNames = new Set(source.edge_functions.map(item => item.name));
+  const stableManagedFunctions = controlledPolicy.supabase.managed_functions
+    .filter(name => !sourceFunctionNames.has(name))
+    .map((name, index) => ({
+      slug: name,
+      status: 'ACTIVE',
+      version: index + 100,
+      verify_jwt: true,
+      ezbr_sha256: String(index + 100).padStart(64, '0'),
+    }));
   const functionRows = [
     ...source.edge_functions.map(item => ({
       slug: item.name,
@@ -458,7 +468,8 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       verify_jwt: item.verify_jwt,
       ezbr_sha256: item.source_sha256,
     })),
-    ...Array.from({ length: 34 - source.edge_functions.length }, (_, index) => ({
+    ...stableManagedFunctions,
+    ...Array.from({ length: 34 - source.edge_functions.length - stableManagedFunctions.length }, (_, index) => ({
       slug: `unmanaged-${String(index + 1).padStart(2, '0')}`,
       status: 'ACTIVE',
       version: index + 1,
@@ -466,6 +477,47 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       ezbr_sha256: String(index + 1).padStart(64, '0'),
     })),
   ];
+  if (source.run_id === '40166468648') {
+    const baselineFunction = controlledPolicy.postcheck_recovery.approved_sources
+      .find(item => item.run_id === '40139736749')
+      .edge_functions.find(item => item.name === 'bdag-ledger');
+    const baselineFunctionRows = functionRows.map(item => item.slug === baselineFunction.name ? {
+      slug: baselineFunction.name,
+      status: baselineFunction.status,
+      version: baselineFunction.version,
+      verify_jwt: baselineFunction.verify_jwt,
+      ezbr_sha256: baselineFunction.source_sha256,
+    } : item);
+    const managedNames = [...controlledPolicy.supabase.managed_functions].sort();
+    const managedSet = new Set(managedNames);
+    const blocked = new Set(controlledPolicy.baseline.blocked_resources);
+    const managed = baselineFunctionRows.filter(item => managedSet.has(item.slug)).map(item => ({
+      name: item.slug,
+      source_sha256: item.ezbr_sha256,
+      source_parity: !blocked.has(item.slug),
+      verify_jwt: item.verify_jwt,
+      version: item.version,
+    })).sort((left, right) => left.name.localeCompare(right.name));
+    const unmanaged = baselineFunctionRows.filter(item => !managedSet.has(item.slug))
+      .map(item => ({ name: item.slug, version: item.version }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    const digest = value => gate.sha256Hex(gate.canonicalJson(value));
+    controlledPolicy.baseline.evidence_digests = {
+      ...controlledPolicy.baseline.evidence_digests,
+      migrations: digest(migrationRows.slice(0, -1).map(item => `${item.version}_${item.name}`)),
+      managed_functions: digest(managed.map(item => ({
+        name: item.name, version: item.version, verify_jwt: item.verify_jwt,
+      }))),
+      unmanaged_functions: digest(unmanaged),
+      function_source_parity: digest(managed.map(item => ({
+        name: item.name, source_sha256: item.source_sha256, source_parity: item.source_parity,
+      }))),
+      config_verify_jwt: digest({
+        complete: true,
+        managed_functions: managed.map(item => ({ name: item.name, verify_jwt: item.verify_jwt })),
+      }),
+    };
+  }
   const zeroReconciliations = {
     account_balance_ledger_mismatch: 0,
     completed_credit_account_mismatch: 0,
@@ -642,7 +694,13 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       { method: 'POST', path: `/v1/projects/${PROJECT_REF}/database/query/read-only`, status: 201, response_sha256: 'b'.repeat(64) },
     );
   }
-  const rpcItems = controlledPolicy.security_advisor.exceptions
+  const recoveryExceptions = adapter.advisorExceptionsForPhase(
+    controlledPolicy,
+    recoveryManifest,
+    'recovery',
+    { request: recoveryRequest, migrations: currentEvidence.migrations },
+  );
+  const rpcItems = recoveryExceptions
     .filter(exception => Array.isArray(exception.object.argument_types))
     .map(exception => ({
     schema: exception.object.schema,
@@ -662,7 +720,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     level: 'WARN',
     resource_kind: 'table',
   }));
-  const advisorItems = [...baselineAdvisorItems, ...controlledPolicy.security_advisor.exceptions.map(exception => ({
+  const advisorItems = [...baselineAdvisorItems, ...recoveryExceptions.map(exception => ({
     fingerprint: exception.advisor_fingerprint,
     level: exception.advisor_severity,
     resource_kind: exception.advisor_type,
@@ -1909,6 +1967,61 @@ test('postcheck recovery manifest strips every productive resource from the read
   }), 'INVALID_MANAGED_SCOPE_TRANSITION');
 });
 
+test('F3 postcheck recovery skips productive finance attestation before manifest construction', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const migration = {
+    path: policy.finance_authority_transition.migration_path,
+    version: '20261025011000',
+  };
+  const result = gate.attestFinanceAuthorityTransition({
+    mode: 'postcheck_recovery',
+    policy,
+    approvedSha: MAIN_SHA,
+    changes: [
+      { status: 'A', path: migration.path },
+      { status: 'M', path: policy.finance_authority_transition.function_path },
+    ],
+    migrations: [migration],
+    affectedFunctions: [policy.finance_authority_transition.function],
+  });
+  assert.deepEqual(result, { migrations: [migration], attestation: null });
+});
+
+test('F3 postcheck recovery emits a zero-resource manifest for the exact failed release source', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.finance_authority_transition;
+  const input = manifestInput(policy, {
+    request: request({
+      mode: 'postcheck_recovery',
+      scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
+      recoverySourceRunId: '40166468648',
+    }),
+    migrations: [{
+      path: transition.migration_path,
+      version: '20261025011000',
+    }],
+    affectedFunctions: [transition.function],
+    functionContracts: [],
+    financeAuthorityTransition: null,
+  });
+  const manifest = gate.buildManifest(input);
+  assert.equal(manifest.result, 'NO PRODUCTIVE CHANGES');
+  assert.equal(manifest.delta.productive_change_count, 0);
+  assert.deepEqual(manifest.resources, {
+    functions: [],
+    function_contracts: [],
+    migrations: [],
+    config_changed: false,
+  });
+  assertDenied(() => gate.buildManifest({
+    ...input,
+    financeAuthorityTransition: {
+      id: transition.id,
+      phase: transition.phase,
+    },
+  }), 'INVALID_FINANCE_AUTHORITY_TRANSITION');
+});
+
 test('one-byte manifest or digest alteration denies', async t => {
   const { gate, policy } = await loadGateAndPolicy();
   const directory = mkdtempSync(join(tmpdir(), 'nelyon-release-bundle-'));
@@ -2117,6 +2230,62 @@ test('postcheck recovery verifies the exact F3 applied state after a snapshot-on
   assert.deepEqual(result.premium_state.legacy,
     { content_count: 9, pending_review_count: 0, deleted_count: 5 });
   assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
+});
+
+test('F3 postcheck recovery rejects historical migration and unchanged Edge drift', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = await recoveryStateFixture(t, gate, policy, 4);
+  const verify = candidate => gate.verifyPostcheckRecovery({
+    policy: candidate.controlledPolicy,
+    recoveryRequest: candidate.recoveryRequest,
+    recoveryManifest: candidate.recoveryManifest,
+    sourceManifest: candidate.sourceManifest,
+    sourceObservation: candidate.sourceObservation,
+    currentEvidence: candidate.currentEvidence,
+    adapterSourceSha256: candidate.adapterSourceSha256,
+  });
+  const resign = candidate => {
+    const { evidence_sha256: ignored, ...unsigned } = candidate.currentEvidence;
+    candidate.currentEvidence.evidence_sha256 = gate.sha256Hex(gate.canonicalJson(unsigned));
+  };
+
+  const migrationDrift = structuredClone(fixture);
+  migrationDrift.currentEvidence.migrations.items[0].name = 'historical_identity_swapped';
+  migrationDrift.currentEvidence.migrations.sha256 = gate.sha256Hex(
+    gate.canonicalJson(migrationDrift.currentEvidence.migrations.items),
+  );
+  resign(migrationDrift);
+  assert.throws(() => verify(migrationDrift), /RPC_SECURITY_ATTESTATION_FAILED|RECOVERY_POSTCHECK_FAILED/);
+
+  for (const mutate of [
+    item => { item.version += 1; },
+    item => { item.ezbr_sha256 = 'f'.repeat(64); },
+    item => { item.verify_jwt = !item.verify_jwt; },
+  ]) {
+    const edgeDrift = structuredClone(fixture);
+    const unchangedEdge = edgeDrift.currentEvidence.functions.items.find(item => (
+      item.slug !== 'bdag-ledger' && edgeDrift.controlledPolicy.supabase.managed_functions.includes(item.slug)
+    ));
+    assert.ok(unchangedEdge);
+    mutate(unchangedEdge);
+    edgeDrift.currentEvidence.functions.sha256 = gate.sha256Hex(
+      gate.canonicalJson(edgeDrift.currentEvidence.functions.items),
+    );
+    resign(edgeDrift);
+    assertDenied(() => verify(edgeDrift), 'RECOVERY_POSTCHECK_FAILED');
+  }
+
+  const unmanagedDrift = structuredClone(fixture);
+  const unmanagedEdge = unmanagedDrift.currentEvidence.functions.items.find(item => (
+    !unmanagedDrift.controlledPolicy.supabase.managed_functions.includes(item.slug)
+  ));
+  assert.ok(unmanagedEdge);
+  unmanagedEdge.version += 1;
+  unmanagedDrift.currentEvidence.functions.sha256 = gate.sha256Hex(
+    gate.canonicalJson(unmanagedDrift.currentEvidence.functions.items),
+  );
+  resign(unmanagedDrift);
+  assertDenied(() => verify(unmanagedDrift), 'RECOVERY_POSTCHECK_FAILED');
 });
 
 test('postcheck recovery fails closed on mutation requests and every protected-state drift', async t => {

@@ -366,6 +366,144 @@ test('F3 projection and relation exceptions require exact foundation transition 
   assert.throws(() => adapter.advisorExceptionsForPhase({ ...policy, baseline: { ...policy.baseline, sha: 'b'.repeat(40) } },m,'post'), /FINANCE_AUTHORITY_TRANSITION/);
 });
 
+test('F3 recovery authorities require the exact approved source and installed migration inventory', async () => {
+  const adapter = await loadAdapter();
+  const controlledPolicy = structuredClone(policy);
+  const source = controlledPolicy.postcheck_recovery.approved_sources.find(item => item.run_id === '40166468648');
+  assert.ok(source);
+  const recoveryRequest = {
+    ...request(),
+    mode: 'postcheck_recovery',
+    scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
+    recoverySourceRunId: source.run_id,
+  };
+  const recoveryManifest = {
+    ...manifest(),
+    identity: { ...manifest().identity, mode: 'postcheck_recovery' },
+    resources: { functions: [], function_contracts: [], migrations: [], config_changed: false },
+  };
+  const rows = [
+    ...Array.from({ length: source.expected_migration_count - 1 }, (_, index) => ({
+      version: `2025${String(index).padStart(10, '0')}`,
+      name: `historical_${String(index).padStart(3, '0')}`,
+    })),
+    {
+      version: source.expected_latest_migration.slice(0, 14),
+      name: source.expected_latest_migration.slice(15),
+    },
+  ];
+  const migrations = {
+    complete: true,
+    count: rows.length,
+    items: rows,
+    latest: rows.at(-1),
+    sha256: sha256(canonicalJson(rows)),
+  };
+  controlledPolicy.baseline.evidence_digests.migrations = sha256(canonicalJson(
+    rows.slice(0, -1).map(item => `${item.version}_${item.name}`),
+  ));
+  const selected = adapter.advisorExceptionsForPhase(
+    controlledPolicy,
+    recoveryManifest,
+    'recovery',
+    { request: recoveryRequest, migrations },
+  );
+  assert.equal(selected.length, 22);
+  assert.equal(selected.filter(item => Array.isArray(item.object.argument_types)).length, 20);
+  assert.equal(selected.some(item => item.object.name === 'get_admin_creator_premium_finance_activation_v1'), true);
+  assert.equal(selected.some(item => item.object.name === 'get_creator_premium_commerce_v2'), true);
+  assert.equal(selected.some(item => item.object.name === 'get_my_creator_premium_subscriptions_v2'), true);
+  assert.equal(selected.some(item => item.object.name === 'creator_premium_finance_authorizations'), true);
+
+  const swappedHistory = structuredClone(migrations);
+  swappedHistory.items[0].name = 'historical_identity_swapped';
+  swappedHistory.sha256 = sha256(canonicalJson(swappedHistory.items));
+  assert.deepEqual(
+    adapter.advisorExceptionsForPhase(
+      controlledPolicy,
+      recoveryManifest,
+      'recovery',
+      { request: recoveryRequest, migrations: swappedHistory },
+    ),
+    controlledPolicy.security_advisor.exceptions,
+  );
+
+  for (const options of [
+    { request: { ...recoveryRequest, recoverySourceRunId: controlledPolicy.postcheck_recovery.approved_sources[0].run_id }, migrations },
+    { request: recoveryRequest, migrations: { ...migrations, count: migrations.count - 1 } },
+    { request: recoveryRequest, migrations: { ...migrations, latest: rows.at(-2) } },
+  ]) {
+    assert.deepEqual(
+      adapter.advisorExceptionsForPhase(controlledPolicy, recoveryManifest, 'recovery', options),
+      controlledPolicy.security_advisor.exceptions,
+    );
+  }
+});
+
+test('F3 recovery capture requests only the successor RPC authority set', async () => {
+  const adapter = await loadAdapter();
+  const controlledPolicy = structuredClone(policy);
+  const source = controlledPolicy.postcheck_recovery.approved_sources.find(item => item.run_id === '40166468648');
+  assert.ok(source);
+  const recoveryRequest = {
+    ...request(),
+    mode: 'postcheck_recovery',
+    scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
+    recoverySourceRunId: source.run_id,
+  };
+  const recoveryManifest = {
+    ...manifest(),
+    identity: { ...manifest().identity, mode: 'postcheck_recovery' },
+    resources: { functions: [], function_contracts: [], migrations: [], config_changed: false },
+  };
+  const migrationRows = [
+    ...Array.from({ length: source.expected_migration_count - 1 }, (_, index) => ({
+      version: `2025${String(index).padStart(10, '0')}`,
+      name: `historical_${String(index).padStart(3, '0')}`,
+    })),
+    {
+      version: source.expected_latest_migration.slice(0, 14),
+      name: source.expected_latest_migration.slice(15),
+    },
+  ];
+  controlledPolicy.baseline.evidence_digests.migrations = sha256(canonicalJson(
+    migrationRows.slice(0, -1).map(item => `${item.version}_${item.name}`),
+  ));
+  const calls = [];
+  const fallback = successfulFetch(calls);
+  let requestedRpcIdentities = null;
+  const fetchImpl = async (url, options = {}) => {
+    const pathname = new URL(url).pathname;
+    if (pathname.endsWith('/database/migrations')) {
+      calls.push({ url: String(url), options });
+      return jsonResponse(migrationRows);
+    }
+    if (pathname.endsWith('/database/query/read-only') && options.method === 'POST') {
+      const body = JSON.parse(options.body);
+      if (body.query.includes('pg_get_function_identity_arguments')) {
+        requestedRpcIdentities = JSON.parse(body.parameters[0]);
+        throw new Error('stop-after-rpc-authority-selection');
+      }
+    }
+    return fallback(url, options);
+  };
+  await assert.rejects(adapter.captureProductionSnapshot({
+    phase: 'recovery',
+    policy: controlledPolicy,
+    request: recoveryRequest,
+    manifest: recoveryManifest,
+    token: 'never-retained',
+    fetchImpl,
+    observedAt: '2026-10-12T12:00:01.000Z',
+    adapterSourceSha256: '6'.repeat(64),
+  }), /REMOTE_READ_FAILED: RPC security attestation request failed/);
+  assert.equal(requestedRpcIdentities.length, 20);
+  assert.equal(requestedRpcIdentities.some(item => item.name === 'get_admin_creator_premium_finance_activation_v1'), true);
+  assert.equal(requestedRpcIdentities.some(item => item.name === 'get_creator_premium_commerce_v2'), true);
+  assert.equal(requestedRpcIdentities.some(item => item.name === 'get_my_creator_premium_subscriptions_v2'), true);
+  assert.equal(requestedRpcIdentities.some(item => item.name === 'creator_premium_finance_authorizations'), false);
+});
+
 test('snapshot adapter never pretends to observe Supabase GitHub auto-deploy state', () => {
   const source = readFileSync(adapterUrl, 'utf8');
   assert.doesNotMatch(source, /SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED|auto_deploy_(?:evidence|expectation)|Deploy to production/);

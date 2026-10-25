@@ -4,7 +4,13 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, posix, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { verifyProductionPreSnapshot, verifyProductionRecoverySnapshot, verifyProductionSnapshotPair } from './nelyon-production-snapshot-adapter.mjs';
+import {
+  advisorExceptionsForPhase,
+  verifyProductionPreSnapshot,
+  verifyProductionRecoverySnapshot,
+  verifyProductionSnapshotPair,
+  verifyRecoveryInfrastructureBaseline,
+} from './nelyon-production-snapshot-adapter.mjs';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 export const F3_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
@@ -998,7 +1004,8 @@ export function attestManagedScopeTransition({
   };
 }
 
-export function attestFinanceAuthorityTransition({ policy, approvedSha, changes, migrations, affectedFunctions, runGit, cwd }) {
+export function attestFinanceAuthorityTransition({ mode, policy, approvedSha, changes, migrations, affectedFunctions, runGit, cwd }) {
+  if (mode === 'postcheck_recovery') return { migrations, attestation: null };
   const t = F3_FINANCE_AUTHORITY_TRANSITION;
   const candidate = migrations?.some(item => item.version === '20261025011000' || item.path === t.migration_path)
     || (policy?.baseline?.sha === t.baseline_sha && affectedFunctions?.includes(t.function));
@@ -1613,7 +1620,7 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     configAfter,
     changes: gitState.changes,
   });
-  const financeTransition = attestFinanceAuthorityTransition({ cwd, policy, approvedSha: request.approvedSha,
+  const financeTransition = attestFinanceAuthorityTransition({ cwd, policy, mode: request.mode, approvedSha: request.approvedSha,
     changes: gitState.changes, migrations: transitionEvidence.migrations, affectedFunctions, runGit });
   const risk = classifyRisk({
     affectedFunctions,
@@ -1718,8 +1725,8 @@ export function buildManifest({
     deny('INVALID_MANAGED_SCOPE_TRANSITION', 'managed scope transition attestation is not applicable');
   }
   const f3 = F3_FINANCE_AUTHORITY_TRANSITION;
-  const f3Candidate = migrations?.some(item => item.version === '20261025011000' || item.path === f3.migration_path)
-    || (policy.baseline.sha === f3.baseline_sha && functionNames.includes(f3.function));
+  const f3Candidate = !recoveryMode && (migrations?.some(item => item.version === '20261025011000' || item.path === f3.migration_path)
+    || (policy.baseline.sha === f3.baseline_sha && functionNames.includes(f3.function)));
   if (f3Candidate) {
     const expected = { id: f3.id, phase: f3.phase, baseline_sha: f3.baseline_sha,
       reviewed_source_sha: f3.reviewed_source_sha, integration_base_sha: f3.integration_base_sha,
@@ -2147,10 +2154,32 @@ export function verifyPostcheckRecovery({
       version: actual.version,
     };
   });
+  if (source.run_id === '40166468648') {
+    const baselineSource = policy?.postcheck_recovery?.approved_sources?.find(item => item.run_id === '40139736749');
+    const functionTransitions = source.edge_functions.map(current => ({
+      current,
+      baseline: baselineSource?.edge_functions?.find(item => item.name === current.name),
+    }));
+    try {
+      verifyRecoveryInfrastructureBaseline({
+        policy,
+        migrations,
+        functions: currentEvidence.functions,
+        expectedLatestMigration: source.expected_latest_migration,
+        functionTransitions,
+      });
+    } catch (error) {
+      deny(code, String(error?.message ?? 'recovery infrastructure baseline verification failed'));
+    }
+  }
 
   const advisorItems = currentEvidence.cron_security.advisors.items;
-  const exceptionFingerprints = new Set(policy.security_advisor.exceptions.map(item => item.advisor_fingerprint));
-  const exceptionByFingerprint = new Map(policy.security_advisor.exceptions.map(item => [item.advisor_fingerprint, item]));
+  const recoveryExceptions = advisorExceptionsForPhase(policy, recoveryManifest, 'recovery', {
+    request: recoveryRequest,
+    migrations: currentEvidence.migrations,
+  });
+  const exceptionFingerprints = new Set(recoveryExceptions.map(item => item.advisor_fingerprint));
+  const exceptionByFingerprint = new Map(recoveryExceptions.map(item => [item.advisor_fingerprint, item]));
   const presentExceptions = advisorItems.filter(item => exceptionFingerprints.has(item.fingerprint));
   const baselineItems = advisorItems.filter(item => !exceptionFingerprints.has(item.fingerprint));
   const reconstructedBaseline = {
