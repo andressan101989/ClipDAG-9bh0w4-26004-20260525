@@ -11,7 +11,9 @@ export const F3_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
   "id": "creator-premium-f3-foundation-v1",
   "phase": "foundation_only",
   "baseline_sha": "238e987933c7198400534121e61fb3d2750ba5ba",
-  "source_ancestor": "27ff8b3861f901c548ee4c6abc054bc805d63f09",
+  "reviewed_source_sha": "27ff8b3861f901c548ee4c6abc054bc805d63f09",
+  "integration_base_sha": "2d8bf717a011f3afe54af1df5cd0f991f94811f3",
+  "approved_sha_ancestry": "verified_integration_base",
   "migration_path": "supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql",
   "migration_blob": "8338634c5341fcadd102cdeb34eb1f9dc701af6d",
   "migration_sha256": "1fea4ed72b0aaee90f066e24307547fb0305aa96e597d75c9eb21bb93384aec5",
@@ -961,9 +963,9 @@ export function attestFinanceAuthorityTransition({ policy, approvedSha, changes,
     deny(code, 'foundation permits exactly its one migration and existing bdag-ledger source');
   }
   try {
-    runGit(['cat-file', '-e', `${t.source_ancestor}^{commit}`], { cwd });
-    runGit(['merge-base', '--is-ancestor', t.baseline_sha, t.source_ancestor], { cwd });
-    runGit(['merge-base', '--is-ancestor', t.source_ancestor, approvedSha], { cwd });
+    runGit(['cat-file', '-e', `${approvedSha}^{commit}`], { cwd });
+    runGit(['merge-base', '--is-ancestor', t.baseline_sha, t.integration_base_sha], { cwd });
+    runGit(['merge-base', '--is-ancestor', t.integration_base_sha, approvedSha], { cwd });
     for (const [path, blob] of [[t.migration_path, t.migration_blob], [t.function_path, t.function_blob], ['supabase/config.toml', t.config_blob]]) {
       if (gitText(runGit, ['rev-parse', `${approvedSha}:${path}`], cwd) !== blob
         || fileTypeAtCommit(runGit, cwd, approvedSha, path) !== 'file') deny(code, 'foundation committed blob/path differs');
@@ -980,7 +982,8 @@ export function attestFinanceAuthorityTransition({ policy, approvedSha, changes,
     deny(code, 'approved commit does not attest the exact foundation ancestry and bytes');
   }
   const attestation = { id: t.id, phase: t.phase, baseline_sha: t.baseline_sha,
-    source_ancestor: t.source_ancestor, approved_sha: approvedSha, descendant_verified: true,
+    reviewed_source_sha: t.reviewed_source_sha, integration_base_sha: t.integration_base_sha,
+    approved_sha: approvedSha, baseline_descendant_verified: true, integration_base_descendant_verified: true,
     migration_blob: t.migration_blob, migration_sha256: t.migration_sha256,
     function_blob: t.function_blob, function_source_sha256: t.function_source_sha256, config_blob: t.config_blob };
   return { migrations: migrations.map(item => ({ ...item, blob: t.migration_blob, sha256: t.migration_sha256 })), attestation };
@@ -1652,7 +1655,8 @@ export function buildManifest({
     || (policy.baseline.sha === f3.baseline_sha && functionNames.includes(f3.function));
   if (f3Candidate) {
     const expected = { id: f3.id, phase: f3.phase, baseline_sha: f3.baseline_sha,
-      source_ancestor: f3.source_ancestor, approved_sha: request.approvedSha, descendant_verified: true,
+      reviewed_source_sha: f3.reviewed_source_sha, integration_base_sha: f3.integration_base_sha,
+      approved_sha: request.approvedSha, baseline_descendant_verified: true, integration_base_descendant_verified: true,
       migration_blob: f3.migration_blob, migration_sha256: f3.migration_sha256,
       function_blob: f3.function_blob, function_source_sha256: f3.function_source_sha256, config_blob: f3.config_blob };
     if (recoveryMode || policy.baseline.sha !== f3.baseline_sha

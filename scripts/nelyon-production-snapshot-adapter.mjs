@@ -726,7 +726,7 @@ function validateManifestAdapterIdentity(manifest, adapterSourceSha256) {
 }
 
 function validateFinancePolicyAuthority(policy) {
-  if (sha256(canonicalJson(policy?.finance_authority_transition ?? null)) !== 'dea8d686901b7e58e04742249b865da0720ea835f52db086b858c298c7996cb9'
+  if (sha256(canonicalJson(policy?.finance_authority_transition ?? null)) !== 'b0ab9d52e4d1355c803d61498d81bcf8f9d8cf0e216b57b00dddeff00ebe30f0'
     || sha256(canonicalJson(policy?.finance_authority ?? null)) !== '5f0d64ecf02d8052c64719490972484801a3859147186b6230bb82d43162653f'
     || sha256(canonicalJson(policy?.finance_security_advisor ?? null)) !== '47fba40bc5736d8da22cda8409ef39538ea3dcc5187b17ce9d898544d2c815a3') {
     fail('FINANCE_AUTHORITY_TRANSITION_REJECTED', 'foundation policy differs from exact reviewed authority');
@@ -741,7 +741,8 @@ export function activeFinanceAuthorityTransition(policy, manifest) {
   validateFinancePolicyAuthority(policy);
   const t = policy.finance_authority_transition;
   const expected = { id: t.id, phase: t.phase, baseline_sha: t.baseline_sha,
-    source_ancestor: t.source_ancestor, approved_sha: manifest?.identity?.approved_sha, descendant_verified: true,
+    reviewed_source_sha: t.reviewed_source_sha, integration_base_sha: t.integration_base_sha,
+    approved_sha: manifest?.identity?.approved_sha, baseline_descendant_verified: true, integration_base_descendant_verified: true,
     migration_blob: t.migration_blob, migration_sha256: t.migration_sha256,
     function_blob: t.function_blob, function_source_sha256: t.function_source_sha256, config_blob: t.config_blob };
   const productivePaths = (manifest?.delta?.files ?? []).filter(item => String(item.path).startsWith('supabase/')).map(item => item.path).sort();

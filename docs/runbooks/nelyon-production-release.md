@@ -9,11 +9,17 @@ agree.
 ## Dormant Creator Premium F3 foundation
 
 `finance_authority_transition` authorizes only the exact foundation delta from
-baseline `238e987933c7198400534121e61fb3d2750ba5ba`, descended from immutable
-source `27ff8b3861f901c548ee4c6abc054bc805d63f09`. The final approved release SHA
-is supplied by the request, must equal fetched protected `main`, and is bound
+baseline `238e987933c7198400534121e61fb3d2750ba5ba`. The immutable reviewed source
+`27ff8b3861f901c548ee4c6abc054bc805d63f09` is an audit reference for the exact
+productive blobs, rather than a required ancestor or available Git object after
+GitHub Rebase and merge. The final approved release SHA must preserve the verified
+chain `238e987933c7198400534121e61fb3d2750ba5ba` → stable pre-F3 protected-main
+integration base `2d8bf717a011f3afe54af1df5cd0f991f94811f3` → approved SHA.
+It is supplied by the request, must equal fetched protected `main`, and is bound
 into the manifest/artifact with the protected policy digest and compiler/adapter
-bytes. There is no self-referential future commit pin.
+bytes. There is no self-referential future commit pin. Rewritten commit identities
+are accepted only when the exact reviewed migration, Edge and config blobs and
+the entire productive diff from the verified baseline match the protected policy.
 
 The entire productive closure is one new migration,
 `20261025011000_creator_premium_f3_bounded_financial_activation.sql` (Git blob

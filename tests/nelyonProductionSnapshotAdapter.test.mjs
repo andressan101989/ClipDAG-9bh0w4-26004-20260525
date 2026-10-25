@@ -182,7 +182,8 @@ function f3FoundationManifest() {
       entrypoint: t.function_path, source_sha256: t.function_source_sha256 }],
     migrations: [{ version: '20261025011000', path: t.migration_path, blob: t.migration_blob, sha256: t.migration_sha256 }],
     finance_authority_transition: { id: t.id, phase: t.phase, baseline_sha: t.baseline_sha,
-      source_ancestor: t.source_ancestor, approved_sha: request().approvedSha, descendant_verified: true,
+      reviewed_source_sha: t.reviewed_source_sha, integration_base_sha: t.integration_base_sha,
+      approved_sha: request().approvedSha, baseline_descendant_verified: true, integration_base_descendant_verified: true,
       migration_blob: t.migration_blob, migration_sha256: t.migration_sha256,
       function_blob: t.function_blob, function_source_sha256: t.function_source_sha256, config_blob: t.config_blob },
   } };
@@ -217,6 +218,7 @@ test('F3 projection and relation exceptions require exact foundation transition 
   assert.equal(post.filter(e => e.object.name === 'creator_premium_finance_authorizations').length,1);
   for (const mutate of [
     candidate => { candidate.resources.finance_authority_transition.approved_sha = 'b'.repeat(40); },
+    candidate => { candidate.resources.finance_authority_transition.integration_base_sha = 'b'.repeat(40); },
     candidate => { candidate.resources.migrations[0].blob = 'b'.repeat(40); },
     candidate => { delete candidate.resources.finance_authority_transition; },
     candidate => { candidate.resources.config_changed = true; },
