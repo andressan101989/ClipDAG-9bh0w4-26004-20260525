@@ -150,6 +150,80 @@ test('F3 foundation transition attests exact committed migration and sole existi
   ]) assert.throws(() => gate.attestFinanceAuthorityTransition({ ...input, ...patch }), error => error.code === 'INVALID_FINANCE_AUTHORITY_TRANSITION');
 });
 
+test('F3 accepts rebase-merged commit identities only with baseline ancestry and exact reviewed Git blobs', async t => {
+  const {gate,policy}=await loadGateAndPolicy();
+  const root=new URL('..',import.meta.url);
+  const rootPath=decodeURIComponent(root.pathname.replace(/^\/([A-Za-z]:)/,'$1'));
+  const temporary=mkdtempSync(join(tmpdir(),'nelyon-release-rebase-'));
+  t.after(()=>rmSync(temporary,{recursive:true,force:true}));
+  const repository=join(temporary,'rebased.git');
+  execFileSync('git',['clone','--shared','--bare',rootPath,repository],{stdio:['pipe','pipe','pipe']});
+  const environment={...process.env,GIT_AUTHOR_NAME:'F3 Governance Test',GIT_AUTHOR_EMAIL:'f3-test@example.invalid',
+    GIT_COMMITTER_NAME:'F3 Governance Test',GIT_COMMITTER_EMAIL:'f3-test@example.invalid',GIT_INDEX_FILE:join(temporary,'test-index')};
+  const git=(args,input)=>execFileSync('git',args,{cwd:repository,env:environment,input,
+    encoding:args.includes('-z')?'buffer':'utf8',stdio:['pipe','pipe','pipe']});
+  const value=(args,input)=>String(git(args,input)).trim();
+  const transition=policy.finance_authority_transition;
+  const integrationBase='2d8bf717a011f3afe54af1df5cd0f991f94811f3';
+  assert.equal(transition.integration_base_sha,integrationBase);
+  const originalHead=value(['rev-parse','HEAD']);
+  let parent=value(['commit-tree',value(['rev-parse',`${integrationBase}^{tree}`]),'-p',integrationBase,'-m','New upstream main commit']);
+  // Preserve already-main history and replay only feature commits over advanced main.
+  // This is the identical-tree
+  // case of GitHub Rebase and merge: every commit gets a different parent/identity.
+  for(const commit of value(['rev-list','--reverse','--first-parent',`${integrationBase}..${originalHead}`]).split('\n')) {
+    parent=value(['commit-tree',value(['rev-parse',`${commit}^{tree}`]),'-p',parent,'-m',`Rebase merged ${commit}`]);
+  }
+  const approvedSha=parent;
+  assert.notEqual(approvedSha,originalHead);
+  git(['merge-base','--is-ancestor',transition.baseline_sha,integrationBase]);
+  git(['merge-base','--is-ancestor',integrationBase,approvedSha]);
+  assert.throws(()=>git(['merge-base','--is-ancestor','27ff8b3861f901c548ee4c6abc054bc805d63f09',approvedSha]));
+  git(['remote','set-url','origin',`https://github.com/${REPOSITORY}.git`]);
+  git(['update-ref','refs/remotes/origin/main',approvedSha]);
+  const state=gate.resolveGitState({cwd:repository,baselineSha:transition.baseline_sha,approvedSha,
+    expectedRepository:REPOSITORY,runGit:args=>git(args)});
+  const input={cwd:repository,policy,approvedSha,changes:state.changes,affectedFunctions:['bdag-ledger'],
+    migrations:[{version:'20261025011000',path:transition.migration_path}],runGit:args=>git(args)};
+  const result=gate.attestFinanceAuthorityTransition(input);
+  assert.equal(result.attestation.approved_sha,approvedSha);
+  assert.equal(result.attestation.integration_base_descendant_verified,true);
+  assert.equal(result.attestation.baseline_descendant_verified,true);
+  assert.equal(result.migrations[0].blob,'8338634c5341fcadd102cdeb34eb1f9dc701af6d');
+  assert.equal(result.migrations[0].sha256,'1fea4ed72b0aaee90f066e24307547fb0305aa96e597d75c9eb21bb93384aec5');
+  const noReviewedBranchObjects=args=>{
+    if(args.some(argument=>argument.includes('27ff8b3861f901c548ee4c6abc054bc805d63f09'))) throw new Error('Original PR object unavailable after rebase merge');
+    return git(args);
+  };
+  assert.equal(gate.attestFinanceAuthorityTransition({...input,runGit:noReviewedBranchObjects}).attestation.approved_sha,approvedSha);
+  assertDenied(()=>gate.resolveGitState({cwd:repository,baselineSha:transition.baseline_sha,
+    approvedSha:originalHead,expectedRepository:REPOSITORY,runGit:args=>git(args)}),'MAIN_SHA_MISMATCH');
+  const approvedTree=value(['rev-parse',`${approvedSha}^{tree}`]);
+  const orphan=value(['commit-tree',approvedTree,'-m','Foreign history with identical productive blobs']);
+  assertDenied(()=>gate.attestFinanceAuthorityTransition({...input,approvedSha:orphan}),'INVALID_FINANCE_AUTHORITY_TRANSITION');
+  const sideBranch=value(['commit-tree',approvedTree,'-p',transition.baseline_sha,'-m','Side branch omits reviewed main integration base']);
+  git(['merge-base','--is-ancestor',transition.baseline_sha,sideBranch]);
+  assert.throws(()=>git(['merge-base','--is-ancestor',integrationBase,sideBranch]));
+  assertDenied(()=>gate.attestFinanceAuthorityTransition({...input,approvedSha:sideBranch}),'INVALID_FINANCE_AUTHORITY_TRANSITION');
+  const changedCommit=(path,bytes,mode='100644')=>{
+    git(['read-tree',approvedTree]);
+    const blob=value(['hash-object','-w','--stdin'],bytes);
+    git(['update-index','--add','--cacheinfo',mode,blob,path]);
+    return value(['commit-tree',value(['write-tree']),'-p',approvedSha,'-m',`Hostile change ${path}`]);
+  };
+  const sql=String(git(['show',`${approvedSha}:${transition.migration_path}`]));
+  for(const hostile of [
+    changedCommit(transition.migration_path,`${sql}\n`),
+    changedCommit(transition.migration_path,sql.replace(/\n/g,'\r\n')),
+    changedCommit(transition.migration_path,sql,'120000'),
+    changedCommit(transition.function_path,'unreviewed Edge source\n'),
+    changedCommit('supabase/config.toml','unreviewed config\n'),
+    changedCommit('supabase/functions/agora-token/unreviewed.ts','extra productive file\n'),
+    changedCommit('supabase/functions/_shared/unreviewed.ts','extra shared dependency\n'),
+    changedCommit('supabase/migrations/20261025012000_unreviewed.sql','select 1;\n'),
+  ]) assertDenied(()=>gate.attestFinanceAuthorityTransition({...input,approvedSha:hostile}),'INVALID_FINANCE_AUTHORITY_TRANSITION');
+});
+
 function asCandidatePolicy(policy) {
   const candidate = structuredClone(policy);
   candidate.baseline = {
