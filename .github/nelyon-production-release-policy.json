@@ -78,6 +78,26 @@
     ],
     "requires_separate_baseline_promotion": true
   },
+  "finance_authority_c2_transition": {
+    "id": "creator-premium-f3-c2-governance-v1",
+    "from_phase": "f3_foundation",
+    "to_phase": "f3_c2",
+    "baseline_sha": "8908c4f9e6b5d48614301e51b16793ed7ae6f895",
+    "reviewed_source_sha": "e692d932e1ce5f6f24b67205373db443f538a464",
+    "integration_base_sha": "0dace3e84031922a35f9213957bd77d886cf3b7a",
+    "approved_sha_ancestry": "verified_integration_base",
+    "migration_path": "supabase/migrations/20261025160452_creator_premium_f3_c2_isolated_canary_governance.sql",
+    "migration_blob": "0c3436a83df2804a4a33d41d0514c50239f5bcd2",
+    "migration_sha256": "0348d73b14afae63cb3f90bd22346cd1f607c7904a7c7285aa7daa2da7a901bc",
+    "productive_paths": [
+      "supabase/migrations/20261025160452_creator_premium_f3_c2_isolated_canary_governance.sql"
+    ],
+    "foundation_guards": [
+      "creator_premium_finance_policy_f3_foundation_off_check",
+      "creator_premium_finance_auth_f3_foundation_insert_guard"
+    ],
+    "requires_separate_baseline_promotion": true
+  },
   "finance_authority": {
     "schema_version": 1,
     "legacy": {
@@ -501,6 +521,108 @@
         "public.ledger_credit(uuid, uuid, numeric, text, jsonb)",
         "public.ledger_debit(uuid, uuid, numeric, text, jsonb)"
       ]
+    },
+    "f3_c2": {
+      "base_phase": "f3_foundation",
+      "relations": [
+        {
+          "identity": "private.creator_premium_finance_authorizations",
+          "sha256": "f09fd03354825686a8c7b841fe8293f3cb798a9f27cb005aad299f53850ef553"
+        },
+        {
+          "identity": "private.creator_premium_finance_owner_attestations_f3_c2",
+          "sha256": "b333e9b62737d51ed4c8557899fab0c973dbcc6c371e540443b57dbec15f645c"
+        },
+        {
+          "identity": "private.creator_premium_finance_policy",
+          "sha256": "3cdd231e49901f90636809cc9b0c1419a253b22be0b005f2fc34c69197418fbc"
+        },
+        {
+          "identity": "private.creator_premium_purchase_receipts",
+          "sha256": "935d25664f50ce71ee3318a99ed64149219d1ee1073cdb5a915149e9335e6ae2"
+        },
+        {
+          "identity": "private.creator_premium_subscription_periods",
+          "sha256": "91b92b3e5b3a537f6276d76deea7ae4308032acc6b000654f727b36d963a06d1"
+        },
+        {
+          "identity": "private.creator_premium_subscriptions",
+          "sha256": "bf82a56a27dd86739d8459c2e2d04dfdd84d905b98db66ae1ab568e7d9662759"
+        }
+      ],
+      "function_overrides": [
+        {
+          "identity": "private.admit_creator_premium_refund_f3_v1(uuid)",
+          "sha256": "2d794814552e4022382a443c55b45dd486f2645c16ede660edd773abac85a12e"
+        },
+        {
+          "identity": "private.assert_creator_premium_finance_deadline_f3_v1(uuid, text)",
+          "sha256": "dca63da09c110b161826bbb4f721f7533ec3ca9b7b5e380f9813d5e5ae188c0e"
+        },
+        {
+          "identity": "private.creator_premium_authorization_binding_f3_v1(uuid, text, uuid, uuid, uuid, uuid, numeric, integer, uuid, uuid, uuid)",
+          "sha256": "2dbbc5979e6cdad08118aa7995c4e87a0a1d56dbac890f1b3c267ff10fa53d02"
+        },
+        {
+          "identity": "private.creator_premium_financial_fact_is_valid_v1(uuid, uuid, text, uuid, uuid, uuid, uuid, uuid, text, uuid, text, text, uuid, uuid, numeric, numeric, numeric, integer)",
+          "sha256": "1f1a924c220d8b9b6f83d659b7d3b45ce011da1d781b728c2f55f6132c43aab8"
+        },
+        {
+          "identity": "private.guard_creator_premium_finance_authorization_f3_v1()",
+          "sha256": "f93abd09ef996e423dfc307516dd4f3080a23cb232626a7972e1b15ad8210e81"
+        },
+        {
+          "identity": "public.search_admin_creator_premium_finance_v1(text, text, text, timestamp with time zone, uuid, integer)",
+          "sha256": "37453a8d44a02f34264dc355741e0e3ac95025863b444011c406ef49d20ea0af"
+        }
+      ],
+      "function_additions": [
+        {
+          "identity": "private.close_creator_premium_finance_authorization_f3_c2_v1(uuid, text)",
+          "sha256": "a37d66309cce8888817b65ce6447a541b675c6d6a348fab9b015e6857db52b04"
+        },
+        {
+          "identity": "private.creator_premium_finance_attestation_digest_f3_c2_v1(jsonb)",
+          "sha256": "51d2cd75d088513ee86463efa3e6dec515ced47c692dcf624a48f4c297ee8318"
+        },
+        {
+          "identity": "private.creator_premium_finance_attestation_payload_f3_c2_v1(jsonb)",
+          "sha256": "604bc45884bf9728eb5ca5279e03fa20c0fb3bec208c86fd04abfcad15ee5fc3"
+        },
+        {
+          "identity": "private.creator_premium_finance_authorization_integrity_f3_c2_v1(uuid)",
+          "sha256": "e208cbb96d9016f3f9ed457dbf8ded2b281c77a89f5299e2ada861d7736c94dc"
+        },
+        {
+          "identity": "private.creator_premium_finance_configuration_digest_f3_c2_v1(jsonb)",
+          "sha256": "c281acaba3048a930786ac95028d68e790f8c8b99ac5469a2207d3a6a392d967"
+        },
+        {
+          "identity": "private.creator_premium_finance_configuration_payload_f3_c2_v1(jsonb)",
+          "sha256": "eafc42c6424f22871a7e38d3a744776d3a50364bc5f2494b4746b14aa95f7e4e"
+        },
+        {
+          "identity": "private.creator_premium_finance_serialize_f3_c2_v1(text[], text[])",
+          "sha256": "ca0b41f725ffe36b8ac92e4b089b1ed83a180bc337480a8c8bd559352b16f7ca"
+        },
+        {
+          "identity": "private.creator_premium_financial_provenance_f3_c2_v1(text, uuid, uuid, uuid)",
+          "sha256": "e4f423a12a4e769de21afc28f2de6c1a3cfc32cc47982861f2cf35739b11485c"
+        },
+        {
+          "identity": "private.finalize_creator_premium_finance_authorization_f3_c2_v1(uuid)",
+          "sha256": "9047d337d021c947261853aba5d3067f025b283f9dc00d7a844a8c3da8055b70"
+        },
+        {
+          "identity": "private.guard_creator_premium_authorization_insert_f3_c2_v1()",
+          "sha256": "5515f40ae6a4015f70827e6273fd706b1785a3d726b2dd96095738bed6b1116c"
+        },
+        {
+          "identity": "private.guard_creator_premium_owner_attestation_f3_c2_v1()",
+          "sha256": "231f94129ed4aabf919b704eb494c688b67c6776dcae6a4d2e55605e4eeb0568"
+        }
+      ],
+      "schema_sha256": "781c180183bfe0c5d70f2782c2badad779e716539a1ea4cc0bc50966eeacc7be"
     }
   },
   "finance_security_advisor": {
@@ -703,6 +825,71 @@
         }
       }
     ],
+    "c2_rpc_replacements": [
+      {
+        "advisor_fingerprint": "f6c527ed886225b79c3412747e8f8375e7552634febc03b37917123f02649109",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": {
+          "schema": "public",
+          "name": "search_admin_creator_premium_finance_v1",
+          "argument_types": [
+            "text",
+            "text",
+            "text",
+            "timestamp with time zone",
+            "uuid",
+            "integer"
+          ],
+          "identity_arguments": "p_source text, p_state text, p_query text, p_cursor_created_at timestamp with time zone, p_cursor_reference_id uuid, p_limit integer"
+        },
+        "attestation": {
+          "security_definer": true,
+          "owner": "postgres",
+          "search_path": [
+            "search_path=\"\""
+          ],
+          "acl": [
+            {
+              "grantee": "authenticated",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            },
+            {
+              "grantee": "postgres",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            }
+          ],
+          "execute": {
+            "anon": false,
+            "authenticated": true,
+            "public": false,
+            "service_role": false
+          },
+          "definition_sha256": "50e8a3e293277f232db34b7b780048b85a69527f29f3f1b6cd8cd860559cf858"
+        },
+        "authorization": {
+          "functional_reason": "Projects bounded immutable Premium finance facts and C2 owner-attestation provenance only to an authenticated administrator with the exact ledger-read capability.",
+          "controls": [
+            "bounded_pagination",
+            "exact_admin_capability",
+            "immutable_financial_facts",
+            "negative_authorization_tests",
+            "owner_attestation_provenance",
+            "read_only_reconciliation",
+            "sanitized_projection"
+          ],
+          "negative_test_evidence_sha256": "7379322432f45ea38741a4179a3bf296fde4d89e0de030e142396e1dad12dc37"
+        },
+        "origin": {
+          "migration": "20261025160452_creator_premium_f3_c2_isolated_canary_governance",
+          "migration_blob": "0c3436a83df2804a4a33d41d0514c50239f5bcd2",
+          "source_sha": "e692d932e1ce5f6f24b67205373db443f538a464"
+        },
+        "technical_approval": "verified"
+      }
+    ],
     "relation_exception": {
       "advisor_fingerprint": "93e9b80ea54177b945f93b8f6b72a207d0d02dbc8cfa1c463211fe1992e3339d",
       "advisor_type": "table",
@@ -710,6 +897,15 @@
       "object": {
         "schema": "private",
         "name": "creator_premium_finance_authorizations"
+      }
+    },
+    "c2_relation_exception": {
+      "advisor_fingerprint": "52c8fca087abbea6fbd033188bc7fb8ab0b0f8b8910dc7712372d34208e61a52",
+      "advisor_type": "table",
+      "advisor_severity": "INFO",
+      "object": {
+        "schema": "private",
+        "name": "creator_premium_finance_owner_attestations_f3_c2"
       }
     }
   },
