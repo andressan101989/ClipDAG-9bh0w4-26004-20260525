@@ -38,6 +38,90 @@ function load(file, require, globals = {}, suffix = '') {
   return module.exports;
 }
 
+// Preserve hook slots and dependency-driven cleanup across real screen renders.
+// Only native rendering, identity and remote I/O are replaced here.
+async function consentScreen({ history = false, projection, subscription }) {
+  const slots = [], effects = [], alerts = [], purchases = [], generated = [];
+  let cursor = 0, pending = [], tree, mounted = true, user = { id: id.buyer }, next = projection;
+  const changed = (before, after) => !before || !after || before.length !== after.length
+    || after.some((value, index) => !Object.is(value, before[index]));
+  const memo = (fn, deps) => {
+    const index = cursor++;
+    if (!slots[index] || changed(slots[index].deps, deps)) slots[index] = { deps, value: fn() };
+    return slots[index].value;
+  };
+  const effect = (fn, deps) => {
+    const index = cursor++;
+    if (!effects[index] || changed(effects[index].deps, deps)) pending.push(() => {
+      effects[index]?.cleanup?.();
+      effects[index] = { deps, cleanup: fn() };
+    });
+  };
+  const hooks = {
+    useState(initial) {
+      const index = cursor++;
+      if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
+      return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }];
+    },
+    useRef(initial) { const index = cursor++; return slots[index] ??= { current: initial }; },
+    useCallback: (fn, deps) => memo(() => fn, deps), useMemo: memo, useEffect: effect,
+  };
+  const jsx = (type, props) => ({ type, props });
+  const component = history ? 'MySubscriptionsScreenContent' : 'CreatorPremiumOfferScreenContent';
+  const page = () => ({ items: [subscription], next_cursor: null, policy });
+  const module = load(history ? 'app/my-subscriptions.tsx' : 'app/creator-premium-offer/[contentId].tsx', name => {
+    if (name === 'react') return { ...hooks, default: hooks };
+    if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
+    if (name === 'react-native') return { Alert: { alert: (...args) => alerts.push(args) },
+      StyleSheet: { create: styles => styles }, Pressable: 'Pressable', View: 'View', Text: 'Text',
+      ScrollView: 'ScrollView', RefreshControl: 'RefreshControl' };
+    if (name === 'expo-router') return { useLocalSearchParams: () => ({ contentId: id.content }),
+      useRouter: () => ({}), useFocusEffect: fn => effect(fn, [fn]) };
+    if (name === 'expo-crypto') return { randomUUID: () => { const key = uuid(1000 + generated.length); generated.push(key); return key; } };
+    if (name === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) };
+    if (name === '@/hooks/useAuth') return { useAuth: () => ({ user }) };
+    if (name === '@/constants/theme') return { Colors: {}, FontSize: {}, FontWeight: {}, Radius: {}, Spacing: {} };
+    if (name === '@/services/creatorPremiumIntegrationState') return { creatorPremiumErrorMessage: () => 'Safe error' };
+    if (name === '@/services/creatorPremiumPresentation.mjs') return { formatCreatorPremiumBdag: text => `${text} BDAG` };
+    if (name === '@/services/creatorPremiumService') return { CREATOR_PREMIUM_REPORT_REASONS: [],
+      fetchCreatorPremiumCommerce: async () => next, fetchMyCreatorPremiumSubscriptions: async () => page() };
+    if (name === '@/services/financial/ledgerClient') {
+      const invoke = async params => { purchases.push(structuredClone(params)); return { success: false, error: 'uncertain' }; };
+      return { purchaseContent: invoke, subscribeToPlan: invoke };
+    }
+    if (name === '@/services/creatorPremiumViewerRuntime.mjs') return {};
+    if (name === '@expo/vector-icons') return { MaterialCommunityIcons: 'Icon' };
+    if (name === 'expo-image') return { Image: 'Image' };
+    if (name === 'expo-status-bar') return { StatusBar: 'StatusBar' };
+    throw new Error(`Unexpected import ${name}`);
+  }, {}, `\nexport { ${component} };`);
+  const render = () => {
+    cursor = 0; pending = []; tree = module[component]();
+    for (const run of pending) run();
+    return tree;
+  };
+  const settle = async () => { await new Promise(resolve => setImmediate(resolve)); if (mounted) render(); };
+  const nodes = () => {
+    const found = [];
+    const walk = node => { if (!node || typeof node !== 'object') return; found.push(node);
+      for (const child of [node.props?.children].flat(Infinity)) walk(child); };
+    walk(tree); return found;
+  };
+  render(); await settle();
+  return {
+    alerts, purchases, generated, render, settle,
+    press() { const action = nodes().find(node => node.type === 'Pressable' && node.props.disabled === false);
+      assert.ok(action, 'charge action missing'); action.props.onPress(); },
+    async confirm() { const dialog = alerts.findLast(args => args[2]?.some(button => button.text === 'Confirmar' || button.text === 'Renovar'));
+      assert.ok(dialog, 'charge confirmation missing'); dialog[2].find(button => button.style !== 'cancel').onPress(); await settle(); },
+    async refresh(value) { if (history) subscription = value; else next = value;
+      const scroll = nodes().find(node => node.props?.refreshControl);
+      assert.ok(scroll, 'refresh control missing'); scroll.props.refreshControl.props.onRefresh(); await settle(); },
+    session(value) { user = value; render(); },
+    unmount() { if (mounted) { mounted = false; for (const entry of effects) entry?.cleanup?.(); } },
+  };
+}
+
 test('F3 foundation ships exactly one forward migration and no activation migration', () => {
   const names = readdirSync(new URL('../supabase/migrations/', import.meta.url))
     .filter(name => name.includes('_creator_premium_f3_'));
@@ -129,6 +213,87 @@ test('mobile accepts effective-disabled canary blockers with the unchanged five-
   invalid.plans[0].subscription_blocker = 'creator_premium_canary_denied';
   assert.throws(() => finance.parseCreatorPremiumCommerce(invalid, id.content), /creator_premium_commerce_invalid/);
 });
+
+function consentFixture(operation) {
+  const projection = structuredClone(commerce);
+  const history = operation === 'history_renewal';
+  projection.operations = { purchase_available: operation === 'purchase', purchase_blocker: operation === 'purchase' ? null : 'creator_premium_purchase_disabled' };
+  if (operation === 'purchase') { projection.plans = []; projection.plan_count = 0; }
+  else {
+    Object.assign(projection.plans[0], { subscription_available: operation === 'subscription',
+      subscription_blocker: operation === 'subscription' ? null : 'creator_premium_renewal_required',
+      renewal_available: operation !== 'subscription',
+      renewal_blocker: operation === 'subscription' ? 'creator_premium_subscription_not_found' : null,
+      relationship: operation === 'subscription' ? null : { id: uuid(30), status: 'cancelled',
+        cancelled_at: '2026-10-25T00:00:00Z', paid_through_at: '2026-10-26T00:00:00Z', access_state: 'expired' } });
+  }
+  const subscription = history ? { id: uuid(30), plan: projection.plans[0], creator: projection.creator,
+    status: 'cancelled', started_at: '2026-09-26T00:00:00Z', cancelled_at: '2026-10-25T00:00:00Z', ended_at: null,
+    period: { id: uuid(31), starts_at: '2026-09-26T00:00:00Z', paid_through_at: '2026-10-26T00:00:00Z', access_state: 'expired', gross_amount_bdag: '20.00000000' },
+    access_active: false, auto_renew: false, renewal_supported: true, renewal_available: true, renewal_blocker: null,
+    is_latest_relationship: true, created_at: '2026-09-26T00:00:00Z', updated_at: '2026-10-25T00:00:00Z' } : undefined;
+  if (history) finance.parseCreatorPremiumSubscriptionsPageV2({ policy, items: [subscription], next_cursor: null });
+  else finance.parseCreatorPremiumCommerceV2(projection, id.content);
+  return { history, projection, subscription };
+}
+
+// Removing current-projection/generation checks or effect cleanup must expose a
+// transport call after the user has consented to an obsolete screen or identity.
+for (const operation of ['purchase', 'subscription', 'renewal', 'history_renewal']) {
+  for (const invalidation of ['rerender', 'session', 'unmount']) {
+    test(`${operation} pending consent cannot dispatch after ${invalidation}`, async () => {
+      const fixture = consentFixture(operation);
+      const screen = await consentScreen(fixture);
+      screen.press();
+      assert.equal(screen.purchases.length, 0);
+      if (invalidation === 'rerender') {
+        const changed = structuredClone(fixture.history ? fixture.subscription : fixture.projection);
+        if (fixture.history) changed.plan.price_bdag = '99.00000000';
+        else if (operation === 'purchase') changed.offer = { ...changed.offer, id: uuid(999), version: 2 };
+        else changed.plans[0].price_bdag = '99.00000000';
+        await screen.refresh(changed);
+      } else if (invalidation === 'session') screen.session(null);
+      else screen.unmount();
+      await screen.confirm();
+      assert.deepEqual(screen.purchases, [], 'obsolete confirmation crossed the transport boundary');
+      screen.unmount();
+    });
+  }
+}
+
+for (const operation of ['purchase', 'subscription', 'history_renewal']) {
+  test(`${operation} uncertain retry retains its key and changed immutable target rotates it`, async () => {
+    const fixture = consentFixture(operation);
+    const screen = await consentScreen(fixture);
+    const charge = async () => { screen.press(); await screen.confirm(); };
+    await charge();
+    await charge();
+    assert.equal(screen.purchases.length, 2);
+    assert.equal(screen.purchases[0].idempotencyKey, screen.purchases[1].idempotencyKey);
+    const changed = structuredClone(fixture.history ? fixture.subscription : fixture.projection);
+    if (operation === 'purchase') changed.offer = { ...changed.offer, id: uuid(999), version: 2 };
+    else if (fixture.history) changed.plan = { ...changed.plan, id: uuid(998), version: 2 };
+    else changed.plans[0] = { ...changed.plans[0], id: uuid(998), version: 2 };
+    await screen.refresh(changed);
+    await charge();
+    await charge();
+    assert.equal(screen.purchases.length, 4);
+    const [first, retry, rotated, rotatedRetry] = screen.purchases;
+    assert.deepEqual(first, operation === 'purchase'
+      ? { contentId: id.content, offerVersionId: id.offer, idempotencyKey: first.idempotencyKey }
+      : { planId: id.plan, idempotencyKey: first.idempotencyKey });
+    assert.deepEqual(retry, first);
+    assert.deepEqual(rotated, operation === 'purchase'
+      ? { contentId: id.content, offerVersionId: uuid(999), idempotencyKey: rotated.idempotencyKey }
+      : { planId: uuid(998), idempotencyKey: rotated.idempotencyKey });
+    assert.notEqual(rotated.idempotencyKey, first.idempotencyKey);
+    assert.deepEqual(rotatedRetry, rotated);
+    assert.ok(screen.generated.includes(first.idempotencyKey));
+    assert.ok(screen.generated.includes(rotated.idempotencyKey));
+    assert.equal(new Set(screen.generated).size, screen.generated.length);
+    screen.unmount();
+  });
+}
 
 test('F3 v2 parser accepts safe canary blockers without weakening the installed v1 contract', () => {
   assert.equal(typeof finance.parseCreatorPremiumCommerceV2, 'function', 'versioned canary commerce parser is missing');
