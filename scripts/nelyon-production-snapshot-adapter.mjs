@@ -892,7 +892,10 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       fail('FINANCE_FACTS_REJECTED', 'foundation facts or reconciliation are nonzero');
     }
   }
-  const phaseExceptions = advisorExceptionsForPhase(policy, manifest, phase);
+  const phaseExceptions = advisorExceptionsForPhase(policy, manifest, phase, {
+    request,
+    migrations: evidence.migrations,
+  });
   validateRpcSecuritySnapshot(evidence.rpc_security);
   validateRpcIdentitySet(evidence.rpc_security, phaseExceptions);
   validatePremiumPostcheckState(evidence.premium_state);
@@ -901,6 +904,108 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
 
 function baselineMigrationName(item) {
   return `${item.version}_${item.name}`;
+}
+
+function hasExactBaselineMigrationAppend(policy, migrations, expectedLatestMigration) {
+  const baseline = policy?.baseline;
+  const baselineCount = baseline?.migration_count;
+  if (!Number.isInteger(baselineCount) || baselineCount < 0
+    || !HASH_PATTERN.test(baseline?.evidence_digests?.migrations ?? '')
+    || migrations?.complete !== true || migrations.count !== baselineCount + 1
+    || !Array.isArray(migrations.items) || migrations.items.length !== migrations.count
+    || `${migrations.latest?.version}_${migrations.latest?.name}` !== expectedLatestMigration
+    || canonicalJson(migrations.latest) !== canonicalJson(migrations.items.at(-1) ?? null)) return false;
+  const baselineNames = migrations.items.slice(0, baselineCount).map(baselineMigrationName);
+  return sha256(canonicalJson(baselineNames)) === baseline.evidence_digests.migrations;
+}
+
+export function verifyRecoveryInfrastructureBaseline({
+  policy,
+  migrations,
+  functions,
+  expectedLatestMigration,
+  functionTransitions,
+}) {
+  validateNormalizedMigrations(migrations);
+  validateNormalizedFunctions(functions);
+  if (!hasExactBaselineMigrationAppend(policy, migrations, expectedLatestMigration)) {
+    fail('RECOVERY_POSTCHECK_FAILED', 'migration history is not the exact reviewed baseline plus the approved append');
+  }
+  if (!Array.isArray(functionTransitions) || functionTransitions.length === 0) {
+    fail('RECOVERY_POSTCHECK_FAILED', 'function transition evidence is unavailable');
+  }
+  const currentBySlug = new Map(functions.items.map(item => [item.slug, item]));
+  const baselineReplacements = new Map();
+  for (const transition of functionTransitions) {
+    const current = transition?.current;
+    const baseline = transition?.baseline;
+    if (!current || !baseline || current.name !== baseline.name || baselineReplacements.has(current.name)) {
+      fail('RECOVERY_POSTCHECK_FAILED', 'function transition evidence is invalid or duplicated');
+    }
+    const expectedCurrent = {
+      ezbr_sha256: current.source_sha256,
+      slug: current.name,
+      status: current.status,
+      verify_jwt: current.verify_jwt,
+      version: current.version,
+    };
+    if (canonicalJson(currentBySlug.get(current.name) ?? null) !== canonicalJson(expectedCurrent)) {
+      fail('RECOVERY_POSTCHECK_FAILED', `Edge Function ${current.name} differs from the approved live attestation`);
+    }
+    baselineReplacements.set(current.name, {
+      ezbr_sha256: baseline.source_sha256,
+      slug: baseline.name,
+      status: baseline.status,
+      verify_jwt: baseline.verify_jwt,
+      version: baseline.version,
+    });
+  }
+  const reconstructed = functions.items.map(item => baselineReplacements.get(item.slug) ?? item);
+  const managedNames = [...(policy?.supabase?.managed_functions ?? [])].sort();
+  const managedSet = new Set(managedNames);
+  const blocked = new Set(policy?.baseline?.blocked_resources ?? []);
+  const managed = reconstructed
+    .filter(item => managedSet.has(item.slug))
+    .map(item => ({
+      name: item.slug,
+      source_sha256: item.ezbr_sha256,
+      source_parity: !blocked.has(item.slug),
+      verify_jwt: item.verify_jwt,
+      version: item.version,
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  if (canonicalJson(managed.map(item => item.name)) !== canonicalJson(managedNames)) {
+    fail('RECOVERY_POSTCHECK_FAILED', 'managed Edge Function inventory is incomplete');
+  }
+  const unmanaged = reconstructed
+    .filter(item => !managedSet.has(item.slug))
+    .map(item => ({ name: item.slug, version: item.version }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const config = {
+    complete: true,
+    managed_functions: managed.map(item => ({ name: item.name, verify_jwt: item.verify_jwt })),
+  };
+  const digestOf = value => sha256(canonicalJson(value));
+  const reconstructedDigests = {
+    config_verify_jwt: digestOf(config),
+    function_source_parity: digestOf(managed.map(item => ({
+      name: item.name,
+      source_sha256: item.source_sha256,
+      source_parity: item.source_parity,
+    }))),
+    managed_functions: digestOf(managed.map(item => ({
+      name: item.name,
+      version: item.version,
+      verify_jwt: item.verify_jwt,
+    }))),
+    migrations: digestOf(migrations.items.slice(0, policy.baseline.migration_count).map(baselineMigrationName)),
+    unmanaged_functions: digestOf(unmanaged),
+  };
+  const expectedDigests = policy?.baseline?.evidence_digests ?? {};
+  if (Object.entries(reconstructedDigests).some(([key, value]) => expectedDigests[key] !== value)) {
+    fail('RECOVERY_POSTCHECK_FAILED', 'unchanged migration or Edge Function inventory differs from the reviewed baseline');
+  }
+  return reconstructedDigests;
 }
 
 function activeManagedScopeTransition({ policy, manifest }) {
@@ -1211,7 +1316,11 @@ export function verifyProductionRecoverySnapshot({ recovery, policy, request, ma
     manifest,
     adapterSourceSha256,
   });
-  validateRpcSecurityAttestations(recovery.rpc_security, policy?.security_advisor?.exceptions);
+  const phaseExceptions = advisorExceptionsForPhase(policy, manifest, 'recovery', {
+    request,
+    migrations: recovery.migrations,
+  });
+  validateRpcSecurityAttestations(recovery.rpc_security, phaseExceptions);
   validatePremiumPostcheckState(recovery.premium_state);
   return {
     result: 'RECOVERY_SNAPSHOT_VERIFIED',
@@ -1459,13 +1568,36 @@ const RPC_REPLACEMENT_PREDECESSOR_ATTESTATIONS = new Map([
   ],
 ]);
 
-export function advisorExceptionsForPhase(policy, manifest, phase) {
+function isExactF3RecoveryAuthority(policy, manifest, phase, { request, migrations } = {}) {
+  if (phase !== 'recovery' || request?.mode !== 'postcheck_recovery'
+    || request?.scopeConfirmation !== 'POSTCHECK_RECOVERY_READ_ONLY'
+    || manifest?.identity?.mode !== 'postcheck_recovery'
+    || canonicalJson(manifest?.resources ?? null) !== canonicalJson({
+      config_changed: false,
+      function_contracts: [],
+      functions: [],
+      migrations: [],
+    })) return false;
+  const source = policy?.postcheck_recovery?.approved_sources?.find(item => (
+    item.run_id === '40166468648'
+    && item.run_id === String(request?.recoverySourceRunId ?? '')
+  ));
+  if (!source || source.expected_latest_migration !== '20261025011000_creator_premium_f3_bounded_financial_activation'
+    || source.expected_migration_count !== policy?.baseline?.migration_count + 1
+    || !hasExactBaselineMigrationAppend(policy, migrations, source.expected_latest_migration)) return false;
+  return source.expected_migrations.every(expected => migrations.items.filter(item => (
+    `${item?.version}_${item?.name}` === expected.name
+  )).length === 1);
+}
+
+export function advisorExceptionsForPhase(policy, manifest, phase, context = {}) {
   if (!['pre', 'post', 'recovery'].includes(phase)) fail('INVALID_SNAPSHOT_IDENTITY', 'phase must be pre, post, or recovery');
   const exceptions = policy?.security_advisor?.exceptions;
   if (!Array.isArray(exceptions)) fail('RPC_SECURITY_ATTESTATION_FAILED', 'Security Advisor exceptions are unavailable');
   const foundation = activeFinanceAuthorityTransition(policy, manifest);
   const installedBaseline = policy?.baseline?.latest_migration >= '20261025011000_creator_premium_f3_bounded_financial_activation';
-  if ((foundation && phase !== 'pre') || installedBaseline) {
+  const exactF3Recovery = isExactF3RecoveryAuthority(policy, manifest, phase, context);
+  if ((foundation && phase !== 'pre') || installedBaseline || exactF3Recovery) {
     validateFinancePolicyAuthority(policy);
     const successors = policy.finance_security_advisor.rpc_attestations;
     return [...exceptions.filter(exception => !successors.some(item => item.object.name === exception.object.name)),
@@ -1842,7 +1974,7 @@ export async function captureProductionSnapshot({
     'finance snapshot',
   );
   const cronBody = await sql(CRON_SNAPSHOT_SQL, null, 'cron snapshot');
-  const phaseExceptions = advisorExceptionsForPhase(policy, manifest, phase);
+  const phaseExceptions = advisorExceptionsForPhase(policy, manifest, phase, { request, migrations });
   const rpcSecurityBody = await sql(
     RPC_SECURITY_ATTESTATION_SQL,
     [JSON.stringify(rpcIdentitiesFromExceptions(phaseExceptions))],
