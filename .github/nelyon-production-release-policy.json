@@ -102,43 +102,47 @@
       "functions": [
         {
           "identity": "private.calculate_creator_premium_split_v1(numeric, integer)",
-          "sha256": "da87dcf5133c3dbf8b99278e75b1d20225fb94f07d794f8e0716ac1a5dc744e2"
+          "sha256": "00226a2bac4b8fadcd2a3f6a75ae9f197458e0abc6abfe0217ea46e213a84be1"
         },
         {
           "identity": "private.creator_premium_actor_is_age_eligible_v1(uuid)",
-          "sha256": "155b5ae7ffe79541c7e95f78ee5ffd443dfe98df455abde45f5a58f94c6e8b1d"
+          "sha256": "19dde699d3d4d4973d084ca6e96b523b2cf592e102907d4d2a24a1fd3db40031"
         },
         {
           "identity": "private.creator_premium_actor_is_operational_v1(uuid)",
-          "sha256": "09ac3d4eaa285dfed19022893a212c210531606cc7d3e5ad97ef3a2b0e1410bb"
+          "sha256": "9aea7bb254e2119360e45576bed9aec0396d8c7519fcff2f2236a664bb1ea5f1"
+        },
+        {
+          "identity": "private.creator_premium_content_has_financial_history(uuid)",
+          "sha256": "902c03100dea3ff1f70a2f367231d74bdad6570b3a0f179dccdfb41f15e1d3ac"
         },
         {
           "identity": "private.creator_premium_financial_fact_is_valid_v1(uuid, uuid, text, uuid, uuid, uuid, uuid, uuid, text, uuid, text, text, uuid, uuid, numeric, numeric, numeric, integer)",
-          "sha256": "a82e6d87cb4949491d0fef8ac80528d08cbe6021f64585760d992dbba78514a4"
+          "sha256": "00a3bc630620f724d52f1bc68458298d2dfa116a41ac7555e93fd2302359f470"
         },
         {
           "identity": "private.creator_premium_image_is_ready_v1(uuid)",
-          "sha256": "427190dc81c9e26d8e2cfc054b48a1977ed267896437b20cdf9c0d7ac1c05a81"
+          "sha256": "4e077faa3ba0f74b922b9a71e258d57ae253cd021c431a44fd3348eac5093a5e"
         },
         {
           "identity": "private.creator_premium_internal_finance_authority_v1()",
-          "sha256": "bd8ea70d9ce77208e905844eb352ca5ad5398cad98d3e3360be595b7f9786669"
+          "sha256": "3812a50fb02105892686ea36a8bb78d987e8fa8bba9928a2dd307e8cf5c2e7ca"
         },
         {
           "identity": "private.creator_premium_pair_is_unblocked_v1(uuid, uuid)",
-          "sha256": "38166b781b64e2f20a57b853be56aa9c4221de013c257798fa854b173daf9532"
+          "sha256": "ae7d43a60962e10666f34d5849fc00f07f517f84944b00f14f0b816ba31dedbb"
         },
         {
           "identity": "private.creator_premium_period_binding_is_valid_v1(uuid)",
-          "sha256": "d5630e1d68a8eb0c824a3ea5ebd4f021c17afb73c3e22d78ba47f56989916ea7"
+          "sha256": "e577d131a8c4e217455aa6e7aea500d413172e801f89f5b8ede925696223a477"
         },
         {
           "identity": "private.creator_premium_purchase_binding_is_valid_v1(uuid)",
-          "sha256": "c48a5acc4d8292fedf7348f9142ceb1ac9711cd5449d0d7b657ddcd83ae83363"
+          "sha256": "ae0dff3f76b25589aca7427a6d1df9195286927d0a9370540886feb1a8ba66e7"
         },
         {
           "identity": "private.creator_premium_request_fingerprint_v1(text, uuid, uuid, text)",
-          "sha256": "696a8fe5e87e6ed0ec01ad166dfbe7aeb49fdbf3fb1e1b66bee19c8022e25736"
+          "sha256": "2fd0ef7392c8db9a773e4787eb421286b4ea787d90730e3611c3dc8faf77281f"
         },
         {
           "identity": "private.creator_premium_subscription_period_fact_is_valid_f2_v1(uuid)",
@@ -146,39 +150,39 @@
         },
         {
           "identity": "private.creator_premium_teaser_url_v1(uuid)",
-          "sha256": "6d9154062df4d3c58ccf9ae477bbc259bfcdc282f72726fecb0c8f8051e58b0e"
+          "sha256": "ea044b5350492a7598b4d4628aa9a13fbd48be645dc4bcc69f423563db6439d7"
         },
         {
           "identity": "private.creator_premium_video_is_ready_v1(uuid)",
-          "sha256": "dee401d23f1d35010fe738adcb0a6ed0101f5124a36073af2bf7a8a182c58ec8"
+          "sha256": "88a2b1e4bee6f778f8c17c53141a403c87f378404d442e1b96e07f646a34453c"
         },
         {
           "identity": "private.current_user_is_creator_exclusive_age_eligible()",
-          "sha256": "591c8d110eeb481dd9a07be2f96ea077436e606367889561d9df84d7cea5ca9d"
+          "sha256": "dc925255dd5da3ce47e5145e71f1df421a563435da77ec68e78bf63cb531be16"
         },
         {
           "identity": "private.guard_creator_premium_offer_financial_identity_v1()",
-          "sha256": "438d30bab38f1a3b298e3067146ca5457b7ec1a62685c8dc572f420caaf1697b"
+          "sha256": "5b8667581373724e28bf0ff153edae0ce36100892e92f9b6e75ebe5b94d142aa"
         },
         {
           "identity": "private.guard_creator_premium_period_snapshot_v1()",
-          "sha256": "e2c7e9d627b3046b87871465aff7105f41c5c90f6eaac0bd7fc05d1819e5d0dd"
+          "sha256": "899a854cf67194e2e71ace2597118bb8de5707d880b6d9d06dfd4bd22079c2ea"
         },
         {
           "identity": "private.guard_creator_premium_plan_financial_identity_v1()",
-          "sha256": "158e50dd2f03d6c936179c6d8c421b12ea71fca375533ca0a45b9b06ab9f1698"
+          "sha256": "32f83d2550b1cf53d2a8611a67b4ad8102777745b89311494d2356bc3729065d"
         },
         {
           "identity": "private.guard_creator_premium_purchase_snapshot_v1()",
-          "sha256": "d5df76688e9909f0232b6d9b243b7ca44fc7f268c1170e4712a6e16cc8b46329"
+          "sha256": "6dc9b14914fa3465f9477b9f41e8042b90fde3bbea3c9b547199b3a00802efc5"
         },
         {
           "identity": "private.post_creator_premium_charge_v1(uuid, uuid, text, text, uuid, uuid, numeric, integer)",
-          "sha256": "19c39215186619a7df5119d121a665e56874d4fb014e7a1951280d25b2721f3f"
+          "sha256": "991586708b4c7e1670696ca504fe33b6357c6c377a95a60eeb1d2d246b99f23d"
         },
         {
           "identity": "private.post_creator_premium_refund_v1(uuid, uuid, uuid, uuid, uuid, text, text, uuid, uuid, numeric, numeric, numeric)",
-          "sha256": "0de24aab7b852da70eae850fac141b4807252ead3a348134704dbd05cc01c457"
+          "sha256": "5783d20324c331846a7229463fbaa08d9f43f26c7995ce2c3be5b71145926276"
         },
         {
           "identity": "private.resolve_creator_premium_entitlement_v1(uuid)",
@@ -186,27 +190,27 @@
         },
         {
           "identity": "private.resolve_creator_premium_platform_account_v1()",
-          "sha256": "7f6ccb488d9c816187181d326898528f8398c5361f66ce99f87e9b5734475cbc"
+          "sha256": "cb75a8da432b3d23f26bea63d5a3932000123d0439a33648ba0155fda1048cef"
         },
         {
           "identity": "private.validate_creator_premium_refund_reason_v1(text)",
-          "sha256": "e293f1d1df20f7463da9550fa6a5c30c85c3f0c94929bd92974ba126be297d99"
+          "sha256": "cfe1763ddc188de08e37d3c3e6275c2c22804295c5d05e807bcd9c9c5bbadd1e"
         },
         {
           "identity": "public.admin_refund_creator_premium_purchase_v1(uuid, uuid, text)",
-          "sha256": "1f8bc804ca3f929d358489bf13b96fc8feed6e3da9eba96aec3841b407933faa"
+          "sha256": "64954838c09cd480caa0ae8efa35b1c58a2338814ead4fccfe472dcd98c19813"
         },
         {
           "identity": "public.admin_refund_creator_premium_subscription_period_v1(uuid, uuid, text)",
-          "sha256": "38274285aa5bf96b5c1890467d89fd9a6a5e3593647a4b04505838a97e8e36c7"
+          "sha256": "002d56366744402abf529c54a0f9689148729ce95a7224075f48b5afe8aaf0d1"
         },
         {
           "identity": "public.cancel_creator_premium_subscription_v1(uuid, uuid, uuid)",
-          "sha256": "7f18db2956355762a411f8a16d9e120e774d3dbde7c2d79e0bd96e9950f47536"
+          "sha256": "c83a8d0aecb203bec3dd76c9d9469dd45ced06932f58a49b82f039cc32850846"
         },
         {
           "identity": "public.get_admin_creator_premium_refund_candidates_v1(uuid)",
-          "sha256": "694bc670c213f1d9bf742107f3ab749905b1feee2f29da5738283fbf99eea29d"
+          "sha256": "ec098d1a26bc02f64172af73676303e67d07088015eccb25346a59cae2fd3c78"
         },
         {
           "identity": "public.get_creator_premium_commerce_v1(uuid)",
@@ -222,7 +226,7 @@
         },
         {
           "identity": "public.get_my_creator_premium_subscriptions_v1(timestamp with time zone, uuid, integer)",
-          "sha256": "c57f97f30358be91558ac7de75b437f6cb68db1ce68ebda1c733833e187690e0"
+          "sha256": "8efe4de0fda85eac90d12de757f1747bec1a22b2d08938557edc00ac5846615d"
         },
         {
           "identity": "public.purchase_creator_premium_content_v1(uuid, uuid, uuid)",
@@ -230,7 +234,7 @@
         },
         {
           "identity": "public.refund_creator_premium_purchase_v1(uuid, uuid, text)",
-          "sha256": "2056a2622a6d6a7cf28b2ddd84da39e8ce09ec15a19db1017c232e3c78f60f73"
+          "sha256": "a445e89e414321fef5300113fac0b9d8417fcbeed87162300a914ff56b6abcba"
         },
         {
           "identity": "public.refund_creator_premium_subscription_period_v1(uuid, uuid, text)",
@@ -297,15 +301,15 @@
         },
         {
           "identity": "private.calculate_creator_premium_split_v1(numeric, integer)",
-          "sha256": "da87dcf5133c3dbf8b99278e75b1d20225fb94f07d794f8e0716ac1a5dc744e2"
+          "sha256": "00226a2bac4b8fadcd2a3f6a75ae9f197458e0abc6abfe0217ea46e213a84be1"
         },
         {
           "identity": "private.creator_premium_actor_is_age_eligible_v1(uuid)",
-          "sha256": "155b5ae7ffe79541c7e95f78ee5ffd443dfe98df455abde45f5a58f94c6e8b1d"
+          "sha256": "19dde699d3d4d4973d084ca6e96b523b2cf592e102907d4d2a24a1fd3db40031"
         },
         {
           "identity": "private.creator_premium_actor_is_operational_v1(uuid)",
-          "sha256": "09ac3d4eaa285dfed19022893a212c210531606cc7d3e5ad97ef3a2b0e1410bb"
+          "sha256": "9aea7bb254e2119360e45576bed9aec0396d8c7519fcff2f2236a664bb1ea5f1"
         },
         {
           "identity": "private.creator_premium_authorization_binding_f3_v1(uuid, text, uuid, uuid, uuid, uuid, numeric, integer, uuid, uuid, uuid)",
@@ -320,24 +324,28 @@
           "sha256": "6b53511fc56da432582678e8185e717b429352bd450b36fbc5c70ca3136b5715"
         },
         {
+          "identity": "private.creator_premium_content_has_financial_history(uuid)",
+          "sha256": "902c03100dea3ff1f70a2f367231d74bdad6570b3a0f179dccdfb41f15e1d3ac"
+        },
+        {
           "identity": "private.creator_premium_finance_consumption_f3_v1(uuid)",
           "sha256": "8b032450f83617c67e9f408fa8428a52b20b35c7c94c09c7508e78e31826bd48"
         },
         {
           "identity": "private.creator_premium_financial_fact_is_valid_v1(uuid, uuid, text, uuid, uuid, uuid, uuid, uuid, text, uuid, text, text, uuid, uuid, numeric, numeric, numeric, integer)",
-          "sha256": "a82e6d87cb4949491d0fef8ac80528d08cbe6021f64585760d992dbba78514a4"
+          "sha256": "00a3bc630620f724d52f1bc68458298d2dfa116a41ac7555e93fd2302359f470"
         },
         {
           "identity": "private.creator_premium_image_is_ready_v1(uuid)",
-          "sha256": "427190dc81c9e26d8e2cfc054b48a1977ed267896437b20cdf9c0d7ac1c05a81"
+          "sha256": "4e077faa3ba0f74b922b9a71e258d57ae253cd021c431a44fd3348eac5093a5e"
         },
         {
           "identity": "private.creator_premium_internal_finance_authority_v1()",
-          "sha256": "bd8ea70d9ce77208e905844eb352ca5ad5398cad98d3e3360be595b7f9786669"
+          "sha256": "3812a50fb02105892686ea36a8bb78d987e8fa8bba9928a2dd307e8cf5c2e7ca"
         },
         {
           "identity": "private.creator_premium_pair_is_unblocked_v1(uuid, uuid)",
-          "sha256": "38166b781b64e2f20a57b853be56aa9c4221de013c257798fa854b173daf9532"
+          "sha256": "ae7d43a60962e10666f34d5849fc00f07f517f84944b00f14f0b816ba31dedbb"
         },
         {
           "identity": "private.creator_premium_period_binding_is_valid_v1(uuid)",
@@ -349,7 +357,7 @@
         },
         {
           "identity": "private.creator_premium_request_fingerprint_v1(text, uuid, uuid, text)",
-          "sha256": "696a8fe5e87e6ed0ec01ad166dfbe7aeb49fdbf3fb1e1b66bee19c8022e25736"
+          "sha256": "2fd0ef7392c8db9a773e4787eb421286b4ea787d90730e3611c3dc8faf77281f"
         },
         {
           "identity": "private.creator_premium_subscription_period_fact_is_valid_f2_v1(uuid)",
@@ -361,15 +369,15 @@
         },
         {
           "identity": "private.creator_premium_teaser_url_v1(uuid)",
-          "sha256": "6d9154062df4d3c58ccf9ae477bbc259bfcdc282f72726fecb0c8f8051e58b0e"
+          "sha256": "ea044b5350492a7598b4d4628aa9a13fbd48be645dc4bcc69f423563db6439d7"
         },
         {
           "identity": "private.creator_premium_video_is_ready_v1(uuid)",
-          "sha256": "dee401d23f1d35010fe738adcb0a6ed0101f5124a36073af2bf7a8a182c58ec8"
+          "sha256": "88a2b1e4bee6f778f8c17c53141a403c87f378404d442e1b96e07f646a34453c"
         },
         {
           "identity": "private.current_user_is_creator_exclusive_age_eligible()",
-          "sha256": "591c8d110eeb481dd9a07be2f96ea077436e606367889561d9df84d7cea5ca9d"
+          "sha256": "dc925255dd5da3ce47e5145e71f1df421a563435da77ec68e78bf63cb531be16"
         },
         {
           "identity": "private.guard_creator_premium_finance_authorization_f3_v1()",
@@ -377,7 +385,7 @@
         },
         {
           "identity": "private.guard_creator_premium_offer_financial_identity_v1()",
-          "sha256": "438d30bab38f1a3b298e3067146ca5457b7ec1a62685c8dc572f420caaf1697b"
+          "sha256": "5b8667581373724e28bf0ff153edae0ce36100892e92f9b6e75ebe5b94d142aa"
         },
         {
           "identity": "private.guard_creator_premium_period_snapshot_v1()",
@@ -385,7 +393,7 @@
         },
         {
           "identity": "private.guard_creator_premium_plan_financial_identity_v1()",
-          "sha256": "158e50dd2f03d6c936179c6d8c421b12ea71fca375533ca0a45b9b06ab9f1698"
+          "sha256": "32f83d2550b1cf53d2a8611a67b4ad8102777745b89311494d2356bc3729065d"
         },
         {
           "identity": "private.guard_creator_premium_purchase_snapshot_v1()",
@@ -397,11 +405,11 @@
         },
         {
           "identity": "private.post_creator_premium_charge_v1(uuid, uuid, text, text, uuid, uuid, numeric, integer)",
-          "sha256": "19c39215186619a7df5119d121a665e56874d4fb014e7a1951280d25b2721f3f"
+          "sha256": "991586708b4c7e1670696ca504fe33b6357c6c377a95a60eeb1d2d246b99f23d"
         },
         {
           "identity": "private.post_creator_premium_refund_v1(uuid, uuid, uuid, uuid, uuid, text, text, uuid, uuid, numeric, numeric, numeric)",
-          "sha256": "0de24aab7b852da70eae850fac141b4807252ead3a348134704dbd05cc01c457"
+          "sha256": "5783d20324c331846a7229463fbaa08d9f43f26c7995ce2c3be5b71145926276"
         },
         {
           "identity": "private.resolve_creator_premium_entitlement_v1(uuid)",
@@ -409,23 +417,23 @@
         },
         {
           "identity": "private.resolve_creator_premium_platform_account_v1()",
-          "sha256": "7f6ccb488d9c816187181d326898528f8398c5361f66ce99f87e9b5734475cbc"
+          "sha256": "cb75a8da432b3d23f26bea63d5a3932000123d0439a33648ba0155fda1048cef"
         },
         {
           "identity": "private.validate_creator_premium_refund_reason_v1(text)",
-          "sha256": "e293f1d1df20f7463da9550fa6a5c30c85c3f0c94929bd92974ba126be297d99"
+          "sha256": "cfe1763ddc188de08e37d3c3e6275c2c22804295c5d05e807bcd9c9c5bbadd1e"
         },
         {
           "identity": "public.admin_refund_creator_premium_purchase_v1(uuid, uuid, text)",
-          "sha256": "1f8bc804ca3f929d358489bf13b96fc8feed6e3da9eba96aec3841b407933faa"
+          "sha256": "64954838c09cd480caa0ae8efa35b1c58a2338814ead4fccfe472dcd98c19813"
         },
         {
           "identity": "public.admin_refund_creator_premium_subscription_period_v1(uuid, uuid, text)",
-          "sha256": "38274285aa5bf96b5c1890467d89fd9a6a5e3593647a4b04505838a97e8e36c7"
+          "sha256": "002d56366744402abf529c54a0f9689148729ce95a7224075f48b5afe8aaf0d1"
         },
         {
           "identity": "public.cancel_creator_premium_subscription_v1(uuid, uuid, uuid)",
-          "sha256": "7f18db2956355762a411f8a16d9e120e774d3dbde7c2d79e0bd96e9950f47536"
+          "sha256": "c83a8d0aecb203bec3dd76c9d9469dd45ced06932f58a49b82f039cc32850846"
         },
         {
           "identity": "public.get_admin_creator_premium_finance_activation_v1()",
@@ -433,7 +441,7 @@
         },
         {
           "identity": "public.get_admin_creator_premium_refund_candidates_v1(uuid)",
-          "sha256": "694bc670c213f1d9bf742107f3ab749905b1feee2f29da5738283fbf99eea29d"
+          "sha256": "ec098d1a26bc02f64172af73676303e67d07088015eccb25346a59cae2fd3c78"
         },
         {
           "identity": "public.get_creator_premium_commerce_v1(uuid)",

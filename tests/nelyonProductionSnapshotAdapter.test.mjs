@@ -7,9 +7,67 @@ import test from 'node:test';
 const adapterUrl = new URL('../scripts/nelyon-production-snapshot-adapter.mjs', import.meta.url);
 const policy = JSON.parse(readFileSync(new URL('../.github/nelyon-production-release-policy.json', import.meta.url), 'utf8'));
 // Authority hashes bind the canonical Git LF bytes, independent of Windows checkout conversion.
-const f3MigrationSql = () => execFileSync('git', [
-  'show', 'HEAD:supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql',
-], { cwd: new URL('../', import.meta.url), encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+const gitSql = path => execFileSync('git', ['show', `HEAD:${path}`], {
+  cwd: new URL('../', import.meta.url), encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
+});
+const f3MigrationSql = () => gitSql(
+  'supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql',
+);
+const preF3CreatorPremiumMigrations = [
+  '20261007035032_creator_premium_b1_canonical_foundation.sql',
+  '20261007135515_creator_premium_b2_private_image_media.sql',
+  '20261008213002_creator_premium_b3_signed_stream_playback.sql',
+  '20261009001706_creator_premium_b4_atomic_finance_authority.sql',
+  '20261009010509_creator_premium_b4_c1_exact_fee_snapshot_binding.sql',
+  '20261009021414_creator_premium_b5_creator_management_ux.sql',
+  '20261010053524_creator_premium_b7_full_functional_commercial_completion.sql',
+  '20261017193000_creator_premium_c1_submission_cancellation.sql',
+  '20261018050000_creator_premium_c3_visual_retry_producer.sql',
+  '20261018120000_creator_premium_content_safety_p1_policy_gate.sql',
+  '20261018170000_creator_premium_content_safety_p2_evidence_runtime.sql',
+  '20261018200000_creator_premium_content_safety_p2_activation.sql',
+  '20261018211327_creator_premium_qa_final_f1.sql',
+  '20261019023431_creator_premium_f1_c4_final_recovery.sql',
+  '20261019170853_creator_premium_f1_c6_submit_unavailable_mapping_recovery.sql',
+  '20261019201914_creator_premium_content_safety_p3_contextual_violence_policy_v2.sql',
+  '20261020000758_content_safety_p3_c1_admin_alerts_sql_recovery.sql',
+  '20261020030515_creator_premium_p3_c2_admin_restriction_recovery.sql',
+  '20261020203718_creator_premium_p3_c3_safety_decision_recovery.sql',
+  '20261023141630_creator_premium_media_lifecycle_c1.sql',
+  '20261024173500_creator_premium_f2_complete_monetization.sql',
+];
+const preB7AdminFixture = `
+  insert into private.admin_roles(
+    role_code,display_name,description,is_assignable,is_root,is_exclusive
+  ) values(
+    'MODERATOR','Moderator','Cross-domain safety and moderation authority.',
+    true,false,false
+  ) on conflict(role_code) do nothing;
+  insert into private.admin_capabilities(
+    capability_code,domain,effect,description,is_sensitive
+  ) values
+    ('content.items.moderate','content','write','Moderate content.',true),
+    ('finance.ledger.read','finance','read','Read immutable ledger projections.',true)
+  on conflict(capability_code) do nothing;
+  insert into private.admin_role_capabilities(role_code,capability_code)
+  values
+    ('SUPER_ADMIN','content.items.moderate'),
+    ('SUPER_ADMIN','finance.ledger.read'),
+    ('MODERATOR','content.items.moderate')
+  on conflict(role_code,capability_code) do nothing;
+`;
+
+function createPreF3GovernanceDatabase({ docker, sql, db }) {
+  docker(['createdb','-U','supabase_admin','-T','algo6_final_compile_a2',db]);
+  for (const migration of preF3CreatorPremiumMigrations) {
+    if (migration === '20261010053524_creator_premium_b7_full_functional_commercial_completion.sql') {
+      sql(preB7AdminFixture);
+    }
+    const migrationSql = gitSql(`supabase/migrations/${migration}`);
+    assert.equal(migrationSql.includes('\r'), false, `${migration} must use canonical Git LF bytes`);
+    sql(migrationSql);
+  }
+}
 
 async function loadAdapter() {
   return import(`${adapterUrl.href}?test=${Date.now()}-${Math.random()}`);
@@ -25,7 +83,7 @@ test('F3 disposable catalog verifies exact authority and detects real PostgreSQL
   const sql = input => execFileSync('docker',['exec','-i','nelyon-ads-v2-d-compile','psql','-X','-q','-v','ON_ERROR_STOP=1','-U','supabase_admin','-d',db,'-At'],
     {input,encoding:'utf8',maxBuffer:8*1024*1024,stdio:['pipe','pipe','pipe']});
   try {
-    docker(['createdb','-U','supabase_admin','-T','premium_f2_governance_20261024',db]);
+    createPreF3GovernanceDatabase({ docker, sql, db });
     const raw = JSON.parse(sql(adapter.FINANCE_AUTHORITY_SQL));
     sql([...raw.relations.filter(r=>r.authority.owner==='supabase_admin').map(r=>`alter table ${r.identity} owner to postgres;`),
       ...raw.functions.filter(r=>r.authority.owner==='supabase_admin').map(r=>`alter function ${r.identity} owner to postgres;`)].join('\n'));
@@ -159,7 +217,7 @@ test('F3 fact envelopes execute as the Management API read-only role before and 
     assert.equal(adapter.validateFinanceFacts(facts, phase), facts);
   };
   try {
-    docker(['createdb','-U','supabase_admin','-T','premium_f2_governance_20261024',db]);
+    createPreF3GovernanceDatabase({ docker, sql, db });
     assert.deepEqual(bindingHelperPermissions(), { purchase: false, period: false });
     readFacts(adapter.selectFinanceSnapshotQueries(inventory([])).facts, 'legacy');
     sql(f3MigrationSql());

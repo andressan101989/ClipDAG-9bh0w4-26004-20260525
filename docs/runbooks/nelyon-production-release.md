@@ -115,10 +115,15 @@ $env:RUN_F3_GOVERNANCE_LOCAL='1'
 node --test tests/nelyonProductionReleaseGate.test.mjs tests/nelyonProductionSnapshotAdapter.test.mjs
 ```
 
-The opt-in local catalog test clones only the existing
-`premium_f2_governance_20261024` fixture in `nelyon-ads-v2-d-compile`, applies the
-unchanged F3 migration and tests rolled-back SQL security mutations. It drops
-only its generated `premium_f3_governance_<pid>_<time>` database in `finally`.
+The opt-in local catalog test creates an isolated database from the stable
+`algo6_final_compile_a2` base and replays the complete 21-migration Creator
+Premium chain from B1 through F2. Every migration is loaded from its exact Git
+blob with LF line endings rather than from the Windows checkout or a mutable
+phase fixture. It then applies the unchanged F3 migration and tests rolled-back
+SQL security mutations. The replay is expected to reproduce the live pre-F3
+catalog exactly, including the F1 financial-history helper still used by draft
+deletion. The test drops only its generated `premium_f3_governance_<pid>_<time>`
+database in `finally`.
 
 ## Single-owner security model
 
