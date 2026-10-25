@@ -865,7 +865,7 @@ function parseSubscriptionsPage(value, blockers) {
         || plan.relationship.access_state !== (period === null ? null : period.access_state)
         || plan.subscription_available
         || plan.subscription_blocker !== (
-          accessActive
+          accessActive && blockers === V2_BLOCKERS
             ? 'creator_premium_already_subscribed'
             : 'creator_premium_renewal_required'
         )
