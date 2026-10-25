@@ -10,7 +10,7 @@ agree.
 
 `finance_authority_transition` authorizes only the exact foundation delta from
 baseline `238e987933c7198400534121e61fb3d2750ba5ba`. The immutable reviewed source
-`a581c2dcfbabdfeed3a80e866b9d69a75b3f1d4e` is an audit reference for the exact
+`aea1a8772ea0ca9c0ede94a9b1f103eaa200dccc` is an audit reference for the exact
 productive blobs, rather than a required ancestor or available Git object after
 GitHub Rebase and merge. The final approved release SHA must preserve the verified
 chain `238e987933c7198400534121e61fb3d2750ba5ba` → stable pre-F3 protected-main
@@ -18,26 +18,36 @@ integration base `2d8bf717a011f3afe54af1df5cd0f991f94811f3` → approved SHA.
 It is supplied by the request, must equal fetched protected `main`, and is bound
 into the manifest/artifact with the protected policy digest and compiler/adapter
 bytes. There is no self-referential future commit pin. Rewritten commit identities
-are accepted only when the exact reviewed migration, Edge and config blobs and
-the entire productive diff from the verified baseline match the protected policy.
+are accepted only when the exact reviewed migration, Edge, config, finance
+parser and client blobs and the entire productive diff from the verified
+baseline match the protected policy.
 
 The entire productive closure is one new migration,
 `20261025011000_creator_premium_f3_bounded_financial_activation.sql` (Git blob
-`840497036e4ff8a0dbd99888de47337dcaea98ee`, SHA-256
-`a217445d138aeb3efe2a8d734ef28089c4f0f0f69378c05b392d1056fe772d53`), and the
-changed existing `bdag-ledger` source (bundle SHA-256
-`8a07c5887d4550e58f554530bcca3dcd84293c074854456fb1c666ad7a73f977`).
+`8d3e57ccf78de470c951fa4f43d2aeb6fd2233da`, SHA-256
+`b72c9d74368b4bcf54d120d76273154367922aaa4ff1876f828715b7cda54dc6`), and the
+changed existing `bdag-ledger` source (Git blob
+`d13817091912dc1d9f80d143f95b8676ce26162a`, bundle SHA-256
+`79e79bd31a62920401b8d55d48e1754ce58149294c8960c7995a070078b796f9`).
 The committed config blob is unchanged; config is not a productive resource in
 this release. Additional migrations, functions, shared files or config changes,
 missing/extra attestations, wrong ancestors, altered bytes and transition reuse
 after baseline promotion fail closed. `bdag-ledger` is already managed; no
 second function is enrolled. Risk remains HIGH.
 
-This reviewed source includes the v1 subscription-history compatibility fix.
-The static private subscriptions projection authority digest is
-`2467cb611384255f07b87e46a6eedb3de22a7d70d0d0324bd4e02d6701e4fd33`.
-The earlier migration/projection bytes fail closed; public RPC definition/grant
-attestations, relation authority and the existing Edge bundle are unchanged.
+This reviewed source records that the frozen F2 parser at integration base
+`2d8bf717a011f3afe54af1df5cd0f991f94811f3` cannot represent a truthful active
+subscription. Its exact parser blob is
+`40e7fd7809ca61570b9c8c00d438f5e83021be45` (SHA-256
+`e55a1c494a8055af1f0990bc096e043aa3c70de693fa85945c161bc6a61fdcc2`).
+F3 therefore requires the exact `creator-premium-f3-v2` client contract before
+purchase or subscription can reach the canonical RPC. The reviewed parser blob
+is `591a7d91de580c473af8812954ab806e1d4e01c7` (SHA-256
+`422d20fdfde1d525d6fd34585257355f129cca9ac3a88ad6f351d2d8a2c38f7a`) and the
+reviewed ledger client blob is `7c169e05d5d23bcb5e3834abfd559cd098602db1`
+(SHA-256 `bb3978856789dae33677592b4cd5c0b7f60030b9113cb3bc32032f1501f0f328`).
+Earlier migration, Edge, parser or client bytes fail closed. This is an upgrade
+boundary, not installed-F2 compatibility and not permission to activate Finance.
 
 The separate versioned `finance_authority` evidence attests relation columns,
 constraints and validation, RESTRICT FKs, indexes and validity, enabled trigger
@@ -54,8 +64,10 @@ foundation guards must remain exactly installed:
 `creator_premium_finance_auth_f3_foundation_insert_guard`. Both v1 read
 projections have exact predecessor/successor attestations; the two v2 reads and
 separate Admin read are authenticated-only. Purchase has exactly four UUID
-arguments; purchase/subscribe/refunds remain service-only and private helpers
-remain owner-only. The existing authenticated RPC verifier remains strict.
+arguments plus the client-contract text, while subscribe has three UUID
+arguments plus the same text. Purchase/subscribe/refunds remain service-only,
+their predecessor overloads are absent, and private helpers remain owner-only.
+The existing authenticated RPC verifier remains strict.
 
 The adapter selects legacy/F3 fact SQL from the validated migration inventory
 before SQL parsing, so the legacy query never references the absent

@@ -11,17 +11,36 @@ export const F3_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
   "id": "creator-premium-f3-foundation-v1",
   "phase": "foundation_only",
   "baseline_sha": "238e987933c7198400534121e61fb3d2750ba5ba",
-  "reviewed_source_sha": "a581c2dcfbabdfeed3a80e866b9d69a75b3f1d4e",
+  "reviewed_source_sha": "aea1a8772ea0ca9c0ede94a9b1f103eaa200dccc",
   "integration_base_sha": "2d8bf717a011f3afe54af1df5cd0f991f94811f3",
   "approved_sha_ancestry": "verified_integration_base",
   "migration_path": "supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql",
-  "migration_blob": "840497036e4ff8a0dbd99888de47337dcaea98ee",
-  "migration_sha256": "a217445d138aeb3efe2a8d734ef28089c4f0f0f69378c05b392d1056fe772d53",
+  "migration_blob": "8d3e57ccf78de470c951fa4f43d2aeb6fd2233da",
+  "migration_sha256": "b72c9d74368b4bcf54d120d76273154367922aaa4ff1876f828715b7cda54dc6",
   "function": "bdag-ledger",
   "function_path": "supabase/functions/bdag-ledger/index.ts",
-  "function_blob": "4304dca929acf958667cc182218f7c91810fb808",
-  "function_source_sha256": "8a07c5887d4550e58f554530bcca3dcd84293c074854456fb1c666ad7a73f977",
+  "function_blob": "d13817091912dc1d9f80d143f95b8676ce26162a",
+  "function_source_sha256": "79e79bd31a62920401b8d55d48e1754ce58149294c8960c7995a070078b796f9",
   "config_blob": "7c3ff52db72f9983aa4128f5c2e7e686bba31d5d",
+  "client_contract": "creator-premium-f3-v2",
+  "client_sources": [
+    {
+      "path": "services/creatorPremiumFinanceContracts.mjs",
+      "blob": "591a7d91de580c473af8812954ab806e1d4e01c7",
+      "sha256": "422d20fdfde1d525d6fd34585257355f129cca9ac3a88ad6f351d2d8a2c38f7a"
+    },
+    {
+      "path": "services/financial/ledgerClient.ts",
+      "blob": "7c169e05d5d23bcb5e3834abfd559cd098602db1",
+      "sha256": "bb3978856789dae33677592b4cd5c0b7f60030b9113cb3bc32032f1501f0f328"
+    }
+  ],
+  "frozen_f2_parser": {
+    "ref": "2d8bf717a011f3afe54af1df5cd0f991f94811f3",
+    "path": "services/creatorPremiumFinanceContracts.mjs",
+    "blob": "40e7fd7809ca61570b9c8c00d438f5e83021be45",
+    "sha256": "e55a1c494a8055af1f0990bc096e043aa3c70de693fa85945c161bc6a61fdcc2"
+  },
   "productive_paths": [
     "supabase/functions/bdag-ledger/index.ts",
     "supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql"
@@ -459,7 +478,7 @@ export function validatePolicy(policy) {
   }
   if (policy.schema_version !== 2) deny('INVALID_POLICY_SCHEMA', 'unsupported policy schema');
   if (canonicalJson(policy.finance_authority_transition) !== canonicalJson(F3_FINANCE_AUTHORITY_TRANSITION)
-    || sha256Hex(canonicalJson(policy.finance_authority)) !== 'e9a4fd1f6a2f6b0399d4e488a98cf0af6fbb53cf9eb87ebbf0dfc0fc6b6fb30b'
+    || sha256Hex(canonicalJson(policy.finance_authority)) !== '59b45c55766c82a6e90ca526fc00e9759cd3be9560fbe60759c552836ec9d78c'
     || sha256Hex(canonicalJson(policy.finance_security_advisor)) !== '47fba40bc5736d8da22cda8409ef39538ea3dcc5187b17ce9d898544d2c815a3') {
     deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'F3 foundation authority must match the exact audited contract');
   }
@@ -970,6 +989,20 @@ export function attestFinanceAuthorityTransition({ policy, approvedSha, changes,
       if (gitText(runGit, ['rev-parse', `${approvedSha}:${path}`], cwd) !== blob
         || fileTypeAtCommit(runGit, cwd, approvedSha, path) !== 'file') deny(code, 'foundation committed blob/path differs');
     }
+    for (const source of t.client_sources) {
+      if (gitText(runGit, ['rev-parse', `${approvedSha}:${source.path}`], cwd) !== source.blob
+        || fileTypeAtCommit(runGit, cwd, approvedSha, source.path) !== 'file'
+        || sha256Hex(runGit(['show', `${approvedSha}:${source.path}`], { cwd })) !== source.sha256) {
+        deny(code, 'foundation client contract source differs');
+      }
+    }
+    if (t.frozen_f2_parser.ref !== t.integration_base_sha
+      || gitText(runGit, ['rev-parse', `${t.frozen_f2_parser.ref}:${t.frozen_f2_parser.path}`], cwd) !== t.frozen_f2_parser.blob
+      || fileTypeAtCommit(runGit, cwd, t.frozen_f2_parser.ref, t.frozen_f2_parser.path) !== 'file'
+      || sha256Hex(runGit(['show', `${t.frozen_f2_parser.ref}:${t.frozen_f2_parser.path}`], { cwd }))
+        !== t.frozen_f2_parser.sha256) {
+      deny(code, 'frozen F2 parser evidence differs');
+    }
     const migrationBytes = runGit(['show', `${approvedSha}:${t.migration_path}`], { cwd });
     if (sha256Hex(migrationBytes) !== t.migration_sha256) deny(code, 'foundation migration bytes differ');
     const actualChanges = parseNameStatusZ(runGit(['diff', '--name-status', '-z', t.baseline_sha, approvedSha, '--', 'supabase/'], { cwd }));
@@ -985,7 +1018,8 @@ export function attestFinanceAuthorityTransition({ policy, approvedSha, changes,
     reviewed_source_sha: t.reviewed_source_sha, integration_base_sha: t.integration_base_sha,
     approved_sha: approvedSha, baseline_descendant_verified: true, integration_base_descendant_verified: true,
     migration_blob: t.migration_blob, migration_sha256: t.migration_sha256,
-    function_blob: t.function_blob, function_source_sha256: t.function_source_sha256, config_blob: t.config_blob };
+    function_blob: t.function_blob, function_source_sha256: t.function_source_sha256, config_blob: t.config_blob,
+    client_contract: t.client_contract, client_sources: t.client_sources, frozen_f2_parser: t.frozen_f2_parser };
   return { migrations: migrations.map(item => ({ ...item, blob: t.migration_blob, sha256: t.migration_sha256 })), attestation };
 }
 
@@ -1658,7 +1692,8 @@ export function buildManifest({
       reviewed_source_sha: f3.reviewed_source_sha, integration_base_sha: f3.integration_base_sha,
       approved_sha: request.approvedSha, baseline_descendant_verified: true, integration_base_descendant_verified: true,
       migration_blob: f3.migration_blob, migration_sha256: f3.migration_sha256,
-      function_blob: f3.function_blob, function_source_sha256: f3.function_source_sha256, config_blob: f3.config_blob };
+      function_blob: f3.function_blob, function_source_sha256: f3.function_source_sha256, config_blob: f3.config_blob,
+      client_contract: f3.client_contract, client_sources: f3.client_sources, frozen_f2_parser: f3.frozen_f2_parser };
     if (recoveryMode || policy.baseline.sha !== f3.baseline_sha
       || canonicalJson(financeAuthorityTransition ?? null) !== canonicalJson(expected)
       || gitState.approvedSha !== request.approvedSha || gitState.originMainSha !== request.approvedSha

@@ -80,8 +80,9 @@ test('F3 disposable catalog verifies exact authority and detects real PostgreSQL
     end $$;`;
     const projectionDefinition=rawPost.functions.find(row=>row.identity===
       'private.creator_premium_subscriptions_projection_f3_v1(boolean, timestamp with time zone, uuid, integer)').authority.definition;
-    assert.match(projectionDefinition,/item\.access_active and not p_legacy/);
-    const staleProjection=projectionDefinition.replace('item.access_active and not p_legacy','item.access_active');
+    assert.match(projectionDefinition,/case when item\.access_active\s+then/);
+    const staleProjection=projectionDefinition.replace(/case when item\.access_active\s+then/,
+      'case when item.access_active and not p_legacy\n              then');
     assert.notEqual(staleProjection,projectionDefinition);
     const mutations = [
       ['stale pre-compatibility projection',`${staleProjection};`],
@@ -94,14 +95,18 @@ test('F3 disposable catalog verifies exact authority and detects real PostgreSQL
         ${rawPost.relations.find(r=>r.identity==='private.creator_premium_finance_policy').authority.constraints.find(c=>c[0]==='creator_premium_finance_policy_f3_foundation_off_check')[5]} not valid;`],
       ['disabled insert guard','alter table private.creator_premium_finance_authorizations disable trigger creator_premium_finance_auth_f3_foundation_insert_guard;'],
       ['missing insert guard','drop trigger creator_premium_finance_auth_f3_foundation_insert_guard on private.creator_premium_finance_authorizations;'],
+      ['missing client contract check','alter table private.creator_premium_finance_authorizations drop constraint creator_premium_finance_authorizations_client_contract_check;'],
       ['extra old purchase overload',"create function public.purchase_creator_premium_content_v1(uuid,uuid,uuid) returns jsonb language sql as 'select null::jsonb';"],
+      ['extra old subscription overload',"create function public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid) returns jsonb language sql as 'select null::jsonb';"],
       ['extra helper overload',"create function private.lock_creator_premium_finance_f3_v1(uuid) returns jsonb language sql as 'select null::jsonb';"],
-      ['missing canonical overload','drop function public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid);'],
+      ['missing canonical purchase overload','drop function public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid,text);'],
+      ['missing canonical subscription overload','drop function public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid,text);'],
       ['altered owner','alter function private.lock_creator_premium_finance_f3_v1() owner to supabase_admin;'],
       ['altered search path',"alter function private.lock_creator_premium_finance_f3_v1() set search_path='public';"],
       ['client helper grant','grant execute on function private.lock_creator_premium_finance_f3_v1() to authenticated;'],
       ['client eligibility helper grant','grant execute on function private.creator_premium_actor_is_age_eligible_v1(uuid) to authenticated;'],
-      ['service-only RPC grant','grant execute on function public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid) to authenticated;'],
+      ['service-only purchase RPC grant','grant execute on function public.purchase_creator_premium_content_v1(uuid,uuid,uuid,uuid,text) to authenticated;'],
+      ['service-only subscription RPC grant','grant execute on function public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid,text) to authenticated;'],
       ['authorization table grant','grant select on private.creator_premium_finance_authorizations to service_role;'],
       ['disabled RLS','alter table private.creator_premium_finance_authorizations disable row level security;'],
       ['disabled FORCE RLS','alter table private.creator_premium_finance_authorizations no force row level security;'],
@@ -112,9 +117,10 @@ test('F3 disposable catalog verifies exact authority and detects real PostgreSQL
     for(const [label,mutation] of mutations) await t.test(label,()=>{
       const changed=JSON.parse(sql(`begin;${mutation}\n${adapter.FINANCE_AUTHORITY_SQL}\nrollback;`));
       const normalized=adapter.normalizeFinanceAuthority(changed,'f3_foundation');
-      if(label==='stale pre-compatibility projection') assert.equal(normalized.functions.find(row=>row.identity===
+      if(label==='stale pre-compatibility projection') assert.notEqual(normalized.functions.find(row=>row.identity===
         'private.creator_premium_subscriptions_projection_f3_v1(boolean, timestamp with time zone, uuid, integer)').sha256,
-      'aa67c23015d3fd7c597459cef4eb816b25a5b8912329fc6c79b37d2c2b4e8be9');
+      policy.finance_authority.f3_foundation.functions.find(row=>row.identity===
+        'private.creator_premium_subscriptions_projection_f3_v1(boolean, timestamp with time zone, uuid, integer)').sha256);
       assert.throws(()=>adapter.validateFinanceAuthority(normalized,policy,'f3_foundation'),/FINANCE_AUTHORITY/);
     });
     assert.equal(adapter.validateFinanceAuthority(adapter.normalizeFinanceAuthority(JSON.parse(sql(adapter.FINANCE_AUTHORITY_SQL)),'f3_foundation'),policy,'f3_foundation'),true);
@@ -195,7 +201,9 @@ function f3FoundationManifest() {
       reviewed_source_sha: t.reviewed_source_sha, integration_base_sha: t.integration_base_sha,
       approved_sha: request().approvedSha, baseline_descendant_verified: true, integration_base_descendant_verified: true,
       migration_blob: t.migration_blob, migration_sha256: t.migration_sha256,
-      function_blob: t.function_blob, function_source_sha256: t.function_source_sha256, config_blob: t.config_blob },
+      function_blob: t.function_blob, function_source_sha256: t.function_source_sha256, config_blob: t.config_blob,
+      client_contract: t.client_contract, client_sources: t.client_sources,
+      frozen_f2_parser: t.frozen_f2_parser },
   } };
 }
 

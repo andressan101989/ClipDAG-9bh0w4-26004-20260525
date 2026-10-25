@@ -38,17 +38,36 @@
     "id": "creator-premium-f3-foundation-v1",
     "phase": "foundation_only",
     "baseline_sha": "238e987933c7198400534121e61fb3d2750ba5ba",
-    "reviewed_source_sha": "a581c2dcfbabdfeed3a80e866b9d69a75b3f1d4e",
+    "reviewed_source_sha": "aea1a8772ea0ca9c0ede94a9b1f103eaa200dccc",
     "integration_base_sha": "2d8bf717a011f3afe54af1df5cd0f991f94811f3",
     "approved_sha_ancestry": "verified_integration_base",
     "migration_path": "supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql",
-    "migration_blob": "840497036e4ff8a0dbd99888de47337dcaea98ee",
-    "migration_sha256": "a217445d138aeb3efe2a8d734ef28089c4f0f0f69378c05b392d1056fe772d53",
+    "migration_blob": "8d3e57ccf78de470c951fa4f43d2aeb6fd2233da",
+    "migration_sha256": "b72c9d74368b4bcf54d120d76273154367922aaa4ff1876f828715b7cda54dc6",
     "function": "bdag-ledger",
     "function_path": "supabase/functions/bdag-ledger/index.ts",
-    "function_blob": "4304dca929acf958667cc182218f7c91810fb808",
-    "function_source_sha256": "8a07c5887d4550e58f554530bcca3dcd84293c074854456fb1c666ad7a73f977",
+    "function_blob": "d13817091912dc1d9f80d143f95b8676ce26162a",
+    "function_source_sha256": "79e79bd31a62920401b8d55d48e1754ce58149294c8960c7995a070078b796f9",
     "config_blob": "7c3ff52db72f9983aa4128f5c2e7e686bba31d5d",
+    "client_contract": "creator-premium-f3-v2",
+    "client_sources": [
+      {
+        "path": "services/creatorPremiumFinanceContracts.mjs",
+        "blob": "591a7d91de580c473af8812954ab806e1d4e01c7",
+        "sha256": "422d20fdfde1d525d6fd34585257355f129cca9ac3a88ad6f351d2d8a2c38f7a"
+      },
+      {
+        "path": "services/financial/ledgerClient.ts",
+        "blob": "7c169e05d5d23bcb5e3834abfd559cd098602db1",
+        "sha256": "bb3978856789dae33677592b4cd5c0b7f60030b9113cb3bc32032f1501f0f328"
+      }
+    ],
+    "frozen_f2_parser": {
+      "ref": "2d8bf717a011f3afe54af1df5cd0f991f94811f3",
+      "path": "services/creatorPremiumFinanceContracts.mjs",
+      "blob": "40e7fd7809ca61570b9c8c00d438f5e83021be45",
+      "sha256": "e55a1c494a8055af1f0990bc096e043aa3c70de693fa85945c161bc6a61fdcc2"
+    },
     "productive_paths": [
       "supabase/functions/bdag-ledger/index.ts",
       "supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql"
@@ -244,7 +263,7 @@
       "relations": [
         {
           "identity": "private.creator_premium_finance_authorizations",
-          "sha256": "d039bd5057aa8cded53d7e1bf19ab0c98f3163e8243b206838741d7435a86105"
+          "sha256": "05b8fdb713ecd89eb9524684fa4c3725f522533d0cd175342d3422db1ac59490"
         },
         {
           "identity": "private.creator_premium_finance_policy",
@@ -265,8 +284,8 @@
       ],
       "functions": [
         {
-          "identity": "private.admit_creator_premium_charge_f3_v1(text, uuid, uuid, uuid, uuid, numeric)",
-          "sha256": "74c18e663e620c07bbb75d5a37291093b126791496387f693ee644f81373b840"
+          "identity": "private.admit_creator_premium_charge_f3_v1(text, uuid, uuid, uuid, uuid, numeric, text)",
+          "sha256": "e264a8650365ce2948c61ccda89698fb3bfbfae05b096d5455d066de0883bd46"
         },
         {
           "identity": "private.admit_creator_premium_refund_f3_v1(uuid)",
@@ -293,12 +312,12 @@
           "sha256": "04aa7ed868a8a67f5c855ba0bde43c4bb9a3698e78760f48a5fd0016f9eb4dfb"
         },
         {
-          "identity": "private.creator_premium_charge_blocker_f3_v1(text, uuid, uuid, uuid, uuid, numeric)",
-          "sha256": "667bcf981be0ff0026855e04e5db382c3496180395e44f76aeb02ef906e3eda8"
+          "identity": "private.creator_premium_charge_blocker_f3_v1(text, uuid, uuid, uuid, uuid, numeric, text)",
+          "sha256": "9095011ae99a087ed47a461571d220ffc9bec4b2703cd67483b966b85b81ee45"
         },
         {
           "identity": "private.creator_premium_commerce_projection_f3_v1(uuid, boolean)",
-          "sha256": "445718a8f2fdf8bf7997f8cfb73e8bef25d4f19e79d57115b898492d04e91bb2"
+          "sha256": "6b53511fc56da432582678e8185e717b429352bd450b36fbc5c70ca3136b5715"
         },
         {
           "identity": "private.creator_premium_finance_consumption_f3_v1(uuid)",
@@ -338,7 +357,7 @@
         },
         {
           "identity": "private.creator_premium_subscriptions_projection_f3_v1(boolean, timestamp with time zone, uuid, integer)",
-          "sha256": "2467cb611384255f07b87e46a6eedb3de22a7d70d0d0324bd4e02d6701e4fd33"
+          "sha256": "985398065497fd4982c02e02843e75a6357ff0f39b2819532bafb64a0320f345"
         },
         {
           "identity": "private.creator_premium_teaser_url_v1(uuid)",
@@ -441,8 +460,8 @@
           "sha256": "12cc8424cf5f2d35ae87161f29f60463767b5cb16dfdbe0335aaa4bd59229e50"
         },
         {
-          "identity": "public.purchase_creator_premium_content_v1(uuid, uuid, uuid, uuid)",
-          "sha256": "2d01b4052c0555a1440548eddfa17411de5d1d12b5b141332737ea3e7efb2b72"
+          "identity": "public.purchase_creator_premium_content_v1(uuid, uuid, uuid, uuid, text)",
+          "sha256": "a5356ec8708edfa36cde21e38c368bcd7e0e5d4359a80764584af94d30487a43"
         },
         {
           "identity": "public.refund_creator_premium_purchase_v1(uuid, uuid, text)",
@@ -457,8 +476,8 @@
           "sha256": "d56c7a2db9f51fcf31aca4e4dbc1d1369484d2406c881ffa480165c5729f65bd"
         },
         {
-          "identity": "public.subscribe_creator_premium_plan_v1(uuid, uuid, uuid)",
-          "sha256": "696b365a0d634d9377aa07f28f42353f7c81c485751ff8e4f2ebf903f7af81de"
+          "identity": "public.subscribe_creator_premium_plan_v1(uuid, uuid, uuid, text)",
+          "sha256": "59047256200baed5a8e53e80f147c9af333b097a385cad221d5d0c007667eb6a"
         }
       ],
       "schema_sha256": "781c180183bfe0c5d70f2782c2badad779e716539a1ea4cc0bc50966eeacc7be",
