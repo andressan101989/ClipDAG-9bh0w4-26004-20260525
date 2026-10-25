@@ -634,6 +634,43 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
       assert.equal(projection.policy.platform_fee_bps, 0);
       assert.deepEqual(parseCreatorPremiumCommerce(projection, id.content), projection);
     });
+    await scenario('v1 subscription history remains parseable across paid cancellation, disarm and expiry', db => {
+      const subscription = success(db, subscribeSql());
+      const readLegacy = () => JSON.parse(authenticated(db, id.buyer,
+        'select public.get_my_creator_premium_subscriptions_v1(null,null,50)').stdout);
+      const assertLegacy = (status, accessActive, periodAccessState) => {
+        const projection = readLegacy();
+        const item = projection.items.find(candidate => candidate.id === subscription.subscription_id);
+        assert.ok(item, 'own paid relationship disappeared from the v1 history');
+        assert.equal(item.status, status);
+        assert.equal(item.access_active, accessActive);
+        assert.equal(item.period.access_state, periodAccessState);
+        assert.equal(item.plan.subscription_blocker, 'creator_premium_renewal_required');
+        assert.deepEqual(parseCreatorPremiumSubscriptionsPage(projection), projection);
+      };
+
+      assertLegacy('active', true, 'active');
+      success(db, `select public.cancel_creator_premium_subscription_v1('${id.buyer}','${subscription.subscription_id}','${randomUUID()}')`);
+      assertLegacy('cancelled', true, 'active');
+
+      sql(db, `set session_replication_role=replica;
+        update private.creator_premium_finance_policy set purchase_enabled=false,
+          subscription_enabled=false,refunds_enabled=false,platform_fee_bps=0
+          ${hasF3 ? ",activation_mode='off',active_authorization_id=null" : ''} where singleton;
+        set session_replication_role=origin;`);
+      assertLegacy('cancelled', true, 'active');
+
+      sql(db, `set session_replication_role=replica;
+        update private.creator_premium_subscription_periods set
+          starts_at=clock_timestamp()-interval '31 days',
+          paid_through_at=clock_timestamp()-interval '1 day',access_state='active'
+          where id='${subscription.period_id}';
+        update private.creator_premium_subscriptions set
+          started_at=clock_timestamp()-interval '31 days',updated_at=clock_timestamp()
+          where id='${subscription.subscription_id}';
+        set session_replication_role=origin;`);
+      assertLegacy('expired', false, 'expired');
+    });
     await scenario('v2 projections expose safe denied and capped blockers to upgraded clients', db => {
       assert.equal(sql(db, "select to_regprocedure('public.get_creator_premium_commerce_v2(uuid)') is not null").stdout, 't');
       assert.equal(sql(db, "select to_regprocedure('public.get_my_creator_premium_subscriptions_v2(timestamp with time zone,uuid,integer)') is not null").stdout, 't');

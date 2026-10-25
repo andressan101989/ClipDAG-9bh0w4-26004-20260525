@@ -334,6 +334,13 @@ test('F3 v2 subscription parser accepts capped renewal while v1 remains strict',
   acquired.items[0].plan.relationship.access_state = 'active';
   acquired.items[0].plan.subscription_blocker = 'creator_premium_already_subscribed';
   assert.deepEqual(finance.parseCreatorPremiumSubscriptionsPageV2(acquired), acquired);
+  const legacyAcquired = structuredClone(acquired);
+  legacyAcquired.policy = { ...policy, purchase_enabled: false, subscription_enabled: false,
+    refunds_enabled: false, platform_fee_bps: 0 };
+  legacyAcquired.items[0].plan.subscription_blocker = 'creator_premium_renewal_required';
+  legacyAcquired.items[0].plan.renewal_blocker = 'creator_premium_subscription_disabled';
+  legacyAcquired.items[0].renewal_blocker = 'creator_premium_subscription_disabled';
+  assert.deepEqual(finance.parseCreatorPremiumSubscriptionsPage(legacyAcquired), legacyAcquired);
   assert.throws(() => finance.parseCreatorPremiumSubscriptionsPage(projection), /creator_premium_subscriptions_invalid/);
   const unknown = structuredClone(projection);
   unknown.items[0].renewal_blocker = 'private_debug_unknown';

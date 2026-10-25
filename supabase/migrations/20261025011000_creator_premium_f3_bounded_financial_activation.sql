@@ -1837,7 +1837,7 @@ begin
               'access_state',item.effective_access_state
             ),
             'subscription_available',false,
-            'subscription_blocker',case when item.access_active
+            'subscription_blocker',case when item.access_active and not p_legacy
               then 'creator_premium_already_subscribed'
               else 'creator_premium_renewal_required' end,
             'renewal_available',item.renewal_available,
