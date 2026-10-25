@@ -138,18 +138,25 @@ async function consentScreen({ history = false, projection, subscription }) {
   };
 }
 
-test('F3 ships its frozen foundation plus one OFF-only C2 governance migration and no activation migration', () => {
+test('F3 ships its frozen foundation plus OFF-only governance and Wallet integration migrations', () => {
   const names = readdirSync(new URL('../supabase/migrations/', import.meta.url))
     .filter(name => name.includes('_creator_premium_f3_'));
   assert.deepEqual(names, [
     '20261025011000_creator_premium_f3_bounded_financial_activation.sql',
     '20261025160452_creator_premium_f3_c2_isolated_canary_governance.sql',
+    '20261025231500_creator_premium_f3_final_wallet_integration.sql',
   ]);
   const governance = read(`supabase/migrations/${names[1]}`)
+    .replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const walletIntegration = read(`supabase/migrations/${names[2]}`)
     .replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
   assert.doesNotMatch(governance, /drop constraint\s+creator_premium_finance_policy_f3_foundation_off_check/i);
   assert.doesNotMatch(governance, /disable trigger\s+creator_premium_finance_auth_f3_foundation_insert_guard/i);
   assert.doesNotMatch(governance, /update\s+private\.creator_premium_finance_policy\s+set\s+activation_mode\s*=\s*'canary'/i);
+  assert.doesNotMatch(walletIntegration,
+    /update\s+private\.creator_premium_finance_policy|insert\s+into\s+public\.financial_transactions|ledger_(?:debit|credit)\s*\(/i);
+  assert.doesNotMatch(walletIntegration,
+    /purchase_enabled\s*=\s*true|subscription_enabled\s*=\s*true|refunds_enabled\s*=\s*true/i);
 });
 
 for (const operation of ['purchase', 'subscription', 'renewal', 'changed_offer', 'history_renewal', 'history_changed_plan']) test(`offer ${operation} requires exact projected consent before dispatch`, async () => {

@@ -78,6 +78,77 @@ test("a user-paid fee remains a negative canonical debit", () => {
   assert.equal(result.signedAmount, -4);
 });
 
+test("Creator Premium charges show the buyer gross debit and creator net credit", () => {
+  for (const [operationType, debitKind, creditKind] of [
+    ["creator_premium_purchase", "content_purchase", "content_sale"],
+    ["creator_premium_subscription", "subscription_payment", "subscription_income"],
+  ]) {
+    const transaction = row(operationType, USER, OTHER, "1500.00000000", {
+      fee_amount: "300.00000000",
+    });
+    const buyer = presentLedgerTransaction(transaction, USER);
+    const creator = presentLedgerTransaction(transaction, OTHER);
+
+    assert.deepEqual(
+      [buyer.kind, buyer.direction, buyer.amount, buyer.signedAmount],
+      [debitKind, "debit", 1500, -1500],
+    );
+    assert.deepEqual(
+      [creator.kind, creator.direction, creator.amount, creator.signedAmount],
+      [creditKind, "credit", 1200, 1200],
+    );
+  }
+});
+
+test("Creator Premium refunds show the buyer gross credit and creator net reversal", () => {
+  for (const operationType of [
+    "creator_premium_purchase_refund",
+    "creator_premium_subscription_refund",
+  ]) {
+    const transaction = row(operationType, OTHER, USER, "1500.00000000", {
+      fee_amount: "300.00000000",
+    });
+    const buyer = presentLedgerTransaction(transaction, USER);
+    const creator = presentLedgerTransaction(transaction, OTHER);
+
+    assert.deepEqual(
+      [buyer.kind, buyer.label, buyer.direction, buyer.amount, buyer.signedAmount],
+      ["creator_premium_refund", "Reembolso Premium", "credit", 1500, 1500],
+    );
+    assert.deepEqual(
+      [creator.kind, creator.label, creator.direction, creator.amount, creator.signedAmount],
+      ["creator_premium_refund", "Reversión Premium", "debit", 1200, -1200],
+    );
+  }
+});
+
+test("Creator Premium presentation rejects missing or invalid fee facts", () => {
+  for (const feeAmount of [undefined, null, "", -1, "not-a-number", 1500, 1600]) {
+    const transaction = row("creator_premium_purchase", USER, OTHER, 1500, {
+      fee_amount: feeAmount,
+    });
+    assert.throws(
+      () => presentLedgerTransaction(transaction, USER),
+      (error) =>
+        error instanceof WalletTransactionPresentationError &&
+        error.code === "wallet_transaction_fee_invalid",
+    );
+  }
+});
+
+test("Creator Premium net presentation does not mutate the canonical ledger row", () => {
+  const transaction = row("creator_premium_subscription", USER, OTHER, "1500.00000000", {
+    fee_amount: "300.00000000",
+  });
+  const snapshot = structuredClone(transaction);
+  const result = presentLedgerTransaction(transaction, OTHER);
+
+  assert.deepEqual(transaction, snapshot);
+  assert.equal(transaction.amount, "1500.00000000");
+  assert.equal(transaction.fee_amount, "300.00000000");
+  assert.equal(result.amount, 1200);
+});
+
 test("seller reversal is a negative Marketplace adjustment", () => {
   const result = presentLedgerTransaction(
     row("marketplace_seller_settlement_reversal", USER, SYSTEM, 28.5),
