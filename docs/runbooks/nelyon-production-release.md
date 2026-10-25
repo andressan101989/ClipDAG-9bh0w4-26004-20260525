@@ -30,7 +30,13 @@ second function is enrolled. Risk remains HIGH.
 The separate versioned `finance_authority` evidence attests relation columns,
 constraints and validation, RESTRICT FKs, indexes and validity, enabled trigger
 definitions, RLS/FORCE RLS, owners and ACLs, and the canonical function call
-closure including every overload, definition, owner, path and ACL. The two
+closure. FK enforcement evidence includes both referencing and referenced
+triggers, even on targets outside the selected finance tables. Stable constraint,
+relation, event and function identities bind the exact enabled/deferral state;
+generated RI trigger names and OIDs are excluded. Private finance FK evidence
+is recorded with the selected private relation, avoiding duplicate entries in
+legacy public-ledger comparisons. The canonical function call
+closure includes every overload, definition, owner, path and ACL. The two
 foundation guards must remain exactly installed:
 `creator_premium_finance_policy_f3_foundation_off_check` and
 `creator_premium_finance_auth_f3_foundation_insert_guard`. Both v1 read

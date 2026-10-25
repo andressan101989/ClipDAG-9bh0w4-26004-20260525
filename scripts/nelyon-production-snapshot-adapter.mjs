@@ -233,6 +233,28 @@ export const FINANCE_AUTHORITY_SQL = `with recursive relations as (
     'constraints',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_array(
       x.conname,x.contype,x.convalidated,x.condeferrable,x.condeferred,pg_catalog.pg_get_constraintdef(x.oid,true)) order by x.conname)
       from pg_catalog.pg_constraint x where x.conrelid=r.oid),'[]'::jsonb),
+    'fk_enforcement',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_array(
+      source_namespace.nspname,source_relation.relname,fk.conname,
+      target_namespace.nspname,target_relation.relname,trigger_namespace.nspname,trigger_relation.relname,
+      enforcement.tgtype,function_namespace.nspname,trigger_function.proname,enforcement.tgenabled,
+      enforcement.tgisinternal,enforcement.tgdeferrable,enforcement.tginitdeferred,
+      enforcement.tgnargs,pg_catalog.encode(enforcement.tgargs,'hex'),enforcement.tgattr::text,
+      pg_catalog.pg_get_expr(enforcement.tgqual,enforcement.tgrelid),enforcement.tgparentid<>0)
+      order by source_namespace.nspname,source_relation.relname,fk.conname,
+        target_namespace.nspname,target_relation.relname,trigger_namespace.nspname,trigger_relation.relname,
+        enforcement.tgtype,function_namespace.nspname,trigger_function.proname)
+      from pg_catalog.pg_constraint fk
+      join pg_catalog.pg_class source_relation on source_relation.oid=fk.conrelid
+      join pg_catalog.pg_namespace source_namespace on source_namespace.oid=source_relation.relnamespace
+      join pg_catalog.pg_class target_relation on target_relation.oid=fk.confrelid
+      join pg_catalog.pg_namespace target_namespace on target_namespace.oid=target_relation.relnamespace
+      join pg_catalog.pg_trigger enforcement on enforcement.tgconstraint=fk.oid
+      join pg_catalog.pg_class trigger_relation on trigger_relation.oid=enforcement.tgrelid
+      join pg_catalog.pg_namespace trigger_namespace on trigger_namespace.oid=trigger_relation.relnamespace
+      join pg_catalog.pg_proc trigger_function on trigger_function.oid=enforcement.tgfoid
+      join pg_catalog.pg_namespace function_namespace on function_namespace.oid=trigger_function.pronamespace
+      where fk.contype='f' and (fk.conrelid=r.oid or fk.confrelid=r.oid)
+        and (r.schema='private' or fk.conrelid not in (select oid from relations where schema='private'))),'[]'::jsonb),
     'indexes',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_array(
       pg_catalog.pg_get_indexdef(i.indexrelid),i.indisvalid,i.indisready,i.indisunique,i.indisreplident) order by pg_catalog.pg_get_indexdef(i.indexrelid))
       from pg_catalog.pg_index i where i.indrelid=r.oid),'[]'::jsonb),
@@ -705,7 +727,7 @@ function validateManifestAdapterIdentity(manifest, adapterSourceSha256) {
 
 function validateFinancePolicyAuthority(policy) {
   if (sha256(canonicalJson(policy?.finance_authority_transition ?? null)) !== 'dea8d686901b7e58e04742249b865da0720ea835f52db086b858c298c7996cb9'
-    || sha256(canonicalJson(policy?.finance_authority ?? null)) !== '1915725abb629c21505cd058532fddefca6f9ba2fdb03eae7b69c6abdcb5ac00'
+    || sha256(canonicalJson(policy?.finance_authority ?? null)) !== '5f0d64ecf02d8052c64719490972484801a3859147186b6230bb82d43162653f'
     || sha256(canonicalJson(policy?.finance_security_advisor ?? null)) !== '47fba40bc5736d8da22cda8409ef39538ea3dcc5187b17ce9d898544d2c815a3') {
     fail('FINANCE_AUTHORITY_TRANSITION_REJECTED', 'foundation policy differs from exact reviewed authority');
   }
