@@ -11,12 +11,12 @@ export const F3_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
   "id": "creator-premium-f3-foundation-v1",
   "phase": "foundation_only",
   "baseline_sha": "238e987933c7198400534121e61fb3d2750ba5ba",
-  "reviewed_source_sha": "27ff8b3861f901c548ee4c6abc054bc805d63f09",
+  "reviewed_source_sha": "a581c2dcfbabdfeed3a80e866b9d69a75b3f1d4e",
   "integration_base_sha": "2d8bf717a011f3afe54af1df5cd0f991f94811f3",
   "approved_sha_ancestry": "verified_integration_base",
   "migration_path": "supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql",
-  "migration_blob": "8338634c5341fcadd102cdeb34eb1f9dc701af6d",
-  "migration_sha256": "1fea4ed72b0aaee90f066e24307547fb0305aa96e597d75c9eb21bb93384aec5",
+  "migration_blob": "840497036e4ff8a0dbd99888de47337dcaea98ee",
+  "migration_sha256": "a217445d138aeb3efe2a8d734ef28089c4f0f0f69378c05b392d1056fe772d53",
   "function": "bdag-ledger",
   "function_path": "supabase/functions/bdag-ledger/index.ts",
   "function_blob": "4304dca929acf958667cc182218f7c91810fb808",
@@ -459,7 +459,7 @@ export function validatePolicy(policy) {
   }
   if (policy.schema_version !== 2) deny('INVALID_POLICY_SCHEMA', 'unsupported policy schema');
   if (canonicalJson(policy.finance_authority_transition) !== canonicalJson(F3_FINANCE_AUTHORITY_TRANSITION)
-    || sha256Hex(canonicalJson(policy.finance_authority)) !== '5f0d64ecf02d8052c64719490972484801a3859147186b6230bb82d43162653f'
+    || sha256Hex(canonicalJson(policy.finance_authority)) !== 'e9a4fd1f6a2f6b0399d4e488a98cf0af6fbb53cf9eb87ebbf0dfc0fc6b6fb30b'
     || sha256Hex(canonicalJson(policy.finance_security_advisor)) !== '47fba40bc5736d8da22cda8409ef39538ea3dcc5187b17ce9d898544d2c815a3') {
     deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'F3 foundation authority must match the exact audited contract');
   }

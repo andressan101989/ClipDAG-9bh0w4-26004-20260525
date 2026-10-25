@@ -726,8 +726,8 @@ function validateManifestAdapterIdentity(manifest, adapterSourceSha256) {
 }
 
 function validateFinancePolicyAuthority(policy) {
-  if (sha256(canonicalJson(policy?.finance_authority_transition ?? null)) !== 'b0ab9d52e4d1355c803d61498d81bcf8f9d8cf0e216b57b00dddeff00ebe30f0'
-    || sha256(canonicalJson(policy?.finance_authority ?? null)) !== '5f0d64ecf02d8052c64719490972484801a3859147186b6230bb82d43162653f'
+  if (sha256(canonicalJson(policy?.finance_authority_transition ?? null)) !== '29906dc123d8e667c15b6999146a2b7c7c015132c3e81aa3093dc86af141efd0'
+    || sha256(canonicalJson(policy?.finance_authority ?? null)) !== 'e9a4fd1f6a2f6b0399d4e488a98cf0af6fbb53cf9eb87ebbf0dfc0fc6b6fb30b'
     || sha256(canonicalJson(policy?.finance_security_advisor ?? null)) !== '47fba40bc5736d8da22cda8409ef39538ea3dcc5187b17ce9d898544d2c815a3') {
     fail('FINANCE_AUTHORITY_TRANSITION_REJECTED', 'foundation policy differs from exact reviewed authority');
   }
