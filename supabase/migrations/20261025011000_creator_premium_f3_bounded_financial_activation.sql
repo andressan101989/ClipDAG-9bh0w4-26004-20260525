@@ -234,6 +234,33 @@ begin
 end;
 $$;
 
+-- Admission is a decision, not a reservation of time. Recheck after blocking
+-- boundaries and immediately before a monetary success returns. The caller
+-- keeps policy/authorization locks; an exception rolls back provisional ledger,
+-- immutable fact, journal and velocity work together. Replays/no-ops are exempt.
+create function private.assert_creator_premium_finance_deadline_f3_v1(
+  p_authorization_id uuid,p_operation text
+) returns void language plpgsql security definer set search_path = '' as $$
+declare v_envelope private.creator_premium_finance_authorizations;
+begin
+  if p_operation is null or p_operation not in ('charge','refund') then
+    raise exception using errcode='22023',message='creator_premium_finance_operation_invalid';
+  end if;
+  select envelope.* into v_envelope from private.creator_premium_finance_authorizations envelope
+    where id=p_authorization_id;
+  if not found or v_envelope.status<>'OPEN' then
+    raise exception using errcode='55000',message='creator_premium_canary_not_open';
+  end if;
+  if pg_catalog.clock_timestamp()<v_envelope.charge_starts_at then
+    raise exception using errcode='55000',message='creator_premium_canary_not_open';
+  end if;
+  if pg_catalog.clock_timestamp()>=(case when p_operation='refund'
+      then v_envelope.refund_expires_at else v_envelope.charge_expires_at end) then
+    raise exception using errcode='55000',message='creator_premium_canary_expired';
+  end if;
+end;
+$$;
+
 create or replace function private.guard_creator_premium_purchase_snapshot_v1()
 returns trigger
 language plpgsql
@@ -512,6 +539,8 @@ set search_path = ''
 as $$
 declare
   v_fingerprint text;
+  v_command public.idempotency_keys;
+  v_response jsonb;
   v_authorization_id uuid;
   v_policy private.creator_premium_finance_policy;
   v_content private.creator_premium_contents;
@@ -537,19 +566,41 @@ begin
     0
   ));
 
+  -- Canonical request lock protects every durable result, including an owned
+  -- no-op. Its key can never turn into a later debit after a refund.
+  select journal.* into v_command from public.idempotency_keys journal
+  where journal.idempotency_key=p_idempotency_key::text
+    and journal.operation_type='creator_premium_purchase_command'
+    and journal.user_id=p_buyer_id;
+  if found then
+    if v_command.request_hash is distinct from v_fingerprint then
+      raise exception using errcode='23505',message='creator_premium_purchase_idempotency_conflict';
+    end if;
+    if v_command.status<>'completed' or v_command.response_body is null then
+      raise exception using errcode='55000',message='creator_premium_purchase_idempotency_in_progress';
+    end if;
+    return v_command.response_body||pg_catalog.jsonb_build_object('money_moved',false,'replayed',true);
+  end if;
+
   select receipt.* into v_existing
   from private.creator_premium_purchase_receipts receipt
   where receipt.buyer_id=p_buyer_id
     and receipt.idempotency_key=p_idempotency_key;
   if found then
-    if v_existing.request_fingerprint<>v_fingerprint then
+    if v_existing.request_fingerprint is distinct from v_fingerprint and not (
+      v_existing.finance_authorization_id is null
+      and v_existing.offer_version_id=p_offer_version_id and v_existing.content_id=p_content_id
+      and v_existing.request_fingerprint=private.creator_premium_request_fingerprint_v1(
+        'creator_premium_purchase',p_buyer_id,p_content_id
+      )
+    ) then
       raise exception using errcode='23505',message='creator_premium_purchase_idempotency_conflict';
     end if;
     if v_existing.access_state='active'
        and not private.creator_premium_purchase_binding_is_valid_v1(v_existing.id) then
       raise exception using errcode='23514',message='creator_premium_purchase_financial_binding_invalid';
     end if;
-    return pg_catalog.jsonb_build_object(
+    v_response := pg_catalog.jsonb_build_object(
       'receipt_id',v_existing.id,
       'content_id',v_existing.content_id,
       'financial_transaction_id',v_existing.financial_transaction_id,
@@ -561,6 +612,13 @@ begin
       'money_moved',false,
       'replayed',true
     );
+    insert into public.idempotency_keys(
+      idempotency_key,operation_type,user_id,request_hash,status,response_body
+    ) values(
+      p_idempotency_key::text,'creator_premium_purchase_command',
+      p_buyer_id,v_fingerprint,'completed',v_response
+    );
+    return v_response;
   end if;
 
   v_policy := private.lock_creator_premium_finance_f3_v1();
@@ -620,7 +678,7 @@ begin
     if not private.creator_premium_purchase_binding_is_valid_v1(v_existing.id) then
       raise exception using errcode='23514',message='creator_premium_purchase_financial_binding_invalid';
     end if;
-    return pg_catalog.jsonb_build_object(
+    v_response := pg_catalog.jsonb_build_object(
       'receipt_id',v_existing.id,
       'content_id',v_existing.content_id,
       'financial_transaction_id',v_existing.financial_transaction_id,
@@ -632,6 +690,13 @@ begin
       'money_moved',false,
       'replayed',false
     );
+    insert into public.idempotency_keys(
+      idempotency_key,operation_type,user_id,request_hash,status,response_body
+    ) values(
+      p_idempotency_key::text,'creator_premium_purchase_command',
+      p_buyer_id,v_fingerprint,'completed',v_response
+    );
+    return v_response;
   end if;
 
   v_authorization_id := private.admit_creator_premium_charge_f3_v1(
@@ -647,6 +712,7 @@ begin
     'creator-premium-velocity|creator_premium_purchase|'||p_buyer_id::text,
     0
   ));
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_authorization_id,'charge');
   begin
     select public.check_velocity_limit(
       p_buyer_id,'creator_premium_purchase',v_offer.price_bdag,100,0,1
@@ -654,6 +720,7 @@ begin
   exception when others then
     raise exception using errcode='55000',message='creator_premium_velocity_check_unavailable';
   end;
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_authorization_id,'charge');
   if v_velocity_allowed is distinct from true then
     raise exception using errcode='55000',message='creator_premium_rate_limited';
   end if;
@@ -664,6 +731,7 @@ begin
     'creator_premium_purchase','creator_premium_purchase_receipt',
     v_receipt_id,p_idempotency_key,v_offer.price_bdag,v_policy.platform_fee_bps
   ) charge;
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_authorization_id,'charge');
 
   -- Recheck the exact approved accounts after the canonical composer has
   -- locked them. A concurrent account change must roll back the whole charge.
@@ -690,7 +758,7 @@ begin
     v_authorization_id,'active',v_now,v_now
   );
 
-  return pg_catalog.jsonb_build_object(
+  v_response := pg_catalog.jsonb_build_object(
     'receipt_id',v_receipt_id,
     'content_id',v_content.id,
     'financial_transaction_id',v_charge.financial_transaction_id,
@@ -702,6 +770,14 @@ begin
     'money_moved',true,
     'replayed',false
   );
+  insert into public.idempotency_keys(
+    idempotency_key,operation_type,user_id,request_hash,status,response_body
+  ) values(
+    p_idempotency_key::text,'creator_premium_purchase_command',
+    p_buyer_id,v_fingerprint,'completed',v_response
+  );
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_authorization_id,'charge');
+  return v_response;
 end;
 $$;
 
@@ -1002,6 +1078,7 @@ begin
     'creator-premium-velocity|creator_premium_subscribe|'||p_subscriber_id::text,
     0
   ));
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_authorization_id,'charge');
   begin
     select public.check_velocity_limit(
       p_subscriber_id,'creator_premium_subscribe',v_plan.price_bdag,20,0,24
@@ -1009,6 +1086,7 @@ begin
   exception when others then
     raise exception using errcode='55000',message='creator_premium_velocity_check_unavailable';
   end;
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_authorization_id,'charge');
   if v_velocity_allowed is distinct from true then
     raise exception using errcode='55000',message='creator_premium_rate_limited';
   end if;
@@ -1020,6 +1098,7 @@ begin
     'creator_premium_subscription','creator_premium_subscription_period',
     v_period_id,p_idempotency_key,v_plan.price_bdag,v_policy.platform_fee_bps
   ) charge;
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_authorization_id,'charge');
 
   if not private.creator_premium_authorization_binding_f3_v1(
     v_authorization_id,'subscription',p_subscriber_id,v_plan.creator_id,v_plan.id,null,
@@ -1076,6 +1155,7 @@ begin
   if not found then
     raise exception using errcode='23514',message='creator_premium_subscription_idempotency_journal_missing';
   end if;
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_authorization_id,'charge');
   return v_response;
 end;
 $$;
@@ -1142,6 +1222,7 @@ begin
   from public.financial_transactions finance_tx
   where finance_tx.id = v_receipt.financial_transaction_id
   for update;
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_receipt.finance_authorization_id,'refund');
 
   v_refund_transaction_id := private.post_creator_premium_refund_v1(
     v_receipt.buyer_id, v_receipt.creator_id,
@@ -1150,6 +1231,7 @@ begin
     v_receipt.id, p_idempotency_key,
     v_receipt.gross_amount_bdag, v_receipt.platform_fee_bdag, v_receipt.creator_net_bdag
   );
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_receipt.finance_authorization_id,'refund');
   update public.financial_transactions
   set status = 'reversed'
   where id = v_original.id and status = 'completed';
@@ -1167,6 +1249,7 @@ begin
       updated_at = v_now
   where id = v_receipt.id;
 
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_receipt.finance_authorization_id,'refund');
   return pg_catalog.jsonb_build_object(
     'receipt_id', v_receipt.id,
     'reversal_financial_transaction_id', v_refund_transaction_id,
@@ -1257,10 +1340,12 @@ begin
   if not found then
     raise exception using errcode='23514',message='creator_premium_subscription_relationship_invalid';
   end if;
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_period.finance_authorization_id,'refund');
   select finance_tx.* into v_original
   from public.financial_transactions finance_tx
   where finance_tx.id=v_period.financial_transaction_id
   for update;
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_period.finance_authorization_id,'refund');
 
   v_refund_transaction_id := private.post_creator_premium_refund_v1(
     v_period.subscriber_id,v_period.creator_id,
@@ -1269,6 +1354,7 @@ begin
     v_period.id,p_idempotency_key,
     v_period.gross_amount_bdag,v_period.platform_fee_bdag,v_period.creator_net_bdag
   );
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_period.finance_authorization_id,'refund');
   update public.financial_transactions
   set status='reversed'
   where id=v_original.id and status='completed';
@@ -1305,6 +1391,7 @@ begin
     and private.creator_premium_subscription_period_fact_is_valid_f2_v1(renewed_period.id)
   limit 1;
 
+  perform private.assert_creator_premium_finance_deadline_f3_v1(v_period.finance_authorization_id,'refund');
   return pg_catalog.jsonb_build_object(
     'period_id',v_period.id,
     'subscription_id',v_period.subscription_id,
