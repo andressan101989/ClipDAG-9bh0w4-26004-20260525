@@ -1064,9 +1064,15 @@ export function attestPhaseBoundMigrationOrigins({ cwd, policy, approvedSha, mig
     if (!origin) return migration;
     let blob;
     try {
+      runGit(['cat-file', '-e', `${origin.source_sha}^{commit}`], { cwd });
+      runGit(['merge-base', '--is-ancestor', origin.source_sha, approvedSha], { cwd });
+      const sourceBlob = gitText(runGit, ['rev-parse', `${origin.source_sha}:${path}`], cwd);
       blob = gitText(runGit, ['rev-parse', `${approvedSha}:${path}`], cwd);
+      if (sourceBlob !== origin.migration_blob) {
+        deny('INVALID_RPC_PHASE_ATTESTATION', 'reviewed RPC source commit does not contain the attested migration blob');
+      }
     } catch {
-      deny('INVALID_RPC_PHASE_ATTESTATION', 'phase-bound migration is unavailable at the approved source');
+      deny('INVALID_RPC_PHASE_ATTESTATION', 'reviewed RPC source is missing, unrelated, or does not contain the attested migration');
     }
     if (blob !== origin.migration_blob) {
       deny('INVALID_RPC_PHASE_ATTESTATION', 'phase-bound migration bytes differ from the reviewed RPC origin');
