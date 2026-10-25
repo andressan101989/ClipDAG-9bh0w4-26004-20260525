@@ -36,6 +36,7 @@ const VELOCITY: Record<string, { maxOps: number; maxAmount: number; windowHours:
   marketplace_order_confirm_delivery: { maxOps: 20, maxAmount: 0, windowHours: 1 },
 };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CREATOR_PREMIUM_FINANCE_CLIENT_CONTRACT = 'creator-premium-f3-v2';
 const PREMIUM_CLIENT_AUTHORITY_FIELDS = new Set([
   'amount', 'price', 'gross', 'gross_amount', 'fee', 'platform_fee',
   'creator_net', 'platform_fee_bps', 'creator_id', 'account_id',
@@ -45,14 +46,20 @@ const PREMIUM_CLIENT_AUTHORITY_FIELDS = new Set([
 function validatePremiumCommand(
   body: Record<string, unknown>,
   targetField: 'content_id' | 'plan_id' | 'subscription_id',
+  requireUpgradedClient = false,
 ): string | null {
   if (Object.keys(body).some(key => PREMIUM_CLIENT_AUTHORITY_FIELDS.has(key))) {
     return 'creator_premium_client_financial_authority_forbidden';
   }
   const allowed = new Set(['action', 'idempotency_key', targetField]);
   if (targetField === 'content_id') allowed.add('offer_version_id');
+  if (requireUpgradedClient) allowed.add('client_contract');
   if (Object.keys(body).some(key => !allowed.has(key))) {
     return 'creator_premium_request_fields_invalid';
+  }
+  if (requireUpgradedClient
+      && body.client_contract !== CREATOR_PREMIUM_FINANCE_CLIENT_CONTRACT) {
+    return 'creator_premium_client_upgrade_required';
   }
   if (typeof body.idempotency_key !== 'string' || !UUID_RE.test(body.idempotency_key)
       || typeof body[targetField] !== 'string' || !UUID_RE.test(body[targetField])
@@ -69,6 +76,7 @@ function premiumRpcError(message: string): string {
 }
 
 function premiumRpcStatus(code: string): number {
+  if (code === 'creator_premium_client_upgrade_required') return 426;
   if (code === 'creator_premium_velocity_check_unavailable') return 503;
   if (code === 'creator_premium_rate_limited') return 429;
   if (code.endsWith('_not_found')) return 404;
@@ -142,13 +150,15 @@ Deno.serve(async (req) => {
     // CREATOR PREMIUM — server-authoritative purchase
     // ════════════════════════════════════════════════════════════════════
     if (action === 'creator_premium_purchase') {
-      const invalid = validatePremiumCommand(body, 'content_id');
-      if (invalid) return fail(invalid, 400);
+      const invalid = validatePremiumCommand(body, 'content_id', true);
+      if (invalid) return fail(invalid,
+        invalid === 'creator_premium_client_upgrade_required' ? 426 : 400);
       const { data, error } = await admin.rpc('purchase_creator_premium_content_v1', {
         p_buyer_id: user.id,
         p_content_id: body.content_id,
         p_offer_version_id: body.offer_version_id,
         p_idempotency_key: body.idempotency_key,
+        p_client_contract: body.client_contract,
       });
       if (error) {
         const code = premiumRpcError(error.message);
@@ -162,12 +172,14 @@ Deno.serve(async (req) => {
     // CREATOR PREMIUM — initial server-authoritative subscription
     // ════════════════════════════════════════════════════════════════════
     if (action === 'creator_premium_subscribe') {
-      const invalid = validatePremiumCommand(body, 'plan_id');
-      if (invalid) return fail(invalid, 400);
+      const invalid = validatePremiumCommand(body, 'plan_id', true);
+      if (invalid) return fail(invalid,
+        invalid === 'creator_premium_client_upgrade_required' ? 426 : 400);
       const { data, error } = await admin.rpc('subscribe_creator_premium_plan_v1', {
         p_subscriber_id: user.id,
         p_plan_id: body.plan_id,
         p_idempotency_key: body.idempotency_key,
+        p_client_contract: body.client_contract,
       });
       if (error) {
         const code = premiumRpcError(error.message);

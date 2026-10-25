@@ -224,6 +224,7 @@ const SUBSCRIPTION_BLOCKERS = Object.freeze([
   'creator_premium_self_subscription_forbidden',
   'creator_premium_subscription_disabled',
   'creator_premium_renewal_required',
+  'creator_premium_already_subscribed',
   'creator_premium_plan_family_access_active',
 ]);
 const RENEWAL_BLOCKERS = Object.freeze([
@@ -248,7 +249,7 @@ const V1_BLOCKERS = Object.freeze({
 });
 const V2_BLOCKERS = Object.freeze({
   purchase: [...PURCHASE_BLOCKERS, ...CANARY_BLOCKERS],
-  subscription: [...SUBSCRIPTION_BLOCKERS, 'creator_premium_already_subscribed', ...CANARY_BLOCKERS],
+  subscription: [...SUBSCRIPTION_BLOCKERS, ...CANARY_BLOCKERS],
   renewal: [...RENEWAL_BLOCKERS, ...CANARY_BLOCKERS],
 });
 
@@ -864,11 +865,9 @@ function parseSubscriptionsPage(value, blockers) {
         || plan.relationship.paid_through_at !== (period === null ? null : period.paid_through_at)
         || plan.relationship.access_state !== (period === null ? null : period.access_state)
         || plan.subscription_available
-        || plan.subscription_blocker !== (
-          accessActive && blockers === V2_BLOCKERS
-            ? 'creator_premium_already_subscribed'
-            : 'creator_premium_renewal_required'
-        )
+        || plan.subscription_blocker !== (accessActive
+          ? 'creator_premium_already_subscribed'
+          : 'creator_premium_renewal_required')
         || plan.renewal_available !== renewalAvailable
         || plan.renewal_blocker !== renewalBlocker
         || renewalAvailable !== (renewalBlocker === null)

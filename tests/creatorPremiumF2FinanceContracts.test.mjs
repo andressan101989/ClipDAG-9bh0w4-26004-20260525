@@ -911,11 +911,13 @@ test('Premium ledger helpers return sanitized typed receipts and send identity-o
   assert.deepEqual(harness.invokes, [
     {
       name: 'bdag-ledger',
-      body: { action: 'creator_premium_purchase', idempotency_key: idempotencyKey, content_id: contentId, offer_version_id: offerId },
+      body: { action: 'creator_premium_purchase', idempotency_key: idempotencyKey,
+        content_id: contentId, offer_version_id: offerId, client_contract: 'creator-premium-f3-v2' },
     },
     {
       name: 'bdag-ledger',
-      body: { action: 'creator_premium_subscribe', idempotency_key: idempotencyKey, plan_id: planId },
+      body: { action: 'creator_premium_subscribe', idempotency_key: idempotencyKey,
+        plan_id: planId, client_contract: 'creator-premium-f3-v2' },
     },
     {
       name: 'bdag-ledger',
