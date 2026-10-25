@@ -726,8 +726,8 @@ function validateManifestAdapterIdentity(manifest, adapterSourceSha256) {
 }
 
 function validateFinancePolicyAuthority(policy) {
-  if (sha256(canonicalJson(policy?.finance_authority_transition ?? null)) !== '29906dc123d8e667c15b6999146a2b7c7c015132c3e81aa3093dc86af141efd0'
-    || sha256(canonicalJson(policy?.finance_authority ?? null)) !== 'e9a4fd1f6a2f6b0399d4e488a98cf0af6fbb53cf9eb87ebbf0dfc0fc6b6fb30b'
+  if (sha256(canonicalJson(policy?.finance_authority_transition ?? null)) !== '18ba08389686a15aea9df1c7b4f974202e147167e5aa1d0f83412e1065ebc882'
+    || sha256(canonicalJson(policy?.finance_authority ?? null)) !== '59b45c55766c82a6e90ca526fc00e9759cd3be9560fbe60759c552836ec9d78c'
     || sha256(canonicalJson(policy?.finance_security_advisor ?? null)) !== '47fba40bc5736d8da22cda8409ef39538ea3dcc5187b17ce9d898544d2c815a3') {
     fail('FINANCE_AUTHORITY_TRANSITION_REJECTED', 'foundation policy differs from exact reviewed authority');
   }
@@ -744,7 +744,8 @@ export function activeFinanceAuthorityTransition(policy, manifest) {
     reviewed_source_sha: t.reviewed_source_sha, integration_base_sha: t.integration_base_sha,
     approved_sha: manifest?.identity?.approved_sha, baseline_descendant_verified: true, integration_base_descendant_verified: true,
     migration_blob: t.migration_blob, migration_sha256: t.migration_sha256,
-    function_blob: t.function_blob, function_source_sha256: t.function_source_sha256, config_blob: t.config_blob };
+    function_blob: t.function_blob, function_source_sha256: t.function_source_sha256, config_blob: t.config_blob,
+    client_contract: t.client_contract, client_sources: t.client_sources, frozen_f2_parser: t.frozen_f2_parser };
   const productivePaths = (manifest?.delta?.files ?? []).filter(item => String(item.path).startsWith('supabase/')).map(item => item.path).sort();
   if (!/^[a-f0-9]{40}$/.test(expected.approved_sha ?? '') || canonicalJson(attestation ?? null) !== canonicalJson(expected)
     || policy.baseline.sha !== t.baseline_sha || manifest?.baseline?.sha !== t.baseline_sha
