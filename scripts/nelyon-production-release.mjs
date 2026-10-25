@@ -57,6 +57,8 @@ export const F3_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
   ],
   "requires_separate_baseline_promotion": true
 });
+export const F3_REMOTE_BDAG_LEDGER_EZBR_SHA256 =
+  'd039819170e2c347ac8a6c88f77fa4461dfae4091a9e937ed47897b2c115e56c';
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
 const EXACT_MODES = ['plan_only', 'gate_proof', 'release', 'postcheck_recovery'];
 const A2_NEGATIVE_TEST_EVIDENCE_SHA256 = '47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e';
@@ -314,7 +316,7 @@ const EXPECTED_RECOVERY_SOURCES = [{
   expected_latest_migration: '20261025011000_creator_premium_f3_bounded_financial_activation',
   edge_functions: [{
     name: 'bdag-ledger',
-    source_sha256: F3_FINANCE_AUTHORITY_TRANSITION.function_source_sha256,
+    source_sha256: F3_REMOTE_BDAG_LEDGER_EZBR_SHA256,
     status: 'ACTIVE',
     verify_jwt: true,
     version: 46,

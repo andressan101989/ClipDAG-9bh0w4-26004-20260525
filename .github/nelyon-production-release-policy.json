@@ -1107,7 +1107,7 @@
         "edge_functions": [
           {
             "name": "bdag-ledger",
-            "source_sha256": "79e79bd31a62920401b8d55d48e1754ce58149294c8960c7995a070078b796f9",
+            "source_sha256": "d039819170e2c347ac8a6c88f77fa4461dfae4091a9e937ed47897b2c115e56c",
             "status": "ACTIVE",
             "verify_jwt": true,
             "version": 46

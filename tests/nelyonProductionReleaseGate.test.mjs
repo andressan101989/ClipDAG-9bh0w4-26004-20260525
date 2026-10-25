@@ -1061,7 +1061,7 @@ test('recovery source is exact immutable failed-postcheck authority', async () =
   assert.deepEqual(f3Source.edge_functions.map(item => [item.name, item.version, item.source_sha256]), [[
     'bdag-ledger',
     46,
-    '79e79bd31a62920401b8d55d48e1754ce58149294c8960c7995a070078b796f9',
+    'd039819170e2c347ac8a6c88f77fa4461dfae4091a9e937ed47897b2c115e56c',
   ]]);
   for (const mutate of [
     candidate => { candidate.run_id = '39066492486'; },
@@ -2223,13 +2223,52 @@ test('postcheck recovery verifies the exact F3 applied state after a snapshot-on
   assert.deepEqual(result.functions.items.map(item => [item.name, item.version, item.source_sha256]), [[
     'bdag-ledger',
     46,
-    '79e79bd31a62920401b8d55d48e1754ce58149294c8960c7995a070078b796f9',
+    'd039819170e2c347ac8a6c88f77fa4461dfae4091a9e937ed47897b2c115e56c',
   ]]);
   assert.equal(result.premium_state.relation_security.sha256,
     '34e13339d4627b7684699288f789780267d7340afbd1c3de33029624e60a2f6a');
   assert.deepEqual(result.premium_state.legacy,
     { content_count: 9, pending_review_count: 0, deleted_count: 5 });
   assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
+});
+
+test('F3 recovery keeps the remote EZBR attestation distinct from the Git source contract', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const source = policy.postcheck_recovery.approved_sources.find(item => item.run_id === '40166468648');
+  const expectedRemoteDigest = 'd039819170e2c347ac8a6c88f77fa4461dfae4091a9e937ed47897b2c115e56c';
+  assert.equal(source.edge_functions[0].source_sha256, expectedRemoteDigest);
+  assert.notEqual(source.edge_functions[0].source_sha256,
+    gate.F3_FINANCE_AUTHORITY_TRANSITION.function_source_sha256);
+
+  const fixture = await recoveryStateFixture(t, gate, policy, 4);
+  const result = gate.verifyPostcheckRecovery({
+    policy: fixture.controlledPolicy,
+    recoveryRequest: fixture.recoveryRequest,
+    recoveryManifest: fixture.recoveryManifest,
+    sourceManifest: fixture.sourceManifest,
+    sourceObservation: fixture.sourceObservation,
+    currentEvidence: fixture.currentEvidence,
+    adapterSourceSha256: fixture.adapterSourceSha256,
+  });
+  assert.equal(result.functions.items[0].source_sha256, expectedRemoteDigest);
+
+  const drift = structuredClone(fixture);
+  drift.currentEvidence.functions.items.find(item => item.slug === 'bdag-ledger').ezbr_sha256 =
+    gate.F3_FINANCE_AUTHORITY_TRANSITION.function_source_sha256;
+  drift.currentEvidence.functions.sha256 = gate.sha256Hex(
+    gate.canonicalJson(drift.currentEvidence.functions.items),
+  );
+  const { evidence_sha256: ignored, ...unsigned } = drift.currentEvidence;
+  drift.currentEvidence.evidence_sha256 = gate.sha256Hex(gate.canonicalJson(unsigned));
+  assertDenied(() => gate.verifyPostcheckRecovery({
+    policy: drift.controlledPolicy,
+    recoveryRequest: drift.recoveryRequest,
+    recoveryManifest: drift.recoveryManifest,
+    sourceManifest: drift.sourceManifest,
+    sourceObservation: drift.sourceObservation,
+    currentEvidence: drift.currentEvidence,
+    adapterSourceSha256: drift.adapterSourceSha256,
+  }), 'RECOVERY_POSTCHECK_FAILED');
 });
 
 test('F3 postcheck recovery rejects historical migration and unchanged Edge drift', async t => {
