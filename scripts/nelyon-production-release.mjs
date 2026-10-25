@@ -877,11 +877,13 @@ export function validateMigrationDelta({ changes, baselineLatestMigration, remot
 export function attestManagedScopeTransition({
   cwd,
   policy,
+  mode,
   approvedSha,
   migrations,
   affectedFunctions,
   runGit,
 }) {
+  if (mode === 'postcheck_recovery') return { migrations, attestation: null };
   if (policy?.baseline?.sha !== F2_MANAGED_SCOPE_TRANSITION.baseline_sha) {
     return { migrations, attestation: null };
   }
@@ -1457,6 +1459,7 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   const transitionEvidence = attestManagedScopeTransition({
     cwd,
     policy,
+    mode: request.mode,
     approvedSha: request.approvedSha,
     migrations: migrationDelta,
     affectedFunctions,
