@@ -120,6 +120,12 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
     denied(result, pattern);
     assert.equal(snapshot(db), before);
   };
+  const expireSubscription = (db, subscription) => sql(db, `set session_replication_role=replica;
+    update private.creator_premium_subscription_periods set starts_at=clock_timestamp()-interval '31 days',
+      paid_through_at=clock_timestamp()-interval '1 day',access_state='expired' where id='${subscription.period_id}';
+    update private.creator_premium_subscriptions set started_at=clock_timestamp()-interval '31 days',
+      cancelled_at=clock_timestamp()-interval '2 days',updated_at=clock_timestamp() where id='${subscription.subscription_id}';
+    set session_replication_role=origin;`);
 
   // Test-only synthetic arm. On F2 there is no envelope to install: enabling its
   // global flags exposes the real baseline gap. No test-only gate replaces SQL authority.
@@ -362,12 +368,7 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
     await scenario('subscription count cap includes cancelled expired paid periods', db => {
       const first = success(db, subscribeSql());
       success(db, `select public.cancel_creator_premium_subscription_v1('${id.buyer}','${first.subscription_id}','${randomUUID()}')`);
-      sql(db, `set session_replication_role=replica;
-        update private.creator_premium_subscription_periods set starts_at=clock_timestamp()-interval '31 days',
-          paid_through_at=clock_timestamp()-interval '1 day',access_state='expired' where id='${first.period_id}';
-        update private.creator_premium_subscriptions set started_at=clock_timestamp()-interval '31 days',
-          cancelled_at=clock_timestamp()-interval '2 days',updated_at=clock_timestamp() where id='${first.subscription_id}';
-        set session_replication_role=origin;`);
+      expireSubscription(db, first);
       unchangedDenial(db, subscribeSql());
     });
     await scenario('refund count cap survives independent purchase and subscription reversals', db => {
@@ -450,6 +451,44 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
       assert.equal(capped.operations.purchase_blocker, 'creator_premium_canary_limit_reached');
       assert.equal(capped.operations.purchase_available, false);
     });
+    await scenario('v2 subscription outsider read never exposes the cohort relationship or authorization', db => {
+      assert.equal(sql(db, "select to_regprocedure('public.get_my_creator_premium_subscriptions_v2(timestamp with time zone,uuid,integer)') is not null").stdout, 't');
+      const subscription = success(db, subscribeSql());
+      const projection = JSON.parse(authenticated(db, id.outsider,
+        'select public.get_my_creator_premium_subscriptions_v2(null,null,50)').stdout);
+      assert.deepEqual(projection.items, []);
+      assert.equal(projection.next_cursor, null);
+      assert.equal(Object.keys(projection.policy).length, 5);
+      for (const privateId of [id.authorization, id.buyerAccount, id.creatorAccount, subscription.subscription_id]) {
+        assert.equal(JSON.stringify(projection).includes(privateId), false);
+      }
+    });
+    for (const expiredWindow of [false, true]) {
+      await scenario(`v2 subscription read reports ${expiredWindow ? 'expired-window' : 'capped'} renewal from real paid history`, db => {
+        assert.equal(sql(db, "select to_regprocedure('public.get_my_creator_premium_subscriptions_v2(timestamp with time zone,uuid,integer)') is not null").stdout, 't');
+        const subscription = success(db, subscribeSql());
+        success(db, `select public.cancel_creator_premium_subscription_v1('${id.buyer}','${subscription.subscription_id}','${randomUUID()}')`);
+        expireSubscription(db, subscription);
+        if (expiredWindow && hasF3) sql(db, `set session_replication_role=replica;
+          update private.creator_premium_finance_authorizations set
+            charge_starts_at=clock_timestamp()-interval '40 minutes',charge_expires_at=clock_timestamp()-interval '10 minutes'
+            where id='${id.authorization}';set session_replication_role=origin;`);
+        const projection = JSON.parse(authenticated(db, id.buyer,
+          'select public.get_my_creator_premium_subscriptions_v2(null,null,50)').stdout);
+        const item = projection.items.find(candidate => candidate.id === subscription.subscription_id);
+        assert.ok(item, 'own paid relationship disappeared from the v2 history');
+        assert.equal(item.access_active, false);
+        assert.equal(item.period.access_state, 'expired');
+        assert.equal(item.renewal_available, false);
+        assert.equal(item.renewal_blocker, expiredWindow ? 'creator_premium_canary_expired' : 'creator_premium_canary_limit_reached');
+        assert.equal(item.plan.renewal_blocker, item.renewal_blocker);
+        assert.equal(Object.keys(projection.policy).length, 5);
+        const legacy = JSON.parse(authenticated(db, id.buyer,
+          'select public.get_my_creator_premium_subscriptions_v1(null,null,50)').stdout);
+        assert.deepEqual(parseCreatorPremiumSubscriptionsPage(legacy), legacy);
+        assert.equal(legacy.policy.subscription_enabled, false);
+      }, expiredWindow ? { max_subscription_count: 2, max_gross_bdag: '50.00000000' } : {});
+    }
     await scenario('capped projections block acquisition while a paid subscription remains usable', db => {
       const purchase = success(db, purchaseSql()); const subscription = success(db, subscribeSql());
       success(db, `select public.refund_creator_premium_purchase_v1('${purchase.receipt_id}','${randomUUID()}','owner_approved')`);
@@ -498,12 +537,19 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
         update private.creator_premium_finance_policy set purchase_enabled=false,subscription_enabled=false,
           refunds_enabled=false,platform_fee_bps=0
           ${hasF3 ? ",activation_mode='off',active_authorization_id=null" : ''} where singleton;
-        select pg_advisory_xact_lock(${marker});select pg_sleep(3);commit;`);
+        select pg_advisory_xact_lock(${marker});select pg_sleep(4);commit;`);
       await waitForLock(db, `select exists(select 1 from pg_locks where locktype='advisory' and objid=${marker} and granted)`);
-      const [noOp, charge, stopped] = await Promise.all([
-        dockerAsync(pgCommand(db), serviceSql(purchaseSql())),
-        dockerAsync(pgCommand(db), serviceSql(subscribeSql())), disarm,
-      ]);
+      const application = `f3_noop_${marker}`;
+      const noOpPending = dockerAsync(pgCommand(db), serviceSql(`set local application_name='${application}';${purchaseSql()}`));
+      const chargePending = dockerAsync(pgCommand(db), serviceSql(subscribeSql()));
+      let results;
+      try {
+        await waitForLock(db, `select exists(select 1 from pg_stat_activity where datname=current_database()
+          and application_name='${application}' and wait_event_type='Lock')`);
+      } finally {
+        results = await Promise.all([noOpPending, chargePending, disarm]);
+      }
+      const [noOp, charge, stopped] = results;
       assert.equal(stopped.status, 0, stopped.stderr);
       assert.equal(noOp.status, 0, `already-owned no-op was lost during disarm: ${noOp.stderr}`);
       assert.equal(JSON.parse(noOp.stdout).money_moved, false);
@@ -512,6 +558,65 @@ test('F3 real authority rejects unbounded admission while retaining acquired rig
       assert.equal(sql(db, 'select count(*) from private.creator_premium_subscription_periods').stdout, '0');
       assert.equal(authenticated(db, id.buyer, `select allowed from public.get_my_creator_premium_entitlement_v1('${id.content}')`).stdout, 't');
     });
+
+    await scenario('fresh-key ownership probe waits behind refund and reflects the committed refunded state', async db => {
+      const purchase = success(db, purchaseSql());
+      const marker = Math.floor(Math.random() * 1_000_000_000) + 1;
+      // The explicit policy lock precedes the real refund. Other sessions still
+      // see the old active fact until commit, so an early terminal owned result is stale.
+      const refund = dockerAsync(pgCommand(db), `begin;set local statement_timeout='10s';
+        select singleton from private.creator_premium_finance_policy where singleton for update;
+        set local request.jwt.claim.role='service_role';set local role service_role;
+        select public.refund_creator_premium_purchase_v1('${purchase.receipt_id}','${randomUUID()}','owner_approved');
+        select pg_advisory_xact_lock(${marker});select pg_sleep(4);commit;`);
+      await waitForLock(db, `select exists(select 1 from pg_locks where locktype='advisory' and objid=${marker} and granted)`);
+      const application = `f3_refund_noop_${marker}`;
+      const attempt = dockerAsync(pgCommand(db), serviceSql(`set local application_name='${application}';${purchaseSql()}`));
+      let settled;
+      try {
+        await waitForLock(db, `select exists(select 1 from pg_stat_activity where datname=current_database()
+          and application_name='${application}' and wait_event_type='Lock')`);
+      } finally {
+        settled = await Promise.all([attempt, refund]);
+      }
+      assert.equal(settled[1].status, 0, settled[1].stderr);
+      // The refund does not restore acquisition headroom: the original authorization
+      // is already exhausted and the now-refunded fact is no longer an owned no-op.
+      denied(settled[0], /creator_premium_canary_limit_reached/);
+      assert.equal(sql(db, `select access_state from private.creator_premium_purchase_receipts where id='${purchase.receipt_id}'`).stdout, 'refunded');
+      assert.equal(sql(db, 'select count(*) from private.creator_premium_purchase_receipts').stdout, '1');
+      assert.equal(authenticated(db, id.buyer, `select allowed from public.get_my_creator_premium_entitlement_v1('${id.content}')`).stdout, 'f');
+    });
+
+    for (const operation of ['purchase', 'subscription']) {
+      await scenario(`${operation} refund waits on authorization before locking its financial fact`, async db => {
+        assert.equal(hasF3, true, 'authorization lock boundary is absent on the F2 baseline');
+        const fact = success(db, operation === 'purchase' ? purchaseSql() : subscribeSql());
+        const table = operation === 'purchase' ? 'creator_premium_purchase_receipts' : 'creator_premium_subscription_periods';
+        const factId = operation === 'purchase' ? fact.receipt_id : fact.period_id;
+        const rpc = operation === 'purchase' ? 'refund_creator_premium_purchase_v1' : 'refund_creator_premium_subscription_period_v1';
+        const marker = Math.floor(Math.random() * 1_000_000_000) + 1;
+        // Policy is deliberately free. This distinguishes policy -> fact -> auth
+        // from the required policy -> auth -> fact, unlike the policy-only probes.
+        const holder = dockerAsync(pgCommand(db), `begin;set local statement_timeout='10s';
+          select id from private.creator_premium_finance_authorizations where id='${id.authorization}' for update;
+          select pg_advisory_xact_lock(${marker});select pg_sleep(4);commit;`);
+        await waitForLock(db, `select exists(select 1 from pg_locks where locktype='advisory' and objid=${marker} and granted)`);
+        const application = `f3_auth_refund_${marker}`;
+        const refund = dockerAsync(pgCommand(db), serviceSql(`set local application_name='${application}';
+          select public.${rpc}('${factId}','${randomUUID()}','owner_approved')`));
+        try {
+          await waitForLock(db, `select exists(select 1 from pg_stat_activity where datname=current_database()
+            and application_name='${application}' and wait_event_type='Lock')`);
+          const independentlyLockable = sql(db, `begin;select id from private.${table}
+            where id='${factId}' for update nowait;rollback;`, true);
+          assert.equal(independentlyLockable.status, 0,
+            `${operation} refund locked its fact before the held authorization: ${independentlyLockable.stderr}`);
+        } finally {
+          for (const result of await Promise.all([holder, refund])) assert.equal(result.status, 0, result.stderr);
+        }
+      });
+    }
 
     await scenario('refund waits on policy before locking its receipt (no inverted fact lock)', async db => {
       const purchase = success(db, purchaseSql());
