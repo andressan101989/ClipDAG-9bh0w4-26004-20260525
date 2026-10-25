@@ -534,6 +534,8 @@ test('policy binds the sole F2 managed-scope transition to immutable evidence an
 
 test('F2 managed-scope transition binds Git ancestry and the exact committed migration blob', async () => {
   const { gate, policy } = await loadGateAndPolicy();
+  const transitionPolicy = structuredClone(policy);
+  transitionPolicy.baseline.sha = F2_MANAGED_SCOPE_TRANSITION.baseline_sha;
   const migrations = [{
     path: 'supabase/migrations/20261024173500_creator_premium_f2_complete_monetization.sql',
     version: '20261024173500',
@@ -545,7 +547,7 @@ test('F2 managed-scope transition binds Git ancestry and the exact committed mig
   };
   const attested = gate.attestManagedScopeTransition({
     cwd: 'C:/repo',
-    policy,
+    policy: transitionPolicy,
     approvedSha: 'a'.repeat(40),
     migrations,
     affectedFunctions: ['bdag-ledger'],
@@ -562,7 +564,7 @@ test('F2 managed-scope transition binds Git ancestry and the exact committed mig
 
   const recovery = gate.attestManagedScopeTransition({
     cwd: 'C:/repo',
-    policy,
+    policy: transitionPolicy,
     mode: 'postcheck_recovery',
     approvedSha: 'a'.repeat(40),
     migrations,
@@ -573,7 +575,7 @@ test('F2 managed-scope transition binds Git ancestry and the exact committed mig
 
   assertDenied(() => gate.attestManagedScopeTransition({
     cwd: 'C:/repo',
-    policy,
+    policy: transitionPolicy,
     approvedSha: 'a'.repeat(40),
     migrations,
     affectedFunctions: ['bdag-ledger'],
@@ -582,7 +584,7 @@ test('F2 managed-scope transition binds Git ancestry and the exact committed mig
 
   assertDenied(() => gate.attestManagedScopeTransition({
     cwd: 'C:/repo',
-    policy,
+    policy: transitionPolicy,
     approvedSha: 'a'.repeat(40),
     migrations,
     affectedFunctions: ['bdag-ledger'],
@@ -591,6 +593,17 @@ test('F2 managed-scope transition binds Git ancestry and the exact committed mig
       return '';
     },
   }), 'INVALID_MANAGED_SCOPE_TRANSITION');
+
+  assert.notEqual(policy.baseline.sha, F2_MANAGED_SCOPE_TRANSITION.baseline_sha);
+  const retired = gate.attestManagedScopeTransition({
+    cwd: 'C:/repo',
+    policy,
+    approvedSha: 'a'.repeat(40),
+    migrations,
+    affectedFunctions: ['bdag-ledger'],
+    runGit: () => { throw new Error('promoted baseline must not inspect retired transition evidence'); },
+  });
+  assert.deepEqual(retired, { migrations, attestation: null });
 });
 
 test('Security Advisor exceptions are exact object-bound verified attestations', async () => {
