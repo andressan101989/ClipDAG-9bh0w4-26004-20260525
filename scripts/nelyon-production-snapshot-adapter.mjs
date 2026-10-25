@@ -1669,15 +1669,35 @@ function isExactF3RecoveryAuthority(policy, manifest, phase, { request, migratio
   )).length === 1);
 }
 
-function phaseBoundRpcExceptions(exceptions, manifest, phase) {
+function phaseBoundRpcExceptions(exceptions, manifest, phase, { policy, migrations } = {}) {
+  if (phase === 'recovery') {
+    const observed = new Set((migrations?.items ?? []).map(migrationIdentity).filter(Boolean));
+    const baselineLatest = String(policy?.baseline?.latest_migration ?? '');
+    return exceptions.filter(exception => {
+      const origin = exception?.origin?.migration;
+      if (typeof origin !== 'string') return true;
+      return origin <= baselineLatest || observed.has(origin);
+    });
+  }
   if (phase !== 'pre') return [...exceptions];
-  const pendingMigrations = new Set((manifest?.resources?.migrations ?? []).map(migrationIdentity).filter(Boolean));
+  const pendingMigrations = new Map((manifest?.resources?.migrations ?? [])
+    .map(item => [migrationIdentity(item), item])
+    .filter(([identity]) => Boolean(identity)));
   return exceptions.flatMap(exception => {
-    if (!pendingMigrations.has(exception?.origin?.migration)) return [exception];
+    const pending = pendingMigrations.get(exception?.origin?.migration);
+    if (!pending) return [exception];
     const predecessor = RPC_REPLACEMENT_PREDECESSOR_ATTESTATIONS.get(
       `${exception.origin.migration}|${exception.advisor_fingerprint}`,
     );
-    return predecessor ? [{ ...exception, attestation: predecessor }] : [];
+    if (predecessor) return [{ ...exception, attestation: predecessor }];
+    const requiresExactSource = exception.origin.migration
+      === '20261025231500_creator_premium_f3_final_wallet_integration';
+    if (pending.blob !== exception.origin.migration_blob
+      || ((requiresExactSource || pending.source_sha !== undefined)
+        && pending.source_sha !== exception.origin.source_sha)) {
+      fail('RPC_SECURITY_ATTESTATION_FAILED', 'phase-bound RPC omission lacks exact migration blob/source evidence');
+    }
+    return [];
   });
 }
 
@@ -1699,9 +1719,9 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
       result = [...result.filter(exception => !replacements.some(item => item.object.name === exception.object.name)),
         ...replacements, policy.finance_security_advisor.c2_relation_exception];
     }
-    return phaseBoundRpcExceptions(result, manifest, phase);
+    return phaseBoundRpcExceptions(result, manifest, phase, { policy, migrations: context.migrations });
   }
-  return phaseBoundRpcExceptions(exceptions, manifest, phase);
+  return phaseBoundRpcExceptions(exceptions, manifest, phase, { policy, migrations: context.migrations });
 }
 
 function rpcIdentitiesFromExceptions(exceptions) {

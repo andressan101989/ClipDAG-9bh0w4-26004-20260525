@@ -1040,6 +1040,41 @@ export function validateMigrationDelta({ changes, baselineLatestMigration, remot
   return migrations;
 }
 
+export function attestPhaseBoundMigrationOrigins({ cwd, policy, approvedSha, migrations, runGit }) {
+  if (!Array.isArray(migrations) || typeof runGit !== 'function' || !SHA_PATTERN.test(approvedSha ?? '')) {
+    deny('INVALID_RPC_PHASE_ATTESTATION', 'phase-bound migration attestation inputs are incomplete');
+  }
+  const origins = new Map();
+  for (const exception of policy?.security_advisor?.exceptions ?? []) {
+    const origin = exception?.origin;
+    if (typeof origin?.migration !== 'string') continue;
+    if (!SHA_PATTERN.test(origin.migration_blob ?? '') || !SHA_PATTERN.test(origin.source_sha ?? '')) {
+      deny('INVALID_RPC_PHASE_ATTESTATION', 'phase-bound RPC origin is malformed');
+    }
+    const previous = origins.get(origin.migration);
+    if (previous && (previous.migration_blob !== origin.migration_blob || previous.source_sha !== origin.source_sha)) {
+      deny('INVALID_RPC_PHASE_ATTESTATION', 'phase-bound RPC origins disagree for one migration');
+    }
+    origins.set(origin.migration, origin);
+  }
+  return migrations.map(migration => {
+    const path = validateGitPath(migration?.path);
+    const identity = path.split('/').at(-1)?.replace(/\.sql$/u, '');
+    const origin = origins.get(identity);
+    if (!origin) return migration;
+    let blob;
+    try {
+      blob = gitText(runGit, ['rev-parse', `${approvedSha}:${path}`], cwd);
+    } catch {
+      deny('INVALID_RPC_PHASE_ATTESTATION', 'phase-bound migration is unavailable at the approved source');
+    }
+    if (blob !== origin.migration_blob) {
+      deny('INVALID_RPC_PHASE_ATTESTATION', 'phase-bound migration bytes differ from the reviewed RPC origin');
+    }
+    return { ...migration, blob, source_sha: origin.source_sha };
+  });
+}
+
 export function attestManagedScopeTransition({
   cwd,
   policy,
@@ -1750,6 +1785,13 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   });
   const financeTransition = attestFinanceAuthorityTransition({ cwd, policy, mode: request.mode, approvedSha: request.approvedSha,
     changes: gitState.changes, migrations: transitionEvidence.migrations, affectedFunctions, runGit });
+  const phaseBoundMigrations = attestPhaseBoundMigrationOrigins({
+    cwd,
+    policy,
+    approvedSha: request.approvedSha,
+    migrations: financeTransition.migrations,
+    runGit,
+  });
   const risk = classifyRisk({
     affectedFunctions,
     changedPaths: gitState.changes.map(change => change.path),
@@ -1761,7 +1803,7 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   return {
     gitState,
     classified,
-    migrations: financeTransition.migrations,
+    migrations: phaseBoundMigrations,
     managedScopeTransition: transitionEvidence.attestation,
     financeAuthorityTransition: financeTransition.attestation,
     affectedFunctions,

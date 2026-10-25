@@ -592,8 +592,8 @@ test('F3 recovery authorities require the exact approved source and installed mi
     'recovery',
     { request: recoveryRequest, migrations },
   );
-  assert.equal(selected.length, 23);
-  assert.equal(selected.filter(item => Array.isArray(item.object.argument_types)).length, 21);
+  assert.equal(selected.length, 22);
+  assert.equal(selected.filter(item => Array.isArray(item.object.argument_types)).length, 20);
   assert.equal(selected.some(item => item.object.name === 'get_admin_creator_premium_finance_activation_v1'), true);
   assert.equal(selected.some(item => item.object.name === 'get_creator_premium_commerce_v2'), true);
   assert.equal(selected.some(item => item.object.name === 'get_my_creator_premium_subscriptions_v2'), true);
@@ -602,6 +602,10 @@ test('F3 recovery authorities require the exact approved source and installed mi
   const swappedHistory = structuredClone(migrations);
   swappedHistory.items[0].name = 'historical_identity_swapped';
   swappedHistory.sha256 = sha256(canonicalJson(swappedHistory.items));
+  const baselineRecoveryExceptions = controlledPolicy.security_advisor.exceptions.filter(exception => (
+    typeof exception?.origin?.migration !== 'string'
+    || exception.origin.migration <= controlledPolicy.baseline.latest_migration
+  ));
   assert.deepEqual(
     adapter.advisorExceptionsForPhase(
       controlledPolicy,
@@ -609,7 +613,7 @@ test('F3 recovery authorities require the exact approved source and installed mi
       'recovery',
       { request: recoveryRequest, migrations: swappedHistory },
     ),
-    controlledPolicy.security_advisor.exceptions,
+    baselineRecoveryExceptions,
   );
 
   for (const options of [
@@ -619,7 +623,7 @@ test('F3 recovery authorities require the exact approved source and installed mi
   ]) {
     assert.deepEqual(
       adapter.advisorExceptionsForPhase(controlledPolicy, recoveryManifest, 'recovery', options),
-      controlledPolicy.security_advisor.exceptions,
+      baselineRecoveryExceptions,
     );
   }
 });
@@ -681,7 +685,7 @@ test('F3 recovery capture requests only the successor RPC authority set', async 
     observedAt: '2026-10-12T12:00:01.000Z',
     adapterSourceSha256: '6'.repeat(64),
   }), /REMOTE_READ_FAILED: RPC security attestation request failed/);
-  assert.equal(requestedRpcIdentities.length, 21);
+  assert.equal(requestedRpcIdentities.length, 20);
   assert.equal(requestedRpcIdentities.some(item => item.name === 'get_admin_creator_premium_finance_activation_v1'), true);
   assert.equal(requestedRpcIdentities.some(item => item.name === 'get_creator_premium_commerce_v2'), true);
   assert.equal(requestedRpcIdentities.some(item => item.name === 'get_my_creator_premium_subscriptions_v2'), true);
@@ -959,6 +963,10 @@ function rpcSecurityRows(overrides = {}) {
     definition: `CREATE FUNCTION public.${name}(${argumentTypes.join(',')})\r\nRETURNS jsonb\r\nSECURITY DEFINER`,
     ...(overrides[name] ?? {}),
   }));
+}
+
+function rpcSecurityRowsBeforeWallet(overrides = {}) {
+  return rpcSecurityRows(overrides).filter(row => row.name !== 'ensure_my_ledger_account');
 }
 
 function premiumPostcheckSnapshot(overrides = {}) {
@@ -1530,11 +1538,11 @@ test('fixed documented recovery capture uses four read-only SQL requests and red
   const calls = [];
   const result = await adapter.captureProductionSnapshot({
     phase: 'recovery', policy, request: request(), manifest: manifest(),
-    token: 'never-serialize-recovery-token', fetchImpl: successfulFetch(calls),
+    token: 'never-serialize-recovery-token', fetchImpl: successfulFetch(calls, { rpcSecurity: rpcSecurityRowsBeforeWallet() }),
     observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
   });
   assert.equal(result.phase, 'recovery');
-  assert.equal(result.rpc_security.count, 18);
+  assert.equal(result.rpc_security.count, 17);
   assert.equal(result.premium_state.complete, true);
   assert.equal(calls.length, 9);
   const sqlCalls = calls.filter(call => (call.options.method ?? 'GET') === 'POST');
@@ -1547,10 +1555,11 @@ test('recovery snapshot verifies exact exception attestations and remains read o
   const adapter = await loadAdapter();
   const recovery = await adapter.captureProductionSnapshot({
     phase: 'recovery', policy, request: request(), manifest: manifest(),
-    token: 'never-serialize-recovery-token', fetchImpl: successfulFetch([]),
+    token: 'never-serialize-recovery-token', fetchImpl: successfulFetch([], { rpcSecurity: rpcSecurityRowsBeforeWallet() }),
     observedAt: '2026-10-12T12:00:01.000Z', adapterSourceSha256: '6'.repeat(64),
   });
-  const items = policy.security_advisor.exceptions
+  const recoveryMigrations = { items: [{ version: '20261009021414', name: 'creator_premium_b5_creator_management_ux' }] };
+  const items = adapter.advisorExceptionsForPhase(policy, manifest(), 'recovery', { migrations: recoveryMigrations })
     .filter(exception => Array.isArray(exception.object.argument_types))
     .map(exception => ({
     schema: exception.object.schema,
@@ -2056,7 +2065,7 @@ test('managed scope transition fails closed for any non-attested baseline manife
   assert.throws(() => verify({
     manifestValue: changedMigrationBlobManifest,
     evidence: changedMigrationBlobEvidence,
-  }), /REMOTE_BASELINE_MISMATCH/);
+  }), /RPC_SECURITY_ATTESTATION_FAILED/);
   const extraManaged = structuredClone(controlledPolicy);
   extraManaged.supabase.managed_functions.push('rogue-function');
   assert.throws(() => verify({ policyPatch: { supabase: extraManaged.supabase } }), /REMOTE_BASELINE_MISMATCH/);
@@ -2215,7 +2224,7 @@ test('phase-bound RPC attestations keep successor authorities stable for an olde
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
   assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre')), 18);
   assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post')), 18);
-  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery')), 18);
+  assert.equal(rpcCount(adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery')), 17);
 });
 
 test('phase-bound RPC attestations introduce self-only Wallet provisioning only after F3-FINAL', async () => {
@@ -2223,22 +2232,49 @@ test('phase-bound RPC attestations introduce self-only Wallet provisioning only 
   const controlledPolicy = structuredClone(installedPolicy);
   const controlledManifest = manifest();
   controlledManifest.resources.migrations = [{
+    blob: 'cdcb1e2bd4db2e2e61c7e5815d62daf27cf15fba',
     path: 'supabase/migrations/20261025231500_creator_premium_f3_final_wallet_integration.sql',
+    source_sha: '8d1dac4a132c612f394ca470d4b4e2cd7b16adb2',
     version: '20261025231500',
   }];
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;
   const pre = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'pre');
   const post = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'post');
-  const recovery = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery');
+  const recoveryBeforeInstall = adapter.advisorExceptionsForPhase(
+    controlledPolicy,
+    controlledManifest,
+    'recovery',
+    { migrations: { items: [{ version: '20261025160452', name: 'creator_premium_f3_c2_isolated_canary_governance' }] } },
+  );
+  const recoveryAfterInstall = adapter.advisorExceptionsForPhase(
+    controlledPolicy,
+    controlledManifest,
+    'recovery',
+    { migrations: { items: [
+      { version: '20261025160452', name: 'creator_premium_f3_c2_isolated_canary_governance' },
+      { version: '20261025231500', name: 'creator_premium_f3_final_wallet_integration' },
+    ] } },
+  );
   assert.equal(pre.length, 23);
   assert.equal(post.length, 24);
-  assert.equal(recovery.length, 24);
+  assert.equal(recoveryBeforeInstall.length, 23);
+  assert.equal(recoveryAfterInstall.length, 24);
   assert.equal(rpcCount(pre), 20);
   assert.equal(rpcCount(post), 21);
-  assert.equal(rpcCount(recovery), 21);
+  assert.equal(rpcCount(recoveryBeforeInstall), 20);
+  assert.equal(rpcCount(recoveryAfterInstall), 21);
   assert.equal(pre.some(item => item.object.name === 'ensure_my_ledger_account'), false);
   assert.equal(post.some(item => item.object.name === 'ensure_my_ledger_account'), true);
-  assert.equal(recovery.some(item => item.object.name === 'ensure_my_ledger_account'), true);
+  assert.equal(recoveryBeforeInstall.some(item => item.object.name === 'ensure_my_ledger_account'), false);
+  assert.equal(recoveryAfterInstall.some(item => item.object.name === 'ensure_my_ledger_account'), true);
+  for (const key of ['blob', 'source_sha']) {
+    const hostileManifest = structuredClone(controlledManifest);
+    hostileManifest.resources.migrations[0][key] = key === 'blob' ? '0'.repeat(40) : '1'.repeat(40);
+    assert.throws(
+      () => adapter.advisorExceptionsForPhase(controlledPolicy, hostileManifest, 'pre'),
+      /RPC_SECURITY_ATTESTATION_FAILED/,
+    );
+  }
   const preFingerprints = new Set(pre.map(item => item.advisor_fingerprint));
   const introduced = post.filter(item => !preFingerprints.has(item.advisor_fingerprint));
   assert.deepEqual(introduced.map(item => item.advisor_fingerprint), [
@@ -2307,7 +2343,7 @@ test('phase-bound RPC attestations activate P3-C2 recovery readiness only after 
   const recovery = adapter.advisorExceptionsForPhase(controlledPolicy, controlledManifest, 'recovery');
   assert.equal(rpcCount(pre), 18);
   assert.equal(rpcCount(post), 18);
-  assert.equal(rpcCount(recovery), 18);
+  assert.equal(rpcCount(recovery), 17);
   const preDetail = pre.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
   const postDetail = post.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
   const recoveryDetail = recovery.find(item => item.object.name === 'get_admin_creator_premium_content_v1');
@@ -2320,7 +2356,9 @@ test('phase-bound RPC attestations activate F2 projections only after the exact 
   const adapter = await loadAdapter();
   const controlledManifest = manifest();
   controlledManifest.resources.migrations = [{
+    blob: 'fce8789a0c79251afbe962bd39f6bd81ae248296',
     path: 'supabase/migrations/20261024173500_creator_premium_f2_complete_monetization.sql',
+    source_sha: '97f6638acaa5be2af336b427184c11185e3d0fe1',
     version: '20261024173500',
   }];
   const rpcCount = items => items.filter(item => Array.isArray(item.object.argument_types)).length;

@@ -677,6 +677,12 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
   }
   if (source.run_id === '40166468648') relationNames.push('creator_premium_finance_authorizations');
   const captureMigrationRows = source.run_id === '40166468648' ? migrationRows.slice(0, -1) : migrationRows;
+  const captureRecoveryExceptions = adapter.advisorExceptionsForPhase(
+    controlledPolicy,
+    recoveryManifest,
+    'recovery',
+    { request: recoveryRequest, migrations: { items: captureMigrationRows } },
+  );
   const fetchImpl = async (url, options = {}) => {
     const pathname = new URL(url).pathname;
     const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -694,7 +700,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       if (body.query.includes('nelyon-finance-snapshot-v1')) return json([{ snapshot: finance }], 201);
       if (body.query.includes('nelyon-cron-snapshot-v1')) return json([{ snapshot: { schema_version: 1, complete: true, query_id: 'nelyon-cron-snapshot-v1', count: 0, items: [] } }], 201);
       if (body.query.includes('pg_get_function_identity_arguments')) {
-        return json(controlledPolicy.security_advisor.exceptions
+        return json(captureRecoveryExceptions
           .filter(exception => Array.isArray(exception.object.argument_types))
           .map(exception => ({
           schema: exception.object.schema,
@@ -1165,6 +1171,40 @@ test('Security Advisor exceptions are exact object-bound verified attestations',
     mutate(walletException);
     assertDenied(() => gate.validateSecurityAdvisorPolicy(candidate), 'INVALID_SECURITY_ADVISOR_POLICY');
   }
+});
+
+test('phase-bound migration omission is bound to the exact reviewed blob and source', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const migration = {
+    path: 'supabase/migrations/20261025231500_creator_premium_f3_final_wallet_integration.sql',
+    version: '20261025231500',
+  };
+  const exactBlob = 'cdcb1e2bd4db2e2e61c7e5815d62daf27cf15fba';
+  const exactSource = '8d1dac4a132c612f394ca470d4b4e2cd7b16adb2';
+  const runGit = args => {
+    assert.deepEqual(args, ['rev-parse', `6636b50e43bedf08b62ba7d929976d73a692b9b9:${migration.path}`]);
+    return `${exactBlob}\n`;
+  };
+  assert.deepEqual(
+    gate.attestPhaseBoundMigrationOrigins({
+      approvedSha: '6636b50e43bedf08b62ba7d929976d73a692b9b9',
+      cwd: '.',
+      migrations: [migration],
+      policy,
+      runGit,
+    }),
+    [{ ...migration, blob: exactBlob, source_sha: exactSource }],
+  );
+  assertDenied(
+    () => gate.attestPhaseBoundMigrationOrigins({
+      approvedSha: '6636b50e43bedf08b62ba7d929976d73a692b9b9',
+      cwd: '.',
+      migrations: [migration],
+      policy,
+      runGit: () => `${'0'.repeat(40)}\n`,
+    }),
+    'INVALID_RPC_PHASE_ATTESTATION',
+  );
 });
 
 test('recovery source is exact immutable failed-postcheck authority', async () => {
@@ -2338,7 +2378,7 @@ test('postcheck recovery verifies B7 current state without productive resources'
   assert.equal(result.migrations.count, 337);
   assert.equal(result.functions.items.length, 12);
   assert.equal(result.security_advisor.baseline_count, 554);
-  assert.equal(result.security_advisor.exception_count, 19);
+  assert.equal(result.security_advisor.exception_count, 18);
   assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
   assert.equal(result.premium_state.legacy.content_count, 2);
   assert.doesNotMatch(JSON.stringify(result), /fixture-token|authorization/i);
