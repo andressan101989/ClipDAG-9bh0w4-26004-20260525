@@ -65,7 +65,23 @@ test('F3 disposable catalog verifies exact authority and detects real PostgreSQL
     await captureActualAuthority('post');
     const facts=JSON.parse(sql(adapter.FINANCE_FACTS_F3_SQL.replaceAll('$1', "'local-release'").replaceAll('$2', "'local-run'")));
     assert.equal(adapter.validateFinanceFacts(facts,'f3_foundation'),facts);
+    const disableForeignKeyTrigger = (source, target, side) => `do $$ declare enforcement record; begin
+      select namespace.nspname schema_name,relation.relname relation_name,trigger.tgname trigger_name
+      into strict enforcement from pg_catalog.pg_constraint constraint_row
+      join pg_catalog.pg_trigger trigger on trigger.tgconstraint=constraint_row.oid
+      join pg_catalog.pg_class relation on relation.oid=trigger.tgrelid
+      join pg_catalog.pg_namespace namespace on namespace.oid=relation.relnamespace
+      where constraint_row.contype='f' and constraint_row.conrelid='${source}'::regclass
+        and constraint_row.confrelid='${target}'::regclass and trigger.tgisinternal
+        and trigger.tgrelid=constraint_row.${side === 'referencing' ? 'conrelid' : 'confrelid'}
+      order by trigger.tgtype limit 1;
+      execute pg_catalog.format('alter table %I.%I disable trigger %I',enforcement.schema_name,
+        enforcement.relation_name,enforcement.trigger_name);
+    end $$;`;
     const mutations = [
+      ['disabled referencing FK enforcement trigger',disableForeignKeyTrigger('private.creator_premium_purchase_receipts','private.creator_premium_finance_authorizations','referencing')],
+      ['disabled referenced FK enforcement trigger',disableForeignKeyTrigger('private.creator_premium_purchase_receipts','private.creator_premium_finance_authorizations','referenced')],
+      ['disabled external referenced FK enforcement trigger',disableForeignKeyTrigger('private.creator_premium_finance_authorizations','auth.users','referenced')],
       ['missing OFF guard','alter table private.creator_premium_finance_policy drop constraint creator_premium_finance_policy_f3_foundation_off_check;'],
       ['unvalidated OFF guard',`alter table private.creator_premium_finance_policy drop constraint creator_premium_finance_policy_f3_foundation_off_check;
         alter table private.creator_premium_finance_policy add constraint creator_premium_finance_policy_f3_foundation_off_check
@@ -642,6 +658,8 @@ test('F3 foundation complete snapshot pair binds catalog phase and rejects resig
     e=>{e.finance_facts.authorizations.push({id_sha256:'a'.repeat(64)});},
     e=>{e.finance_facts.release_movement_bdag='1.00000000';},
     e=>{e.finance_authority.phase='legacy';},
+    e=>{e.finance_authority.relations.find(row=>row.identity==='private.creator_premium_purchase_receipts').sha256='a36e29bc8d8e2df1b9df71d7a001f43346e799f0773e25c63289a05aab7b7e26';
+      const {sha256:ignored,...unsigned}=e.finance_authority;e.finance_authority.sha256=sha256(canonicalJson(unsigned));},
     e=>{e.finance_authority.legacy_functions[0].sha256='b'.repeat(64);const {sha256:ignored,...unsigned}=e.finance_authority;e.finance_authority.sha256=sha256(canonicalJson(unsigned));},
     e=>{e.finance_authority.legacy_relations[0].sha256='b'.repeat(64);const {sha256:ignored,...unsigned}=e.finance_authority;e.finance_authority.sha256=sha256(canonicalJson(unsigned));},
     e=>{e.adapter.queries.at(-1).sha256='f'.repeat(64);},

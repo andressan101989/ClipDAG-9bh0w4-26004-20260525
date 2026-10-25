@@ -457,7 +457,7 @@ export function validatePolicy(policy) {
   }
   if (policy.schema_version !== 2) deny('INVALID_POLICY_SCHEMA', 'unsupported policy schema');
   if (canonicalJson(policy.finance_authority_transition) !== canonicalJson(F3_FINANCE_AUTHORITY_TRANSITION)
-    || sha256Hex(canonicalJson(policy.finance_authority)) !== '1915725abb629c21505cd058532fddefca6f9ba2fdb03eae7b69c6abdcb5ac00'
+    || sha256Hex(canonicalJson(policy.finance_authority)) !== '5f0d64ecf02d8052c64719490972484801a3859147186b6230bb82d43162653f'
     || sha256Hex(canonicalJson(policy.finance_security_advisor)) !== '47fba40bc5736d8da22cda8409ef39538ea3dcc5187b17ce9d898544d2c815a3') {
     deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'F3 foundation authority must match the exact audited contract');
   }
