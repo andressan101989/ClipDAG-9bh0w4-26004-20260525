@@ -6,6 +6,10 @@ import test from 'node:test';
 
 const adapterUrl = new URL('../scripts/nelyon-production-snapshot-adapter.mjs', import.meta.url);
 const policy = JSON.parse(readFileSync(new URL('../.github/nelyon-production-release-policy.json', import.meta.url), 'utf8'));
+// Authority hashes bind the canonical Git LF bytes, independent of Windows checkout conversion.
+const f3MigrationSql = () => execFileSync('git', [
+  'show', 'HEAD:supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql',
+], { cwd: new URL('../', import.meta.url), encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
 
 async function loadAdapter() {
   return import(`${adapterUrl.href}?test=${Date.now()}-${Math.random()}`);
@@ -56,7 +60,7 @@ test('F3 disposable catalog verifies exact authority and detects real PostgreSQL
       assert.doesNotMatch(JSON.stringify(result),/local-never-retained|CREATE FUNCTION/);
     };
     await captureActualAuthority('pre');
-    sql(readFileSync(new URL('../supabase/migrations/20261025011000_creator_premium_f3_bounded_financial_activation.sql',import.meta.url),'utf8'));
+    sql(f3MigrationSql());
     const rawPost=JSON.parse(sql(adapter.FINANCE_AUTHORITY_SQL));
     const post=adapter.normalizeFinanceAuthority(rawPost,'f3_foundation');
     assert.equal(adapter.validateFinanceAuthority(post,policy,'f3_foundation'),true);
@@ -127,6 +131,45 @@ test('F3 disposable catalog verifies exact authority and detects real PostgreSQL
   } finally { docker(['dropdb','-U','supabase_admin','--force','--if-exists',db]); }
 });
 
+test('F3 fact envelopes execute as the Management API read-only role before and after migration', {
+  skip: process.env.RUN_F3_GOVERNANCE_LOCAL !== '1', timeout: 120000,
+}, async () => {
+  const adapter = await loadAdapter();
+  const db = `premium_f3_readonly_${process.pid}_${Date.now()}`;
+  assert.match(db, /^premium_f3_readonly_[0-9]+_[0-9]+$/);
+  const docker = args => execFileSync('docker', ['exec','-i','nelyon-ads-v2-d-compile',...args],
+    {encoding:'utf8',stdio:['pipe','pipe','pipe']});
+  const sql = input => execFileSync('docker',['exec','-i','nelyon-ads-v2-d-compile','psql','-X','-q',
+    '-v','ON_ERROR_STOP=1','-U','supabase_admin','-d',db,'-At'],
+  {input,encoding:'utf8',maxBuffer:8*1024*1024,stdio:['pipe','pipe','pipe']});
+  const inventory = items => ({ complete: true, count: items.length, items,
+    latest: items.at(-1) ?? null, sha256: sha256(canonicalJson(items)) });
+  const bindingHelperPermissions = () => JSON.parse(sql(`select pg_catalog.jsonb_build_object(
+    'purchase',pg_catalog.has_function_privilege('supabase_read_only_user',
+      'private.creator_premium_purchase_binding_is_valid_v1(uuid)','EXECUTE'),
+    'period',pg_catalog.has_function_privilege('supabase_read_only_user',
+      'private.creator_premium_period_binding_is_valid_v1(uuid)','EXECUTE'));`));
+  const readFacts = (query, phase) => {
+    assert.doesNotMatch(query, /private\.creator_premium_(?:purchase|period)_binding_is_valid_v1/);
+    const bound = query.replaceAll('$1', "'local-release'").replaceAll('$2', "'local-run'");
+    const facts = JSON.parse(sql(`begin read only;
+      set local role supabase_read_only_user;
+      ${bound}
+      rollback;`));
+    assert.equal(adapter.validateFinanceFacts(facts, phase), facts);
+  };
+  try {
+    docker(['createdb','-U','supabase_admin','-T','premium_f2_governance_20261024',db]);
+    assert.deepEqual(bindingHelperPermissions(), { purchase: false, period: false });
+    readFacts(adapter.selectFinanceSnapshotQueries(inventory([])).facts, 'legacy');
+    sql(f3MigrationSql());
+    assert.deepEqual(bindingHelperPermissions(), { purchase: false, period: false });
+    readFacts(adapter.selectFinanceSnapshotQueries(inventory([
+      { version: '20261025011000', name: 'creator_premium_f3_bounded_financial_activation' },
+    ])).facts, 'f3_foundation');
+  } finally { docker(['dropdb','-U','supabase_admin','--force','--if-exists',db]); }
+});
+
 test('F3 selects attested SQL only from complete migration inventory and rejects phase mismatch', async () => {
   const adapter = await loadAdapter();
   const inventory = items => ({ complete: true, count: items.length, items,
@@ -134,6 +177,8 @@ test('F3 selects attested SQL only from complete migration inventory and rejects
   const legacy = adapter.selectFinanceSnapshotQueries(inventory([]));
   assert.equal(legacy.phase, 'legacy');
   assert.doesNotMatch(legacy.facts, /from private\.creator_premium_finance_authorizations/);
+  assert.doesNotMatch(legacy.facts,
+    /private\.creator_premium_(?:purchase|period)_binding_is_valid_v1/);
   const f3 = adapter.selectFinanceSnapshotQueries(inventory([
     { version: '20261025011000', name: 'creator_premium_f3_bounded_financial_activation' },
   ]));
