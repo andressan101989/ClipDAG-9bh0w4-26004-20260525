@@ -45,7 +45,7 @@ export const FINANCE_POLICY_DIGESTS = Object.freeze({
   historical_transition: '18ba08389686a15aea9df1c7b4f974202e147167e5aa1d0f83412e1065ebc882',
   c2_transition: '2fc5ae800bf96aed59d78b953cfe628007f9603b48dd8e7a25dc915e88927af2',
   f4_transition: 'de7891ab96cd95280a5d1e80ad56b8411045b66bb54e71f610874f4cc280e36a',
-  authority: 'de66270db10a710d5caf9580b7d1128719029e2322b6cecfe54ff62e1dd7018c',
+  authority: '65e7686d4f2047acfa8ba4e90bd91481df2d07c0bb6c140582b930288b2357b1',
   security_advisor: '2c7c69d297f6b20b97cbaf7cf3ce339b8498c20a8209859f407493d864fef678',
 });
 
@@ -1332,24 +1332,20 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   validateFinanceSnapshot(evidence.finance);
   if (requireFinanceAuthority) {
     validateFinancePolicyAuthority(policy);
+    const recoveryAuthorityPhase = exactRecoveryAuthorityPhase(policy, manifest, phase, {
+      request,
+      migrations: evidence.migrations,
+    });
     const expectedPhase = financeTransition
       ? (phase === 'pre' ? (financeTransition.from_phase ?? 'legacy') : (financeTransition.to_phase ?? 'f3_foundation'))
-      : financeQueries.phase;
-    const recoverySource = phase === 'recovery' && request?.mode === 'postcheck_recovery'
-      ? policy?.postcheck_recovery?.approved_sources?.find(item => (
-        item.run_id === String(request.recoverySourceRunId ?? '')
-        && item.expected_latest_migration === '20261025011000_creator_premium_f3_bounded_financial_activation'
-        && item.expected_migration_count === evidence.migrations.count
-        && `${evidence.migrations.latest.version}_${evidence.migrations.latest.name}` === item.expected_latest_migration
-      ))
-      : null;
+      : (recoveryAuthorityPhase ?? financeQueries.phase);
     const expectedBaselineMigration = expectedPhase === 'f4_general'
       ? '20261026030000_creator_premium_f4_general_bdag_activation'
       : expectedPhase === 'f3_c2'
         ? '20261025160452_creator_premium_f3_c2_isolated_canary_governance'
         : '20261025011000_creator_premium_f3_bounded_financial_activation';
     if (financeQueries.phase !== expectedPhase || (!financeTransition
-      && !recoverySource
+      && !recoveryAuthorityPhase
       && policy.baseline.latest_migration < expectedBaselineMigration)) {
       fail('FINANCE_AUTHORITY_MISMATCH', 'migration/catalog/release phase differs');
     }
@@ -1407,7 +1403,7 @@ export function verifyRecoveryInfrastructureBaseline({
   if (!hasExactBaselineMigrationAppend(policy, migrations, expectedLatestMigration)) {
     fail('RECOVERY_POSTCHECK_FAILED', 'migration history is not the exact reviewed baseline plus the approved append');
   }
-  if (!Array.isArray(functionTransitions) || functionTransitions.length === 0) {
+  if (!Array.isArray(functionTransitions)) {
     fail('RECOVERY_POSTCHECK_FAILED', 'function transition evidence is unavailable');
   }
   const currentBySlug = new Map(functions.items.map(item => [item.slug, item]));
@@ -2094,7 +2090,7 @@ const RPC_REPLACEMENT_PREDECESSOR_ATTESTATIONS = new Map([
   ],
 ]);
 
-function isExactF3RecoveryAuthority(policy, manifest, phase, { request, migrations } = {}) {
+function exactRecoveryAuthorityPhase(policy, manifest, phase, { request, migrations } = {}) {
   if (phase !== 'recovery' || request?.mode !== 'postcheck_recovery'
     || request?.scopeConfirmation !== 'POSTCHECK_RECOVERY_READ_ONLY'
     || manifest?.identity?.mode !== 'postcheck_recovery'
@@ -2103,17 +2099,30 @@ function isExactF3RecoveryAuthority(policy, manifest, phase, { request, migratio
       function_contracts: [],
       functions: [],
       migrations: [],
-    })) return false;
+    })) return null;
+  const recoveryPhases = new Map([
+    ['40166468648', {
+      expectedLatestMigration: '20261025011000_creator_premium_f3_bounded_financial_activation',
+      phase: 'f3_foundation',
+    }],
+    ['40268500711', {
+      expectedLatestMigration: '20261026030000_creator_premium_f4_general_bdag_activation',
+      phase: 'f4_general',
+    }],
+  ]);
+  const requestedRunId = String(request?.recoverySourceRunId ?? '');
+  const recovery = recoveryPhases.get(requestedRunId);
+  if (!recovery) return null;
   const source = policy?.postcheck_recovery?.approved_sources?.find(item => (
-    item.run_id === '40166468648'
-    && item.run_id === String(request?.recoverySourceRunId ?? '')
+    item.run_id === requestedRunId
   ));
-  if (!source || source.expected_latest_migration !== '20261025011000_creator_premium_f3_bounded_financial_activation'
+  if (!source || source.expected_latest_migration !== recovery.expectedLatestMigration
     || source.expected_migration_count !== policy?.baseline?.migration_count + 1
-    || !hasExactBaselineMigrationAppend(policy, migrations, source.expected_latest_migration)) return false;
-  return source.expected_migrations.every(expected => migrations.items.filter(item => (
+    || !hasExactBaselineMigrationAppend(policy, migrations, source.expected_latest_migration)) return null;
+  if (!source.expected_migrations.every(expected => migrations.items.filter(item => (
     `${item?.version}_${item?.name}` === expected.name
-  )).length === 1);
+  )).length === 1)) return null;
+  return recovery.phase;
 }
 
 function phaseBoundRpcExceptions(exceptions, manifest, phase, { policy, migrations } = {}) {
@@ -2156,18 +2165,20 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
   const installedFoundation = policy?.baseline?.latest_migration >= '20261025011000_creator_premium_f3_bounded_financial_activation';
   const installedC2 = policy?.baseline?.latest_migration >= '20261025160452_creator_premium_f3_c2_isolated_canary_governance';
   const installedF4 = policy?.baseline?.latest_migration >= '20261026030000_creator_premium_f4_general_bdag_activation';
-  const exactF3Recovery = isExactF3RecoveryAuthority(policy, manifest, phase, context);
-  if ((transition && phase !== 'pre') || installedFoundation || exactF3Recovery) {
+  const exactRecoveryPhase = exactRecoveryAuthorityPhase(policy, manifest, phase, context);
+  if ((transition && phase !== 'pre') || installedFoundation || exactRecoveryPhase) {
     validateFinancePolicyAuthority(policy);
     const successors = policy.finance_security_advisor.rpc_attestations;
     let result = [...exceptions.filter(exception => !successors.some(item => item.object.name === exception.object.name)),
       ...successors, policy.finance_security_advisor.relation_exception];
-    if ((transition?.to_phase === 'f3_c2' && phase !== 'pre') || installedC2) {
+    if ((transition?.to_phase === 'f3_c2' && phase !== 'pre') || installedC2
+      || ['f3_c2', 'f4_general'].includes(exactRecoveryPhase)) {
       const replacements = policy.finance_security_advisor.c2_rpc_replacements;
       result = [...result.filter(exception => !replacements.some(item => item.object.name === exception.object.name)),
         ...replacements, policy.finance_security_advisor.c2_relation_exception];
     }
-    if ((transition?.to_phase === 'f4_general' && phase !== 'pre') || installedF4) {
+    if ((transition?.to_phase === 'f4_general' && phase !== 'pre') || installedF4
+      || exactRecoveryPhase === 'f4_general') {
       const replacements = policy.finance_security_advisor.f4_rpc_replacements;
       result = [...result.filter(exception => !replacements.some(item => item.object.name === exception.object.name)),
         ...replacements];

@@ -464,6 +464,12 @@ test('F4 read-only facts execute against refunded commerce and reject hostile pr
       set role postgres;
       ${f4GeneralMigrationSql()}
       reset role;`);
+    const f4Authority = adapter.normalizeFinanceAuthority(
+      JSON.parse(sql(adapter.FINANCE_AUTHORITY_SQL).stdout),
+      'f4_general',
+    );
+    assert.equal(f4Authority.functions.length, 63);
+    assert.equal(adapter.validateFinanceAuthority(f4Authority, installedPolicy, 'f4_general'), true);
     const purchase = JSON.parse(sql(service(`select public.purchase_creator_premium_content_v1(
       '${id.buyer}','${id.content}','${id.offer}','${randomUUID()}','creator-premium-f3-v2')`)).stdout);
     const subscription = JSON.parse(sql(service(`select public.subscribe_creator_premium_plan_v1(
@@ -956,6 +962,172 @@ test('F3 recovery authorities require the exact approved source and installed mi
       adapter.advisorExceptionsForPhase(controlledPolicy, recoveryManifest, 'recovery', options),
       baselineRecoveryExceptions,
     );
+  }
+});
+
+test('F4 recovery selects the exact general successor only for the immutable failed-postcheck source', async () => {
+  const adapter = await loadAdapter();
+  const controlledPolicy = structuredClone(f4TransitionPolicy);
+  const source = controlledPolicy.postcheck_recovery.approved_sources
+    .find(item => item.run_id === '40268500711');
+  assert.ok(source);
+  const recoveryRequest = {
+    ...request(),
+    mode: 'postcheck_recovery',
+    scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
+    recoverySourceRunId: source.run_id,
+  };
+  const recoveryManifest = {
+    ...manifest(),
+    identity: { ...manifest().identity, mode: 'postcheck_recovery' },
+    resources: { functions: [], function_contracts: [], migrations: [], config_changed: false },
+  };
+  const rows = [
+    ...Array.from({ length: source.expected_migration_count - 4 }, (_, index) => ({
+      version: `2025${String(index).padStart(10, '0')}`,
+      name: `historical_${String(index).padStart(3, '0')}`,
+    })),
+    { version: '20261025011000', name: 'creator_premium_f3_bounded_financial_activation' },
+    { version: '20261025160452', name: 'creator_premium_f3_c2_isolated_canary_governance' },
+    { version: '20261025231500', name: 'creator_premium_f3_final_wallet_integration' },
+    { version: '20261026030000', name: 'creator_premium_f4_general_bdag_activation' },
+  ];
+  const migrations = {
+    complete: true,
+    count: rows.length,
+    items: rows,
+    latest: rows.at(-1),
+    sha256: sha256(canonicalJson(rows)),
+  };
+  controlledPolicy.baseline.evidence_digests.migrations = sha256(canonicalJson(
+    rows.slice(0, -1).map(item => `${item.version}_${item.name}`),
+  ));
+  const selected = adapter.advisorExceptionsForPhase(
+    controlledPolicy,
+    recoveryManifest,
+    'recovery',
+    { request: recoveryRequest, migrations },
+  );
+  const f4Admin = controlledPolicy.finance_security_advisor.f4_rpc_replacements[0];
+  assert.equal(selected.find(item => item.object.name === f4Admin.object.name)
+    .attestation.definition_sha256, f4Admin.attestation.definition_sha256);
+  assert.equal(selected.some(item => (
+    item.object.name === 'creator_premium_finance_owner_attestations_f3_c2'
+  )), true);
+
+  for (const options of [
+    { request: { ...recoveryRequest, recoverySourceRunId: '40166468648' }, migrations },
+    { request: recoveryRequest, migrations: { ...migrations, count: migrations.count - 1 } },
+    { request: recoveryRequest, migrations: { ...migrations, latest: rows.at(-2) } },
+    { request: recoveryRequest, migrations: {
+      ...migrations,
+      items: rows.map((item, index) => index === 0 ? { ...item, name: 'history_drift' } : item),
+    } },
+  ]) {
+    const fallback = adapter.advisorExceptionsForPhase(
+      controlledPolicy,
+      recoveryManifest,
+      'recovery',
+      options,
+    );
+    assert.notEqual(fallback.find(item => item.object.name === f4Admin.object.name)
+      .attestation.definition_sha256, f4Admin.attestation.definition_sha256);
+  }
+});
+
+test('zero-Edge F4 recovery still binds the complete unchanged Edge inventory to the baseline', async () => {
+  const adapter = await loadAdapter();
+  const controlledPolicy = structuredClone(f4TransitionPolicy);
+  const migrationRows = [
+    ...Array.from({ length: 353 }, (_, index) => ({
+      version: `2025${String(index).padStart(10, '0')}`,
+      name: `historical_${String(index).padStart(3, '0')}`,
+    })),
+    { version: '20261025231500', name: 'creator_premium_f3_final_wallet_integration' },
+    { version: '20261026030000', name: 'creator_premium_f4_general_bdag_activation' },
+  ];
+  const migrations = {
+    complete: true,
+    count: migrationRows.length,
+    items: migrationRows,
+    latest: migrationRows.at(-1),
+    sha256: sha256(canonicalJson(migrationRows)),
+  };
+  const managedSet = new Set(controlledPolicy.supabase.managed_functions);
+  const functionRows = [
+    ...controlledPolicy.supabase.managed_functions.map((slug, index) => ({
+      slug, status: 'ACTIVE', version: index + 100, verify_jwt: true,
+      ezbr_sha256: String(index + 100).padStart(64, '0'),
+    })),
+    ...Array.from({ length: 34 - controlledPolicy.supabase.managed_functions.length }, (_, index) => ({
+      slug: `unmanaged-${String(index + 1).padStart(2, '0')}`,
+      status: 'ACTIVE', version: index + 1, verify_jwt: true,
+      ezbr_sha256: String(index + 1).padStart(64, '0'),
+    })),
+  ].sort((left, right) => left.slug.localeCompare(right.slug));
+  const functions = {
+    complete: true,
+    count: functionRows.length,
+    items: functionRows,
+    sha256: sha256(canonicalJson(functionRows)),
+  };
+  const blocked = new Set(controlledPolicy.baseline.blocked_resources);
+  const managed = functionRows.filter(item => managedSet.has(item.slug)).map(item => ({
+    name: item.slug,
+    source_sha256: item.ezbr_sha256,
+    source_parity: !blocked.has(item.slug),
+    verify_jwt: item.verify_jwt,
+    version: item.version,
+  })).sort((left, right) => left.name.localeCompare(right.name));
+  const unmanaged = functionRows.filter(item => !managedSet.has(item.slug))
+    .map(item => ({ name: item.slug, version: item.version }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const digest = value => sha256(canonicalJson(value));
+  controlledPolicy.baseline.evidence_digests = {
+    ...controlledPolicy.baseline.evidence_digests,
+    migrations: digest(migrationRows.slice(0, -1).map(item => `${item.version}_${item.name}`)),
+    managed_functions: digest(managed.map(item => ({
+      name: item.name, version: item.version, verify_jwt: item.verify_jwt,
+    }))),
+    unmanaged_functions: digest(unmanaged),
+    function_source_parity: digest(managed.map(item => ({
+      name: item.name, source_sha256: item.source_sha256, source_parity: item.source_parity,
+    }))),
+    config_verify_jwt: digest({
+      complete: true,
+      managed_functions: managed.map(item => ({ name: item.name, verify_jwt: item.verify_jwt })),
+    }),
+  };
+  assert.equal(adapter.verifyRecoveryInfrastructureBaseline({
+    policy: controlledPolicy,
+    migrations,
+    functions,
+    expectedLatestMigration: '20261026030000_creator_premium_f4_general_bdag_activation',
+    functionTransitions: [],
+  }).migrations, controlledPolicy.baseline.evidence_digests.migrations);
+  assert.throws(() => adapter.verifyRecoveryInfrastructureBaseline({
+    policy: controlledPolicy,
+    migrations,
+    functions,
+    expectedLatestMigration: '20261026030000_creator_premium_f4_general_bdag_activation',
+    functionTransitions: undefined,
+  }), /RECOVERY_POSTCHECK_FAILED/);
+
+  for (const mutate of [
+    item => { item.version += 1; },
+    item => { item.ezbr_sha256 = 'f'.repeat(64); },
+    item => { item.verify_jwt = false; },
+  ]) {
+    const drift = structuredClone(functions);
+    mutate(drift.items[0]);
+    drift.sha256 = digest(drift.items);
+    assert.throws(() => adapter.verifyRecoveryInfrastructureBaseline({
+      policy: controlledPolicy,
+      migrations,
+      functions: drift,
+      expectedLatestMigration: '20261026030000_creator_premium_f4_general_bdag_activation',
+      functionTransitions: [],
+    }), /RECOVERY_POSTCHECK_FAILED/);
   }
 });
 
