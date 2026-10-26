@@ -329,6 +329,9 @@ begin
       'cancellation_effect','future_renewal_revoked_after_race');
   else
     v_response:=private.cancel_creator_premium_subscription_f4_v1(p_subscriber_id,p_subscription_id,p_idempotency_key);
+    -- Pre-F5 commands have no wrapper journal. Their canonical replay receipt
+    -- acknowledges the old cancellation, not authority over later consent.
+    if (v_response->>'replayed')::boolean then return v_response; end if;
   end if;
   update private.creator_premium_auto_renewal_mandates set state='REVOKED',revoked_at=clock_timestamp(),next_attempt_at=null,last_result='cancelled'
     where subscriber_id=p_subscriber_id and creator_id=v_plan.creator_id and plan_key=v_plan.plan_key and state<>'REVOKED' returning id into v_m;
@@ -352,9 +355,10 @@ begin
   v_response:=private.refund_creator_premium_subscription_period_f4_v1(p_period_id,p_idempotency_key,p_reason_code);
   -- A later independently paid period makes this a historical refund even if
   -- cron has not yet adopted that manual renewal into the mandate pointer.
+  -- Expiry ends access, not the identity of the newer paid renewal basis.
   if not exists(select 1 from private.creator_premium_subscription_periods newer join private.creator_premium_plans plan on plan.id=newer.plan_id
     where newer.subscriber_id=v_period.subscriber_id and newer.creator_id=v_period.creator_id and plan.plan_key=v_plan.plan_key
-      and newer.starts_at>v_period.starts_at and newer.access_state='active'
+      and newer.starts_at>v_period.starts_at and newer.access_state in ('active','expired')
       and private.creator_premium_subscription_period_fact_is_valid_f2_v1(newer.id)) then
     update private.creator_premium_auto_renewal_mandates set state='PAUSED',next_attempt_at=null,last_result='refunded'
       where subscriber_id=v_period.subscriber_id and creator_id=v_period.creator_id and plan_key=v_plan.plan_key and state='ENABLED' returning id into v_m;
