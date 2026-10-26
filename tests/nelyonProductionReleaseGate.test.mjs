@@ -95,11 +95,19 @@ async function loadGateAndPolicy() {
   return { gate, policy };
 }
 
+const FINANCE_OFF_POLICY = Object.freeze({
+  platform_fee_bps: 0,
+  purchase_enabled: false,
+  refunds_enabled: false,
+  subscription_enabled: false,
+});
+
 function asF3TransitionPolicy(policy) {
   const transitionPolicy = structuredClone(policy);
   transitionPolicy.baseline.sha = policy.finance_authority_transition.baseline_sha;
   transitionPolicy.baseline.migration_count = 351;
   transitionPolicy.baseline.latest_migration = '20261024173500_creator_premium_f2_complete_monetization';
+  transitionPolicy.supabase.finance_policy = { ...FINANCE_OFF_POLICY };
   return transitionPolicy;
 }
 
@@ -108,6 +116,16 @@ function asF3C2TransitionPolicy(policy) {
   transitionPolicy.baseline.sha = policy.finance_authority_c2_transition.baseline_sha;
   transitionPolicy.baseline.migration_count = 352;
   transitionPolicy.baseline.latest_migration = '20261025011000_creator_premium_f3_bounded_financial_activation';
+  transitionPolicy.supabase.finance_policy = { ...FINANCE_OFF_POLICY };
+  return transitionPolicy;
+}
+
+function asF4TransitionPolicy(policy) {
+  const transitionPolicy = structuredClone(policy);
+  transitionPolicy.baseline.sha = policy.finance_authority_f4_transition.baseline_sha;
+  transitionPolicy.baseline.migration_count = 354;
+  transitionPolicy.baseline.latest_migration = '20261025231500_creator_premium_f3_final_wallet_integration';
+  transitionPolicy.supabase.finance_policy = { ...FINANCE_OFF_POLICY };
   return transitionPolicy;
 }
 
@@ -613,12 +631,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
   const adapter = await import(`${adapterUrl.href}?recovery=${Date.now()}-${Math.random()}`);
   const requestedSource = policy.postcheck_recovery.approved_sources[sourceIndex];
   const isF4Recovery = requestedSource.run_id === '40268500711';
-  const controlledPolicy = isF4Recovery ? structuredClone(policy) : asF3TransitionPolicy(policy);
-  if (isF4Recovery) {
-    controlledPolicy.baseline.sha = policy.finance_authority_f4_transition.baseline_sha;
-    controlledPolicy.baseline.migration_count = 354;
-    controlledPolicy.baseline.latest_migration = '20261025231500_creator_premium_f3_final_wallet_integration';
-  }
+  const controlledPolicy = isF4Recovery ? asF4TransitionPolicy(policy) : asF3TransitionPolicy(policy);
   const recoveryRequest = request({
     mode: 'postcheck_recovery',
     scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
@@ -1088,7 +1101,8 @@ test('policy accepts the exact repository owner project modes and managed functi
 });
 
 test('policy binds the sole F2 managed-scope transition to immutable evidence and Finance OFF', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const { gate, policy: installedPolicy } = await loadGateAndPolicy();
+  const policy = asF3TransitionPolicy(installedPolicy);
   assert.deepEqual(policy.managed_scope_transitions, [F2_MANAGED_SCOPE_TRANSITION]);
   for (const mutate of [
     candidate => { candidate.managed_scope_transitions = []; },
@@ -1572,35 +1586,35 @@ test('expanded managed scope has a verified static cutover control', async () =>
   }), policy).mode, 'release');
 });
 
-test('F3-FINAL Wallet production baseline is promoted from the exact successful release evidence', async () => {
+test('F4 GENERAL production baseline is promoted from the exact successful recovery evidence', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(gate.validatePolicy(policy), true);
   assert.deepEqual(policy.baseline, {
     authority_source: 'owner-control-plane',
     blocked_resources: [],
-    evidence: '9380542a20c0de7a2782c0544a6ec4fb5134f871567b691a32ff1dbb9a304197',
+    evidence: '69f65a8572cde59734e466af010495d70c8da0c28a7ba2131cf539b66ac91933',
     evidence_digests: {
-      migrations: '5b3c40f204058d87698ad10abccde756296775b7d5a9a9df2cf65c9776f02bef',
+      migrations: '90ec14e3a81752b992fce92b6e2dd9da045ebe973f2c2360950cd3e92c85afa8',
       managed_functions: 'a2e693b4083f343c2459cdb3e11cad295c9b084ecb6f8deeb457c71c91f0dd83',
       unmanaged_functions: '26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc',
       function_source_parity: '0980feb5ada4e589bc1b8ac9e4d0d6dcd4813420e573c8de726d78eb0f2ff917',
       config_verify_jwt: '703749fce46f724c7c4e791f7a222915b166af0ded38f00f34f983798355ba15',
       cron_security: 'caad94f091360c63c3e62a5439706a43b4b64e9502f60176ef5b22d45e22d497',
-      finance: '0dfaec137cad5e9580a719845e34cd462c8e6b38577f5ca8882503610779d665',
+      finance: 'f94d54264c5d7658dc04aba34b028c815e99d7eb8ccf2490410817d47566754f',
     },
-    latest_migration: '20261025231500_creator_premium_f3_final_wallet_integration',
-    migration_count: 354,
+    latest_migration: F4_GENERAL_MIGRATION,
+    migration_count: 355,
     prior_release: {
       kind: 'post-release',
-      release_id: 'nelyon-f3-final-wallet-release-20261025T205015Z',
-      manifest_sha256: 'c36a654aba1e66238a7bc9e6fda1290d5b13e81e715f534d40a7be73a85c5698',
-      postcheck_evidence_sha256: '9380542a20c0de7a2782c0544a6ec4fb5134f871567b691a32ff1dbb9a304197',
+      release_id: 'nelyon-f4-general-activation-release-20261026T041943Z',
+      manifest_sha256: '96d731beeef25b2de5077f525e406727e249a073008653def91b923d4e2e6c17',
+      postcheck_evidence_sha256: '69f65a8572cde59734e466af010495d70c8da0c28a7ba2131cf539b66ac91933',
     },
     requires_separate_policy_commit: true,
-    reviewed_policy_sha256: '8f1476459169808ee653f2c67c2a6937e1c2c76cf8a678e6a7c67046dd683c6b',
-    sha: '7721b50dafa6a54a131dd44ddad83ece250fe9e3',
+    reviewed_policy_sha256: '9d45a98cf42c1bd9a48ec754e8d2053c66540ee90d33f166f87f1f766ecaeced',
+    sha: '02c238618b05cd01c7388cc592ba7ac426973ce5',
     state: 'verified',
-    verified_at: '2026-10-25T20:51:54.890Z',
+    verified_at: '2026-10-26T05:13:31.563Z',
     verified_by: OWNER,
   });
 
@@ -2615,7 +2629,7 @@ test('postcheck recovery verifies B7 current state without productive resources'
   assert.equal(result.functions.items.length, 12);
   assert.equal(result.security_advisor.baseline_count, 554);
   assert.equal(result.security_advisor.exception_count, 18);
-  assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
+  assert.deepEqual(result.finance.policy, fixture.controlledPolicy.supabase.finance_policy);
   assert.equal(result.premium_state.legacy.content_count, 2);
   assert.doesNotMatch(JSON.stringify(result), /fixture-token|authorization/i);
 });
@@ -2690,7 +2704,7 @@ test('postcheck recovery verifies the exact F2 migration and deployed bdag-ledge
   ]]);
   assert.deepEqual(result.premium_state.legacy, { content_count: 9, pending_review_count: 0, deleted_count: 5 });
   assert.equal(result.premium_state.relation_security.sha256, '055e1a5d6b3d452951a4843a99eb4b6a1bc144f387baa559c3a32c9e0fe674b6');
-  assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
+  assert.deepEqual(result.finance.policy, fixture.controlledPolicy.supabase.finance_policy);
 });
 
 test('postcheck recovery verifies the exact F3 applied state after a snapshot-only failure', async t => {
@@ -2719,7 +2733,7 @@ test('postcheck recovery verifies the exact F3 applied state after a snapshot-on
     '34e13339d4627b7684699288f789780267d7340afbd1c3de33029624e60a2f6a');
   assert.deepEqual(result.premium_state.legacy,
     { content_count: 9, pending_review_count: 0, deleted_count: 5 });
-  assert.deepEqual(result.finance.policy, policy.supabase.finance_policy);
+  assert.deepEqual(result.finance.policy, fixture.controlledPolicy.supabase.finance_policy);
 });
 
 test('postcheck recovery verifies the exact F4 general state after a snapshot-only failure', async t => {
@@ -3346,7 +3360,7 @@ function baselineSnapshot(policy, overrides = {}) {
     cron_security: { complete: true, cron: [], security_findings: [] },
     finance: {
       complete: true,
-      policy: { purchase_enabled: false, subscription_enabled: false, refunds_enabled: false, platform_fee_bps: 0 },
+      policy: { ...policy.supabase.finance_policy },
       premium_transaction_count: 0,
       c2_attributed_bdag_movement: 0,
     },
@@ -3806,7 +3820,7 @@ test('unchanged counters are not required when legitimate concurrent transaction
     after,
     window,
     reconciliationResults: zeroReconciliation(),
-    expectedPolicy: policy.supabase.finance_policy,
+    expectedPolicy: FINANCE_OFF_POLICY,
   });
   assert.equal(result.integrity, 'PASS');
   assert.equal(result.count_growth.transactions, 1);
@@ -3825,7 +3839,7 @@ test('postcheck authority derives finance window from raw rows instead of trusti
     after,
     windowRows: { complete: true, integrity: 'PASS', transactions: [existingAfter], ledger_entries: entries },
     reconciliationResults: zeroReconciliation(),
-    expectedPolicy: policy.supabase.finance_policy,
+    expectedPolicy: FINANCE_OFF_POLICY,
     releaseIdentity: releaseIdentity(),
   });
   assert.deepEqual(result.window.preexisting_confirmed_after_snapshot, ['txn-old']);
@@ -3835,7 +3849,7 @@ test('postcheck authority derives finance window from raw rows instead of trusti
     after,
     windowRows: { complete: true, integrity: 'PASS', transactions: [], ledger_entries: entries },
     reconciliationResults: zeroReconciliation(),
-    expectedPolicy: policy.supabase.finance_policy,
+    expectedPolicy: FINANCE_OFF_POLICY,
     releaseIdentity: releaseIdentity(),
   }), 'INVALID_FINANCE_WINDOW');
 });
@@ -3851,7 +3865,7 @@ test('finance postcheck requires the exact reconciliation inventory and monotoni
     after: financeSnapshot({ databaseTime: '2026-10-09T12:00:06.000Z' }),
     windowRows,
     reconciliationResults: { not_a_canonical_reconciliation: 0 },
-    expectedPolicy: policy.supabase.finance_policy,
+    expectedPolicy: FINANCE_OFF_POLICY,
     releaseIdentity: releaseIdentity(),
   }), 'FINANCE_RECONCILIATION_FAILED');
   assertDenied(() => gate.verifyFinancePostcheckFromRaw({
@@ -3859,7 +3873,7 @@ test('finance postcheck requires the exact reconciliation inventory and monotoni
     after,
     windowRows,
     reconciliationResults: exact,
-    expectedPolicy: policy.supabase.finance_policy,
+    expectedPolicy: FINANCE_OFF_POLICY,
     releaseIdentity: releaseIdentity(),
   }), 'INVALID_FINANCE_WINDOW');
 });
@@ -3928,7 +3942,7 @@ test('changed historical immutable rows frozen policy or platform fee denies', a
     after: financeSnapshot({ policy: { platform_fee_bps: 100 } }),
     window: cleanWindow,
     reconciliationResults: zeroReconciliation(),
-    expectedPolicy: policy.supabase.finance_policy,
+    expectedPolicy: FINANCE_OFF_POLICY,
   }), 'FINANCE_POLICY_CHANGED');
 });
 
@@ -3963,7 +3977,7 @@ test('failed canonical reconciliation denies even when changes appear legitimate
     after,
     window,
     reconciliationResults: zeroReconciliation({ orphan_ledger_entries: 1 }),
-    expectedPolicy: policy.supabase.finance_policy,
+    expectedPolicy: FINANCE_OFF_POLICY,
   }), 'FINANCE_RECONCILIATION_FAILED');
 });
 
@@ -3981,7 +3995,7 @@ test('snapshot count growth is reported separately from integrity verdict', asyn
     after,
     window,
     reconciliationResults: zeroReconciliation(),
-    expectedPolicy: policy.supabase.finance_policy,
+    expectedPolicy: FINANCE_OFF_POLICY,
   });
   assert.deepEqual(result.count_growth, { ledger_entries: 2, transactions: 1 });
   assert.equal(result.integrity, 'PASS');
