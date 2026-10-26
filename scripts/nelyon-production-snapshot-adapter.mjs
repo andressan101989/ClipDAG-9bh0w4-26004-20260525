@@ -824,7 +824,26 @@ export function normalizeCronCommand(command) {
 }
 
 export function cronCommandSha256(command) {
+  if (typeof command !== 'string') fail('INVALID_SNAPSHOT', 'cron command must be text');
+  return sha256(command);
+}
+
+export function normalizedCronCommandSha256(command) {
   return sha256(normalizeCronCommand(command));
+}
+
+export function projectCronBaselineItems(items, useRawCommandIdentity) {
+  if (!Array.isArray(items)) fail('INVALID_SNAPSHOT', 'cron baseline items must be an array');
+  return items.map(item => {
+    if (!item || typeof item !== 'object' || !HASH_PATTERN.test(item.command_sha256 ?? '')) {
+      fail('INVALID_SNAPSHOT', 'cron baseline item is invalid');
+    }
+    const { legacy_normalized_command_sha256: legacyDigest, ...rawIdentity } = item;
+    if (useRawCommandIdentity) return rawIdentity;
+    if (legacyDigest === undefined) return rawIdentity;
+    if (!HASH_PATTERN.test(legacyDigest)) fail('INVALID_SNAPSHOT', 'legacy cron command digest is invalid');
+    return { ...rawIdentity, command_sha256: legacyDigest };
+  });
 }
 
 export const CRON_SNAPSHOT_SQL = `select pg_catalog.jsonb_build_object(
@@ -835,6 +854,8 @@ export const CRON_SNAPSHOT_SQL = `select pg_catalog.jsonb_build_object(
     'database',j.database,'username',j.username,'active',j.active,
     'nodename',j.nodename,'nodeport',j.nodeport,
     'command_sha256',pg_catalog.encode(extensions.digest(pg_catalog.convert_to(
+      j.command,'UTF8'),'sha256'),'hex'),
+    'legacy_normalized_command_sha256',pg_catalog.encode(extensions.digest(pg_catalog.convert_to(
       pg_catalog.regexp_replace(pg_catalog.btrim(j.command),'[[:space:]]+',' ','g'),'UTF8'),'sha256'),'hex')
   ) order by j.jobid),'[]'::jsonb)
 ) snapshot from cron.job j;`;
@@ -1073,7 +1094,8 @@ function validateCronSnapshot(snapshot) {
   const jobIds = [];
   for (const item of snapshot.items) {
     exactKeys(item, [
-      'active','command_sha256','database','jobid','jobname','nodename','nodeport','schedule','username',
+      'active','command_sha256','database','jobid','jobname','legacy_normalized_command_sha256',
+      'nodename','nodeport','schedule','username',
     ], 'INVALID_SNAPSHOT');
     if (!/^[1-9][0-9]*$/.test(item.jobid ?? '') || typeof item.jobname !== 'string' || item.jobname.length === 0
       || typeof item.schedule !== 'string' || item.schedule.length === 0
@@ -1081,7 +1103,10 @@ function validateCronSnapshot(snapshot) {
       || typeof item.username !== 'string' || item.username.length === 0
       || typeof item.active !== 'boolean' || typeof item.nodename !== 'string' || item.nodename.length === 0
       || !Number.isInteger(item.nodeport) || item.nodeport < 1 || item.nodeport > 65535
-      || !HASH_PATTERN.test(item.command_sha256 ?? '')) fail('INVALID_SNAPSHOT', 'cron job identity is invalid');
+      || !HASH_PATTERN.test(item.command_sha256 ?? '')
+      || !HASH_PATTERN.test(item.legacy_normalized_command_sha256 ?? '')) {
+      fail('INVALID_SNAPSHOT', 'cron job identity is invalid');
+    }
     jobIds.push(item.jobid);
   }
   if (new Set(jobIds).size !== jobIds.length
@@ -1100,7 +1125,7 @@ export function verifyCronSnapshotTransition(pre, post, transition = null) {
   }
   const expected = transition.cron_job;
   if (!expected || normalizeCronCommand(expected.command) !== expected.command
-    || cronCommandSha256(expected.command) !== expected.normalized_command_sha256
+    || normalizedCronCommandSha256(expected.command) !== expected.normalized_command_sha256
     || pre.items.some(item => item.jobname === expected.jobname) || post.count !== pre.count + 1) {
     fail('REMOTE_POSTCHECK_FAILED', 'F5 cron transition contract is invalid');
   }
@@ -1118,15 +1143,17 @@ export function verifyCronSnapshotTransition(pre, post, transition = null) {
     command_sha256: exactAdded?.command_sha256,
     database: exactAdded?.database,
     jobname: exactAdded?.jobname,
+    legacy_normalized_command_sha256: exactAdded?.legacy_normalized_command_sha256,
     nodename: exactAdded?.nodename,
     nodeport: exactAdded?.nodeport,
     schedule: exactAdded?.schedule,
     username: exactAdded?.username,
   }) !== canonicalJson({
     active: expected.active,
-    command_sha256: expected.normalized_command_sha256,
+    command_sha256: cronCommandSha256(expected.command),
     database: expected.database,
     jobname: expected.jobname,
+    legacy_normalized_command_sha256: expected.normalized_command_sha256,
     nodename: 'localhost',
     nodeport: 5432,
     schedule: expected.schedule,
@@ -1658,9 +1685,18 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
     .map(exception => exception.advisor_fingerprint));
   const historicalAdvisorItems = evidence.cron_security.advisors.items
     .filter(item => !deployedExceptionFingerprints.has(item.fingerprint));
+  // The promoted baseline predates raw command identities. Preserve its exact
+  // normalized shape while signed pre/post evidence and transition checks use
+  // command_sha256 (the raw command bytes) as the preservation authority.
+  const baselineUsesRawCronIdentity = policy?.baseline?.latest_migration
+    >= '20261026072512_creator_premium_f5_autonomous_subscriptions';
+  const baselineCronItems = projectCronBaselineItems(
+    evidence.cron_security.cron.items,
+    baselineUsesRawCronIdentity,
+  );
   const cronSecurity = {
     complete: true,
-    cron: evidence.cron_security.cron.items,
+    cron: baselineCronItems,
     security_findings: historicalAdvisorItems,
   };
   const f4GeneralBaseline = policy?.baseline?.latest_migration

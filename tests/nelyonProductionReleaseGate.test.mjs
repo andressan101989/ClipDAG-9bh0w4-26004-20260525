@@ -225,6 +225,35 @@ test('F5 autonomous transition attests one exact migration, bdag-ledger, strict 
   }
 });
 
+test('baseline promotion migrates cron identity from legacy normalization to raw F5 bytes', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const rawDigest = 'a'.repeat(64);
+  const legacyDigest = 'b'.repeat(64);
+  const cronItem = {
+    jobid: '3', jobname: 'existing-job', schedule: '0 3 * * *', database: 'postgres',
+    username: 'postgres', active: true, nodename: 'localhost', nodeport: 5432,
+    command_sha256: rawDigest,
+    legacy_normalized_command_sha256: legacyDigest,
+  };
+  const legacySnapshot = baselineSnapshot(policy, {
+    cron_security: { complete: true, cron: [cronItem], security_findings: [] },
+  });
+  const legacyEvidence = gate.buildBaselineEvidence(legacySnapshot);
+  assert.equal(legacyEvidence.cron_security.cron[0].command_sha256, legacyDigest);
+  assert.equal('legacy_normalized_command_sha256' in legacyEvidence.cron_security.cron[0], false);
+
+  const rawSnapshot = baselineSnapshot(policy, {
+    migrations: {
+      ...legacySnapshot.migrations,
+      latest: '20261026072512_creator_premium_f5_autonomous_subscriptions',
+    },
+    cron_security: { complete: true, cron: [cronItem], security_findings: [] },
+  });
+  const rawEvidence = gate.buildBaselineEvidence(rawSnapshot);
+  assert.equal(rawEvidence.cron_security.cron[0].command_sha256, rawDigest);
+  assert.equal('legacy_normalized_command_sha256' in rawEvidence.cron_security.cron[0], false);
+});
+
 test('F5 Git attestation and manifest reject every migration Edge config client and closure mutation', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const transition = policy.finance_authority_f5_transition;

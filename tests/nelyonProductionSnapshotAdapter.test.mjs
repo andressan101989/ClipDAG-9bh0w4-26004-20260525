@@ -856,31 +856,69 @@ test('F5 snapshot authority selects the autonomous phase and exact inherited cat
   assert.equal(beforeProjection.advisor_fingerprint, afterProjection.advisor_fingerprint);
 });
 
-test('F5 cron normalization permits exactly one pinned job and rejects every catalog drift', async () => {
+test('F5 cron transition preserves exact command bytes and rejects quoted whitespace drift', async () => {
   const adapter = await loadAdapter();
   const cron = installedPolicy.finance_authority_f5_transition.cron_job;
   assert.equal(adapter.normalizeCronCommand(`  select\n private.process_creator_premium_auto_renewals_f5_v1(25);  `),
     cron.command);
-  assert.equal(adapter.cronCommandSha256(cron.command), cron.normalized_command_sha256);
-  const existing = {
+  const commandPairs = [
+    ["select public.job('a b');", "select public.job('a  b');"],
+    ['select public.job($body$a b$body$);', 'select public.job($body$a  b$body$);'],
+  ];
+  for (const [before, after] of commandPairs) {
+    assert.equal(adapter.normalizeCronCommand(before), adapter.normalizeCronCommand(after));
+    assert.equal(adapter.cronCommandSha256(before), sha256(before));
+    assert.equal(adapter.cronCommandSha256(after), sha256(after));
+    assert.notEqual(adapter.cronCommandSha256(before), adapter.cronCommandSha256(after));
+  }
+  assert.equal(adapter.normalizedCronCommandSha256(cron.command), cron.normalized_command_sha256);
+  assert.equal(adapter.cronCommandSha256(cron.command), sha256(cron.command));
+  assert.match(adapter.CRON_SNAPSHOT_SQL,
+    /'command_sha256'[\s\S]*?convert_to\(\s*j\.command\s*,\s*'UTF8'\s*\)/i);
+  assert.match(adapter.CRON_SNAPSHOT_SQL,
+    /'legacy_normalized_command_sha256'[\s\S]*?regexp_replace\(pg_catalog\.btrim\(j\.command\)/i);
+
+  const existingSingleQuoted = {
     jobid: '3', jobname: 'existing-safe-job', schedule: '0 3 * * *', database: 'postgres',
     username: 'postgres', active: true, nodename: 'localhost', nodeport: 5432,
-    command_sha256: 'a'.repeat(64),
+    command_sha256: adapter.cronCommandSha256(commandPairs[0][0]),
+    legacy_normalized_command_sha256: adapter.normalizedCronCommandSha256(commandPairs[0][0]),
   };
+  const existingDollarQuoted = {
+    jobid: '4', jobname: 'existing-dollar-quoted-job', schedule: '0 4 * * *', database: 'postgres',
+    username: 'postgres', active: true, nodename: 'localhost', nodeport: 5432,
+    command_sha256: adapter.cronCommandSha256(commandPairs[1][0]),
+    legacy_normalized_command_sha256: adapter.normalizedCronCommandSha256(commandPairs[1][0]),
+  };
+  const rawBaselineIdentity = { ...existingSingleQuoted };
+  delete rawBaselineIdentity.legacy_normalized_command_sha256;
+  const legacyBaselineIdentity = {
+    ...rawBaselineIdentity,
+    command_sha256: existingSingleQuoted.legacy_normalized_command_sha256,
+  };
+  assert.deepEqual(adapter.projectCronBaselineItems([existingSingleQuoted], false),
+    [legacyBaselineIdentity]);
+  assert.deepEqual(adapter.projectCronBaselineItems([existingSingleQuoted], true),
+    [rawBaselineIdentity]);
   const added = {
     jobid: '17', jobname: cron.jobname, schedule: cron.schedule, database: cron.database,
     username: cron.username, active: cron.active, nodename: 'localhost', nodeport: 5432,
-    command_sha256: cron.normalized_command_sha256,
+    command_sha256: adapter.cronCommandSha256(cron.command),
+    legacy_normalized_command_sha256: cron.normalized_command_sha256,
   };
   const snapshot = items => ({ schema_version: 1, complete: true, query_id: 'nelyon-cron-snapshot-v1',
     count: items.length, items });
-  const pre = snapshot([existing]);
-  const post = snapshot([existing, added]);
+  const pre = snapshot([existingSingleQuoted, existingDollarQuoted]);
+  const post = snapshot([existingSingleQuoted, existingDollarQuoted, added]);
   assert.equal(adapter.verifyCronSnapshotTransition(pre, post,
     installedPolicy.finance_authority_f5_transition), true);
 
   const mutations = [
-    items => items.filter(item => item.jobid !== existing.jobid),
+    items => items.filter(item => item.jobid !== existingSingleQuoted.jobid),
+    items => items.map(item => item.jobid === existingSingleQuoted.jobid
+      ? { ...item, command_sha256: adapter.cronCommandSha256(commandPairs[0][1]) } : item),
+    items => items.map(item => item.jobid === existingDollarQuoted.jobid
+      ? { ...item, command_sha256: adapter.cronCommandSha256(commandPairs[1][1]) } : item),
     items => [...items, { ...added, jobid: '18', jobname: 'unexpected-job' }],
     items => items.map(item => item.jobid === added.jobid ? { ...item, jobname: 'renamed' } : item),
     items => items.map(item => item.jobid === added.jobid ? { ...item, active: false } : item),
