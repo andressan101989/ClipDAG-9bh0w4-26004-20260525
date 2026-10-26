@@ -139,7 +139,9 @@ export type CreatorPremiumAutoRenewalProjection = Readonly<{
   last_attempt_at: string | null;
 }>;
 
-export type CreatorPremiumSubscriptionsProjectionV2 = Readonly<{
+export type CreatorPremiumSubscriptionsProjectionV2 = CreatorPremiumSubscriptionsProjection;
+
+export type CreatorPremiumSubscriptionsProjectionV3 = Readonly<{
   policy: CreatorPremiumFinancePolicyProjection;
   items: readonly (CreatorPremiumSubscriptionsProjection['items'][number] & Readonly<{
     auto_renewal: CreatorPremiumAutoRenewalProjection;
@@ -327,3 +329,7 @@ export function parseCreatorPremiumCommerceV2(
 export function parseCreatorPremiumSubscriptionsPageV2(
   value: unknown,
 ): CreatorPremiumSubscriptionsProjectionV2;
+
+export function parseCreatorPremiumSubscriptionsPageV3(
+  value: unknown,
+): CreatorPremiumSubscriptionsProjectionV3;

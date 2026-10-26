@@ -20,13 +20,17 @@
 - All SQL is forward-only, owner/search_path/ACL/RLS hardened, atomic, idempotent and concurrency tested.
 - Remove only the Nelyon UI overlay; do not modify provider media.
 
+## Final-review correction
+
+The controller confirmed that shipped F4 clients already call and exact-parse v2. F5 therefore introduces v3 and preserves v1/v2 response bytes. Ordinary cancelled wrapper-journal replays normalize `already_cancelled=true`; the cron-race acknowledgement retains `false`, and all replay paths remain isolated from later consent generations.
+
 ## Review Focus
 
 - A due mandate racing manual renewal must produce one paid period and one debit; covered by Task 1 concurrent real-Postgres test.
 - Cancellation racing cron must prevent future charge while retaining paid access; covered by Task 1 concurrent test.
 - A price/version change must pause for re-consent instead of charging; covered by Task 1 plan-snapshot test.
 - Failure after a charge attempt must preserve a durable safe outcome without partial ledger state; covered by Task 1 failure/replay tests.
-- Legacy v1 clients must continue parsing the old projection while v2 validates the new exact shape; covered by Task 2 contract tests.
+- Installed v1/v2 clients retain their byte-compatible projections while v3 validates the new exact shape; covered by Task 2 contract tests.
 
 ---
 
@@ -40,7 +44,7 @@
 
 **Interfaces:**
 - Consumes: `public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid,text)`, canonical family advisory key, F4 finance policy and refund/cancel authorities.
-- Produces: `public.set_creator_premium_auto_renewal_v1(uuid,uuid,boolean,numeric,integer,text) -> jsonb`, `private.process_creator_premium_auto_renewals_f5_v1(integer) -> jsonb`, strict v2 projection and one exact cron job.
+- Produces: `public.set_creator_premium_auto_renewal_v1(uuid,uuid,boolean,numeric,integer,text) -> jsonb`, `private.process_creator_premium_auto_renewals_f5_v1(integer) -> jsonb`, strict v3 projection and one exact cron job.
 
 - [ ] Write structural and disposable PostgreSQL tests for opt-in/absence/revocation, no retroactive rows, exact price snapshot, due renewal, insufficient funds, bounded retries, double cron, cron+manual, cron+cancel, cron+refund, replay, plan/price change, actor/content restrictions, entitlement, 80/20 ledger, Finance OFF/GENERAL, RLS/ACL and exact cron.
 - [ ] Run the new tests against F4 and record RED failures caused by missing F5 contracts.
@@ -63,13 +67,13 @@
 - Modify/Create: focused F5 and F2 client contract tests
 
 **Interfaces:**
-- Consumes: Task 1 consent RPC and v2 projection.
+- Consumes: Task 1 consent RPC and v3 projection.
 - Produces: `setCreatorPremiumAutoRenewal({subscriptionId,enabled,expectedPriceBdag,expectedPlanVersion,idempotencyKey})`, exact `auto_renewal` projection types and opt-in/revoke UI.
 
 - [ ] Write failing client/Edge contract tests for strict payloads, forbidden client financial fields, exact projection, stale response protection, explicit confirmation, ON/OFF state and safe error mapping.
 - [ ] Run focused tests and record RED.
 - [ ] Add the single bdag-ledger action and typed client wrapper; never accept buyer, fee, creator or amount authority from the client beyond expected-value concurrency checks.
-- [ ] Add separate v1/v2 strict parsers and types, preserving the v1 contract.
+- [ ] Add separate v1/v2/v3 strict parsers and types, preserving both installed v1 and v2 contracts.
 - [ ] Implement server-confirmed toggle, next charge, manual renewal, cancellation and failure copy without redesign.
 - [ ] Run client, Edge, TypeScript and ESLint focal checks until GREEN.
 - [ ] Commit the client/Edge unit.

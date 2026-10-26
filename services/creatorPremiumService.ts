@@ -9,7 +9,7 @@ import {
   parseCreatorPremiumCommerceV2,
   parseCreatorPremiumCommercialSummary,
   parseCreatorPremiumFinancialHistoryPage,
-  parseCreatorPremiumSubscriptionsPageV2,
+  parseCreatorPremiumSubscriptionsPageV3,
   type CreatorPremiumAutoRenewalProjection,
 } from '@/services/creatorPremiumFinanceContracts.mjs';
 import { normalizeCreatorPremiumPriceBdag } from '@/services/creatorPremiumMoney.mjs';
@@ -771,13 +771,13 @@ export async function fetchMyCreatorPremiumSubscriptions(
 ): Promise<CreatorPremiumSubscriptionPage> {
   const limit = safeLimit(options.limit ?? 50);
   const cursor = cursorParams(options.cursor);
-  const { data, error } = await db().rpc('get_my_creator_premium_subscriptions_v2', {
+  const { data, error } = await db().rpc('get_my_creator_premium_subscriptions_v3', {
     p_cursor_created_at: cursor.timestamp,
     p_cursor_id: cursor.id,
     p_limit: limit,
   });
   if (error) throw error;
-  const result = parseCreatorPremiumSubscriptionsPageV2(firstRow(data));
+  const result = parseCreatorPremiumSubscriptionsPageV3(firstRow(data));
   return {
     policy: result.policy as CreatorPremiumFinancePolicy,
     items: result.items as unknown as CreatorPremiumSubscriptionItem[],

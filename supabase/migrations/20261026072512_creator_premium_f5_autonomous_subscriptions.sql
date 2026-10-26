@@ -306,7 +306,10 @@ begin
     if v_command.request_hash is distinct from v_fingerprint then
       raise exception using errcode='23505',message='creator_premium_cancellation_idempotency_conflict';
     end if;
-    return v_command.response_body||jsonb_build_object('replayed',true,'money_moved',false);
+    return v_command.response_body||jsonb_build_object('replayed',true,'money_moved',false)
+      ||case when v_command.response_body->>'status'='cancelled'
+        and not (v_command.response_body ? 'cancellation_effect')
+        then jsonb_build_object('already_cancelled',true) else '{}'::jsonb end;
   end if;
   select * into v_subscription from private.creator_premium_subscriptions where id=p_subscription_id and subscriber_id=p_subscriber_id;
   if v_subscription.status='expired' and exists(select 1 from private.creator_premium_auto_renewal_mandates m
@@ -368,7 +371,8 @@ begin
 end;
 $$;
 
-create or replace function public.get_my_creator_premium_subscriptions_v2(
+-- Keep the installed v1/v2 endpoints unchanged; F5 has its own exact contract.
+create function public.get_my_creator_premium_subscriptions_v3(
   p_cursor_created_at timestamptz default null,p_cursor_id uuid default null,p_limit integer default 50
 ) returns jsonb language plpgsql stable security definer set search_path='' as $$
 declare v_result jsonb;
@@ -395,7 +399,7 @@ alter function public.set_creator_premium_auto_renewal_v1(uuid,uuid,boolean,nume
 alter function public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid,text) owner to postgres;
 alter function public.cancel_creator_premium_subscription_v1(uuid,uuid,uuid) owner to postgres;
 alter function public.refund_creator_premium_subscription_period_v1(uuid,uuid,text) owner to postgres;
-alter function public.get_my_creator_premium_subscriptions_v2(timestamptz,uuid,integer) owner to postgres;
+alter function public.get_my_creator_premium_subscriptions_v3(timestamptz,uuid,integer) owner to postgres;
 revoke all on function private.creator_premium_auto_renewal_append_only_f5_v1(),
   private.creator_premium_auto_renewal_command_id_f5_v1(uuid,integer,timestamptz),
   private.creator_premium_auto_renewal_projection_f5_v1(uuid),private.record_creator_premium_auto_renewal_f5_v1(uuid,text,uuid),
@@ -406,8 +410,8 @@ revoke all on function public.set_creator_premium_auto_renewal_v1(uuid,uuid,bool
 grant execute on function public.set_creator_premium_auto_renewal_v1(uuid,uuid,boolean,numeric,integer,text),
   public.subscribe_creator_premium_plan_v1(uuid,uuid,uuid,text),public.cancel_creator_premium_subscription_v1(uuid,uuid,uuid),
   public.refund_creator_premium_subscription_period_v1(uuid,uuid,text) to service_role;
-revoke all on function public.get_my_creator_premium_subscriptions_v2(timestamptz,uuid,integer) from public,anon,service_role;
-grant execute on function public.get_my_creator_premium_subscriptions_v2(timestamptz,uuid,integer) to authenticated;
+revoke all on function public.get_my_creator_premium_subscriptions_v3(timestamptz,uuid,integer) from public,anon,service_role;
+grant execute on function public.get_my_creator_premium_subscriptions_v3(timestamptz,uuid,integer) to authenticated;
 
 select cron.schedule('creator-premium-auto-renewals-f5','*/5 * * * *',
   'select private.process_creator_premium_auto_renewals_f5_v1(25);');

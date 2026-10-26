@@ -191,7 +191,7 @@ for (const operation of ['purchase', 'subscription', 'renewal', 'changed_offer',
     access_active: false, auto_renew: false, renewal_supported: true, renewal_available: true, renewal_blocker: null,
     auto_renewal: autoRenewalAbsent,
     is_latest_relationship: true, created_at: '2026-09-26T00:00:00Z', updated_at: '2026-10-25T00:00:00Z' };
-  if (history) finance.parseCreatorPremiumSubscriptionsPageV2({ policy, items: [subscription], next_cursor: null });
+  if (history) finance.parseCreatorPremiumSubscriptionsPageV3({ policy, items: [subscription], next_cursor: null });
   else finance.parseCreatorPremiumCommerceV2(projection, id.content);
   const alerts = [], purchases = [];
   let stateIndex = 0;
@@ -277,7 +277,7 @@ function consentFixture(operation) {
     access_active: false, auto_renew: false, renewal_supported: true, renewal_available: true, renewal_blocker: null,
     auto_renewal: autoRenewalAbsent,
     is_latest_relationship: true, created_at: '2026-09-26T00:00:00Z', updated_at: '2026-10-25T00:00:00Z' } : undefined;
-  if (history) finance.parseCreatorPremiumSubscriptionsPageV2({ policy, items: [subscription], next_cursor: null });
+  if (history) finance.parseCreatorPremiumSubscriptionsPageV3({ policy, items: [subscription], next_cursor: null });
   else finance.parseCreatorPremiumCommerceV2(projection, id.content);
   return { history, projection, subscription };
 }
@@ -369,7 +369,6 @@ test('current parsers preserve truthful acquired rights while exact frozen F2 by
     period: { id: uuid(31), starts_at: '2026-09-26T00:00:00Z', paid_through_at: relationship.paid_through_at,
       access_state: 'expired', gross_amount_bdag: '20.00000000' },
     access_active: false, auto_renew: false, renewal_supported: true,
-    auto_renewal: autoRenewalAbsent,
     renewal_available: false, renewal_blocker: 'creator_premium_canary_limit_reached',
     is_latest_relationship: true, created_at: '2026-09-26T00:00:00Z', updated_at: relationship.cancelled_at,
   }], next_cursor: null };
@@ -381,7 +380,6 @@ test('current parsers preserve truthful acquired rights while exact frozen F2 by
   acquired.items[0].plan.subscription_blocker = 'creator_premium_already_subscribed';
   assert.deepEqual(finance.parseCreatorPremiumSubscriptionsPageV2(acquired), acquired);
   const currentV1Acquired = structuredClone(acquired);
-  delete currentV1Acquired.items[0].auto_renewal;
   currentV1Acquired.policy = { ...policy, purchase_enabled: false, subscription_enabled: false,
     refunds_enabled: false, platform_fee_bps: 0 };
   currentV1Acquired.items[0].plan.renewal_blocker = 'creator_premium_subscription_disabled';

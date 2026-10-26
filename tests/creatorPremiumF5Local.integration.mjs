@@ -1,9 +1,17 @@
 // Disposable PostgreSQL only. Never point this harness at a hosted database.
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
+import * as finance from '../services/creatorPremiumFinanceContracts.mjs';
+import { FINANCE_AUTHORITY_SQL, normalizeFinanceAuthority } from '../scripts/nelyon-production-snapshot-adapter.mjs';
+
+// Frozen shipped F4 parser: compatibility must not be judged by a parser changed in F5.
+const frozenSource = spawnSync('git', ['show', '8b869746ea4bbc08fb79d42fe06f316849a7bfb9:services/creatorPremiumFinanceContracts.mjs'], { encoding: 'utf8' });
+assert.equal(frozenSource.status, 0, frozenSource.stderr);
+const frozenFinance = await import(`data:text/javascript;base64,${Buffer.from(frozenSource.stdout+'\n//# sourceURL=frozen-f4-finance-contracts.mjs').toString('base64')}`);
 
 const enabled = process.env.RUN_CREATOR_PREMIUM_F5_LOCAL === '1';
 const container = process.env.CREATOR_PREMIUM_PG_CONTAINER || 'nelyon-ads-v2-d-compile';
@@ -265,10 +273,34 @@ test('F5 real PostgreSQL consent, charge, retries, concurrency and security cont
     const legacyCancelId=current.subscription_id;
     const legacyCancelReceipt=json(db,service(`select public.cancel_creator_premium_subscription_v1('${id.subscriber}','${legacyCancelId}','${legacyCancelKey}')`));
     assert.equal(legacyCancelReceipt.replayed,false);
+    const legacyProjections = [1,2].map(version => authenticated(db,id.subscriber,`select public.get_my_creator_premium_subscriptions_v${version}()`).stdout);
     const f5File = files.find(name => name.endsWith('_creator_premium_f5_autonomous_subscriptions.sql'));
-    if (f5File) sql(db, `set role postgres;${readFileSync(new URL(f5File,migrations),'utf8')}reset role;`);
+    // Release attestation binds Git LF bytes, independent of Windows checkout conversion.
+    if (f5File) sql(db, `set role postgres;${readFileSync(new URL(f5File,migrations),'utf8').replace(/\r\n/g,'\n')}reset role;`);
     assert.equal(sql(db,`select to_regclass('private.creator_premium_auto_renewal_mandates') is not null`).stdout,'t','missing F5 mandate table');
     assert.equal(monetarySnapshot(),beforeF5);
+    await t.test('real PostgreSQL cancellation and v3 authority match the exact release catalog', () => {
+      const policy=JSON.parse(readFileSync(new URL('../.github/nelyon-production-release-policy.json',import.meta.url),'utf8'));
+      const authority=normalizeFinanceAuthority(json(db,FINANCE_AUTHORITY_SQL),'f5_autonomous');
+      for(const identity of [
+        'public.cancel_creator_premium_subscription_v1(uuid, uuid, uuid)',
+        'public.get_my_creator_premium_subscriptions_v3(timestamp with time zone, uuid, integer)',
+      ]) {
+        const expected=[...policy.finance_authority.f5_autonomous.function_overrides,
+          ...policy.finance_authority.f5_autonomous.function_additions].find(row=>row.identity===identity);
+        assert.deepEqual(authority.functions.find(row=>row.identity===identity),expected);
+      }
+      assert.equal(policy.finance_authority.f5_autonomous.function_overrides.some(row=>/get_my_creator_premium_subscriptions_v[12]\(/.test(row.identity)),false);
+    });
+    await t.test('frozen pre-F5 v1 and v2 endpoint bytes and exact parsers remain compatible', () => {
+      for (const version of [1,2]) {
+        const raw=authenticated(db,id.subscriber,`select public.get_my_creator_premium_subscriptions_v${version}()`).stdout;
+        assert.equal(raw,legacyProjections[version-1]);
+        // v1 intentionally carries F3's upgrade-required blocker; preserve its
+        // exact bytes. Installed F4 clients call and exact-parse v2.
+        if(version===2) assert.deepEqual(frozenFinance.parseCreatorPremiumSubscriptionsPageV2(JSON.parse(raw)),JSON.parse(raw));
+      }
+    });
     await t.test('due-slot command UUID is RFC v3, deterministic across timezone, and unique by generation/due', () => {
       const expression=`private.creator_premium_auto_renewal_command_id_f5_v1('00000000-0000-4000-8000-000000000001',1,'2026-10-26 00:00:00+00')`;
       const key=sql(db,`select ${expression}`).stdout;
@@ -296,7 +328,13 @@ test('F5 real PostgreSQL consent, charge, retries, concurrency and security cont
       const legacy=JSON.parse(authenticated(db,id.subscriber,'select public.get_my_creator_premium_subscriptions_v1()').stdout);
       assert.equal('auto_renewal' in legacy.items[0],false);
       const v2=JSON.parse(authenticated(db,id.subscriber,'select public.get_my_creator_premium_subscriptions_v2()').stdout);
-      assert.deepEqual(Object.keys(v2.items[0].auto_renewal).sort(),['enabled','mandate_state','consented_at','revoked_at','next_charge_at','authorized_price_bdag','authorized_plan_version','retry_count','last_result','last_attempt_at'].sort());
+      assert.deepEqual(frozenFinance.parseCreatorPremiumSubscriptionsPageV2(v2),v2);
+      const v3=JSON.parse(authenticated(db,id.subscriber,'select public.get_my_creator_premium_subscriptions_v3()').stdout);
+      assert.deepEqual(finance.parseCreatorPremiumSubscriptionsPageV3(v3),v3);
+      assert.deepEqual(v3.items.map(({auto_renewal,...item})=>item),v2.items);
+      assert.throws(()=>frozenFinance.parseCreatorPremiumSubscriptionsPageV2(v3),/creator_premium_subscriptions_invalid/);
+      assert.throws(()=>finance.parseCreatorPremiumSubscriptionsPageV3(v2),/creator_premium_subscriptions_invalid/);
+      assert.deepEqual(Object.keys(v3.items[0].auto_renewal).sort(),['enabled','mandate_state','consented_at','revoked_at','next_charge_at','authorized_price_bdag','authorized_plan_version','retry_count','last_result','last_attempt_at'].sort());
     });
     await t.test('pre-F5 cancellation replay preserves a later explicit consent generation', () => {
       const before=mandate();
@@ -326,6 +364,19 @@ test('F5 real PostgreSQL consent, charge, retries, concurrency and security cont
       json(db,service(subscribe(key))); sql(db,worker());
       assert.equal(Number(sql(db,'select count(*) from public.financial_transactions').stdout),before+1);
       current=json(db,`select jsonb_build_object('subscription_id',subscription_id,'period_id',id) from private.creator_premium_subscription_periods where id='${mandate().current_period_id}'`);
+    });
+    await t.test('ordinary wrapper cancellation replay passes the strict client parser without mutating newer consent', () => {
+      const key=randomUUID();
+      const command=`select public.cancel_creator_premium_subscription_v1('${id.subscriber}','${current.subscription_id}','${key}')`;
+      const first=json(db,service(command));
+      assert.equal(finance.parseCreatorPremiumCancellationReceipt(first,current.subscription_id).already_cancelled,false);
+      json(db,service(consent()));
+      const before=mandate();
+      const money=monetarySnapshot();
+      const replay=json(db,service(command));
+      assert.deepEqual(mandate(),before);
+      assert.equal(monetarySnapshot(),money);
+      assert.deepEqual(finance.parseCreatorPremiumCancellationReceipt(replay,current.subscription_id),{...first,replayed:true,already_cancelled:true});
     });
     await t.test('insufficient funds leave no debt or period, back off, and stop after three failures', () => {
       expire(); sql(db,`update public.ledger_accounts set balance=0 where id='${id.subscriberAccount}'`);
@@ -398,7 +449,7 @@ test('F5 real PostgreSQL consent, charge, retries, concurrency and security cont
     });
     await t.test('manual renewal projects family consent immediately before cron adopts the new period', () => {
       json(db,service(consent()));renewManually();
-      const projection=JSON.parse(authenticated(db,id.subscriber,'select public.get_my_creator_premium_subscriptions_v2()').stdout);
+      const projection=JSON.parse(authenticated(db,id.subscriber,'select public.get_my_creator_premium_subscriptions_v3()').stdout);
       assert.equal(projection.items.find(item=>item.id===current.subscription_id).auto_renewal.enabled,true);
       sql(db,worker());assert.equal(mandate().current_period_id,current.period_id);
     });
@@ -471,7 +522,11 @@ test('F5 real PostgreSQL consent, charge, retries, concurrency and security cont
       assert.equal(mandate().state,'REVOKED');
       current=json(db,`select jsonb_build_object('subscription_id',subscription_id,'period_id',id) from private.creator_premium_subscription_periods where id='${mandate().current_period_id}'`);
       assert.equal(sql(db,`select status from private.creator_premium_subscriptions where id='${current.subscription_id}'`).stdout,'active');
-      json(db,service(consent()));json(db,service(command));assert.equal(mandate().state,'ENABLED');
+      json(db,service(consent()));
+      const replay=json(db,service(command));
+      assert.deepEqual(finance.parseCreatorPremiumCancellationReceipt(replay,oldId),{...response,replayed:true});
+      assert.equal(replay.already_cancelled,false);
+      assert.equal(mandate().state,'ENABLED');
       denied(sql(db,service(`select public.cancel_creator_premium_subscription_v1('${id.subscriber}','${oldId}','${randomUUID()}')`),true),/not_cancellable/);
       assert.equal(mandate().state,'ENABLED','an unrelated historical ID cannot revoke fresh consent');
     });

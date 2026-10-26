@@ -122,8 +122,8 @@ export const F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
   integration_base_sha: '8b869746ea4bbc08fb79d42fe06f316849a7bfb9',
   approved_sha_ancestry: 'verified_integration_base',
   migration_path: 'supabase/migrations/20261026072512_creator_premium_f5_autonomous_subscriptions.sql',
-  migration_blob: 'ba832c2d06b40e2f6b76b75151690a42ea9e463c',
-  migration_sha256: '728bdcb2a5ee74a3cddd74fae0dd1df9a296c69a5ce462ae9bdc9d93a3cddd66',
+  migration_blob: 'ca08f3a5224cea2ef6b4390bc625d55f378b2ca6',
+  migration_sha256: '5975e535f4818981e076f4f8617caa8e357852a4926a3f1c8c5e8879712299f3',
   function: 'bdag-ledger',
   function_path: 'supabase/functions/bdag-ledger/index.ts',
   function_blob: 'e50f8109c6ec479483cb64f3da68812c446b0dda',
@@ -131,10 +131,14 @@ export const F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
   config_blob: '7c3ff52db72f9983aa4128f5c2e7e686bba31d5d',
   client_contract: 'creator-premium-f3-v2',
   client_sources: [
-    { path: 'services/creatorPremiumFinanceContracts.mjs', blob: 'a968127bab8e6cb80b5f8437bb10d2f963c41aee',
-      sha256: '07a455dd3dfaf9ed7f044a837d78649585b1fe7f3e6b03d6be419c5b4366778c' },
+    { path: 'services/creatorPremiumFinanceContracts.mjs', blob: '116068dcb37812721b5960af158fc249a225b6ee',
+      sha256: '03774e0de62200f3734dc63a2995afdac02e19d4d8f6589995acca33c9a060b9' },
     { path: 'services/financial/ledgerClient.ts', blob: '01a8f7f622c78f637d15a8e3eadf4af71017a47b',
       sha256: '1f718c565a305366e614dc8905e87a5b1017832bcbdc416ad0d4e97d484e9c6f' },
+    { path: 'services/creatorPremiumFinanceContracts.d.mts', blob: 'b89adf820f389147e9f1fdaa8fdc1c003bfd3bd0',
+      sha256: '250d37537cc746e3eef726e72753c930dd1fe7d5f96a1afbdacfdd89e53aa107' },
+    { path: 'services/creatorPremiumService.ts', blob: '5899c8d9564b8d7691f7a3266f8050ec13e18bb7',
+      sha256: '979baec6879a6f8ce9fb579205e36cdd6a1f63da8eb17ee741b90739665ca7d7' },
   ],
   productive_paths: [
     'supabase/functions/bdag-ledger/index.ts',
@@ -708,14 +712,14 @@ export function validatePolicy(policy) {
     deny('INVALID_FINANCE_AUTHORITY_TRANSITION',
       'F4 Admin Finance replacement must match the exact phase-bound catalog evidence');
   }
-  const f5SubscriptionProjection = policy.finance_security_advisor?.f5_rpc_replacements?.find(exception =>
+  const f5SubscriptionProjection = policy.finance_security_advisor?.f5_rpc_additions?.find(exception =>
     exception?.object?.schema === 'public'
-      && exception?.object?.name === 'get_my_creator_premium_subscriptions_v2');
-  if (policy.finance_security_advisor?.f5_rpc_replacements?.length !== 1
+      && exception?.object?.name === 'get_my_creator_premium_subscriptions_v3');
+  if (policy.finance_security_advisor?.f5_rpc_additions?.length !== 1
     || f5SubscriptionProjection?.advisor_fingerprint
-      !== '3da775663b576889fd8c250ade795a244518cb9a8385c4002153b1adf67b37d0'
+      !== 'e14d79e47e9db72a50028805bf1a1f321e5c7df19dd2d23b6128e78d1bfa4a16'
     || f5SubscriptionProjection?.attestation?.definition_sha256
-      !== '2705216260908d75ca840c1c5d041601975c8b9b2f405233a398c75d93854421'
+      !== '246ab182de52bedd431e12a54ddf48923ecbd85e296ad6e138e54017f5ed7489'
     || f5SubscriptionProjection?.origin?.migration
       !== '20261026072512_creator_premium_f5_autonomous_subscriptions'
     || f5SubscriptionProjection?.origin?.migration_blob

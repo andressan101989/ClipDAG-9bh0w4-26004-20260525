@@ -38,7 +38,7 @@ If automatic renewal wins immediately before an exact-id cancellation of the exp
 
 ### Projection and UI
 
-The authenticated v2 subscriptions projection gains a strict `auto_renewal` object: state, consent timestamp, next charge, authorized price/version, retry count and safe last result. The legacy v1 shape remains unchanged. Client parsers retain exact-key validation.
+The authenticated v3 subscriptions projection adds a strict `auto_renewal` object: state, consent timestamp, next charge, authorized price/version, retry count and safe last result. Installed F4 clients already exact-parse v2, so both v1 and v2 endpoint shapes remain byte-compatible. The new client explicitly calls v3; no shape negotiation is permitted. Client parsers retain exact-key validation.
 
 The existing subscriptions screen gains an explicit toggle, server-confirmed ON/OFF state, next-charge copy, and insufficient-balance/re-consent messages. Manual renewal and cancellation remain available according to server truth. The offer screen explains that automatic renewal is optional; initial purchase does not silently opt in.
 
