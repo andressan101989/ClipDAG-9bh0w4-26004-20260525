@@ -45,8 +45,9 @@ export const FINANCE_POLICY_DIGESTS = Object.freeze({
   historical_transition: '18ba08389686a15aea9df1c7b4f974202e147167e5aa1d0f83412e1065ebc882',
   c2_transition: '2fc5ae800bf96aed59d78b953cfe628007f9603b48dd8e7a25dc915e88927af2',
   f4_transition: 'de7891ab96cd95280a5d1e80ad56b8411045b66bb54e71f610874f4cc280e36a',
-  authority: '65e7686d4f2047acfa8ba4e90bd91481df2d07c0bb6c140582b930288b2357b1',
-  security_advisor: '2c7c69d297f6b20b97cbaf7cf3ce339b8498c20a8209859f407493d864fef678',
+  f5_transition: '314cda23776c0c8612513d7e1a3658feb3c8562594ba9046b0f58090eb9cf5d6',
+  authority: '81112f116533e6ecd10d5eb00c39cb089482ab1ebcb9fa02e4c787a70bf01804',
+  security_advisor: '6f2c4a99d2990bf5dd87827edc8b4b67907aba73b3f31204964cf66b1ccf9c16',
 });
 
 export const FINANCE_SNAPSHOT_SQL = `with
@@ -233,6 +234,7 @@ export const FINANCE_AUTHORITY_SQL = `with recursive authority_context as materi
   where context.search_path is not null and c.relkind in ('r','p') and ((n.nspname='private' and c.relname in (
     'creator_premium_finance_policy','creator_premium_finance_authorizations',
     'creator_premium_finance_owner_attestations_f3_c2',
+    'creator_premium_auto_renewal_attempts','creator_premium_auto_renewal_mandates',
     'creator_premium_purchase_receipts','creator_premium_subscription_periods','creator_premium_subscriptions'))
     or (n.nspname='public' and c.relname in ('financial_transactions','ledger_accounts','ledger_entries')))
 ), relation_rows as (
@@ -286,7 +288,7 @@ export const FINANCE_AUTHORITY_SQL = `with recursive authority_context as materi
 ), function_seeds as (
   select p.oid from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
   where n.nspname in ('private','public') and p.prokind='f' and p.proname like '%creator_premium%'
-    and p.proname ~ '(finance|financial|charge|refund|purchase|period|subscription|subscribe|commerce|commercial|authorization)'
+    and p.proname ~ '(finance|financial|charge|refund|purchase|period|subscription|subscribe|commerce|commercial|authorization|renewal)'
   union
   select trigger.tgfoid from relations relation
   join pg_catalog.pg_trigger trigger on trigger.tgrelid=relation.oid and not trigger.tgisinternal
@@ -683,6 +685,13 @@ export const FINANCE_FACTS_F4_GENERAL_SQL = FINANCE_FACTS_F3_C2_SQL
       'multiple_periods_per_relationship',${F4_MULTIPLE_PERIODS_PER_RELATIONSHIP_SQL},
       'duplicate_open_relationships',${F4_DUPLICATE_OPEN_RELATIONSHIPS_SQL}`);
 
+export const FINANCE_FACTS_F5_AUTONOMOUS_SQL = FINANCE_FACTS_F4_GENERAL_SQL
+  .replace("'phase','f4_general'", "'phase','f5_autonomous'")
+  .replace("  union all select 'receipts',pg_catalog.to_jsonb(r) from private.creator_premium_purchase_receipts r",
+    "  union all select 'mandates',pg_catalog.to_jsonb(m) from private.creator_premium_auto_renewal_mandates m\n  union all select 'attempts',pg_catalog.to_jsonb(x) from private.creator_premium_auto_renewal_attempts x\n  union all select 'receipts',pg_catalog.to_jsonb(r) from private.creator_premium_purchase_receipts r")
+  .replace("  'receipts',coalesce((select pg_catalog.jsonb_agg(item order by item::text) from sanitized where kind='receipts'),'[]'::jsonb),",
+    "  'mandates',coalesce((select pg_catalog.jsonb_agg(item order by item::text) from sanitized where kind='mandates'),'[]'::jsonb),\n  'attempts',coalesce((select pg_catalog.jsonb_agg(item order by item::text) from sanitized where kind='attempts'),'[]'::jsonb),\n  'receipts',coalesce((select pg_catalog.jsonb_agg(item order by item::text) from sanitized where kind='receipts'),'[]'::jsonb),");
+
 // Select the legacy query before parsing SQL: PostgreSQL must never resolve an absent F3 relation.
 const FINANCE_FACTS_LEGACY_SQL = FINANCE_FACTS_F3_SQL
   .replace("select 'authorizations' kind,pg_catalog.to_jsonb(a) fact from private.creator_premium_finance_authorizations a",
@@ -696,6 +705,7 @@ export function selectFinanceSnapshotQueries(migrations) {
   const installed = migrations.items.find(item => item.version === '20261025011000');
   const c2 = migrations.items.find(item => item.version === '20261025160452');
   const f4 = migrations.items.find(item => item.version === '20261026030000');
+  const f5 = migrations.items.find(item => item.version === '20261026072512');
   if (installed && installed.name !== 'creator_premium_f3_bounded_financial_activation') {
     fail('FINANCE_AUTHORITY_MISMATCH', 'F3 migration identity differs');
   }
@@ -705,24 +715,30 @@ export function selectFinanceSnapshotQueries(migrations) {
   if (f4 && f4.name !== 'creator_premium_f4_general_bdag_activation') {
     fail('FINANCE_AUTHORITY_MISMATCH', 'F4 migration identity differs');
   }
+  if (f5 && f5.name !== 'creator_premium_f5_autonomous_subscriptions') {
+    fail('FINANCE_AUTHORITY_MISMATCH', 'F5 migration identity differs');
+  }
   if (c2 && !installed) fail('FINANCE_AUTHORITY_MISMATCH', 'F3-C2 requires the F3 foundation');
   if (f4 && (!installed || !c2)) fail('FINANCE_AUTHORITY_MISMATCH', 'F4 requires F3-C2');
-  const phase = f4 ? 'f4_general' : c2 ? 'f3_c2' : installed ? 'f3_foundation' : 'legacy';
+  if (f5 && (!installed || !c2 || !f4)) fail('FINANCE_AUTHORITY_MISMATCH', 'F5 requires F4 general');
+  const phase = f5 ? 'f5_autonomous' : f4 ? 'f4_general' : c2 ? 'f3_c2' : installed ? 'f3_foundation' : 'legacy';
   return { phase, authority: FINANCE_AUTHORITY_SQL,
-    facts: f4 ? FINANCE_FACTS_F4_GENERAL_SQL
+    facts: f5 ? FINANCE_FACTS_F5_AUTONOMOUS_SQL : f4 ? FINANCE_FACTS_F4_GENERAL_SQL
       : c2 ? FINANCE_FACTS_F3_C2_SQL : installed ? FINANCE_FACTS_F3_SQL : FINANCE_FACTS_LEGACY_SQL };
 }
 
 export function validateFinanceFacts(snapshot, phase) {
   const code = 'FINANCE_FACTS_REJECTED';
   exactKeys(snapshot, ['schema_version','complete','phase','policy',
-    ...(['f3_c2','f4_general'].includes(phase) ? ['attestations'] : []), 'authorizations','receipts','periods',
+    ...(['f3_c2','f4_general','f5_autonomous'].includes(phase) ? ['attestations'] : []),
+    ...(phase === 'f5_autonomous' ? ['mandates','attempts'] : []), 'authorizations','receipts','periods',
     'subscriptions','transactions','acquisition_exposure_bdag','release_movement_bdag','reconciliation'], code);
   const off = { activation_mode: 'off', active_authorization_id: null, purchase_enabled: false,
     subscription_enabled: false, refunds_enabled: false, platform_fee_bps: 0 };
   const general = { activation_mode: 'general', active_authorization_id: 'f4000000-0000-4000-8000-000000000001',
     purchase_enabled: true, subscription_enabled: true, refunds_enabled: true, platform_fee_bps: 2000 };
-  const arrayKeys = [...(['f3_c2','f4_general'].includes(phase) ? ['attestations'] : []),
+  const arrayKeys = [...(['f3_c2','f4_general','f5_autonomous'].includes(phase) ? ['attestations'] : []),
+    ...(phase === 'f5_autonomous' ? ['mandates','attempts'] : []),
     'authorizations','receipts','periods','subscriptions','transactions'];
   const decimal = /^(?:0|[1-9][0-9]*)\.[0-9]{8}$/;
   const validSanitizedRows = key => Array.isArray(snapshot[key]) && snapshot[key].every(row => (
@@ -742,7 +758,7 @@ export function validateFinanceFacts(snapshot, phase) {
     'max_purchase_count','max_subscription_count','max_refund_count','max_gross_bdag',
     'charge_expires_at','refund_expires_at',
   ];
-  const f4FactsValid = phase === 'f4_general'
+  const f4FactsValid = ['f4_general','f5_autonomous'].includes(phase)
     && canonicalJson(snapshot.policy) === canonicalJson(general)
     && snapshot.attestations.length === 1 && snapshot.authorizations.length === 1
     && generalAuthorization.id === sha256('f4000000-0000-4000-8000-000000000001')
@@ -771,7 +787,7 @@ export function validateFinanceFacts(snapshot, phase) {
     && snapshot.acquisition_exposure_bdag === '0.00000000'
     && snapshot.release_movement_bdag === '0.00000000'
     && canonicalJson(snapshot.reconciliation) === canonicalJson({ purchase_binding_mismatches: 0, period_binding_mismatches: 0 });
-  if (!['legacy','f3_foundation','f3_c2','f4_general'].includes(phase)
+  if (!['legacy','f3_foundation','f3_c2','f4_general','f5_autonomous'].includes(phase)
     || snapshot.schema_version !== 1 || snapshot.complete !== true || snapshot.phase !== phase
     || (!foundationFactsValid && !f4FactsValid)) {
     fail(code, 'foundation requires exact OFF and no financial facts');
@@ -781,7 +797,7 @@ export function validateFinanceFacts(snapshot, phase) {
 
 export function normalizeFinanceAuthority(snapshot, phase) {
   exactKeys(snapshot, ['schema_version','complete','relations','functions'], 'FINANCE_AUTHORITY_MISMATCH');
-  if (snapshot.schema_version !== 1 || snapshot.complete !== true || !['legacy','f3_foundation','f3_c2','f4_general'].includes(phase)) {
+  if (snapshot.schema_version !== 1 || snapshot.complete !== true || !['legacy','f3_foundation','f3_c2','f4_general','f5_autonomous'].includes(phase)) {
     fail('FINANCE_AUTHORITY_MISMATCH', 'catalog identity is incomplete');
   }
   const result = { schema_version: 1, complete: true, phase };
@@ -802,6 +818,15 @@ export function normalizeFinanceAuthority(snapshot, phase) {
   return { ...result, sha256: sha256(canonicalJson(result)) };
 }
 
+export function normalizeCronCommand(command) {
+  if (typeof command !== 'string') fail('INVALID_SNAPSHOT', 'cron command must be text');
+  return command.trim().replace(/\s+/g, ' ');
+}
+
+export function cronCommandSha256(command) {
+  return sha256(normalizeCronCommand(command));
+}
+
 export const CRON_SNAPSHOT_SQL = `select pg_catalog.jsonb_build_object(
   'schema_version',1,'complete',true,'query_id','nelyon-cron-snapshot-v1',
   'count',pg_catalog.count(*)::integer,
@@ -809,7 +834,8 @@ export const CRON_SNAPSHOT_SQL = `select pg_catalog.jsonb_build_object(
     'jobid',j.jobid::text,'jobname',j.jobname,'schedule',j.schedule,
     'database',j.database,'username',j.username,'active',j.active,
     'nodename',j.nodename,'nodeport',j.nodeport,
-    'command_sha256',pg_catalog.encode(extensions.digest(pg_catalog.convert_to(j.command,'UTF8'),'sha256'),'hex')
+    'command_sha256',pg_catalog.encode(extensions.digest(pg_catalog.convert_to(
+      pg_catalog.regexp_replace(pg_catalog.btrim(j.command),'[[:space:]]+',' ','g'),'UTF8'),'sha256'),'hex')
   ) order by j.jobid),'[]'::jsonb)
 ) snapshot from cron.job j;`;
 
@@ -1041,11 +1067,72 @@ function validateCronSnapshot(snapshot) {
   if (snapshot.schema_version !== 1 || snapshot.complete !== true
     || snapshot.query_id !== 'nelyon-cron-snapshot-v1'
     || !Number.isInteger(snapshot.count) || snapshot.count < 0
-    || !Array.isArray(snapshot.items) || snapshot.items.length !== snapshot.count
-    || snapshot.items.some(item => !HASH_PATTERN.test(item?.command_sha256 ?? ''))) {
+    || !Array.isArray(snapshot.items) || snapshot.items.length !== snapshot.count) {
     fail('INVALID_SNAPSHOT', 'cron snapshot is invalid');
   }
+  const jobIds = [];
+  for (const item of snapshot.items) {
+    exactKeys(item, [
+      'active','command_sha256','database','jobid','jobname','nodename','nodeport','schedule','username',
+    ], 'INVALID_SNAPSHOT');
+    if (!/^[1-9][0-9]*$/.test(item.jobid ?? '') || typeof item.jobname !== 'string' || item.jobname.length === 0
+      || typeof item.schedule !== 'string' || item.schedule.length === 0
+      || typeof item.database !== 'string' || item.database.length === 0
+      || typeof item.username !== 'string' || item.username.length === 0
+      || typeof item.active !== 'boolean' || typeof item.nodename !== 'string' || item.nodename.length === 0
+      || !Number.isInteger(item.nodeport) || item.nodeport < 1 || item.nodeport > 65535
+      || !HASH_PATTERN.test(item.command_sha256 ?? '')) fail('INVALID_SNAPSHOT', 'cron job identity is invalid');
+    jobIds.push(item.jobid);
+  }
+  if (new Set(jobIds).size !== jobIds.length
+    || snapshot.items.some((item, index) => index > 0 && BigInt(snapshot.items[index - 1].jobid) >= BigInt(item.jobid))) {
+    fail('INVALID_SNAPSHOT', 'cron jobs are duplicated or unordered');
+  }
   return snapshot;
+}
+
+export function verifyCronSnapshotTransition(pre, post, transition = null) {
+  validateCronSnapshot(pre);
+  validateCronSnapshot(post);
+  if (transition?.to_phase !== 'f5_autonomous') {
+    if (canonicalJson(pre) !== canonicalJson(post)) fail('REMOTE_POSTCHECK_FAILED', 'cron configuration changed during release');
+    return true;
+  }
+  const expected = transition.cron_job;
+  if (!expected || normalizeCronCommand(expected.command) !== expected.command
+    || cronCommandSha256(expected.command) !== expected.normalized_command_sha256
+    || pre.items.some(item => item.jobname === expected.jobname) || post.count !== pre.count + 1) {
+    fail('REMOTE_POSTCHECK_FAILED', 'F5 cron transition contract is invalid');
+  }
+  const before = new Map(pre.items.map(item => [item.jobid, item]));
+  const after = new Map(post.items.map(item => [item.jobid, item]));
+  for (const [jobid, item] of before) {
+    if (!after.has(jobid) || canonicalJson(after.get(jobid)) !== canonicalJson(item)) {
+      fail('REMOTE_POSTCHECK_FAILED', 'pre-existing cron job changed or disappeared');
+    }
+  }
+  const added = post.items.filter(item => !before.has(item.jobid));
+  const exactAdded = added[0];
+  if (added.length !== 1 || canonicalJson({
+    active: exactAdded?.active,
+    command_sha256: exactAdded?.command_sha256,
+    database: exactAdded?.database,
+    jobname: exactAdded?.jobname,
+    nodename: exactAdded?.nodename,
+    nodeport: exactAdded?.nodeport,
+    schedule: exactAdded?.schedule,
+    username: exactAdded?.username,
+  }) !== canonicalJson({
+    active: expected.active,
+    command_sha256: expected.normalized_command_sha256,
+    database: expected.database,
+    jobname: expected.jobname,
+    nodename: 'localhost',
+    nodeport: 5432,
+    schedule: expected.schedule,
+    username: expected.username,
+  })) fail('REMOTE_POSTCHECK_FAILED', 'F5 cron delta differs from the exact reviewed job');
+  return true;
 }
 
 function validateNormalizedMigrations(inventory) {
@@ -1145,6 +1232,8 @@ function validateFinancePolicyAuthority(policy) {
     || sha256(canonicalJson(policy?.finance_authority_c2_transition ?? null)) !== FINANCE_POLICY_DIGESTS.c2_transition
     || (FINANCE_POLICY_DIGESTS.f4_transition !== undefined
       && sha256(canonicalJson(policy?.finance_authority_f4_transition ?? null)) !== FINANCE_POLICY_DIGESTS.f4_transition)
+    || (FINANCE_POLICY_DIGESTS.f5_transition !== undefined
+      && sha256(canonicalJson(policy?.finance_authority_f5_transition ?? null)) !== FINANCE_POLICY_DIGESTS.f5_transition)
     || sha256(canonicalJson(policy?.finance_authority ?? null)) !== FINANCE_POLICY_DIGESTS.authority
     || sha256(canonicalJson(policy?.finance_security_advisor ?? null)) !== FINANCE_POLICY_DIGESTS.security_advisor) {
     fail('FINANCE_AUTHORITY_TRANSITION_REJECTED', 'foundation policy differs from exact reviewed authority');
@@ -1155,8 +1244,8 @@ function effectiveFinanceAuthority(policy, phase) {
   const authority = policy?.finance_authority;
   const exact = authority?.[phase];
   if (!exact || !exact.base_phase) return exact;
-  if (!['f3_c2', 'f4_general'].includes(phase)
-    || !['f3_foundation', 'f3_c2'].includes(exact.base_phase)) {
+  if (!['f3_c2', 'f4_general', 'f5_autonomous'].includes(phase)
+    || !['f3_foundation', 'f3_c2', 'f4_general'].includes(exact.base_phase)) {
     fail('FINANCE_AUTHORITY_MISMATCH', 'finance authority inheritance phase is unsupported');
   }
   const base = effectiveFinanceAuthority(policy, exact.base_phase);
@@ -1190,18 +1279,29 @@ function effectiveFinanceAuthority(policy, phase) {
 export function activeFinanceAuthorityTransition(policy, manifest) {
   const migrations = manifest?.resources?.migrations ?? [];
   const attestation = manifest?.resources?.finance_authority_transition;
-  const f4Candidate = attestation?.to_phase === 'f4_general' || migrations.some(item => item.version === '20261026030000'
-    || String(item.path).includes('creator_premium_f4_general_bdag_activation'));
+  const f5Candidate = attestation?.to_phase === 'f5_autonomous' || migrations.some(item => item.version === '20261026072512'
+    || String(item.path).includes('creator_premium_f5_autonomous_subscriptions'));
+  const f4Candidate = !f5Candidate && (attestation?.to_phase === 'f4_general' || migrations.some(item => item.version === '20261026030000'
+    || String(item.path).includes('creator_premium_f4_general_bdag_activation')));
   const c2Candidate = !f4Candidate && (attestation?.to_phase === 'f3_c2' || migrations.some(item => item.version === '20261025160452'
     || String(item.path).includes('creator_premium_f3_c2_isolated_canary_governance')));
-  const foundationCandidate = !f4Candidate && !c2Candidate && (Boolean(attestation) || migrations.some(item => item.version === '20261025011000'
+  const foundationCandidate = !f5Candidate && !f4Candidate && !c2Candidate && (Boolean(attestation) || migrations.some(item => item.version === '20261025011000'
     || String(item.path).includes('creator_premium_f3_bounded_financial_activation')));
-  if (!f4Candidate && !c2Candidate && !foundationCandidate) return null;
+  if (!f5Candidate && !f4Candidate && !c2Candidate && !foundationCandidate) return null;
   validateFinancePolicyAuthority(policy);
-  const t = f4Candidate ? policy.finance_authority_f4_transition
+  const t = f5Candidate ? policy.finance_authority_f5_transition : f4Candidate ? policy.finance_authority_f4_transition
     : c2Candidate ? policy.finance_authority_c2_transition : policy.finance_authority_transition;
-  const migrationVersion = f4Candidate ? '20261026030000' : c2Candidate ? '20261025160452' : '20261025011000';
-  const expected = (f4Candidate || c2Candidate)
+  const migrationVersion = f5Candidate ? '20261026072512' : f4Candidate ? '20261026030000'
+    : c2Candidate ? '20261025160452' : '20261025011000';
+  const expected = f5Candidate
+    ? { id: t.id, from_phase: t.from_phase, to_phase: t.to_phase, baseline_sha: t.baseline_sha,
+      reviewed_source_sha: t.reviewed_source_sha, integration_base_sha: t.integration_base_sha,
+      approved_sha: manifest?.identity?.approved_sha, baseline_descendant_verified: true,
+      integration_base_descendant_verified: true, migration_blob: t.migration_blob,
+      migration_sha256: t.migration_sha256, function_blob: t.function_blob,
+      function_source_sha256: t.function_source_sha256, config_blob: t.config_blob,
+      client_contract: t.client_contract, client_sources: t.client_sources, cron_job: t.cron_job }
+    : (f4Candidate || c2Candidate)
     ? { id: t.id, from_phase: t.from_phase, to_phase: t.to_phase, baseline_sha: t.baseline_sha,
       reviewed_source_sha: t.reviewed_source_sha, integration_base_sha: t.integration_base_sha,
       approved_sha: manifest?.identity?.approved_sha, baseline_descendant_verified: true,
@@ -1221,7 +1321,7 @@ export function activeFinanceAuthorityTransition(policy, manifest) {
     || migrations[0].blob !== t.migration_blob || migrations[0].sha256 !== t.migration_sha256
     || canonicalJson(manifest.resources.functions) !== canonicalJson((f4Candidate || c2Candidate) ? [] : [t.function])
     || manifest.resources.function_contracts?.length !== ((f4Candidate || c2Candidate) ? 0 : 1)
-    || (!f4Candidate && !c2Candidate && (manifest.resources.function_contracts[0].name !== t.function
+    || ((f5Candidate || (!f4Candidate && !c2Candidate)) && (manifest.resources.function_contracts[0].name !== t.function
       || manifest.resources.function_contracts[0].source_sha256 !== t.function_source_sha256))
     || manifest.resources.config_changed !== false || canonicalJson(productivePaths) !== canonicalJson(t.productive_paths)) {
     fail('FINANCE_AUTHORITY_TRANSITION_REJECTED', 'foundation manifest lacks its exact ancestry/bytes/productive closure');
@@ -1339,8 +1439,10 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     const expectedPhase = financeTransition
       ? (phase === 'pre' ? (financeTransition.from_phase ?? 'legacy') : (financeTransition.to_phase ?? 'f3_foundation'))
       : (recoveryAuthorityPhase ?? financeQueries.phase);
-    const expectedBaselineMigration = expectedPhase === 'f4_general'
-      ? '20261026030000_creator_premium_f4_general_bdag_activation'
+    const expectedBaselineMigration = expectedPhase === 'f5_autonomous'
+      ? '20261026072512_creator_premium_f5_autonomous_subscriptions'
+      : expectedPhase === 'f4_general'
+        ? '20261026030000_creator_premium_f4_general_bdag_activation'
       : expectedPhase === 'f3_c2'
         ? '20261025160452_creator_premium_f3_c2_isolated_canary_governance'
         : '20261025011000_creator_premium_f3_bounded_financial_activation';
@@ -1354,7 +1456,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     if (evidence.finance.schema_sha256 !== effectiveFinanceAuthority(policy, expectedPhase).schema_sha256) {
       fail('FINANCE_AUTHORITY_MISMATCH', 'finance schema differs from exact phase catalog');
     }
-    const expectedCounts = expectedPhase === 'f4_general'
+    const expectedCounts = ['f4_general','f5_autonomous'].includes(expectedPhase)
       ? evidence.finance.premium_transaction_count === evidence.finance_facts.transactions.length
         && evidence.finance.premium_bindings.purchase_receipts.count === evidence.finance_facts.receipts.length
         && evidence.finance.premium_bindings.subscription_periods.count === evidence.finance_facts.periods.length
@@ -1657,6 +1759,20 @@ export function verifyProductionPreSnapshot({ pre, policy, request, manifest, ad
   };
 }
 
+export function verifyF5AutonomousPostReleaseFacts(pre, post) {
+  const exactArrays = ['attestations','authorizations','receipts','periods','subscriptions','transactions'];
+  if (pre?.phase !== 'f4_general' || post?.phase !== 'f5_autonomous'
+    || !Array.isArray(post?.mandates) || post.mandates.length !== 0
+    || !Array.isArray(post?.attempts) || post.attempts.length !== 0
+    || pre?.release_movement_bdag !== '0.00000000' || post?.release_movement_bdag !== '0.00000000'
+    || pre?.acquisition_exposure_bdag !== post?.acquisition_exposure_bdag
+    || exactArrays.some(key => !Array.isArray(pre?.[key]) || !Array.isArray(post?.[key])
+      || canonicalJson(pre[key]) !== canonicalJson(post[key]))) {
+    fail('REMOTE_POSTCHECK_FAILED', 'F5 release created retroactive mandates, attempts, or financial movement');
+  }
+  return true;
+}
+
 export function verifyProductionSnapshotPair({ pre, post, policy, request, manifest, adapterSourceSha256 }) {
   verifyProductionPreSnapshot({ pre, policy, request, manifest, adapterSourceSha256 });
   validateCapturedEvidence({ evidence: post, phase: 'post', policy, request, manifest, adapterSourceSha256 });
@@ -1747,9 +1863,7 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
     fail('REMOTE_POSTCHECK_FAILED', 'not every manifest function produced a verified remote version change');
   }
 
-  if (canonicalJson(pre.cron_security.cron) !== canonicalJson(post.cron_security.cron)) {
-    fail('REMOTE_POSTCHECK_FAILED', 'cron configuration changed during release');
-  }
+  verifyCronSnapshotTransition(pre.cron_security.cron, post.cron_security.cron, financeTransition);
   const preExceptions = advisorExceptionsForPhase(policy, manifest, 'pre');
   const postExceptions = advisorExceptionsForPhase(policy, manifest, 'post');
   const preExceptionFingerprints = new Set(preExceptions.map(exception => exception.advisor_fingerprint));
@@ -1765,6 +1879,7 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
     removedExceptionFingerprints,
   );
   const f4Transition = financeTransition?.to_phase === 'f4_general';
+  const f5Transition = financeTransition?.to_phase === 'f5_autonomous';
   const financePolicy = value => ({
     activation_mode: value.activation_mode,
     active_authorization_id: value.active_authorization_id,
@@ -1787,10 +1902,19 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
     && canonicalJson(post.finance_facts.transactions) === '[]\n'
     && post.finance_facts.release_movement_bdag === '0.00000000'
   );
+  const f5TransitionValid = !f5Transition || (
+    canonicalJson(post.finance.policy) === canonicalJson(pre.finance.policy)
+    && canonicalJson(post.finance.premium_bindings) === canonicalJson(pre.finance.premium_bindings)
+    && canonicalJson(post.finance.transactions) === canonicalJson(pre.finance.transactions)
+    && canonicalJson(post.finance.ledger_entries) === canonicalJson(pre.finance.ledger_entries)
+    && post.finance.premium_transaction_count === pre.finance.premium_transaction_count
+    && verifyF5AutonomousPostReleaseFacts(pre.finance_facts, post.finance_facts)
+  );
   if ((!financeTransition && post.finance.schema_sha256 !== pre.finance.schema_sha256)
-    || (!f4Transition && canonicalJson(post.finance.premium_bindings) !== canonicalJson(pre.finance.premium_bindings))
-    || (!f4Transition && canonicalJson(post.finance.policy) !== canonicalJson(pre.finance.policy))
+    || (!f4Transition && !f5Transition && canonicalJson(post.finance.premium_bindings) !== canonicalJson(pre.finance.premium_bindings))
+    || (!f4Transition && !f5Transition && canonicalJson(post.finance.policy) !== canonicalJson(pre.finance.policy))
     || !f4TransitionValid
+    || !f5TransitionValid
     || RECONCILIATION_KEYS.some(key => post.finance.reconciliation[key] !== 0)) {
     fail('REMOTE_POSTCHECK_FAILED', 'finance schema, Premium bindings, policy, or reconciliation changed');
   }
@@ -2088,6 +2212,20 @@ const RPC_REPLACEMENT_PREDECESSOR_ATTESTATIONS = new Map([
       definition_sha256: '1b33026301062223a91c4e35000a44f8299b639d7a728834150fb32d23d6309a',
     },
   ],
+  [
+    '20261026072512_creator_premium_f5_autonomous_subscriptions|3da775663b576889fd8c250ade795a244518cb9a8385c4002153b1adf67b37d0',
+    {
+      security_definer: true,
+      owner: 'postgres',
+      search_path: ['search_path=""'],
+      acl: [
+        { grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false },
+        { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+      ],
+      execute: { anon: false, authenticated: true, public: false, service_role: false },
+      definition_sha256: '307938b5ec832f0bdc2c4ad4009180c6a1b3ae28a7cc1f617c5b856fa13210a9',
+    },
+  ],
 ]);
 
 function exactRecoveryAuthorityPhase(policy, manifest, phase, { request, migrations } = {}) {
@@ -2165,6 +2303,7 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
   const installedFoundation = policy?.baseline?.latest_migration >= '20261025011000_creator_premium_f3_bounded_financial_activation';
   const installedC2 = policy?.baseline?.latest_migration >= '20261025160452_creator_premium_f3_c2_isolated_canary_governance';
   const installedF4 = policy?.baseline?.latest_migration >= '20261026030000_creator_premium_f4_general_bdag_activation';
+  const installedF5 = policy?.baseline?.latest_migration >= '20261026072512_creator_premium_f5_autonomous_subscriptions';
   const exactRecoveryPhase = exactRecoveryAuthorityPhase(policy, manifest, phase, context);
   if ((transition && phase !== 'pre') || installedFoundation || exactRecoveryPhase) {
     validateFinancePolicyAuthority(policy);
@@ -2180,6 +2319,11 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
     if ((transition?.to_phase === 'f4_general' && phase !== 'pre') || installedF4
       || exactRecoveryPhase === 'f4_general') {
       const replacements = policy.finance_security_advisor.f4_rpc_replacements;
+      result = [...result.filter(exception => !replacements.some(item => item.object.name === exception.object.name)),
+        ...replacements];
+    }
+    if ((transition?.to_phase === 'f5_autonomous' && phase !== 'pre') || installedF5) {
+      const replacements = policy.finance_security_advisor.f5_rpc_replacements;
       result = [...result.filter(exception => !replacements.some(item => item.object.name === exception.object.name)),
         ...replacements];
     }
@@ -2454,16 +2598,22 @@ export function validatePremiumStateTransition(preState, postState, manifest = n
     .flatMap(key => approvedRelationAdditions.get(key) ?? []).sort();
   const financeTransition = activeFinanceAuthorityTransition(policy, manifest);
   if (financeTransition && financeTransition.to_phase !== 'f4_general') {
-    const relationName = financeTransition.to_phase === 'f3_c2'
-      ? 'creator_premium_finance_owner_attestations_f3_c2'
-      : 'creator_premium_finance_authorizations';
-    allowedAddedIdentities.push(`private.${relationName}`);
+    const relationNames = financeTransition.to_phase === 'f5_autonomous'
+      ? ['creator_premium_auto_renewal_attempts','creator_premium_auto_renewal_mandates']
+      : [financeTransition.to_phase === 'f3_c2'
+        ? 'creator_premium_finance_owner_attestations_f3_c2'
+        : 'creator_premium_finance_authorizations'];
+    for (const relationName of relationNames) {
+      allowedAddedIdentities.push(`private.${relationName}`);
+      const actual = postState.relation_security.items.find(row => row.schema === 'private' && row.name === relationName);
+      const expected = { schema: 'private', name: relationName, owner: 'postgres',
+        rls_enabled: true, force_rls: true, acl: ['DELETE','INSERT','MAINTAIN','REFERENCES','SELECT','TRIGGER','TRUNCATE','UPDATE']
+          .map(privilege_type => ({ grantee: 'postgres', privilege_type, is_grantable: false })) };
+      if (canonicalJson(actual ?? null) !== canonicalJson(expected)) {
+        fail('PREMIUM_POSTCHECK_FAILED', 'new finance relation must have exact owner-only ACL and FORCE RLS');
+      }
+    }
     allowedAddedIdentities.sort();
-    const actual = postState.relation_security.items.find(row => row.schema === 'private' && row.name === relationName);
-    const expected = { schema: 'private', name: relationName, owner: 'postgres',
-      rls_enabled: true, force_rls: true, acl: ['DELETE','INSERT','MAINTAIN','REFERENCES','SELECT','TRIGGER','TRUNCATE','UPDATE']
-        .map(privilege_type => ({ grantee: 'postgres', privilege_type, is_grantable: false })) };
-    if (canonicalJson(actual ?? null) !== canonicalJson(expected)) fail('PREMIUM_POSTCHECK_FAILED', 'new finance relation must have exact owner-only ACL and FORCE RLS');
   }
   const before = new Map(preState.relation_security.items.map(item => [`${item.schema}.${item.name}`, item]));
   const after = new Map(postState.relation_security.items.map(item => [`${item.schema}.${item.name}`, item]));

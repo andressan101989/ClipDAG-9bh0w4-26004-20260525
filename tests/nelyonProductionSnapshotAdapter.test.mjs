@@ -756,12 +756,177 @@ function f4GeneralManifest() {
   } };
 }
 
+function f5AutonomousManifest() {
+  const t = installedPolicy.finance_authority_f5_transition;
+  return { ...manifest(), baseline: { sha: t.baseline_sha }, delta: { files: [
+    { path: t.function_path, status: 'M' },
+    { path: t.migration_path, status: 'A' },
+  ] }, resources: {
+    functions: [t.function],
+    config_changed: false,
+    function_contracts: [{
+      name: t.function,
+      entrypoint: t.function_path,
+      import_map: null,
+      verify_jwt: true,
+      source_changed: true,
+      source_files: [
+        { path: 'supabase/functions/_shared/cors.ts', sha256: '2ec2fbe24a648db8750e74da1225dfb0d4f7aa00d86001d8c2990b9a428d4a87' },
+        { path: t.function_path, sha256: 'd16d76b509c2592c4e3f558c8ba80a25b77df650f52b16194a19a072f93dc693' },
+      ],
+      source_sha256: t.function_source_sha256,
+    }],
+    migrations: [{ version: '20261026072512', path: t.migration_path,
+      blob: t.migration_blob, sha256: t.migration_sha256 }],
+    finance_authority_transition: {
+      id: t.id,
+      from_phase: t.from_phase,
+      to_phase: t.to_phase,
+      baseline_sha: t.baseline_sha,
+      reviewed_source_sha: t.reviewed_source_sha,
+      integration_base_sha: t.integration_base_sha,
+      approved_sha: request().approvedSha,
+      baseline_descendant_verified: true,
+      integration_base_descendant_verified: true,
+      migration_blob: t.migration_blob,
+      migration_sha256: t.migration_sha256,
+      function_blob: t.function_blob,
+      function_source_sha256: t.function_source_sha256,
+      config_blob: t.config_blob,
+      client_contract: t.client_contract,
+      client_sources: t.client_sources,
+      cron_job: t.cron_job,
+    },
+  } };
+}
+
+test('F5 snapshot authority selects the autonomous phase and exact inherited catalog', async () => {
+  const adapter = await loadAdapter();
+  const transitionPolicy = structuredClone(installedPolicy);
+  transitionPolicy.baseline.sha = installedPolicy.finance_authority_f5_transition.baseline_sha;
+  transitionPolicy.baseline.migration_count = 355;
+  transitionPolicy.baseline.latest_migration = '20261026030000_creator_premium_f4_general_bdag_activation';
+  const transition = adapter.activeFinanceAuthorityTransition(transitionPolicy, f5AutonomousManifest());
+  assert.equal(transition.to_phase, 'f5_autonomous');
+
+  const inventory = items => ({ complete: true, count: items.length, items,
+    latest: items.at(-1) ?? null, sha256: sha256(canonicalJson(items)) });
+  const migrations = [
+    { version: '20261025011000', name: 'creator_premium_f3_bounded_financial_activation' },
+    { version: '20261025160452', name: 'creator_premium_f3_c2_isolated_canary_governance' },
+    { version: '20261026030000', name: 'creator_premium_f4_general_bdag_activation' },
+    { version: '20261026072512', name: 'creator_premium_f5_autonomous_subscriptions' },
+  ];
+  const selected = adapter.selectFinanceSnapshotQueries(inventory(migrations));
+  assert.equal(selected.phase, 'f5_autonomous');
+  assert.equal(selected.facts, adapter.FINANCE_FACTS_F5_AUTONOMOUS_SQL);
+  assert.match(selected.authority, /creator_premium_auto_renewal_attempts/);
+  assert.match(selected.authority, /authorization\|renewal/);
+  assert.match(selected.facts, /'mandates'.*creator_premium_auto_renewal_mandates/s);
+  assert.match(selected.facts, /'attempts'.*creator_premium_auto_renewal_attempts/s);
+
+  const functions = new Map(installedPolicy.finance_authority.f3_foundation.functions
+    .map(row => [row.identity, row]));
+  for (const phase of ['f3_c2', 'f4_general', 'f5_autonomous']) {
+    for (const row of installedPolicy.finance_authority[phase].function_overrides) functions.set(row.identity, row);
+    for (const row of installedPolicy.finance_authority[phase].function_additions) functions.set(row.identity, row);
+  }
+  const unsigned = {
+    schema_version: 1,
+    complete: true,
+    phase: 'f5_autonomous',
+    relations: installedPolicy.finance_authority.f5_autonomous.relations,
+    functions: [...functions.values()].sort((left, right) => left.identity.localeCompare(right.identity)),
+    legacy_functions: installedPolicy.finance_authority.f3_foundation.legacy_function_identities
+      .map(identity => ({ identity, sha256: 'a'.repeat(64) })),
+    legacy_relations: ['public.financial_transactions', 'public.ledger_accounts', 'public.ledger_entries']
+      .map(identity => ({ identity, sha256: 'a'.repeat(64) })),
+  };
+  assert.equal(adapter.validateFinanceAuthority({ ...unsigned, sha256: sha256(canonicalJson(unsigned)) },
+    installedPolicy, 'f5_autonomous'), true);
+
+  const beforeProjection = adapter.advisorExceptionsForPhase(transitionPolicy, f5AutonomousManifest(), 'pre')
+    .find(row => row.object.name === 'get_my_creator_premium_subscriptions_v2');
+  const afterProjection = adapter.advisorExceptionsForPhase(transitionPolicy, f5AutonomousManifest(), 'post')
+    .find(row => row.object.name === 'get_my_creator_premium_subscriptions_v2');
+  assert.equal(beforeProjection.attestation.definition_sha256,
+    '307938b5ec832f0bdc2c4ad4009180c6a1b3ae28a7cc1f617c5b856fa13210a9');
+  assert.equal(afterProjection.attestation.definition_sha256,
+    '2705216260908d75ca840c1c5d041601975c8b9b2f405233a398c75d93854421');
+  assert.equal(beforeProjection.advisor_fingerprint, afterProjection.advisor_fingerprint);
+});
+
+test('F5 cron normalization permits exactly one pinned job and rejects every catalog drift', async () => {
+  const adapter = await loadAdapter();
+  const cron = installedPolicy.finance_authority_f5_transition.cron_job;
+  assert.equal(adapter.normalizeCronCommand(`  select\n private.process_creator_premium_auto_renewals_f5_v1(25);  `),
+    cron.command);
+  assert.equal(adapter.cronCommandSha256(cron.command), cron.normalized_command_sha256);
+  const existing = {
+    jobid: '3', jobname: 'existing-safe-job', schedule: '0 3 * * *', database: 'postgres',
+    username: 'postgres', active: true, nodename: 'localhost', nodeport: 5432,
+    command_sha256: 'a'.repeat(64),
+  };
+  const added = {
+    jobid: '17', jobname: cron.jobname, schedule: cron.schedule, database: cron.database,
+    username: cron.username, active: cron.active, nodename: 'localhost', nodeport: 5432,
+    command_sha256: cron.normalized_command_sha256,
+  };
+  const snapshot = items => ({ schema_version: 1, complete: true, query_id: 'nelyon-cron-snapshot-v1',
+    count: items.length, items });
+  const pre = snapshot([existing]);
+  const post = snapshot([existing, added]);
+  assert.equal(adapter.verifyCronSnapshotTransition(pre, post,
+    installedPolicy.finance_authority_f5_transition), true);
+
+  const mutations = [
+    items => items.filter(item => item.jobid !== existing.jobid),
+    items => [...items, { ...added, jobid: '18', jobname: 'unexpected-job' }],
+    items => items.map(item => item.jobid === added.jobid ? { ...item, jobname: 'renamed' } : item),
+    items => items.map(item => item.jobid === added.jobid ? { ...item, active: false } : item),
+    items => items.map(item => item.jobid === added.jobid ? { ...item, schedule: '*/10 * * * *' } : item),
+    items => items.map(item => item.jobid === added.jobid ? { ...item, username: 'supabase_admin' } : item),
+    items => items.map(item => item.jobid === added.jobid ? { ...item, command_sha256: 'b'.repeat(64) } : item),
+    items => [...items, { ...added, jobid: '18' }],
+  ];
+  for (const mutate of mutations) assert.throws(() => adapter.verifyCronSnapshotTransition(
+    pre, snapshot(mutate(post.items)), installedPolicy.finance_authority_f5_transition,
+  ), /REMOTE_POSTCHECK_FAILED|INVALID_SNAPSHOT/);
+});
+
+test('F5 post-release facts forbid retroactive enrollment and any release-window financial delta', async () => {
+  const adapter = await loadAdapter();
+  const pre = {
+    phase: 'f4_general',
+    attestations: [{ fact_sha256: '1'.repeat(64) }],
+    authorizations: [{ fact_sha256: '2'.repeat(64) }],
+    receipts: [{ fact_sha256: '3'.repeat(64) }],
+    periods: [{ fact_sha256: '4'.repeat(64) }],
+    subscriptions: [{ fact_sha256: '5'.repeat(64) }],
+    transactions: [{ fact_sha256: '6'.repeat(64) }],
+    acquisition_exposure_bdag: '100.00000000',
+    release_movement_bdag: '0.00000000',
+  };
+  const post = { ...structuredClone(pre), phase: 'f5_autonomous', mandates: [], attempts: [] };
+  assert.equal(adapter.verifyF5AutonomousPostReleaseFacts(pre, post), true);
+  for (const hostile of [
+    { ...post, mandates: [{ fact_sha256: '7'.repeat(64) }] },
+    { ...post, attempts: [{ fact_sha256: '8'.repeat(64) }] },
+    { ...post, receipts: [...post.receipts, { fact_sha256: '9'.repeat(64) }] },
+    { ...post, periods: [...post.periods, { fact_sha256: 'a'.repeat(64) }] },
+    { ...post, authorizations: [...post.authorizations, { fact_sha256: 'b'.repeat(64) }] },
+    { ...post, release_movement_bdag: '0.00000001' },
+  ]) assert.throws(() => adapter.verifyF5AutonomousPostReleaseFacts(pre, hostile),
+    /REMOTE_POSTCHECK_FAILED/);
+});
+
 test('F3-C2 successor authority pins the new relation, changed Admin RPC, empty facts and exact phase', async () => {
   const adapter = await loadAdapter();
   assert.deepEqual(adapter.FINANCE_POLICY_DIGESTS, {
     historical_transition: sha256(canonicalJson(installedPolicy.finance_authority_transition)),
     c2_transition: sha256(canonicalJson(installedPolicy.finance_authority_c2_transition)),
     f4_transition: sha256(canonicalJson(installedPolicy.finance_authority_f4_transition)),
+    f5_transition: sha256(canonicalJson(installedPolicy.finance_authority_f5_transition)),
     authority: sha256(canonicalJson(installedPolicy.finance_authority)),
     security_advisor: sha256(canonicalJson(installedPolicy.finance_security_advisor)),
   });
@@ -2044,6 +2209,35 @@ test('F3-C2 Premium transition permits only the owner-only attestation relation'
     assert.throws(() => adapter.validatePremiumStateTransition(pre, invalid, f3C2Manifest(), c2TransitionPolicy),
       /PREMIUM_POSTCHECK_FAILED/);
   }
+});
+
+test('F5 Premium transition permits exactly two owner-only renewal relations', async () => {
+  const adapter = await loadAdapter();
+  const originalRelation = premiumPostcheckSnapshot().relations[0];
+  const ownerOnly = name => ({
+    schema: 'private', name, owner: 'postgres', rls_enabled: true, force_rls: true,
+    acl: ['DELETE','INSERT','MAINTAIN','REFERENCES','SELECT','TRIGGER','TRUNCATE','UPDATE']
+      .map(privilege_type => ({ grantee: 'postgres', privilege_type, is_grantable: false })),
+  });
+  const attempts = ownerOnly('creator_premium_auto_renewal_attempts');
+  const mandates = ownerOnly('creator_premium_auto_renewal_mandates');
+  const pre = adapter.normalizePremiumPostcheckState(premiumPostcheckSnapshot());
+  const transitionPolicy = structuredClone(installedPolicy);
+  transitionPolicy.baseline.sha = installedPolicy.finance_authority_f5_transition.baseline_sha;
+  transitionPolicy.baseline.latest_migration = '20261026030000_creator_premium_f4_general_bdag_activation';
+  const valid = relations => adapter.normalizePremiumPostcheckState(premiumPostcheckSnapshot({ relations }));
+  const post = valid([attempts, mandates, originalRelation]);
+  assert.equal(adapter.validatePremiumStateTransition(pre, post, f5AutonomousManifest(), transitionPolicy), true);
+  for (const relations of [
+    [attempts, originalRelation],
+    [attempts, mandates, ownerOnly('creator_premium_unapproved_relation'), originalRelation],
+    [{ ...attempts, owner: 'supabase_admin' }, mandates, originalRelation],
+    [attempts, { ...mandates, rls_enabled: false }, originalRelation],
+    [attempts, { ...mandates, force_rls: false }, originalRelation],
+    [attempts, { ...mandates, acl: mandates.acl.slice(1) }, originalRelation],
+  ]) assert.throws(() => adapter.validatePremiumStateTransition(
+    pre, valid(relations), f5AutonomousManifest(), transitionPolicy,
+  ), /PREMIUM_POSTCHECK_FAILED/);
 });
 
 test('fixed documented recovery capture uses four read-only SQL requests and redacts credentials', async () => {
