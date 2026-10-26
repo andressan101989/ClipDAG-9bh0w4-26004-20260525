@@ -130,6 +130,58 @@
     },
     "requires_separate_baseline_promotion": true
   },
+  "finance_authority_f5_transition": {
+    "id": "creator-premium-f5-autonomous-subscriptions-v1",
+    "from_phase": "f4_general",
+    "to_phase": "f5_autonomous",
+    "baseline_sha": "02c238618b05cd01c7388cc592ba7ac426973ce5",
+    "reviewed_source_sha": "a153e0fa0aaa945ea036e258ce25b1c575a2309f",
+    "integration_base_sha": "8b869746ea4bbc08fb79d42fe06f316849a7bfb9",
+    "approved_sha_ancestry": "verified_integration_base",
+    "migration_path": "supabase/migrations/20261026072512_creator_premium_f5_autonomous_subscriptions.sql",
+    "migration_blob": "ba832c2d06b40e2f6b76b75151690a42ea9e463c",
+    "migration_sha256": "728bdcb2a5ee74a3cddd74fae0dd1df9a296c69a5ce462ae9bdc9d93a3cddd66",
+    "function": "bdag-ledger",
+    "function_path": "supabase/functions/bdag-ledger/index.ts",
+    "function_blob": "e50f8109c6ec479483cb64f3da68812c446b0dda",
+    "function_source_sha256": "de3d258f3b4db069a848418bd0b4921d32520cb56d133f918747699af48c53ed",
+    "config_blob": "7c3ff52db72f9983aa4128f5c2e7e686bba31d5d",
+    "client_contract": "creator-premium-f3-v2",
+    "client_sources": [
+      {
+        "path": "services/creatorPremiumFinanceContracts.mjs",
+        "blob": "a968127bab8e6cb80b5f8437bb10d2f963c41aee",
+        "sha256": "07a455dd3dfaf9ed7f044a837d78649585b1fe7f3e6b03d6be419c5b4366778c"
+      },
+      {
+        "path": "services/financial/ledgerClient.ts",
+        "blob": "01a8f7f622c78f637d15a8e3eadf4af71017a47b",
+        "sha256": "1f718c565a305366e614dc8905e87a5b1017832bcbdc416ad0d4e97d484e9c6f"
+      }
+    ],
+    "productive_paths": [
+      "supabase/functions/bdag-ledger/index.ts",
+      "supabase/migrations/20261026072512_creator_premium_f5_autonomous_subscriptions.sql"
+    ],
+    "finance_policy": {
+      "activation_mode": "general",
+      "active_authorization_id": "f4000000-0000-4000-8000-000000000001",
+      "platform_fee_bps": 2000,
+      "purchase_enabled": true,
+      "refunds_enabled": true,
+      "subscription_enabled": true
+    },
+    "cron_job": {
+      "jobname": "creator-premium-auto-renewals-f5",
+      "schedule": "*/5 * * * *",
+      "database": "postgres",
+      "username": "postgres",
+      "active": true,
+      "command": "select private.process_creator_premium_auto_renewals_f5_v1(25);",
+      "normalized_command_sha256": "31518881633261ec69720f0604f35d81c2b784db4a24a87c32d9d696304173f1"
+    },
+    "requires_separate_baseline_promotion": true
+  },
   "finance_authority": {
     "schema_version": 1,
     "legacy": {
@@ -737,6 +789,100 @@
         }
       ],
       "schema_sha256": "781c180183bfe0c5d70f2782c2badad779e716539a1ea4cc0bc50966eeacc7be"
+    },
+    "f5_autonomous": {
+      "base_phase": "f4_general",
+      "relations": [
+        {
+          "identity": "private.creator_premium_auto_renewal_attempts",
+          "sha256": "5d7df2557a0ad227ec1e5a3cb6dea06f82a7dff51ce40107f45eee6c2e4bd0f1"
+        },
+        {
+          "identity": "private.creator_premium_auto_renewal_mandates",
+          "sha256": "0887f9b7045dee3b0380d1be8228be7b1e72dc70d4e6e0338300bb06a8c0724e"
+        },
+        {
+          "identity": "private.creator_premium_finance_authorizations",
+          "sha256": "a965ee21aab5469fec67a78bd9425ca3ce30a6be3b77e8efa62cc71410be54db"
+        },
+        {
+          "identity": "private.creator_premium_finance_owner_attestations_f3_c2",
+          "sha256": "b333e9b62737d51ed4c8557899fab0c973dbcc6c371e540443b57dbec15f645c"
+        },
+        {
+          "identity": "private.creator_premium_finance_policy",
+          "sha256": "d78525f526be90d65fbbd57fc68ae41690c795d5dd9be3f4d462a3e941d15cf7"
+        },
+        {
+          "identity": "private.creator_premium_purchase_receipts",
+          "sha256": "935d25664f50ce71ee3318a99ed64149219d1ee1073cdb5a915149e9335e6ae2"
+        },
+        {
+          "identity": "private.creator_premium_subscription_periods",
+          "sha256": "8d4de014f24b9425fd0e79f6d58cd1b01cb78a267465ff407992b8841be99446"
+        },
+        {
+          "identity": "private.creator_premium_subscriptions",
+          "sha256": "bf82a56a27dd86739d8459c2e2d04dfdd84d905b98db66ae1ab568e7d9662759"
+        }
+      ],
+      "function_overrides": [
+        {
+          "identity": "public.cancel_creator_premium_subscription_v1(uuid, uuid, uuid)",
+          "sha256": "784d2b0587afb68f5389ff13627e45c7494dae6876670608d2ef9ead9368255c"
+        },
+        {
+          "identity": "public.get_my_creator_premium_subscriptions_v2(timestamp with time zone, uuid, integer)",
+          "sha256": "22611e98606cc1f5339c8fea55fab1ebe39828140b9164d94990f2abb32f2b7c"
+        },
+        {
+          "identity": "public.refund_creator_premium_subscription_period_v1(uuid, uuid, text)",
+          "sha256": "c780b51fa9f1f2e5bb05733a43a4b2259a639bf6d6581a17cfd0e1211ff443d1"
+        },
+        {
+          "identity": "public.subscribe_creator_premium_plan_v1(uuid, uuid, uuid, text)",
+          "sha256": "23fff2f69d1620c546195930aa9d4866b11d300ce0a63a2433aece50208a71f6"
+        }
+      ],
+      "function_additions": [
+        {
+          "identity": "private.cancel_creator_premium_subscription_f4_v1(uuid, uuid, uuid)",
+          "sha256": "c19d8e51d9eb22ee28a2891b03c8dbf475ee835e77d4e50c9eec33514eea7d96"
+        },
+        {
+          "identity": "private.creator_premium_auto_renewal_append_only_f5_v1()",
+          "sha256": "208533989061c0d59ad346dddf7594747b423bca443af030d985ade7a1fee681"
+        },
+        {
+          "identity": "private.creator_premium_auto_renewal_command_id_f5_v1(uuid, integer, timestamp with time zone)",
+          "sha256": "58df660182f5e5f85c1aa362df3f099d7dd85f5a4a2c1b21f279b72780996fb4"
+        },
+        {
+          "identity": "private.creator_premium_auto_renewal_projection_f5_v1(uuid)",
+          "sha256": "d27dc421b45fa8a50f4933f2ce83bbd332e4110205337ea9e991354d9620b2af"
+        },
+        {
+          "identity": "private.process_creator_premium_auto_renewals_f5_v1(integer)",
+          "sha256": "e59968ee82dff45f46da3f35177eb05029bfe72c6e8d2466dee06cfb3b64190b"
+        },
+        {
+          "identity": "private.record_creator_premium_auto_renewal_f5_v1(uuid, text, uuid)",
+          "sha256": "8fe26a114be0f76862256d6036c3698b2d6e1263311e3db3b9a6aec686f1d1d2"
+        },
+        {
+          "identity": "private.refund_creator_premium_subscription_period_f4_v1(uuid, uuid, text)",
+          "sha256": "36de8d0d1cf46336eb149cb1e3ddc3997255ee36d8d5d41a02b70179a5831117"
+        },
+        {
+          "identity": "private.subscribe_creator_premium_plan_f4_v1(uuid, uuid, uuid, text)",
+          "sha256": "6d37ecc1bfe2e6fbb7280db4ec02e9931922fc3dd9776ef7216720f9af6e8448"
+        },
+        {
+          "identity": "public.set_creator_premium_auto_renewal_v1(uuid, uuid, boolean, numeric, integer, text)",
+          "sha256": "f5f77e958cf933cb95d55efdebebc7710968fba79fee08a47c3b2479f471599e"
+        }
+      ],
+      "schema_sha256": "781c180183bfe0c5d70f2782c2badad779e716539a1ea4cc0bc50966eeacc7be"
     }
   },
   "finance_security_advisor": {
@@ -1045,6 +1191,54 @@
           "migration": "20261026030000_creator_premium_f4_general_bdag_activation",
           "migration_blob": "8197f838edd56d9b5e52c69f2b039bec4fbcc5f6",
           "source_sha": "fc70374445471ad63411b6de3ea7fd86a6730bd6"
+        }
+      }
+    ],
+    "f5_rpc_replacements": [
+      {
+        "advisor_fingerprint": "3da775663b576889fd8c250ade795a244518cb9a8385c4002153b1adf67b37d0",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": {
+          "name": "get_my_creator_premium_subscriptions_v2",
+          "schema": "public",
+          "argument_types": [
+            "timestamp with time zone",
+            "uuid",
+            "integer"
+          ],
+          "identity_arguments": "p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_limit integer"
+        },
+        "attestation": {
+          "security_definer": true,
+          "owner": "postgres",
+          "search_path": [
+            "search_path=\"\""
+          ],
+          "acl": [
+            {
+              "grantee": "authenticated",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            },
+            {
+              "grantee": "postgres",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            }
+          ],
+          "execute": {
+            "anon": false,
+            "public": false,
+            "service_role": false,
+            "authenticated": true
+          },
+          "definition_sha256": "2705216260908d75ca840c1c5d041601975c8b9b2f405233a398c75d93854421"
+        },
+        "origin": {
+          "migration": "20261026072512_creator_premium_f5_autonomous_subscriptions",
+          "migration_blob": "ba832c2d06b40e2f6b76b75151690a42ea9e463c",
+          "source_sha": "a153e0fa0aaa945ea036e258ce25b1c575a2309f"
         }
       }
     ],
