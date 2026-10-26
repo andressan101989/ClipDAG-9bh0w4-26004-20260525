@@ -271,6 +271,11 @@ test('baseline promotion migrates cron identity from legacy normalization to raw
     legacy_normalized_command_sha256: legacyDigest,
   };
   const legacySnapshot = baselineSnapshot(policy, {
+    migrations: {
+      complete: true,
+      items: Array.from({ length: 355 }, (_, index) => `2026${String(index).padStart(10, '0')}`),
+      latest: F4_GENERAL_MIGRATION,
+    },
     cron_security: { complete: true, cron: [cronItem], security_findings: [] },
   });
   const legacyEvidence = gate.buildBaselineEvidence(legacySnapshot);
@@ -292,6 +297,8 @@ test('baseline promotion migrates cron identity from legacy normalization to raw
 test('F5 Git attestation and manifest reject every migration Edge config client and closure mutation', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const transition = policy.finance_authority_f5_transition;
+  const transitionPolicy = structuredClone(policy);
+  transitionPolicy.baseline.sha = transition.baseline_sha;
   const root = new URL('..', import.meta.url);
   const rootPath = decodeURIComponent(root.pathname.replace(/^\/([A-Za-z]:)/, '$1'));
   const approvedSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
@@ -303,7 +310,7 @@ test('F5 Git attestation and manifest reject every migration Edge config client 
     cwd: root, encoding: args.includes('-z') ? 'buffer' : 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
   });
   const input = {
-    policy, approvedSha, changes, affectedFunctions: ['bdag-ledger'],
+    policy: transitionPolicy, approvedSha, changes, affectedFunctions: ['bdag-ledger'],
     migrations: [{ path: transition.migration_path, version: '20261026072512' }], runGit,
   };
   const result = gate.attestFinanceAuthorityTransition(input);
@@ -321,7 +328,7 @@ test('F5 Git attestation and manifest reject every migration Edge config client 
   });
   assert.equal(contracts[0].source_sha256, transition.function_source_sha256);
   const manifestInput = {
-    request: request({ approvedSha, mainSha: approvedSha }), policy,
+    request: request({ approvedSha, mainSha: approvedSha }), policy: transitionPolicy,
     gitState: { approvedSha, baselineSha: transition.baseline_sha, originMainSha: approvedSha },
     classified: gate.classifyChangedPaths(changes), migrations: result.migrations,
     financeAuthorityTransition: result.attestation, affectedFunctions: ['bdag-ledger'], functionContracts: contracts,
@@ -1883,35 +1890,35 @@ test('expanded managed scope has a verified static cutover control', async () =>
   }), policy).mode, 'release');
 });
 
-test('F4 GENERAL production baseline is promoted from the exact successful recovery evidence', async () => {
+test('F5 autonomous production baseline is promoted from independently verified owner evidence', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(gate.validatePolicy(policy), true);
   assert.deepEqual(policy.baseline, {
     authority_source: 'owner-control-plane',
     blocked_resources: [],
-    evidence: '69f65a8572cde59734e466af010495d70c8da0c28a7ba2131cf539b66ac91933',
+    evidence: 'b4756af439dad99ae36df5a107a91bb8a6467848d4b3a31ee3ae6ebd56a01a6b',
     evidence_digests: {
-      migrations: '90ec14e3a81752b992fce92b6e2dd9da045ebe973f2c2360950cd3e92c85afa8',
-      managed_functions: 'a2e693b4083f343c2459cdb3e11cad295c9b084ecb6f8deeb457c71c91f0dd83',
+      migrations: '8bff3e46f2baee474d7db5a8375cdb20457a60c2b4c1fdc9a02f75d11248be86',
+      managed_functions: '9851a1d192f523bd326213e77de5f7c2e691fb5cd2928a569fdf1086b187a131',
       unmanaged_functions: '26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc',
-      function_source_parity: '0980feb5ada4e589bc1b8ac9e4d0d6dcd4813420e573c8de726d78eb0f2ff917',
+      function_source_parity: '6fdd9e7abfe3e7695508908129f91762546aac8cea7e2eb00555d794d2b7dd58',
       config_verify_jwt: '703749fce46f724c7c4e791f7a222915b166af0ded38f00f34f983798355ba15',
-      cron_security: 'caad94f091360c63c3e62a5439706a43b4b64e9502f60176ef5b22d45e22d497',
+      cron_security: '7abbb7c306dc044e6228a9fdc1e00fa2dbcec6936e433ea3c5b6123611cc2ae1',
       finance: 'f94d54264c5d7658dc04aba34b028c815e99d7eb8ccf2490410817d47566754f',
     },
-    latest_migration: F4_GENERAL_MIGRATION,
-    migration_count: 355,
+    latest_migration: '20261026072512_creator_premium_f5_autonomous_subscriptions',
+    migration_count: 356,
     prior_release: {
       kind: 'post-release',
-      release_id: 'nelyon-f4-general-activation-release-20261026T041943Z',
-      manifest_sha256: '96d731beeef25b2de5077f525e406727e249a073008653def91b923d4e2e6c17',
-      postcheck_evidence_sha256: '69f65a8572cde59734e466af010495d70c8da0c28a7ba2131cf539b66ac91933',
+      release_id: 'nelyon-f5-autonomous-releasefix-20261026T124453Z',
+      manifest_sha256: '7f184407b0e5d06da1e28dda45870958736dbd972587fc487b029569dc4f1a9e',
+      postcheck_evidence_sha256: '0d0e11cc67d9805de11b7f47009ec82acf4a68290ae8347600375d3224ed484a',
     },
     requires_separate_policy_commit: true,
-    reviewed_policy_sha256: '9d45a98cf42c1bd9a48ec754e8d2053c66540ee90d33f166f87f1f766ecaeced',
-    sha: '02c238618b05cd01c7388cc592ba7ac426973ce5',
+    reviewed_policy_sha256: '871765ce6d5cbc6b86a54938f6aea2f1340f1cd81478f5887fa4f2ef8074e522',
+    sha: 'ec9e08227801c3ce59f7c01f8db3ed846831160e',
     state: 'verified',
-    verified_at: '2026-10-26T05:13:31.563Z',
+    verified_at: '2026-10-26T15:15:23.424Z',
     verified_by: OWNER,
   });
 
@@ -3844,6 +3851,43 @@ test('F4 promoted baseline accepts reconciled nonzero commerce under the exact g
   assert.equal(verified.finance.premium_transaction_count, 4);
 });
 
+test('owner baseline finance digest matches the immutable production projection after F4', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const candidate = asCandidatePolicy(policy);
+  candidate.baseline.migration_count = 356;
+  candidate.baseline.latest_migration = '20261026072512_creator_premium_f5_autonomous_subscriptions';
+  const snapshot = baselineSnapshot(candidate);
+  snapshot.finance = {
+    ...snapshot.finance,
+    schema_sha256: 'a'.repeat(64),
+    reconciliation: {
+      account_balance_ledger_mismatch: 0,
+      completed_credit_account_mismatch: 0,
+      completed_credit_total_mismatch: 0,
+      completed_debit_account_mismatch: 0,
+      completed_debit_total_mismatch: 0,
+      completed_without_credit: 0,
+      completed_without_debit: 0,
+      noncanonical_entry_type: 0,
+      orphan_ledger_entries: 0,
+      premium_finance_policy_row_count_mismatch: 0,
+    },
+    premium_transaction_count: 7,
+    premium_bindings: { receipts: 4, subscription_periods: 3 },
+  };
+  const evidence = gate.buildBaselineEvidence(snapshot);
+  const projectedFinance = {
+    complete: true,
+    schema_sha256: snapshot.finance.schema_sha256,
+    policy: snapshot.finance.policy,
+    reconciliation: snapshot.finance.reconciliation,
+    c2_attributed_bdag_movement: 0,
+    authority_phase: 'f4_general',
+    mutable_commerce_inventory: 'reconciled_not_baselined',
+  };
+  assert.equal(evidence.digests.finance, gate.sha256Hex(gate.canonicalJson(projectedFinance)));
+});
+
 test('Git SHA equality alone cannot verify baseline', async () => {
   const loaded = await loadGateAndPolicy();
   const { gate } = loaded;
@@ -4009,7 +4053,7 @@ test('baseline promotion denies every independently reviewed section mismatch', 
   cron.cron_security.security_findings.push({ name: 'unexpected-warning', level: 'WARN' });
   snapshots.push(cron);
   const finance = baselineSnapshot(policy);
-  finance.finance.premium_ledger_entry_count = 1;
+  finance.finance.policy = { ...finance.finance.policy, platform_fee_bps: 1234 };
   snapshots.push(finance);
   for (const snapshot of snapshots) {
     const evidence = gate.buildBaselineEvidence(snapshot);

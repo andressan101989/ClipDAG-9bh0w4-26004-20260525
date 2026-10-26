@@ -1677,6 +1677,28 @@ function activeManagedScopeTransition({ policy, manifest }) {
   return F2_MANAGED_SCOPE_TRANSITION;
 }
 
+export function projectProductionBaselineFinance(finance, latestMigration) {
+  const f4GeneralBaseline = latestMigration
+    >= '20261026030000_creator_premium_f4_general_bdag_activation';
+  return {
+    complete: true,
+    ...(finance?.schema_sha256 === undefined ? {} : { schema_sha256: finance.schema_sha256 }),
+    ...(finance?.policy === undefined ? {} : { policy: finance.policy }),
+    ...(finance?.reconciliation === undefined ? {} : { reconciliation: finance.reconciliation }),
+    c2_attributed_bdag_movement: 0,
+    ...(f4GeneralBaseline
+      ? { authority_phase: 'f4_general', mutable_commerce_inventory: 'reconciled_not_baselined' }
+      : {
+        ...(finance?.premium_transaction_count === undefined
+          ? {}
+          : { premium_transaction_count: finance.premium_transaction_count }),
+        ...(finance?.premium_bindings === undefined
+          ? {}
+          : { premium_bindings: finance.premium_bindings }),
+      }),
+  };
+}
+
 export function buildProductionBaselineDigests({ evidence, policy, managedFunctions }) {
   validateNormalizedMigrations(evidence?.migrations);
   validateNormalizedFunctions(evidence?.functions);
@@ -1724,19 +1746,10 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
   if (f4GeneralBaseline && RECONCILIATION_KEYS.some(key => evidence.finance.reconciliation[key] !== 0)) {
     fail('REMOTE_BASELINE_MISMATCH', 'active F4 finance baseline is not reconciled');
   }
-  const finance = {
-    complete: true,
-    schema_sha256: evidence.finance.schema_sha256,
-    policy: evidence.finance.policy,
-    reconciliation: evidence.finance.reconciliation,
-    c2_attributed_bdag_movement: 0,
-    ...(f4GeneralBaseline
-      ? { authority_phase: 'f4_general', mutable_commerce_inventory: 'reconciled_not_baselined' }
-      : {
-        premium_transaction_count: evidence.finance.premium_transaction_count,
-        premium_bindings: evidence.finance.premium_bindings,
-      }),
-  };
+  const finance = projectProductionBaselineFinance(
+    evidence.finance,
+    policy?.baseline?.latest_migration,
+  );
   const digestOf = value => sha256(canonicalJson(value));
   return {
     migrations: digestOf(evidence.migrations.items.map(baselineMigrationName)),
