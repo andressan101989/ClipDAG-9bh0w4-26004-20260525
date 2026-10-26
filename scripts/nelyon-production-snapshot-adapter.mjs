@@ -44,8 +44,9 @@ const F2_MANAGED_SCOPE_TRANSITION = Object.freeze({
 export const FINANCE_POLICY_DIGESTS = Object.freeze({
   historical_transition: '18ba08389686a15aea9df1c7b4f974202e147167e5aa1d0f83412e1065ebc882',
   c2_transition: '2fc5ae800bf96aed59d78b953cfe628007f9603b48dd8e7a25dc915e88927af2',
-  authority: 'fbe694cc946c1c27f237323d62cf61f9ece4294bc3d34072bca04cdcc28768d2',
-  security_advisor: '6ad59ae25792cd10de732526b05e3f472ef629e16f90dfcc38469384d985cf3e',
+  f4_transition: 'de7891ab96cd95280a5d1e80ad56b8411045b66bb54e71f610874f4cc280e36a',
+  authority: 'de66270db10a710d5caf9580b7d1128719029e2322b6cecfe54ff62e1dd7018c',
+  security_advisor: '2c7c69d297f6b20b97cbaf7cf3ce339b8498c20a8209859f407493d864fef678',
 });
 
 export const FINANCE_SNAPSHOT_SQL = `with
@@ -331,7 +332,7 @@ export const FINANCE_FACTS_F3_SQL = `with facts as (
     when key='id' or key like '%_id' then case when value='null'::jsonb then value else
       pg_catalog.to_jsonb(pg_catalog.encode(extensions.digest(pg_catalog.convert_to(value#>>'{}','UTF8'),'sha256'),'hex')) end
     when key ~ '(amount|bdag)$' then pg_catalog.to_jsonb(value#>>'{}')
-    when key like '%_at' or key in ('status','access_state','platform_fee_bps',
+    when key like '%_at' or key in ('status','access_state','authorization_scope','client_contract','platform_fee_bps',
       'charge_starts_at','charge_expires_at','refund_expires_at','max_purchase_count','max_subscription_count','max_refund_count') then value
     else pg_catalog.to_jsonb(pg_catalog.encode(extensions.digest(pg_catalog.convert_to(value::text,'UTF8'),'sha256'),'hex')) end
     order by key)||pg_catalog.jsonb_build_object('fact_sha256',pg_catalog.encode(extensions.digest(pg_catalog.convert_to(fact::text,'UTF8'),'sha256'),'hex')) item
@@ -362,6 +363,326 @@ export const FINANCE_FACTS_F3_C2_SQL = FINANCE_FACTS_F3_SQL
   .replace("'authorizations',coalesce((select pg_catalog.jsonb_agg(item order by item::text) from sanitized where kind='authorizations'),'[]'::jsonb),",
     "'attestations',coalesce((select pg_catalog.jsonb_agg(item order by item::text) from sanitized where kind='attestations'),'[]'::jsonb),\n  'authorizations',coalesce((select pg_catalog.jsonb_agg(item order by item::text) from sanitized where kind='authorizations'),'[]'::jsonb),");
 
+// F4 runs through the Management API read-only role. Reconcile the same complete
+// accounting contract as creator_premium_financial_fact_is_valid_v1 without
+// granting the read-only role EXECUTE on a private SECURITY DEFINER helper.
+function canonicalFinanceFieldSql(key, valueSql) {
+  return `('${key}:'||pg_catalog.octet_length(pg_catalog.convert_to((${valueSql})::text,'UTF8'))::text||':'||(${valueSql})::text)`;
+}
+
+function canonicalFinancePayloadSql(fields) {
+  return fields.map(([key, valueSql]) => canonicalFinanceFieldSql(key, valueSql)).join("||E'\\n'||");
+}
+
+const F4_GENERAL_CONFIGURATION_PAYLOAD_SQL = canonicalFinancePayloadSql([
+  ['domain', "'creator-premium-f4-general-configuration-v1'"],
+  ['id', 'envelope.id::text'],
+  ['authorization_scope', 'envelope.authorization_scope'],
+  ['client_contract', 'envelope.client_contract'],
+  ['platform_account_id', 'envelope.platform_account_id::text'],
+  ['platform_fee_bps', 'envelope.platform_fee_bps::text'],
+  ['charge_starts_at', "(extract(epoch from envelope.charge_starts_at)*1000000)::bigint::text"],
+  ['purchase_enabled', "'true'"],
+  ['subscription_enabled', "'true'"],
+  ['refunds_enabled', "'true'"],
+]);
+
+const F4_CANARY_CONFIGURATION_PAYLOAD_SQL = canonicalFinancePayloadSql([
+  ['domain', "'creator-premium-f3-c2-configuration-v1'"],
+  ['id', 'envelope.id::text'],
+  ['client_contract', 'envelope.client_contract'],
+  ['buyer_id', 'envelope.buyer_id::text'],
+  ['creator_id', 'envelope.creator_id::text'],
+  ['buyer_account_id', 'envelope.buyer_account_id::text'],
+  ['creator_account_id', 'envelope.creator_account_id::text'],
+  ['platform_account_id', 'envelope.platform_account_id::text'],
+  ['purchase_content_id', 'envelope.purchase_content_id::text'],
+  ['purchase_offer_version_id', 'envelope.purchase_offer_version_id::text'],
+  ['subscription_plan_id', 'envelope.subscription_plan_id::text'],
+  ['purchase_amount_bdag', 'envelope.purchase_amount_bdag::numeric(38,8)::text'],
+  ['subscription_amount_bdag', 'envelope.subscription_amount_bdag::numeric(38,8)::text'],
+  ['max_purchase_count', 'envelope.max_purchase_count::text'],
+  ['max_subscription_count', 'envelope.max_subscription_count::text'],
+  ['max_refund_count', 'envelope.max_refund_count::text'],
+  ['max_gross_bdag', 'envelope.max_gross_bdag::numeric(38,8)::text'],
+  ['platform_fee_bps', 'envelope.platform_fee_bps::text'],
+  ['charge_starts_at', "(extract(epoch from envelope.charge_starts_at)*1000000)::bigint::text"],
+  ['charge_expires_at', "(extract(epoch from envelope.charge_expires_at)*1000000)::bigint::text"],
+  ['refund_expires_at', "(extract(epoch from envelope.refund_expires_at)*1000000)::bigint::text"],
+]);
+
+const F4_ATTESTATION_PAYLOAD_SQL = canonicalFinancePayloadSql([
+  ['domain', "'creator-premium-f3-c2-attestation-v1'"],
+  ['configuration_digest', 'attestation.configuration_digest'],
+  ['approval_reference', 'attestation.approval_reference'],
+  ['evidence_digest', 'attestation.evidence_digest'],
+  ['repository', 'attestation.repository'],
+  ['protected_source_sha', 'attestation.protected_source_sha'],
+  ['environment', 'attestation.environment'],
+  ['approved_at', "(extract(epoch from attestation.approved_at)*1000000)::bigint::text"],
+  ['attestation_version', 'attestation.attestation_version'],
+]);
+
+function f4FinancialFactMismatchSql({ table, alias, payerId, payerAccount, referenceType,
+  chargeOperation, refundOperation, activeStates, targetId, offerId }) {
+  const operationBinding = offerId === null
+    ? `${alias}.${targetId} is not null`
+    : `${alias}.${targetId} is not null and ${alias}.${offerId} is not null`;
+  const canaryOperationBinding = offerId === null
+    ? `envelope.subscription_plan_id=${alias}.${targetId}
+            and envelope.subscription_amount_bdag=${alias}.gross_amount_bdag`
+    : `envelope.purchase_content_id=${alias}.${targetId}
+            and envelope.purchase_offer_version_id=${alias}.${offerId}
+            and envelope.purchase_amount_bdag=${alias}.gross_amount_bdag`;
+  return `(select pg_catalog.count(*)::integer
+    from ${table} ${alias}
+    left join private.creator_premium_finance_authorizations envelope
+      on envelope.id=${alias}.finance_authorization_id
+    left join private.creator_premium_finance_owner_attestations_f3_c2 attestation
+      on (attestation.approval_digest,attestation.configuration_digest)
+        =(envelope.approval_digest,envelope.configuration_digest)
+    left join public.financial_transactions original
+      on original.id=${alias}.financial_transaction_id
+    left join public.financial_transactions reversal
+      on reversal.id=${alias}.reversal_financial_transaction_id
+    left join public.ledger_accounts payer_account
+      on payer_account.id=${alias}.${payerAccount}
+    left join public.ledger_accounts creator_account
+      on creator_account.id=${alias}.creator_account_id
+    left join public.ledger_accounts platform_account
+      on platform_account.id=${alias}.platform_account_id
+    where not coalesce((
+      (((${alias}.finance_authorization_id is null and ${alias}.created_at<(
+          select general.created_at from private.creator_premium_finance_authorizations general
+          where general.authorization_scope='GENERAL' order by general.created_at limit 1)))
+        or (${alias}.finance_authorization_id is not null
+          and envelope.configuration_digest=case envelope.authorization_scope
+            when 'CANARY' then pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+              ${F4_CANARY_CONFIGURATION_PAYLOAD_SQL},'UTF8')),'hex')
+            when 'GENERAL' then pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+              ${F4_GENERAL_CONFIGURATION_PAYLOAD_SQL},'UTF8')),'hex')
+            else null end
+          and attestation.approval_digest=pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+            ${F4_ATTESTATION_PAYLOAD_SQL},'UTF8')),'hex')
+          and attestation.registered_by='postgres'
+          and envelope.platform_account_id=${alias}.platform_account_id
+          and envelope.platform_fee_bps=${alias}.platform_fee_bps
+          and envelope.platform_fee_bps=2000
+          and ((envelope.authorization_scope='GENERAL')
+            or (envelope.authorization_scope='CANARY'
+              and envelope.buyer_id=${alias}.${payerId}
+              and envelope.creator_id=${alias}.creator_id
+              and envelope.buyer_account_id=${alias}.${payerAccount}
+              and envelope.creator_account_id=${alias}.creator_account_id
+              and ${canaryOperationBinding}))))
+      and ${alias}.access_state in (${activeStates.map(value => `'${value}'`).join(',')},'refunded')
+      and ${alias}.${payerId} is not null and ${alias}.creator_id is not null
+      and ${alias}.${payerId}<>${alias}.creator_id
+      and ${operationBinding}
+      and payer_account.owner_id=${alias}.${payerId}
+      and payer_account.account_type='user' and payer_account.currency='BDAG'
+      and creator_account.owner_id=${alias}.creator_id
+      and creator_account.account_type='user' and creator_account.currency='BDAG'
+      and platform_account.owner_id is null
+      and platform_account.account_type='platform' and platform_account.currency='BDAG'
+      and ${alias}.gross_amount_bdag>0 and ${alias}.gross_amount_bdag<=1000000000000
+      and ${alias}.creator_net_bdag>0
+      and ${alias}.platform_fee_bdag>=0 and ${alias}.platform_fee_bps between 0 and 9999
+      and ${alias}.gross_amount_bdag=${alias}.creator_net_bdag+${alias}.platform_fee_bdag
+      and ${alias}.platform_fee_bdag=pg_catalog.round(
+        ${alias}.gross_amount_bdag*${alias}.platform_fee_bps/10000,8)
+      and ${alias}.gross_amount_bdag=pg_catalog.round(${alias}.gross_amount_bdag,8)
+      and ${alias}.creator_net_bdag=pg_catalog.round(${alias}.creator_net_bdag,8)
+      and ${alias}.platform_fee_bdag=pg_catalog.round(${alias}.platform_fee_bdag,8)
+      and original.operation_type='${chargeOperation}'
+      and original.reference_type='${referenceType}'
+      and original.reference_id=${alias}.id::text
+      and original.from_account_id=${alias}.${payerAccount}
+      and original.to_account_id=${alias}.creator_account_id
+      and original.amount=${alias}.gross_amount_bdag
+      and original.fee_amount=${alias}.platform_fee_bdag
+      and original.currency='BDAG'
+      and original.initiated_by=${alias}.${payerId}
+      and original.idempotency_key=${alias}.idempotency_key::text
+      and original.status=case when ${alias}.access_state='refunded' then 'reversed' else 'completed' end
+      and (select pg_catalog.count(*) from public.ledger_entries entry
+        where entry.txn_id=original.id)=case when ${alias}.platform_fee_bdag=0 then 2 else 3 end
+      and (select pg_catalog.count(*) from public.ledger_entries entry
+        where entry.txn_id=original.id and entry.account_id=${alias}.${payerAccount}
+          and entry.entry_type='debit' and entry.amount=${alias}.gross_amount_bdag
+          and entry.metadata->>'fin_txn_id'=original.id::text
+          and entry.metadata->>'reference_type'='${referenceType}'
+          and entry.metadata->>'reference_id'=${alias}.id::text
+          and entry.metadata->>'financial_leg'='payer_gross_debit')=1
+      and (select pg_catalog.count(*) from public.ledger_entries entry
+        where entry.txn_id=original.id and entry.account_id=${alias}.creator_account_id
+          and entry.entry_type='credit' and entry.amount=${alias}.creator_net_bdag
+          and entry.metadata->>'fin_txn_id'=original.id::text
+          and entry.metadata->>'reference_type'='${referenceType}'
+          and entry.metadata->>'reference_id'=${alias}.id::text
+          and entry.metadata->>'financial_leg'='creator_net_credit')=1
+      and (${alias}.platform_fee_bdag=0 or (select pg_catalog.count(*)
+        from public.ledger_entries entry
+        where entry.txn_id=original.id and entry.account_id=${alias}.platform_account_id
+          and entry.entry_type='credit' and entry.amount=${alias}.platform_fee_bdag
+          and entry.metadata->>'fin_txn_id'=original.id::text
+          and entry.metadata->>'reference_type'='${referenceType}'
+          and entry.metadata->>'reference_id'=${alias}.id::text
+          and entry.metadata->>'financial_leg'='platform_fee_credit')=1)
+      and ((${alias}.access_state<>'refunded'
+          and ${alias}.reversal_financial_transaction_id is null
+          and ${alias}.refund_idempotency_key is null)
+        or (${alias}.access_state='refunded'
+          and ${alias}.reversal_financial_transaction_id is not null
+          and ${alias}.refund_idempotency_key is not null
+          and reversal.status='completed'
+          and reversal.operation_type='${refundOperation}'
+          and reversal.reference_type='${referenceType}'
+          and reversal.reference_id=${alias}.id::text
+          and reversal.from_account_id=${alias}.creator_account_id
+          and reversal.to_account_id=${alias}.${payerAccount}
+          and reversal.amount=${alias}.gross_amount_bdag
+          and reversal.fee_amount=${alias}.platform_fee_bdag
+          and reversal.currency='BDAG'
+          and reversal.initiated_by=${alias}.${payerId}
+          and reversal.idempotency_key=${alias}.refund_idempotency_key::text
+          and (select pg_catalog.count(*) from public.ledger_entries entry
+            where entry.txn_id=reversal.id)=case when ${alias}.platform_fee_bdag=0 then 2 else 3 end
+          and (select pg_catalog.count(*) from public.ledger_entries entry
+            where entry.txn_id=reversal.id and entry.account_id=${alias}.creator_account_id
+              and entry.entry_type='debit' and entry.amount=${alias}.creator_net_bdag
+              and entry.metadata->>'fin_txn_id'=reversal.id::text
+              and entry.metadata->>'reference_type'='${referenceType}'
+              and entry.metadata->>'reference_id'=${alias}.id::text
+              and entry.metadata->>'financial_leg'='creator_net_debit')=1
+          and (${alias}.platform_fee_bdag=0 or (select pg_catalog.count(*)
+            from public.ledger_entries entry
+            where entry.txn_id=reversal.id and entry.account_id=${alias}.platform_account_id
+              and entry.entry_type='debit' and entry.amount=${alias}.platform_fee_bdag
+              and entry.metadata->>'fin_txn_id'=reversal.id::text
+              and entry.metadata->>'reference_type'='${referenceType}'
+              and entry.metadata->>'reference_id'=${alias}.id::text
+              and entry.metadata->>'financial_leg'='platform_fee_debit')=1)
+          and (select pg_catalog.count(*) from public.ledger_entries entry
+            where entry.txn_id=reversal.id and entry.account_id=${alias}.${payerAccount}
+              and entry.entry_type='credit' and entry.amount=${alias}.gross_amount_bdag
+              and entry.metadata->>'fin_txn_id'=reversal.id::text
+              and entry.metadata->>'reference_type'='${referenceType}'
+              and entry.metadata->>'reference_id'=${alias}.id::text
+              and entry.metadata->>'financial_leg'='payer_gross_credit')=1))
+    ),false))`;
+}
+
+const F4_PURCHASE_BINDING_MISMATCH_SQL = f4FinancialFactMismatchSql({
+  table: 'private.creator_premium_purchase_receipts', alias: 'receipt', payerId: 'buyer_id',
+  payerAccount: 'buyer_account_id', referenceType: 'creator_premium_purchase_receipt',
+  chargeOperation: 'creator_premium_purchase', refundOperation: 'creator_premium_purchase_refund',
+  activeStates: ['active','revoked'], targetId: 'content_id', offerId: 'offer_version_id',
+});
+const F4_PERIOD_BINDING_MISMATCH_SQL = f4FinancialFactMismatchSql({
+  table: 'private.creator_premium_subscription_periods', alias: 'period', payerId: 'subscriber_id',
+  payerAccount: 'subscriber_account_id', referenceType: 'creator_premium_subscription_period',
+  chargeOperation: 'creator_premium_subscription', refundOperation: 'creator_premium_subscription_refund',
+  activeStates: ['active','expired','revoked'], targetId: 'plan_id', offerId: null,
+});
+
+const F4_ORPHAN_PREMIUM_TRANSACTION_SQL = `(select pg_catalog.count(*)::integer
+  from public.financial_transactions transaction_row
+  where transaction_row.operation_type in (
+      'creator_premium_purchase','creator_premium_purchase_refund',
+      'creator_premium_subscription','creator_premium_subscription_refund')
+    and not (
+      (transaction_row.operation_type='creator_premium_purchase'
+        and exists(select 1 from private.creator_premium_purchase_receipts receipt
+          where receipt.financial_transaction_id=transaction_row.id
+            and transaction_row.reference_type='creator_premium_purchase_receipt'
+            and transaction_row.reference_id=receipt.id::text))
+      or (transaction_row.operation_type='creator_premium_purchase_refund'
+        and exists(select 1 from private.creator_premium_purchase_receipts receipt
+          where receipt.reversal_financial_transaction_id=transaction_row.id
+            and transaction_row.reference_type='creator_premium_purchase_receipt'
+            and transaction_row.reference_id=receipt.id::text))
+      or (transaction_row.operation_type='creator_premium_subscription'
+        and exists(select 1 from private.creator_premium_subscription_periods period
+          where period.financial_transaction_id=transaction_row.id
+            and transaction_row.reference_type='creator_premium_subscription_period'
+            and transaction_row.reference_id=period.id::text))
+      or (transaction_row.operation_type='creator_premium_subscription_refund'
+        and exists(select 1 from private.creator_premium_subscription_periods period
+          where period.reversal_financial_transaction_id=transaction_row.id
+            and transaction_row.reference_type='creator_premium_subscription_period'
+            and transaction_row.reference_id=period.id::text))))`;
+
+const F4_ORPHAN_PREMIUM_LEDGER_ENTRY_SQL = `(select pg_catalog.count(*)::integer
+  from public.ledger_entries entry
+  join public.financial_transactions transaction_row on transaction_row.id=entry.txn_id
+  where (transaction_row.operation_type in (
+      'creator_premium_purchase','creator_premium_purchase_refund',
+      'creator_premium_subscription','creator_premium_subscription_refund')
+    or entry.metadata->>'reference_type' in (
+      'creator_premium_purchase_receipt','creator_premium_subscription_period')
+    or entry.metadata->>'financial_leg' in (
+      'payer_gross_debit','creator_net_credit','platform_fee_credit',
+      'creator_net_debit','platform_fee_debit','payer_gross_credit'))
+    and not (
+      entry.metadata->>'fin_txn_id'=transaction_row.id::text
+      and (
+        (transaction_row.operation_type in ('creator_premium_purchase','creator_premium_purchase_refund')
+          and entry.metadata->>'reference_type'='creator_premium_purchase_receipt'
+          and exists(select 1 from private.creator_premium_purchase_receipts receipt
+            where entry.metadata->>'reference_id'=receipt.id::text
+              and ((transaction_row.operation_type='creator_premium_purchase'
+                  and receipt.financial_transaction_id=transaction_row.id)
+                or (transaction_row.operation_type='creator_premium_purchase_refund'
+                  and receipt.reversal_financial_transaction_id=transaction_row.id))))
+        or (transaction_row.operation_type in ('creator_premium_subscription','creator_premium_subscription_refund')
+          and entry.metadata->>'reference_type'='creator_premium_subscription_period'
+          and exists(select 1 from private.creator_premium_subscription_periods period
+            where entry.metadata->>'reference_id'=period.id::text
+              and ((transaction_row.operation_type='creator_premium_subscription'
+                  and period.financial_transaction_id=transaction_row.id)
+                or (transaction_row.operation_type='creator_premium_subscription_refund'
+                  and period.reversal_financial_transaction_id=transaction_row.id)))))))`;
+
+const F4_SUBSCRIPTIONS_WITHOUT_PERIOD_SQL = `(select pg_catalog.count(*)::integer
+  from private.creator_premium_subscriptions relationship
+  where not exists(
+    select 1 from private.creator_premium_subscription_periods period
+    where period.subscription_id=relationship.id
+  ))`;
+
+const F4_MULTIPLE_PERIODS_PER_RELATIONSHIP_SQL = `(select pg_catalog.count(*)::integer
+  from (
+    select period.subscription_id
+    from private.creator_premium_subscription_periods period
+    group by period.subscription_id
+    having pg_catalog.count(*)>1
+  ) multiple_periods)`;
+
+const F4_DUPLICATE_OPEN_RELATIONSHIPS_SQL = `(select pg_catalog.count(*)::integer
+  from (
+    select relationship.subscriber_id,relationship.creator_id,plan.plan_key
+    from private.creator_premium_subscriptions relationship
+    join private.creator_premium_plans plan
+      on plan.id=relationship.plan_id
+     and plan.creator_id=relationship.creator_id
+    where relationship.status in ('pending','active','cancelled')
+    group by relationship.subscriber_id,relationship.creator_id,plan.plan_key
+    having pg_catalog.count(*)>1
+  ) duplicate_relationships)`;
+
+export const FINANCE_FACTS_F4_GENERAL_SQL = FINANCE_FACTS_F3_C2_SQL
+  .replace("'phase','f3_c2'", "'phase','f4_general'")
+  .replace("'purchase_binding_mismatches',(select pg_catalog.count(*)::integer from facts where kind='receipts'),",
+    `'purchase_binding_mismatches',${F4_PURCHASE_BINDING_MISMATCH_SQL},`)
+  .replace("'period_binding_mismatches',(select pg_catalog.count(*)::integer from facts where kind='periods')",
+    `'period_binding_mismatches',${F4_PERIOD_BINDING_MISMATCH_SQL},
+      'orphan_premium_transactions',${F4_ORPHAN_PREMIUM_TRANSACTION_SQL},
+      'orphan_premium_ledger_entries',${F4_ORPHAN_PREMIUM_LEDGER_ENTRY_SQL},
+      'subscriptions_without_period',${F4_SUBSCRIPTIONS_WITHOUT_PERIOD_SQL},
+      'multiple_periods_per_relationship',${F4_MULTIPLE_PERIODS_PER_RELATIONSHIP_SQL},
+      'duplicate_open_relationships',${F4_DUPLICATE_OPEN_RELATIONSHIPS_SQL}`);
+
 // Select the legacy query before parsing SQL: PostgreSQL must never resolve an absent F3 relation.
 const FINANCE_FACTS_LEGACY_SQL = FINANCE_FACTS_F3_SQL
   .replace("select 'authorizations' kind,pg_catalog.to_jsonb(a) fact from private.creator_premium_finance_authorizations a",
@@ -374,31 +695,85 @@ export function selectFinanceSnapshotQueries(migrations) {
   validateNormalizedMigrations(migrations);
   const installed = migrations.items.find(item => item.version === '20261025011000');
   const c2 = migrations.items.find(item => item.version === '20261025160452');
+  const f4 = migrations.items.find(item => item.version === '20261026030000');
   if (installed && installed.name !== 'creator_premium_f3_bounded_financial_activation') {
     fail('FINANCE_AUTHORITY_MISMATCH', 'F3 migration identity differs');
   }
   if (c2 && c2.name !== 'creator_premium_f3_c2_isolated_canary_governance') {
     fail('FINANCE_AUTHORITY_MISMATCH', 'F3-C2 migration identity differs');
   }
+  if (f4 && f4.name !== 'creator_premium_f4_general_bdag_activation') {
+    fail('FINANCE_AUTHORITY_MISMATCH', 'F4 migration identity differs');
+  }
   if (c2 && !installed) fail('FINANCE_AUTHORITY_MISMATCH', 'F3-C2 requires the F3 foundation');
-  const phase = c2 ? 'f3_c2' : installed ? 'f3_foundation' : 'legacy';
+  if (f4 && (!installed || !c2)) fail('FINANCE_AUTHORITY_MISMATCH', 'F4 requires F3-C2');
+  const phase = f4 ? 'f4_general' : c2 ? 'f3_c2' : installed ? 'f3_foundation' : 'legacy';
   return { phase, authority: FINANCE_AUTHORITY_SQL,
-    facts: c2 ? FINANCE_FACTS_F3_C2_SQL : installed ? FINANCE_FACTS_F3_SQL : FINANCE_FACTS_LEGACY_SQL };
+    facts: f4 ? FINANCE_FACTS_F4_GENERAL_SQL
+      : c2 ? FINANCE_FACTS_F3_C2_SQL : installed ? FINANCE_FACTS_F3_SQL : FINANCE_FACTS_LEGACY_SQL };
 }
 
 export function validateFinanceFacts(snapshot, phase) {
   const code = 'FINANCE_FACTS_REJECTED';
   exactKeys(snapshot, ['schema_version','complete','phase','policy',
-    ...(phase === 'f3_c2' ? ['attestations'] : []), 'authorizations','receipts','periods',
+    ...(['f3_c2','f4_general'].includes(phase) ? ['attestations'] : []), 'authorizations','receipts','periods',
     'subscriptions','transactions','acquisition_exposure_bdag','release_movement_bdag','reconciliation'], code);
   const off = { activation_mode: 'off', active_authorization_id: null, purchase_enabled: false,
     subscription_enabled: false, refunds_enabled: false, platform_fee_bps: 0 };
-  if (!['legacy','f3_foundation','f3_c2'].includes(phase) || snapshot.schema_version !== 1 || snapshot.complete !== true || snapshot.phase !== phase
-    || canonicalJson(snapshot.policy) !== canonicalJson(off)
-    || [...(phase === 'f3_c2' ? ['attestations'] : []),'authorizations','receipts','periods','subscriptions','transactions']
-      .some(key => canonicalJson(snapshot[key]) !== '[]\n')
-    || snapshot.acquisition_exposure_bdag !== '0.00000000' || snapshot.release_movement_bdag !== '0.00000000'
-    || canonicalJson(snapshot.reconciliation) !== canonicalJson({ purchase_binding_mismatches: 0, period_binding_mismatches: 0 })) {
+  const general = { activation_mode: 'general', active_authorization_id: 'f4000000-0000-4000-8000-000000000001',
+    purchase_enabled: true, subscription_enabled: true, refunds_enabled: true, platform_fee_bps: 2000 };
+  const arrayKeys = [...(['f3_c2','f4_general'].includes(phase) ? ['attestations'] : []),
+    'authorizations','receipts','periods','subscriptions','transactions'];
+  const decimal = /^(?:0|[1-9][0-9]*)\.[0-9]{8}$/;
+  const validSanitizedRows = key => Array.isArray(snapshot[key]) && snapshot[key].every(row => (
+    row && typeof row === 'object' && !Array.isArray(row) && HASH_PATTERN.test(row.fact_sha256 ?? '')
+    && Object.entries(row).every(([name,value]) => {
+      if (name === 'fact_sha256') return true;
+      if (name === 'id' || name.endsWith('_id')) return value === null || HASH_PATTERN.test(value);
+      if (name.endsWith('_bdag') || name === 'amount') return value === null || (typeof value === 'string' && decimal.test(value));
+      return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null;
+    })
+  ));
+  const generalAuthorization = snapshot.authorizations?.[0];
+  const generalAttestation = snapshot.attestations?.[0];
+  const generalNullFields = [
+    'buyer_id','creator_id','buyer_account_id','creator_account_id','purchase_content_id',
+    'purchase_offer_version_id','subscription_plan_id','purchase_amount_bdag','subscription_amount_bdag',
+    'max_purchase_count','max_subscription_count','max_refund_count','max_gross_bdag',
+    'charge_expires_at','refund_expires_at',
+  ];
+  const f4FactsValid = phase === 'f4_general'
+    && canonicalJson(snapshot.policy) === canonicalJson(general)
+    && snapshot.attestations.length === 1 && snapshot.authorizations.length === 1
+    && generalAuthorization.id === sha256('f4000000-0000-4000-8000-000000000001')
+    && generalAuthorization.authorization_scope === 'GENERAL'
+    && generalAuthorization.client_contract === 'creator-premium-f3-v2'
+    && generalAuthorization.status === 'OPEN'
+    && generalAuthorization.platform_fee_bps === 2000
+    && generalNullFields.every(key => generalAuthorization[key] === null)
+    && generalAuthorization.configuration_digest === generalAttestation.configuration_digest
+    && generalAuthorization.approval_digest === generalAttestation.approval_digest
+    && arrayKeys.every(validSanitizedRows)
+    && decimal.test(snapshot.acquisition_exposure_bdag)
+    && snapshot.release_movement_bdag === '0.00000000'
+    && canonicalJson(snapshot.reconciliation) === canonicalJson({
+      purchase_binding_mismatches: 0,
+      period_binding_mismatches: 0,
+      orphan_premium_transactions: 0,
+      orphan_premium_ledger_entries: 0,
+      subscriptions_without_period: 0,
+      multiple_periods_per_relationship: 0,
+      duplicate_open_relationships: 0,
+    });
+  const foundationFactsValid = ['legacy','f3_foundation','f3_c2'].includes(phase)
+    && canonicalJson(snapshot.policy) === canonicalJson(off)
+    && arrayKeys.every(key => canonicalJson(snapshot[key]) === '[]\n')
+    && snapshot.acquisition_exposure_bdag === '0.00000000'
+    && snapshot.release_movement_bdag === '0.00000000'
+    && canonicalJson(snapshot.reconciliation) === canonicalJson({ purchase_binding_mismatches: 0, period_binding_mismatches: 0 });
+  if (!['legacy','f3_foundation','f3_c2','f4_general'].includes(phase)
+    || snapshot.schema_version !== 1 || snapshot.complete !== true || snapshot.phase !== phase
+    || (!foundationFactsValid && !f4FactsValid)) {
     fail(code, 'foundation requires exact OFF and no financial facts');
   }
   return snapshot;
@@ -406,7 +781,7 @@ export function validateFinanceFacts(snapshot, phase) {
 
 export function normalizeFinanceAuthority(snapshot, phase) {
   exactKeys(snapshot, ['schema_version','complete','relations','functions'], 'FINANCE_AUTHORITY_MISMATCH');
-  if (snapshot.schema_version !== 1 || snapshot.complete !== true || !['legacy','f3_foundation','f3_c2'].includes(phase)) {
+  if (snapshot.schema_version !== 1 || snapshot.complete !== true || !['legacy','f3_foundation','f3_c2','f4_general'].includes(phase)) {
     fail('FINANCE_AUTHORITY_MISMATCH', 'catalog identity is incomplete');
   }
   const result = { schema_version: 1, complete: true, phase };
@@ -632,10 +1007,17 @@ function validateFinanceSnapshot(snapshot) {
   exactKeys(snapshot.policy, [
     'platform_fee_bps', 'policy_version', 'purchase_enabled', 'refunds_enabled', 'subscription_enabled',
   ], 'INVALID_SNAPSHOT');
-  if (snapshot.policy.purchase_enabled !== false || snapshot.policy.subscription_enabled !== false
-    || snapshot.policy.refunds_enabled !== false || snapshot.policy.platform_fee_bps !== 0
+  const policyShape = {
+    purchase_enabled: snapshot.policy.purchase_enabled,
+    subscription_enabled: snapshot.policy.subscription_enabled,
+    refunds_enabled: snapshot.policy.refunds_enabled,
+    platform_fee_bps: snapshot.policy.platform_fee_bps,
+  };
+  const financeOff = { purchase_enabled: false, subscription_enabled: false, refunds_enabled: false, platform_fee_bps: 0 };
+  const financeGeneral = { purchase_enabled: true, subscription_enabled: true, refunds_enabled: true, platform_fee_bps: 2000 };
+  if (![canonicalJson(financeOff), canonicalJson(financeGeneral)].includes(canonicalJson(policyShape))
     || typeof snapshot.policy.policy_version !== 'string') {
-    fail('FINANCE_POLICY_CHANGED', 'Premium Finance must remain disabled');
+    fail('FINANCE_POLICY_CHANGED', 'Premium Finance must be exact OFF or exact F4 general');
   }
   validateInventory(snapshot.transactions, 'transaction');
   validateInventory(snapshot.ledger_entries, 'ledger entry');
@@ -761,6 +1143,8 @@ function validateManifestAdapterIdentity(manifest, adapterSourceSha256) {
 function validateFinancePolicyAuthority(policy) {
   if (sha256(canonicalJson(policy?.finance_authority_transition ?? null)) !== FINANCE_POLICY_DIGESTS.historical_transition
     || sha256(canonicalJson(policy?.finance_authority_c2_transition ?? null)) !== FINANCE_POLICY_DIGESTS.c2_transition
+    || (FINANCE_POLICY_DIGESTS.f4_transition !== undefined
+      && sha256(canonicalJson(policy?.finance_authority_f4_transition ?? null)) !== FINANCE_POLICY_DIGESTS.f4_transition)
     || sha256(canonicalJson(policy?.finance_authority ?? null)) !== FINANCE_POLICY_DIGESTS.authority
     || sha256(canonicalJson(policy?.finance_security_advisor ?? null)) !== FINANCE_POLICY_DIGESTS.security_advisor) {
     fail('FINANCE_AUTHORITY_TRANSITION_REJECTED', 'foundation policy differs from exact reviewed authority');
@@ -770,26 +1154,30 @@ function validateFinancePolicyAuthority(policy) {
 function effectiveFinanceAuthority(policy, phase) {
   const authority = policy?.finance_authority;
   const exact = authority?.[phase];
-  if (!exact || phase !== 'f3_c2') return exact;
-  const base = authority?.[exact.base_phase];
-  if (exact.base_phase !== 'f3_foundation' || !base
+  if (!exact || !exact.base_phase) return exact;
+  if (!['f3_c2', 'f4_general'].includes(phase)
+    || !['f3_foundation', 'f3_c2'].includes(exact.base_phase)) {
+    fail('FINANCE_AUTHORITY_MISMATCH', 'finance authority inheritance phase is unsupported');
+  }
+  const base = effectiveFinanceAuthority(policy, exact.base_phase);
+  if (!base
     || !Array.isArray(exact.relations) || !Array.isArray(exact.function_overrides)
-    || !Array.isArray(exact.function_additions) || exact.schema_sha256 !== base.schema_sha256) {
-    fail('FINANCE_AUTHORITY_MISMATCH', 'C2 authority inheritance is malformed');
+    || !Array.isArray(exact.function_additions) || !HASH_PATTERN.test(exact.schema_sha256 ?? '')) {
+    fail('FINANCE_AUTHORITY_MISMATCH', 'finance authority inheritance is malformed');
   }
   const functions = new Map(base.functions.map(row => [row.identity, row]));
   for (const row of exact.function_overrides) {
-    if (!functions.has(row.identity)) fail('FINANCE_AUTHORITY_MISMATCH', 'C2 function override has no foundation identity');
+    if (!functions.has(row.identity)) fail('FINANCE_AUTHORITY_MISMATCH', 'finance function override has no inherited identity');
     functions.set(row.identity, row);
   }
   for (const row of exact.function_additions) {
-    if (functions.has(row.identity)) fail('FINANCE_AUTHORITY_MISMATCH', 'C2 function addition duplicates foundation authority');
+    if (functions.has(row.identity)) fail('FINANCE_AUTHORITY_MISMATCH', 'finance function addition duplicates inherited authority');
     functions.set(row.identity, row);
   }
   const expectedChanged = new Set([...exact.function_overrides, ...exact.function_additions].map(row => row.identity));
   if (expectedChanged.size !== exact.function_overrides.length + exact.function_additions.length
     || new Set(exact.relations.map(row => row.identity)).size !== exact.relations.length) {
-    fail('FINANCE_AUTHORITY_MISMATCH', 'C2 authority contains duplicate identities');
+    fail('FINANCE_AUTHORITY_MISMATCH', 'finance authority contains duplicate identities');
   }
   return {
     relations: [...exact.relations].sort((a, b) => a.identity.localeCompare(b.identity)),
@@ -802,14 +1190,18 @@ function effectiveFinanceAuthority(policy, phase) {
 export function activeFinanceAuthorityTransition(policy, manifest) {
   const migrations = manifest?.resources?.migrations ?? [];
   const attestation = manifest?.resources?.finance_authority_transition;
-  const c2Candidate = attestation?.to_phase === 'f3_c2' || migrations.some(item => item.version === '20261025160452'
-    || String(item.path).includes('creator_premium_f3_c2_isolated_canary_governance'));
-  const foundationCandidate = !c2Candidate && (Boolean(attestation) || migrations.some(item => item.version === '20261025011000'
+  const f4Candidate = attestation?.to_phase === 'f4_general' || migrations.some(item => item.version === '20261026030000'
+    || String(item.path).includes('creator_premium_f4_general_bdag_activation'));
+  const c2Candidate = !f4Candidate && (attestation?.to_phase === 'f3_c2' || migrations.some(item => item.version === '20261025160452'
+    || String(item.path).includes('creator_premium_f3_c2_isolated_canary_governance')));
+  const foundationCandidate = !f4Candidate && !c2Candidate && (Boolean(attestation) || migrations.some(item => item.version === '20261025011000'
     || String(item.path).includes('creator_premium_f3_bounded_financial_activation')));
-  if (!c2Candidate && !foundationCandidate) return null;
+  if (!f4Candidate && !c2Candidate && !foundationCandidate) return null;
   validateFinancePolicyAuthority(policy);
-  const t = c2Candidate ? policy.finance_authority_c2_transition : policy.finance_authority_transition;
-  const expected = c2Candidate
+  const t = f4Candidate ? policy.finance_authority_f4_transition
+    : c2Candidate ? policy.finance_authority_c2_transition : policy.finance_authority_transition;
+  const migrationVersion = f4Candidate ? '20261026030000' : c2Candidate ? '20261025160452' : '20261025011000';
+  const expected = (f4Candidate || c2Candidate)
     ? { id: t.id, from_phase: t.from_phase, to_phase: t.to_phase, baseline_sha: t.baseline_sha,
       reviewed_source_sha: t.reviewed_source_sha, integration_base_sha: t.integration_base_sha,
       approved_sha: manifest?.identity?.approved_sha, baseline_descendant_verified: true,
@@ -825,11 +1217,11 @@ export function activeFinanceAuthorityTransition(policy, manifest) {
   if (!/^[a-f0-9]{40}$/.test(expected.approved_sha ?? '') || canonicalJson(attestation ?? null) !== canonicalJson(expected)
     || policy.baseline.sha !== t.baseline_sha || manifest?.baseline?.sha !== t.baseline_sha
     || migrations.length !== 1 || migrations[0].path !== t.migration_path
-    || migrations[0].version !== (c2Candidate ? '20261025160452' : '20261025011000')
+    || migrations[0].version !== migrationVersion
     || migrations[0].blob !== t.migration_blob || migrations[0].sha256 !== t.migration_sha256
-    || canonicalJson(manifest.resources.functions) !== canonicalJson(c2Candidate ? [] : [t.function])
-    || manifest.resources.function_contracts?.length !== (c2Candidate ? 0 : 1)
-    || (!c2Candidate && (manifest.resources.function_contracts[0].name !== t.function
+    || canonicalJson(manifest.resources.functions) !== canonicalJson((f4Candidate || c2Candidate) ? [] : [t.function])
+    || manifest.resources.function_contracts?.length !== ((f4Candidate || c2Candidate) ? 0 : 1)
+    || (!f4Candidate && !c2Candidate && (manifest.resources.function_contracts[0].name !== t.function
       || manifest.resources.function_contracts[0].source_sha256 !== t.function_source_sha256))
     || manifest.resources.config_changed !== false || canonicalJson(productivePaths) !== canonicalJson(t.productive_paths)) {
     fail('FINANCE_AUTHORITY_TRANSITION_REJECTED', 'foundation manifest lacks its exact ancestry/bytes/productive closure');
@@ -951,9 +1343,11 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
         && `${evidence.migrations.latest.version}_${evidence.migrations.latest.name}` === item.expected_latest_migration
       ))
       : null;
-    const expectedBaselineMigration = expectedPhase === 'f3_c2'
-      ? '20261025160452_creator_premium_f3_c2_isolated_canary_governance'
-      : '20261025011000_creator_premium_f3_bounded_financial_activation';
+    const expectedBaselineMigration = expectedPhase === 'f4_general'
+      ? '20261026030000_creator_premium_f4_general_bdag_activation'
+      : expectedPhase === 'f3_c2'
+        ? '20261025160452_creator_premium_f3_c2_isolated_canary_governance'
+        : '20261025011000_creator_premium_f3_bounded_financial_activation';
     if (financeQueries.phase !== expectedPhase || (!financeTransition
       && !recoverySource
       && policy.baseline.latest_migration < expectedBaselineMigration)) {
@@ -964,10 +1358,14 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     if (evidence.finance.schema_sha256 !== effectiveFinanceAuthority(policy, expectedPhase).schema_sha256) {
       fail('FINANCE_AUTHORITY_MISMATCH', 'finance schema differs from exact phase catalog');
     }
-    if (evidence.finance.premium_transaction_count !== 0
-      || Object.values(evidence.finance.premium_bindings).some(value => value.count !== 0)
-      || RECONCILIATION_KEYS.some(key => evidence.finance.reconciliation[key] !== 0)) {
-      fail('FINANCE_FACTS_REJECTED', 'foundation facts or reconciliation are nonzero');
+    const expectedCounts = expectedPhase === 'f4_general'
+      ? evidence.finance.premium_transaction_count === evidence.finance_facts.transactions.length
+        && evidence.finance.premium_bindings.purchase_receipts.count === evidence.finance_facts.receipts.length
+        && evidence.finance.premium_bindings.subscription_periods.count === evidence.finance_facts.periods.length
+      : evidence.finance.premium_transaction_count === 0
+        && Object.values(evidence.finance.premium_bindings).every(value => value.count === 0);
+    if (!expectedCounts || RECONCILIATION_KEYS.some(key => evidence.finance.reconciliation[key] !== 0)) {
+      fail('FINANCE_FACTS_REJECTED', 'finance facts, bindings, or reconciliation differ from the active authority');
     }
   }
   const phaseExceptions = advisorExceptionsForPhase(policy, manifest, phase, {
@@ -1167,14 +1565,23 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
     cron: evidence.cron_security.cron.items,
     security_findings: historicalAdvisorItems,
   };
+  const f4GeneralBaseline = policy?.baseline?.latest_migration
+    >= '20261026030000_creator_premium_f4_general_bdag_activation';
+  if (f4GeneralBaseline && RECONCILIATION_KEYS.some(key => evidence.finance.reconciliation[key] !== 0)) {
+    fail('REMOTE_BASELINE_MISMATCH', 'active F4 finance baseline is not reconciled');
+  }
   const finance = {
     complete: true,
     schema_sha256: evidence.finance.schema_sha256,
     policy: evidence.finance.policy,
-    premium_transaction_count: evidence.finance.premium_transaction_count,
-    premium_bindings: evidence.finance.premium_bindings,
     reconciliation: evidence.finance.reconciliation,
     c2_attributed_bdag_movement: 0,
+    ...(f4GeneralBaseline
+      ? { authority_phase: 'f4_general', mutable_commerce_inventory: 'reconciled_not_baselined' }
+      : {
+        premium_transaction_count: evidence.finance.premium_transaction_count,
+        premium_bindings: evidence.finance.premium_bindings,
+      }),
   };
   const digestOf = value => sha256(canonicalJson(value));
   return {
@@ -1203,9 +1610,11 @@ export function verifyProductionPreSnapshot({ pre, policy, request, manifest, ad
     fail('REMOTE_BASELINE_MISMATCH', 'owner-reviewed baseline authority is incomplete');
   }
   const latest = pre.migrations.latest ? baselineMigrationName(pre.migrations.latest) : null;
+  const f4GeneralBaseline = baseline?.latest_migration
+    >= '20261026030000_creator_premium_f4_general_bdag_activation';
   if (pre.migrations.count !== baseline.migration_count || latest !== baseline.latest_migration
     || pre.functions.count !== policy?.supabase?.expected_remote_function_count
-    || pre.finance.premium_transaction_count !== 0
+    || (!f4GeneralBaseline && pre.finance.premium_transaction_count !== 0)
     || RECONCILIATION_KEYS.some(key => pre.finance.reconciliation[key] !== 0)
     || canonicalJson({
       purchase_enabled: pre.finance.policy.purchase_enabled,
@@ -1359,9 +1768,33 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
     introducedExceptions,
     removedExceptionFingerprints,
   );
+  const f4Transition = financeTransition?.to_phase === 'f4_general';
+  const financePolicy = value => ({
+    activation_mode: value.activation_mode,
+    active_authorization_id: value.active_authorization_id,
+    platform_fee_bps: value.platform_fee_bps,
+    purchase_enabled: value.purchase_enabled,
+    refunds_enabled: value.refunds_enabled,
+    subscription_enabled: value.subscription_enabled,
+  });
+  const f4TransitionValid = !f4Transition || (
+    canonicalJson(financePolicy(pre.finance.policy)) === canonicalJson(policy.finance_authority_f4_transition.from_policy)
+    && canonicalJson(financePolicy(post.finance.policy)) === canonicalJson(policy.finance_authority_f4_transition.to_policy)
+    && canonicalJson(post.finance.premium_bindings) === canonicalJson(pre.finance.premium_bindings)
+    && Object.values(post.finance.premium_bindings).every(value => value.count === 0)
+    && post.finance.premium_transaction_count === 0
+    && canonicalJson(post.finance.transactions) === canonicalJson(pre.finance.transactions)
+    && canonicalJson(post.finance.ledger_entries) === canonicalJson(pre.finance.ledger_entries)
+    && canonicalJson(post.finance_facts.receipts) === '[]\n'
+    && canonicalJson(post.finance_facts.periods) === '[]\n'
+    && canonicalJson(post.finance_facts.subscriptions) === '[]\n'
+    && canonicalJson(post.finance_facts.transactions) === '[]\n'
+    && post.finance_facts.release_movement_bdag === '0.00000000'
+  );
   if ((!financeTransition && post.finance.schema_sha256 !== pre.finance.schema_sha256)
-    || canonicalJson(post.finance.premium_bindings) !== canonicalJson(pre.finance.premium_bindings)
-    || canonicalJson(post.finance.policy) !== canonicalJson(pre.finance.policy)
+    || (!f4Transition && canonicalJson(post.finance.premium_bindings) !== canonicalJson(pre.finance.premium_bindings))
+    || (!f4Transition && canonicalJson(post.finance.policy) !== canonicalJson(pre.finance.policy))
+    || !f4TransitionValid
     || RECONCILIATION_KEYS.some(key => post.finance.reconciliation[key] !== 0)) {
     fail('REMOTE_POSTCHECK_FAILED', 'finance schema, Premium bindings, policy, or reconciliation changed');
   }
@@ -1645,6 +2078,20 @@ const RPC_REPLACEMENT_PREDECESSOR_ATTESTATIONS = new Map([
       definition_sha256: '7e3e9f176c216fd35bd9dc4fe00b7d577558265afe2f884630d53747737f02ee',
     },
   ],
+  [
+    '20261026030000_creator_premium_f4_general_bdag_activation|2818544a84b6844679779d5b23a03199e75c18d5d36d6d160aca9c8191c41097',
+    {
+      security_definer: true,
+      owner: 'postgres',
+      search_path: ['search_path=""'],
+      acl: [
+        { grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false },
+        { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+      ],
+      execute: { anon: false, authenticated: true, public: false, service_role: false },
+      definition_sha256: '1b33026301062223a91c4e35000a44f8299b639d7a728834150fb32d23d6309a',
+    },
+  ],
 ]);
 
 function isExactF3RecoveryAuthority(policy, manifest, phase, { request, migrations } = {}) {
@@ -1708,6 +2155,7 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
   const transition = activeFinanceAuthorityTransition(policy, manifest);
   const installedFoundation = policy?.baseline?.latest_migration >= '20261025011000_creator_premium_f3_bounded_financial_activation';
   const installedC2 = policy?.baseline?.latest_migration >= '20261025160452_creator_premium_f3_c2_isolated_canary_governance';
+  const installedF4 = policy?.baseline?.latest_migration >= '20261026030000_creator_premium_f4_general_bdag_activation';
   const exactF3Recovery = isExactF3RecoveryAuthority(policy, manifest, phase, context);
   if ((transition && phase !== 'pre') || installedFoundation || exactF3Recovery) {
     validateFinancePolicyAuthority(policy);
@@ -1718,6 +2166,11 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
       const replacements = policy.finance_security_advisor.c2_rpc_replacements;
       result = [...result.filter(exception => !replacements.some(item => item.object.name === exception.object.name)),
         ...replacements, policy.finance_security_advisor.c2_relation_exception];
+    }
+    if ((transition?.to_phase === 'f4_general' && phase !== 'pre') || installedF4) {
+      const replacements = policy.finance_security_advisor.f4_rpc_replacements;
+      result = [...result.filter(exception => !replacements.some(item => item.object.name === exception.object.name)),
+        ...replacements];
     }
     return phaseBoundRpcExceptions(result, manifest, phase, { policy, migrations: context.migrations });
   }
@@ -1989,7 +2442,7 @@ export function validatePremiumStateTransition(preState, postState, manifest = n
   const allowedAddedIdentities = manifestMigrationKeys
     .flatMap(key => approvedRelationAdditions.get(key) ?? []).sort();
   const financeTransition = activeFinanceAuthorityTransition(policy, manifest);
-  if (financeTransition) {
+  if (financeTransition && financeTransition.to_phase !== 'f4_general') {
     const relationName = financeTransition.to_phase === 'f3_c2'
       ? 'creator_premium_finance_owner_attestations_f3_c2'
       : 'creator_premium_finance_authorizations';
