@@ -17,6 +17,10 @@ create table public.live_sessions(
   id uuid primary key default gen_random_uuid(), host_id uuid not null references auth.users,
   status text not null default 'live', ended_at timestamptz
 );
+create table public.live_participants(
+  session_id uuid references public.live_sessions, user_id uuid references auth.users,
+  status text not null, primary key(session_id,user_id)
+);
 create table public.gift_catalog(
   id text primary key, emoji text not null, cost_coins integer not null,
   active boolean not null default true, enabled boolean not null default true
@@ -44,7 +48,9 @@ create table public.idempotency_keys(
 );
 create table public.live_battle_rule_sets(
   id uuid primary key default gen_random_uuid(), rule_version integer default 2,
-  gift_points_per_coin integer default 100, rose_gift_id text, rose_target_units integer default 0
+  gift_points_per_coin integer default 100, rose_gift_id text, rose_target_units integer default 0,
+  like_points integer default 5, max_scoreable_likes_per_viewer integer default 20,
+  unique(id,rule_version)
 );
 create table public.live_battle_current_rule_set(singleton boolean primary key, rule_set_id uuid);
 create table public.live_battle_boost_events(
@@ -55,9 +61,6 @@ create table public.live_battle_power_states(
   battle_id uuid, side text, rose_progress_units integer default 0,
   rose_activations_used integer default 0, power_version bigint default 0,
   updated_at timestamptz default now(), primary key(battle_id,side)
-);
-create table public.live_battle_like_score_events(
-  battle_id uuid, target_user_id uuid, awarded_points bigint, accepted_count integer
 );
 create table public.live_battle_public_states(
   session_id uuid primary key, battle_id uuid not null, opponent_session_id uuid,
