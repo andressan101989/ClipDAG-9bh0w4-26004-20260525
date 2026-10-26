@@ -301,7 +301,7 @@ test('F5 Git attestation and manifest reject every migration Edge config client 
   transitionPolicy.baseline.sha = transition.baseline_sha;
   const root = new URL('..', import.meta.url);
   const rootPath = decodeURIComponent(root.pathname.replace(/^\/([A-Za-z]:)/, '$1'));
-  const approvedSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  const approvedSha = transition.reviewed_source_sha;
   const changes = [
     { status: 'M', path: 'supabase/functions/bdag-ledger/index.ts' },
     { status: 'A', path: transition.migration_path },
@@ -313,6 +313,11 @@ test('F5 Git attestation and manifest reject every migration Edge config client 
     policy: transitionPolicy, approvedSha, changes, affectedFunctions: ['bdag-ledger'],
     migrations: [{ path: transition.migration_path, version: '20261026072512' }], runGit,
   };
+  const currentHead = runGit(['rev-parse', 'HEAD']).trim();
+  assert.throws(() => gate.attestFinanceAuthorityTransition({ ...input, approvedSha: currentHead }), {
+    code: 'INVALID_FINANCE_AUTHORITY_TRANSITION',
+    message: 'F5 Git productive closure differs from supplied evidence',
+  });
   const result = gate.attestFinanceAuthorityTransition(input);
   assert.equal(result.attestation.to_phase, 'f5_autonomous');
   assert.equal(result.attestation.function_source_sha256, transition.function_source_sha256);
