@@ -30,7 +30,7 @@ import {
 const date=(value:string|null|undefined)=>value&&!Number.isNaN(Date.parse(value))?new Intl.DateTimeFormat('es',{dateStyle:'medium'}).format(new Date(value)):'—';
 const statusLabel:Record<CreatorPremiumSubscriptionItem['status'],string>={pending:'Pendiente',active:'Activa',cancelled:'Cancelada',expired:'Vencida',revoked:'Revocada'};
 const autoRenewalResultCopy:Readonly<Record<string,string>>={
-  insufficient_balance:'Saldo insuficiente. No se creó un periodo ni una deuda. Agrega saldo; si quedó pausada, vuelve a autorizar.',
+  insufficient_balance:'Saldo insuficiente. No se creó un periodo ni una deuda. Agrega saldo y renueva manualmente; después podrás autorizar de nuevo.',
   retryable_failure:'El cobro no pudo confirmarse. Los reintentos son limitados; si quedó pausada, revisa el plan y vuelve a autorizar.',
   plan_changed:'El plan o el precio cambió. Revisa la versión vigente y vuelve a dar tu consentimiento.',
   safety_blocked:'La renovación está pausada porque el contenido o una cuenta ya no es elegible.',
@@ -150,6 +150,7 @@ function MySubscriptionsScreenContent(){
     const expectedPriceBdag=subscription.plan.price_bdag;
     const expectedPlanVersion=subscription.plan.version;
     const priorEnabled=subscription.auto_renewal.enabled;
+    const priorMandateState=subscription.auto_renewal.mandate_state;
     const nextCharge=date(subscription.period?.paid_through_at);
     const title=enabled?'Activar renovación automática':'Desactivar renovación automática';
     const confirmation=enabled?'Activar':'Desactivar';
@@ -195,11 +196,15 @@ function MySubscriptionsScreenContent(){
             const confirmedSubscription=confirmed.items.find(item=>item.id===subscriptionId);
             if(!confirmedSubscription
               ||confirmedSubscription.auto_renewal.enabled!==enabled
+              ||(!enabled&&priorMandateState!==null
+                &&confirmedSubscription.auto_renewal.mandate_state!=='REVOKED')
               ||(enabled&&(confirmedSubscription.auto_renewal.authorized_price_bdag!==expectedPriceBdag
                 ||confirmedSubscription.auto_renewal.authorized_plan_version!==expectedPlanVersion))){
               throw new Error('creator_premium_auto_renewal_readback_pending');
             }
-            autoRenewalAttempts.current.delete(attemptKey);
+            for(const key of autoRenewalAttempts.current.keys()){
+              if(key.startsWith(`${subscriptionId}:`))autoRenewalAttempts.current.delete(key);
+            }
             if(generation===contextGeneration.current){
               Alert.alert(
                 enabled?'Renovación automática activada':'Renovación automática desactivada',

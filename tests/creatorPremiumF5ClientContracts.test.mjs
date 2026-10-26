@@ -146,6 +146,16 @@ const autoRenewalCancelled = Object.freeze({
   last_result: 'cancelled',
 });
 
+const autoRenewalPausedInsufficient = Object.freeze({
+  ...autoRenewalEnabled,
+  enabled: false,
+  mandate_state: 'PAUSED',
+  next_charge_at: null,
+  retry_count: 3,
+  last_result: 'insufficient_balance',
+  last_attempt_at: '2026-11-25T14:00:00.000Z',
+});
+
 function compile(source, filename) {
   return ts.transpileModule(source, {
     fileName: filename,
@@ -260,12 +270,14 @@ async function subscriptionHistoryScreen({
   initialPage = servicePage({ ...subscriptionItem, auto_renewal: autoRenewalAbsent }),
   setAutoRenewal,
   cancelSubscription,
+  subscribeToPlan,
 } = {}) {
   const slots = [];
   const effects = [];
   const alerts = [];
   const autoRenewalCalls = [];
   const cancellationCalls = [];
+  const renewalCalls = [];
   const generated = [];
   let cursor = 0;
   let pending = [];
@@ -358,7 +370,14 @@ async function subscriptionHistoryScreen({
         fetchMyCreatorPremiumSubscriptionsSnapshot: async () => clone(serverPage),
       };
       if (specifier === '@/services/financial/ledgerClient') return {
-        subscribeToPlan: async () => ({ success: false, error: 'not-used' }),
+        subscribeToPlan: async params => {
+          renewalCalls.push(clone(params));
+          const outcome = subscribeToPlan
+            ? await subscribeToPlan(clone(params), clone(serverPage))
+            : { result: { success: false, error: 'not-configured' } };
+          if (outcome?.page) serverPage = clone(outcome.page);
+          return outcome?.result ?? outcome;
+        },
         setCreatorPremiumAutoRenewal: async params => {
           autoRenewalCalls.push(clone(params));
           const outcome = setAutoRenewal
@@ -433,6 +452,7 @@ async function subscriptionHistoryScreen({
     alerts,
     autoRenewalCalls,
     cancellationCalls,
+    renewalCalls,
     generated,
     render,
     settle,
@@ -485,6 +505,7 @@ test('F5 v2 subscription projection adds one exact auto-renewal object while v1 
     { ...autoRenewalEnabled, authorized_price_bdag: 100 },
     { ...autoRenewalEnabled, authorized_price_bdag: '100' },
     { ...autoRenewalEnabled, authorized_plan_version: 0 },
+    { ...autoRenewalEnabled, authorized_plan_version: 2147483648 },
     { ...autoRenewalEnabled, retry_count: 3 },
     { ...autoRenewalEnabled, next_charge_at: null },
     { ...autoRenewalAbsent, authorized_price_bdag: '100.00000000' },
@@ -522,12 +543,25 @@ test('F5 auto-renewal command receipts are target-bound, exact and move no money
     { ...autoRenewalReceipt, replayed: 'false' },
     { ...autoRenewalReceipt, extra: true },
     { ...autoRenewalReceipt, auto_renewal: autoRenewalAbsent },
+    {
+      ...autoRenewalReceipt,
+      auto_renewal: autoRenewalPausedInsufficient,
+    },
   ]) {
     assert.throws(
       () => finance.parseCreatorPremiumAutoRenewalReceipt(invalid, ids.subscription, true),
       /creator_premium_auto_renewal_receipt_invalid/,
     );
   }
+
+  assert.throws(
+    () => finance.parseCreatorPremiumAutoRenewalReceipt(
+      { ...autoRenewalReceipt, auto_renewal: autoRenewalPausedInsufficient },
+      ids.subscription,
+      false,
+    ),
+    /creator_premium_auto_renewal_receipt_invalid/,
+  );
 });
 
 test('F5 cancellation parser accepts only the reviewed cron-won acknowledgement', () => {
@@ -742,6 +776,35 @@ test('subscription UI revokes future charges only after an exact server readback
   screen.unmount();
 });
 
+test('subscription UI does not call a PAUSED mandate a confirmed revocation', async () => {
+  const initial = servicePage({ ...subscriptionItem, auto_renewal: autoRenewalEnabled });
+  const pausedItem = { ...subscriptionItem, auto_renewal: autoRenewalPausedInsufficient };
+  const screen = await subscriptionHistoryScreen({
+    initialPage: initial,
+    setAutoRenewal: async () => ({
+      result: {
+        success: true,
+        data: {
+          subscription_id: ids.subscription,
+          auto_renewal: autoRenewalPausedInsufficient,
+          money_moved: false,
+          replayed: false,
+        },
+      },
+      page: servicePage(pausedItem),
+    }),
+  });
+  screen.press('Desactivar renovación automática');
+  await screen.confirm('Desactivar');
+  assert.equal(screen.alerts.at(-1)[0], 'No se pudo actualizar');
+  assert.equal(
+    screen.alerts.at(-1)[1],
+    'SAFE:creator_premium_auto_renewal_readback_pending',
+  );
+  assert.doesNotMatch(screen.alerts.at(-1)[0], /desactivada/i);
+  screen.unmount();
+});
+
 test('subscription UI permits revocation while Finance is OFF', async () => {
   const initial = servicePage({ ...subscriptionItem, auto_renewal: autoRenewalEnabled });
   initial.policy.subscription_enabled = false;
@@ -810,6 +873,138 @@ test('subscription UI rejects consent captured from a stale price or plan versio
     screen.alerts.at(-1)[1],
     'SAFE:creator_premium_auto_renewal_snapshot_changed',
   );
+  screen.unmount();
+});
+
+test('subscription UI rotates an ambiguous consent key after an opposite transition is confirmed', async () => {
+  const enabledItem = { ...subscriptionItem, auto_renewal: autoRenewalEnabled };
+  const revokedItem = { ...subscriptionItem, auto_renewal: autoRenewalRevoked };
+  let firstEnableKey;
+  const screen = await subscriptionHistoryScreen({
+    setAutoRenewal: async params => {
+      if (params.enabled && firstEnableKey === undefined) {
+        firstEnableKey = params.idempotencyKey;
+        return {
+          result: { success: false, error: 'transport_timeout' },
+          page: servicePage(enabledItem),
+        };
+      }
+      if (!params.enabled) {
+        return {
+          result: {
+            success: true,
+            data: {
+              subscription_id: ids.subscription,
+              auto_renewal: autoRenewalRevoked,
+              money_moved: false,
+              replayed: false,
+            },
+          },
+          page: servicePage(revokedItem),
+        };
+      }
+      if (params.idempotencyKey === firstEnableKey) {
+        return {
+          result: {
+            success: true,
+            data: { ...autoRenewalReceipt, replayed: true },
+          },
+        };
+      }
+      return {
+        result: { success: true, data: autoRenewalReceipt },
+        page: servicePage(enabledItem),
+      };
+    },
+  });
+
+  screen.press('Activar renovación automática');
+  await screen.confirm('Activar');
+  assert.equal(screen.alerts.at(-1)[0], 'No se pudo actualizar');
+
+  await screen.refresh(servicePage(enabledItem));
+  screen.press('Desactivar renovación automática');
+  await screen.confirm('Desactivar');
+  assert.match(screen.text(), /Renovación automática desactivada/);
+
+  screen.press('Activar renovación automática');
+  await screen.confirm('Activar');
+  assert.equal(screen.autoRenewalCalls.length, 3);
+  assert.notEqual(
+    screen.autoRenewalCalls[2].idempotencyKey,
+    firstEnableKey,
+    'the confirmed opposite transition must retire the old ambiguous consent key',
+  );
+  assert.match(screen.text(), /Renovación automática activa/);
+  screen.unmount();
+});
+
+test('insufficient balance recovery requires manual renewal before fresh auto-renewal consent', async () => {
+  const expired = {
+    ...subscriptionItem,
+    status: 'expired',
+    ended_at: subscriptionItem.period.paid_through_at,
+    access_active: false,
+    period: { ...subscriptionItem.period, access_state: 'expired' },
+    plan: {
+      ...subscriptionItem.plan,
+      relationship: {
+        ...subscriptionItem.plan.relationship,
+        status: 'expired',
+        paid_through_at: subscriptionItem.period.paid_through_at,
+        access_state: 'expired',
+      },
+      renewal_available: true,
+      renewal_blocker: null,
+    },
+    auto_renewal: autoRenewalPausedInsufficient,
+    renewal_available: true,
+    renewal_blocker: null,
+  };
+  const renewedId = uuid(74);
+  const renewed = {
+    ...subscriptionItem,
+    id: renewedId,
+    plan: {
+      ...subscriptionItem.plan,
+      relationship: { ...subscriptionItem.plan.relationship, id: renewedId },
+    },
+    period: { ...subscriptionItem.period, id: uuid(75) },
+    auto_renewal: autoRenewalPausedInsufficient,
+  };
+  const renewedEnabled = { ...renewed, auto_renewal: autoRenewalEnabled };
+  const screen = await subscriptionHistoryScreen({
+    initialPage: servicePage(expired),
+    subscribeToPlan: async () => ({
+      result: { success: true, data: { subscription_id: renewedId } },
+      page: servicePage(renewed),
+    }),
+    setAutoRenewal: async params => ({
+      result: {
+        success: true,
+        data: {
+          ...autoRenewalReceipt,
+          subscription_id: params.subscriptionId,
+          auto_renewal: autoRenewalEnabled,
+        },
+      },
+      page: servicePage(renewedEnabled),
+    }),
+  });
+
+  assert.match(screen.text(), /saldo insuficiente/i);
+  assert.match(screen.text(), /renueva manualmente/i);
+  assert.doesNotMatch(screen.text(), /agrega saldo; si quedó pausada, vuelve a autorizar/i);
+  screen.press('Renovar periodo');
+  await screen.confirm('Renovar');
+  assert.equal(screen.renewalCalls.length, 1);
+  assert.match(screen.text(), /Renovación automática pausada/);
+
+  screen.press('Activar renovación automática');
+  await screen.confirm('Activar');
+  assert.equal(screen.autoRenewalCalls.length, 1);
+  assert.equal(screen.autoRenewalCalls[0].subscriptionId, renewedId);
+  assert.match(screen.text(), /Renovación automática activa/);
   screen.unmount();
 });
 
