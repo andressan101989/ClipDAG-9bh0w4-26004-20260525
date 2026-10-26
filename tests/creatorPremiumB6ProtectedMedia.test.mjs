@@ -227,9 +227,9 @@ test('native screen-protection failure is fail-closed before either protected so
   assert.match(video, /!mediaVisible/);
 });
 
-test('Premium viewer has no Nelyon overlay while retaining protected media and the opaque fail-closed cover', () => {
+test('Premium viewer leaves the legacy watermark component inert while retaining protected media and the opaque fail-closed cover', () => {
   const viewer = read('app/creator-premium-viewer/[contentId].tsx');
-  assert.equal(existsSync(path.join(root, 'components/premium/PremiumWatermark.tsx')), false);
+  assert.equal(existsSync(path.join(root, 'components/premium/PremiumWatermark.tsx')), true);
   assert.doesNotMatch(viewer, /PremiumWatermark|randomUUID|pseudonymousMarker|sessionMarker|watermarkTime/);
   assert.match(viewer, /ProtectedPremiumImage/);
   assert.match(viewer, /ProtectedPremiumVideo/);
