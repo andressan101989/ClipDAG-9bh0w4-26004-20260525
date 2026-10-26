@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -173,7 +173,7 @@ test('protected video disables caching, PiP, fullscreen, external playback, back
   assert.doesNotMatch(video, /Share|download|VideoAirPlayButton|AsyncStorage|FileSystem|MediaLibrary/i);
 });
 
-test('protected video uses Android textureView so opaque covers and watermark can compose above playback', () => {
+test('protected video uses Android textureView so opaque covers can compose above playback', () => {
   const video = read('components/premium/ProtectedPremiumVideo.tsx');
   assert.match(video, /surfaceType="textureView"/);
 });
@@ -227,12 +227,12 @@ test('native screen-protection failure is fail-closed before either protected so
   assert.match(video, /!mediaVisible/);
 });
 
-test('watermark is visible, non-interactive, bounded, and contains no direct PII field', () => {
-  const watermark = read('components/premium/PremiumWatermark.tsx');
-  assert.match(watermark, /pointerEvents="none"/);
-  assert.match(watermark, /userMarker/);
-  assert.match(watermark, /sessionMarker/);
-  assert.match(watermark, /timestamp/);
-  assert.match(watermark, /slice\(0,\s*16\)/);
-  assert.doesNotMatch(watermark, /email|phone|authToken|signedUrl|assetId|cloudflareUid/i);
+test('Premium viewer has no Nelyon overlay while retaining protected media and the opaque fail-closed cover', () => {
+  const viewer = read('app/creator-premium-viewer/[contentId].tsx');
+  assert.equal(existsSync(path.join(root, 'components/premium/PremiumWatermark.tsx')), false);
+  assert.doesNotMatch(viewer, /PremiumWatermark|randomUUID|pseudonymousMarker|sessionMarker|watermarkTime/);
+  assert.match(viewer, /ProtectedPremiumImage/);
+  assert.match(viewer, /ProtectedPremiumVideo/);
+  assert.match(viewer, /protectionState\s*===\s*'protected'/);
+  assert.match(viewer, /styles\.opaqueCover/);
 });

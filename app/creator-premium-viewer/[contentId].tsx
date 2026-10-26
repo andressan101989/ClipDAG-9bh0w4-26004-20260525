@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -7,10 +7,8 @@ import {
   Text,
   View,
 } from 'react-native';
-import { randomUUID } from 'expo-crypto';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
-import { PremiumWatermark } from '@/components/premium/PremiumWatermark';
 import { ProtectedPremiumImage } from '@/components/premium/ProtectedPremiumImage';
 import { ProtectedPremiumVideo } from '@/components/premium/ProtectedPremiumVideo';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
@@ -31,23 +29,10 @@ const STATE_COPY: Record<CreatorPremiumViewerStatus, { title: string; body: stri
   'offline': { title: 'Sin conexión', body: 'Conéctate a internet para volver a validar el acceso.' },
 };
 
-function pseudonymousMarker(value: string | null): string {
-  let hash = 2_166_136_261;
-  for (const character of value ?? '') {
-    hash ^= character.charCodeAt(0);
-    hash = Math.imul(hash, 16_777_619);
-  }
-  return `U${(hash >>> 0).toString(36).toUpperCase()}`;
-}
-
 export default function CreatorPremiumViewerScreen() {
   const params = useLocalSearchParams<{ contentId?: string | string[] }>();
   const router = useRouter();
   const contentId = typeof params.contentId === 'string' ? params.contentId : '';
-  const sessionMarker = useMemo(
-    () => `S${randomUUID().replace(/-/g, '').slice(0, 10).toUpperCase()}`,
-    [],
-  );
   const {
     snapshot,
     protectionState,
@@ -67,8 +52,6 @@ export default function CreatorPremiumViewerScreen() {
     && protectionState === 'protected'
     && ['ready', 'playing', 'paused'].includes(snapshot.status)
     && snapshot.grant !== null;
-  const marker = useMemo(() => pseudonymousMarker(snapshot.userId), [snapshot.userId]);
-  const watermarkTime = new Date().toISOString().slice(11, 16);
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -102,13 +85,6 @@ export default function CreatorPremiumViewerScreen() {
             onPlaybackStateChange={handlePlaybackStateChange}
           />
         ) : null}
-
-        <PremiumWatermark
-          visible={protectedAndReady}
-          userMarker={marker}
-          sessionMarker={sessionMarker}
-          timestamp={watermarkTime}
-        />
 
         {!protectedAndReady ? (
           <View style={styles.opaqueCover}>

@@ -161,7 +161,7 @@ test('viewer route accepts only contentId and keeps an opaque cover until native
   assert.match(viewer, /styles\.opaqueCover/);
   assert.match(viewer, /ProtectedPremiumImage/);
   assert.match(viewer, /ProtectedPremiumVideo/);
-  assert.match(viewer, /PremiumWatermark/);
+  assert.doesNotMatch(viewer, /PremiumWatermark|randomUUID|pseudonymousMarker|sessionMarker|watermarkTime/);
   assert.match(viewer, /Volver/);
   assert.doesNotMatch(viewer, /assetId|cloudflareUid|signedUrl|hlsUrl\s*=|dashUrl\s*=|thumbnailUrl\s*=/i);
 });
