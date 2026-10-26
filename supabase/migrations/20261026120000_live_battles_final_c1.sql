@@ -3,6 +3,33 @@ begin;
 -- LIVE Battles Final C1: forward-only lifecycle and gift integrity repair.
 -- Preserve A6 transitions, canonical ledger/score authorities, and SKIP LOCKED rebuild.
 
+-- Serialize participant admission without blocking the KEY SHARE lock taken
+-- by a winner/receipt FK after Battle has been locked. Deletion and changes to
+-- user identity still conflict with NO KEY UPDATE; the canonical UUID order stays.
+create or replace function private.live_battle_lock_users(
+  p_first_user_id uuid,
+  p_second_user_id uuid
+)
+returns void language plpgsql security invoker set search_path = ''
+as $$
+declare
+  v_count integer;
+begin
+  if p_first_user_id is null or p_second_user_id is null or p_first_user_id = p_second_user_id then
+    raise exception using errcode = '22023', message = 'live_battle_users_invalid';
+  end if;
+  perform u.id from auth.users as u
+  where u.id in (p_first_user_id, p_second_user_id)
+  order by u.id
+  for no key update;
+  select pg_catalog.count(*)::integer into v_count
+  from auth.users as u where u.id in (p_first_user_id, p_second_user_id);
+  if v_count <> 2 then
+    raise exception using errcode = 'P0002', message = 'live_battle_user_not_found';
+  end if;
+end;
+$$;
+
 create or replace function private.sync_live_battle_public_states()
 returns trigger
 language plpgsql
@@ -57,6 +84,7 @@ begin
   perform private.live_battle_lock_sessions(
     p_challenger_session_id, p_opponent_session_id
   );
+  v_now := pg_catalog.clock_timestamp();
   select * into v_challenger_session
   from public.live_sessions as session
   where session.id = p_challenger_session_id;
@@ -443,7 +471,7 @@ begin
   perform participant.id from auth.users as participant
   where participant.id in (v_sender, v_route.challenger_user_id, v_route.opponent_user_id)
   order by participant.id
-  for update;
+  for no key update;
   perform private.live_battle_lock_users(
     v_route.challenger_user_id, v_route.opponent_user_id
   );
@@ -664,6 +692,7 @@ revoke all on public.live_battle_public_states from public, anon, authenticated,
 grant select on public.live_battle_public_states to authenticated;
 
 alter function private.prevent_confirmed_live_gift_mutation() owner to postgres;
+alter function private.live_battle_lock_users(uuid, uuid) owner to postgres;
 alter function private.validate_live_battle_winner_identity() owner to postgres;
 alter function private.sync_live_battle_public_states() owner to postgres;
 alter function private.reconcile_due_live_battle_series(integer) owner to postgres;
@@ -671,6 +700,7 @@ alter function public.create_live_battle_invite(uuid, uuid, uuid) owner to postg
 alter function public.send_live_gift(uuid, text, text) owner to postgres;
 alter function public.send_live_battle_gift(uuid, uuid, text, text) owner to postgres;
 revoke all on function private.prevent_confirmed_live_gift_mutation(),
+  private.live_battle_lock_users(uuid, uuid),
   private.validate_live_battle_winner_identity(),
   private.sync_live_battle_public_states(),
   private.reconcile_due_live_battle_series(integer)
@@ -738,8 +768,27 @@ begin
   for v_gift in select gift.* from public.live_gift_transactions as gift
     where gift.session_id in (v_series.challenger_session_id, v_series.opponent_session_id)
        or gift.battle_id in (select id from public.live_battles where series_id = v_series_id)
+       or exists (
+         select 1 from public.financial_transactions as financial
+         where financial.id = gift.financial_transaction_id
+           and financial.operation_type = 'live_gift'
+           and ((financial.reference_type = 'live_battle' and financial.reference_id in (
+             select id::text from public.live_battles where series_id = v_series_id))
+             or (financial.reference_type = 'live_session' and financial.reference_id in (
+               v_series.challenger_session_id::text, v_series.opponent_session_id::text)))
+       )
   loop
     begin
+      if v_gift.battle_id is not null and not exists (
+        select 1 from public.live_battles as battle
+        where battle.id = v_gift.battle_id
+          and ((v_gift.receiver_user_id = battle.challenger_user_id
+                and v_gift.session_id = battle.challenger_session_id)
+            or (v_gift.receiver_user_id = battle.opponent_user_id
+                and v_gift.session_id = battle.opponent_session_id))
+      ) then
+        raise exception 'live_battles_final_c1_gift_route_invalid';
+      end if;
       perform private.verify_live_gift_journal(
         v_gift.financial_transaction_id, v_gift.sender_user_id, v_gift.receiver_user_id,
         v_gift.amount_coins::bigint, v_gift.platform_fee_coins::bigint,

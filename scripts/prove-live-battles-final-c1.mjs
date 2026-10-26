@@ -68,7 +68,7 @@ try {
   await admin.connect();
   await admin.query(`create database ${database}`); created = true;
   const db = await connect();
-  await db.query(readFileSync(new URL('supabase/tests/live_battles_final_c1_fixture.sql', root), 'utf8'));
+  await db.query(readFileSync(new URL('tests/fixtures/live_battles_final_c1_fixture.sql', root), 'utf8'));
   for (const name of ['live_battles', 'live_battle_events', 'live_battle_series', 'live_battle_rematch_requests', 'live_gift_transactions']) await db.query(table(name));
   await db.query(`
     alter table public.live_battles add column series_id uuid references public.live_battle_series,
@@ -123,6 +123,7 @@ try {
     await client.query('insert into auth.users(id) select unnest($1::uuid[])', [[host, opponent, sender]]);
     await client.query('insert into public.live_sessions(id,host_id) values($1,$2),($3,$4)', [first,host,second,opponent]);
     await client.query("insert into public.ledger_accounts(owner_id,account_type,balance) values($1,'user',10000),($2,'user',0),($3,'user',0)",[sender,host,opponent]);
+    if(status==='fresh') return {host,opponent,sender,first,second,series,battle};
     await client.query(`insert into public.live_battle_series(id,challenger_user_id,opponent_user_id,challenger_session_id,opponent_session_id,format,max_rounds,wins_required)
       values($1,$2,$3,$4,$5,'best_of_5',5,3)`, [series,host,opponent,first,second]);
     await client.query(`insert into public.live_battles(id,challenger_user_id,opponent_user_id,challenger_session_id,opponent_session_id,invite_expires_at,last_transition_reason,series_id,battle_rule_set_id)
@@ -161,6 +162,12 @@ try {
     await db.query("insert into public.financial_transactions(id,operation_type,status,reference_type,reference_id) values($1,'live_gift','pending','live_battle',$2)",[badFinance,orphan.battle]);
     await rejected(db.query(migration),'unresolved_gift_finance'); await db.query('rollback');
     await db.query('delete from public.financial_transactions where id=$1',[badFinance]);
+    const outsideReceipt=(await gift(extra,'cross-route-repair')).rows[0];
+    await db.query("update public.financial_transactions set reference_type='live_battle',reference_id=$2 where id=(select financial_transaction_id from public.live_gift_transactions where id=$1)",[outsideReceipt.transaction_id,orphan.battle]);
+    await rejected(db.query(migration),'unresolved_gift_finance'); await db.query('rollback');
+    assert.equal((await db.query("select to_regprocedure('private.prevent_confirmed_live_gift_mutation()') is null as rolled_back")).rows[0].rolled_back,true);
+    await db.query("update public.financial_transactions set reference_type='live_session',reference_id=$2 where id=(select financial_transaction_id from public.live_gift_transactions where id=$1)",[outsideReceipt.transaction_id,extra.first]);
+    console.log('PASS exact migration rejects receipt reached by scoped finance despite outside receipt route; DDL rolls back');
     await db.query(migration);
     assert.equal((await state(orphan)).status,'cancelled');
     console.log('PASS exact migration scope drift, finance drift, atomic rollback, one canonical repair');
@@ -217,8 +224,9 @@ try {
   await run('winner binding rejects wrong side and null winner in score and either projection',async()=>{
     const p=await pair('active');
     await rejected(db.query("update public.live_battle_score_states set challenger_score=1,outcome='challenger',winner_user_id=$2,finalized_at=clock_timestamp() where battle_id=$1",[p.battle,p.opponent]),null,'23514');
-    for(const winner of [p.opponent,null]) await rejected(db.query("update public.live_battle_public_states set outcome='challenger',winner_user_id=$2 where battle_id=$1",[p.battle,winner]),'winner_identity_invalid','23514');
-    await db.query("update public.live_battle_public_states set outcome='challenger',winner_user_id=$2 where battle_id=$1",[p.battle,p.host]);
+    for(const winner of [p.opponent,null]) await rejected(db.query("update public.live_battle_public_states set challenger_score=1,outcome='challenger',winner_user_id=$2 where battle_id=$1",[p.battle,winner]),'winner_identity_invalid','23514');
+    await rejected(db.query("update public.live_battle_public_states set outcome='challenger',winner_user_id=$2 where battle_id=$1",[p.battle,p.host]),'live_battle_public_states_result_check','23514');
+    await db.query("update public.live_battle_public_states set challenger_score=1,outcome='challenger',winner_user_id=$2 where battle_id=$1",[p.battle,p.host]);
     assert.equal((await db.query("select count(*) from public.live_battle_public_states where battle_id=$1 and winner_user_id=$2",[p.battle,p.host])).rows[0].count,'2');
   });
   await run('ACL, RLS, private helper ACL and rollback preserve finance',async()=>{
@@ -238,6 +246,17 @@ try {
     await db.query('reset role');
     const rls=(await db.query("select bool_and(relrowsecurity) as ok from pg_class where oid in('public.live_gift_transactions'::regclass,'public.live_battle_score_states'::regclass,'public.live_battle_public_states'::regclass)")).rows[0]; assert.equal(rls.ok,true);
     const rpc=(await db.query("select bool_and(pg_get_userbyid(proowner)='postgres' and proconfig @> array['search_path=\"\"']) as ok from pg_proc where oid in('public.send_live_gift(uuid,text,text)'::regprocedure,'public.send_live_battle_gift(uuid,uuid,text,text)'::regprocedure,'public.create_live_battle_invite(uuid,uuid,uuid)'::regprocedure)")).rows[0]; assert.equal(rpc.ok,true);
+  });
+  await run('participant admission allows FK key-share but still blocks deletion and identity changes',async()=>{
+    const p=await pair('fresh'); const admission=await connect(); const other=await connect();
+    await admission.query('begin'); await admission.query('select private.live_battle_lock_users($1,$2)',[p.host,p.opponent]);
+    try {
+      await other.query('select id from auth.users where id=$1 for key share nowait',[p.host]);
+      await rejected(other.query('select id from auth.users where id=$1 for update nowait',[p.host]),null,'55P03');
+      await other.query("set lock_timeout='100ms'");
+      await rejected(other.query('delete from auth.users where id=$1',[p.host]),null,'55P03');
+      await rejected(other.query('update auth.users set id=$2 where id=$1',[p.host,randomUUID()]),null,'55P03');
+    } finally { await admission.query('rollback'); await other.query("set lock_timeout='6s'"); }
   });
   await run('skipped terminal rebuild retries durably and double reconciliation is idempotent',async()=>{
     const p=await pair(); const locker=await connect();
@@ -329,6 +348,42 @@ try {
       await completion.query('commit'); const result=await pending;
       assert.equal(result.error?.code,'PT409'); assert.equal(result.error?.message,'live_battle_series_pair_busy');
     }finally{await completion.query('rollback');await pending;}
+  });
+  for(const contender of ['invite','directed gift']) await run(`non-tie completion versus ${contender} permits winner FK and preserves one score/charge`,async()=>{
+    const p=await pair('active'); await gift(p,'winner-proof',true);
+    const completion=await connect(); const admission=await connect();
+    await completion.query('begin'); await completion.query('select 1 from public.live_battles where id=$1 for update',[p.battle]);
+    await auth(admission,contender==='invite'?p.host:p.sender);
+    const pending=(contender==='invite'
+      ? admission.query('select public.create_live_battle_invite($1,$2,$3)',[p.opponent,p.first,p.second])
+      : admission.query('select * from public.send_live_battle_gift($1,$2,$3,$4)',[p.battle,p.host,'proof','losing-admission'])
+    ).then(value=>({value}),error=>({error}));
+    try {
+      await waiting(db,admission);
+      await completion.query("select private.live_battle_transition($1,'active','completed',null,'battle_duration_elapsed',clock_timestamp()+interval '301 seconds')",[p.battle]);
+      await completion.query('commit'); const result=await pending;
+      assert.equal(result.error?.message,contender==='invite'?'live_battle_series_pair_busy':'live_battle_gift_not_active');
+      assert.notEqual(result.error?.code,'40P01');
+      assert.deepEqual((await db.query('select outcome,winner_user_id,score_version from public.live_battle_score_states where battle_id=$1',[p.battle])).rows[0],{outcome:'challenger',winner_user_id:p.host,score_version:'1'});
+      assert.equal((await db.query('select count(*) from public.live_gift_transactions where battle_id=$1',[p.battle])).rows[0].count,'1');
+    } finally { await completion.query('rollback'); await pending; }
+  });
+  await run('fresh invite refreshes timestamp after admission lock wait',async()=>{
+    const p=await pair('fresh'); const locker=await connect(); const invite=await connect();
+    const definition=(await db.query("select pg_get_functiondef('public.create_live_battle_invite(uuid,uuid,uuid)'::regprocedure) as sql")).rows[0].sql;
+    // Controlled old statement-time initializer simulates >30 seconds elapsed
+    // without slowing the proof. Every other production statement stays exact.
+    assert.equal((definition.match(/v_now timestamptz := pg_catalog.statement_timestamp\(\);/g)??[]).length,1);
+    await db.query(definition.replace('v_now timestamptz := pg_catalog.statement_timestamp();',"v_now timestamptz := pg_catalog.statement_timestamp() - interval '31 seconds';"));
+    await locker.query('begin'); await locker.query('select private.live_battle_lock_users($1,$2)',[p.host,p.opponent]);
+    await auth(invite,p.host);
+    const pending=invite.query('select public.create_live_battle_invite($1,$2,$3) as battle',[p.opponent,p.first,p.second]).then(value=>({value}),error=>({error}));
+    try {
+      await waiting(db,invite); await locker.query('commit'); const result=await pending;
+      assert.ok(result.value,result.error?.message);
+      const id=result.value.rows[0].battle.id;
+      assert.equal((await db.query("select invite_expires_at > clock_timestamp()+interval '28 seconds' as fresh from public.live_battles where id=$1",[id])).rows[0].fresh,true);
+    } finally { await locker.query('rollback'); await pending; await db.query(definition); }
   });
   await run('invite replay locks first and later completion waits then finalizes once',async()=>{
     const p=await pair(); const invite=await connect(); const completion=await connect();
