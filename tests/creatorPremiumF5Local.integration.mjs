@@ -261,6 +261,10 @@ test('F5 real PostgreSQL consent, charge, retries, concurrency and security cont
     const beforeF5 = monetarySnapshot();
     // The compile template predates production ownership normalization.
     sql(db,'alter function public.cancel_creator_premium_subscription_v1(uuid,uuid,uuid) owner to postgres;');
+    const legacyCancelKey=randomUUID();
+    const legacyCancelId=current.subscription_id;
+    const legacyCancelReceipt=json(db,service(`select public.cancel_creator_premium_subscription_v1('${id.subscriber}','${legacyCancelId}','${legacyCancelKey}')`));
+    assert.equal(legacyCancelReceipt.replayed,false);
     const f5File = files.find(name => name.endsWith('_creator_premium_f5_autonomous_subscriptions.sql'));
     if (f5File) sql(db, `set role postgres;${readFileSync(new URL(f5File,migrations),'utf8')}reset role;`);
     assert.equal(sql(db,`select to_regclass('private.creator_premium_auto_renewal_mandates') is not null`).stdout,'t','missing F5 mandate table');
@@ -293,6 +297,19 @@ test('F5 real PostgreSQL consent, charge, retries, concurrency and security cont
       assert.equal('auto_renewal' in legacy.items[0],false);
       const v2=JSON.parse(authenticated(db,id.subscriber,'select public.get_my_creator_premium_subscriptions_v2()').stdout);
       assert.deepEqual(Object.keys(v2.items[0].auto_renewal).sort(),['enabled','mandate_state','consented_at','revoked_at','next_charge_at','authorized_price_bdag','authorized_plan_version','retry_count','last_result','last_attempt_at'].sort());
+    });
+    await t.test('pre-F5 cancellation replay preserves a later explicit consent generation', () => {
+      const before=mandate();
+      const attempts=sql(db,'select count(*) from private.creator_premium_auto_renewal_attempts').stdout;
+      try {
+        const receipt=json(db,service(`select public.cancel_creator_premium_subscription_v1('${id.subscriber}','${legacyCancelId}','${legacyCancelKey}')`));
+        assert.deepEqual(receipt,{...legacyCancelReceipt,replayed:true,already_cancelled:true});
+        assert.deepEqual(mandate(),before,'legacy replay must not mutate a later consent generation');
+        assert.equal(sql(db,'select count(*) from private.creator_premium_auto_renewal_attempts').stdout,attempts);
+        assert.equal(monetarySnapshot(),beforeF5);
+      } finally {
+        if(mandate().state!=='ENABLED') json(db,service(consent()));
+      }
     });
     await t.test('due double cron charges once with exact 20 percent fee and balanced ledger', async () => {
       expire();
@@ -403,6 +420,25 @@ test('F5 real PostgreSQL consent, charge, retries, concurrency and security cont
       assert.equal(mandate().state,'PAUSED');assert.equal(mandate().last_result,'refunded');
       assert.equal(authenticated(db,id.subscriber,`select allowed from public.get_my_creator_premium_entitlement_v1('${id.content}')`).stdout,'f');
       renewManually();json(db,service(consent()));
+    });
+    await t.test('historical refund preserves an expired newer period awaiting consented renewal', () => {
+      expire();
+      replaceFixture(`update private.creator_premium_subscription_periods set access_state='expired' where id='${current.period_id}'`);
+      json(db,service(consent()));
+      const before=mandate();
+      const historical=sql(db,`select id from private.creator_premium_subscription_periods where subscriber_id='${id.subscriber}' and id<>'${current.period_id}' and access_state='expired' order by starts_at limit 1`).stdout;
+      assert.ok(historical);
+      assert.equal(sql(db,`select private.creator_premium_subscription_period_fact_is_valid_f2_v1('${current.period_id}')`).stdout,'t');
+      assert.equal(sql(db,`select next_attempt_at<=clock_timestamp() from private.creator_premium_auto_renewal_mandates where subscriber_id='${id.subscriber}'`).stdout,'t');
+      const attempts=sql(db,'select count(*) from private.creator_premium_auto_renewal_attempts').stdout;
+      try {
+        json(db,service(`select public.refund_creator_premium_subscription_period_v1('${historical}','${randomUUID()}','owner_approved')`));
+        assert.deepEqual(mandate(),before,'historical refund must not mutate an expired newer period mandate');
+        assert.equal(sql(db,'select count(*) from private.creator_premium_auto_renewal_attempts').stdout,attempts);
+        assert.equal(sql(db,`select access_state from private.creator_premium_subscription_periods where id='${current.period_id}'`).stdout,'expired');
+      } finally {
+        renewManually();json(db,service(consent()));
+      }
     });
     await t.test('cancel racing due cron revokes future charges and preserves already-paid entitlement', async () => {
       const cancelledId=current.subscription_id;const key=randomUUID();expire();
