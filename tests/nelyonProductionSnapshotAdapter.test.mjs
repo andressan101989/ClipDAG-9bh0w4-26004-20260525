@@ -867,6 +867,10 @@ test('F5 snapshot authority selects the autonomous phase and exact inherited cat
   assert.equal(pre.some(row => row.object.name === 'get_my_creator_premium_subscriptions_v3'), false);
   assert.equal(post.find(row => row.object.name === 'get_my_creator_premium_subscriptions_v3').attestation.definition_sha256,
     '246ab182de52bedd431e12a54ddf48923ecbd85e296ad6e138e54017f5ed7489');
+  for (const addition of installedPolicy.finance_security_advisor.f5_relation_additions) {
+    assert.equal(pre.some(row => row.advisor_fingerprint === addition.advisor_fingerprint), false);
+    assert.equal(post.some(row => row.advisor_fingerprint === addition.advisor_fingerprint), true);
+  }
   assert.equal(beforeProjection.advisor_fingerprint, afterProjection.advisor_fingerprint);
 });
 
@@ -1309,6 +1313,9 @@ test('F5 recovery selects the autonomous successor only for the immutable failed
   for (const addition of controlledPolicy.finance_security_advisor.f5_rpc_additions) {
     assert.equal(selected.some(item => item.advisor_fingerprint === addition.advisor_fingerprint), true);
   }
+  for (const addition of controlledPolicy.finance_security_advisor.f5_relation_additions) {
+    assert.equal(selected.some(item => item.advisor_fingerprint === addition.advisor_fingerprint), true);
+  }
   assert.equal(selected.some(item => (
     item.object.name === 'creator_premium_finance_owner_attestations_f3_c2'
   )), true);
@@ -1325,6 +1332,9 @@ test('F5 recovery selects the autonomous successor only for the immutable failed
       options,
     );
     assert.equal(controlledPolicy.finance_security_advisor.f5_rpc_additions.every(addition => (
+      !fallback.some(item => item.advisor_fingerprint === addition.advisor_fingerprint)
+    )), true);
+    assert.equal(controlledPolicy.finance_security_advisor.f5_relation_additions.every(addition => (
       !fallback.some(item => item.advisor_fingerprint === addition.advisor_fingerprint)
     )), true);
   }

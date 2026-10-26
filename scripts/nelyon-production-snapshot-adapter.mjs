@@ -47,8 +47,29 @@ export const FINANCE_POLICY_DIGESTS = Object.freeze({
   f4_transition: 'de7891ab96cd95280a5d1e80ad56b8411045b66bb54e71f610874f4cc280e36a',
   f5_transition: '3829cb90de13c8aece7b40f6d70364f02635a79163d32668229382665a83d051',
   authority: '64fc55b66c681bb901dd79e610a33cd3dc689a330a65c88c4a8619bc9b668fbf',
-  security_advisor: '3c53134f7f1764d1808b88d5b58d7bac44d46ed3b014afbd30de0c61a34be7db',
+  security_advisor: '9cb8e8f25c4311553c2e4e30139c45f53c8472b1ff374af8d6a95f9a289ca096',
 });
+
+export const F5_SECURITY_ADVISOR_RELATION_ADDITIONS = Object.freeze([
+  Object.freeze({
+    advisor_fingerprint: '70d2706125a8861824f9c876848c472a28bde6db0813543ba97ec3409516967f',
+    advisor_type: 'table',
+    advisor_severity: 'INFO',
+    object: Object.freeze({
+      schema: 'private',
+      name: 'creator_premium_auto_renewal_attempts',
+    }),
+  }),
+  Object.freeze({
+    advisor_fingerprint: 'd37d10aa8c56fc907ce6ce86f44aafcb36f8bd6c7d719cc33032fe1561eee56d',
+    advisor_type: 'table',
+    advisor_severity: 'INFO',
+    object: Object.freeze({
+      schema: 'private',
+      name: 'creator_premium_auto_renewal_mandates',
+    }),
+  }),
+]);
 
 export const FINANCE_SNAPSHOT_SQL = `with
 clk as (select pg_catalog.clock_timestamp() observed_at),
@@ -1262,6 +1283,8 @@ function validateFinancePolicyAuthority(policy) {
     || (FINANCE_POLICY_DIGESTS.f5_transition !== undefined
       && sha256(canonicalJson(policy?.finance_authority_f5_transition ?? null)) !== FINANCE_POLICY_DIGESTS.f5_transition)
     || sha256(canonicalJson(policy?.finance_authority ?? null)) !== FINANCE_POLICY_DIGESTS.authority
+    || canonicalJson(policy?.finance_security_advisor?.f5_relation_additions ?? null)
+      !== canonicalJson(F5_SECURITY_ADVISOR_RELATION_ADDITIONS)
     || sha256(canonicalJson(policy?.finance_security_advisor ?? null)) !== FINANCE_POLICY_DIGESTS.security_advisor) {
     fail('FINANCE_AUTHORITY_TRANSITION_REJECTED', 'foundation policy differs from exact reviewed authority');
   }
@@ -2347,8 +2370,9 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
     }
     if ((transition?.to_phase === 'f5_autonomous' && phase !== 'pre') || installedF5
       || exactRecoveryPhase === 'f5_autonomous') {
-      const additions = policy.finance_security_advisor.f5_rpc_additions;
-      result = [...result, ...additions];
+      const rpcAdditions = policy.finance_security_advisor.f5_rpc_additions;
+      const relationAdditions = policy.finance_security_advisor.f5_relation_additions;
+      result = [...result, ...rpcAdditions, ...relationAdditions];
     }
     return phaseBoundRpcExceptions(result, manifest, phase, { policy, migrations: context.migrations });
   }

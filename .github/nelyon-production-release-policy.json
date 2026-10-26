@@ -1269,6 +1269,26 @@
           "source_sha": "94de72a46558aab408c0f4d062f80462fd17f116"
         }
       }
+    ],
+    "f5_relation_additions": [
+      {
+        "advisor_fingerprint": "70d2706125a8861824f9c876848c472a28bde6db0813543ba97ec3409516967f",
+        "advisor_type": "table",
+        "advisor_severity": "INFO",
+        "object": {
+          "schema": "private",
+          "name": "creator_premium_auto_renewal_attempts"
+        }
+      },
+      {
+        "advisor_fingerprint": "d37d10aa8c56fc907ce6ce86f44aafcb36f8bd6c7d719cc33032fe1561eee56d",
+        "advisor_type": "table",
+        "advisor_severity": "INFO",
+        "object": {
+          "schema": "private",
+          "name": "creator_premium_auto_renewal_mandates"
+        }
+      }
     ]
   },
   "managed_scope_transitions": [

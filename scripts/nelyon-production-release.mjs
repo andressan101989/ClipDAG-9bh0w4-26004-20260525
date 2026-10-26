@@ -6,6 +6,7 @@ import { isAbsolute, join, posix, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   advisorExceptionsForPhase,
+  F5_SECURITY_ADVISOR_RELATION_ADDITIONS,
   normalizedCronCommandSha256,
   FINANCE_POLICY_DIGESTS,
   normalizeCronCommand,
@@ -762,6 +763,11 @@ export function validatePolicy(policy) {
       !== F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION.reviewed_source_sha) {
     deny('INVALID_FINANCE_AUTHORITY_TRANSITION',
       'F5 subscription projection must match the exact phase-bound catalog evidence');
+  }
+  if (canonicalJson(policy.finance_security_advisor?.f5_relation_additions ?? null)
+    !== canonicalJson(F5_SECURITY_ADVISOR_RELATION_ADDITIONS)) {
+    deny('INVALID_FINANCE_AUTHORITY_TRANSITION',
+      'F5 relation exceptions must match the exact phase-bound private-table catalog');
   }
   const f5Cron = policy.finance_authority_f5_transition?.cron_job;
   if (normalizeCronCommand(f5Cron?.command ?? '') !== f5Cron?.command
@@ -2777,7 +2783,9 @@ export function verifyPostcheckRecovery({
   }
   const reconstructedBaseline = {
     complete: true,
-    cron: baselineCronItems,
+    cron: source.run_id === '40324910390'
+      ? projectCronBaselineItems(baselineCronItems, true)
+      : baselineCronItems,
     security_findings: baselineItems,
   };
   if (presentExceptions.length !== exceptionFingerprints.size
