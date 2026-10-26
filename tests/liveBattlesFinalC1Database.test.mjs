@@ -77,3 +77,10 @@ test('one forward migration retains confirmed receipts and strict winner authori
   assert.doesNotMatch(sql, /create (?:unique )?index/i);
   assert.doesNotMatch(sql, /create or replace function private.live_battle_transition\(/);
 });
+test('likes locks session before Battle and preserves replay before mutable admission', () => {
+  const sql = latest('public.send_live_battle_likes');
+  assert.ok(sql.indexOf('into v_session') < sql.indexOf('into v_battle'));
+  assert.ok(sql.indexOf('if v_existing.id is not null') < sql.indexOf('live_participant_required'));
+  assert.match(sql,/v_session.ended_at is null/);
+  assert.match(sql,/v_now := pg_catalog.clock_timestamp\(\)/);
+});

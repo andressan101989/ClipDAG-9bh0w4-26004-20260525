@@ -79,7 +79,7 @@ try {
     create unique index proof_battle_gift_key on public.live_gift_transactions(sender_user_id,battle_id,idempotency_key) where battle_id is not null;
     create unique index proof_gift_finance on public.live_gift_transactions(financial_transaction_id);
   `);
-  for (const name of ['live_battle_score_states', 'live_battle_score_events']) await db.query(table(name));
+  for (const name of ['live_battle_score_states', 'live_battle_score_events', 'live_battle_like_score_events']) await db.query(table(name));
   await db.query('alter table public.live_battle_score_events drop constraint live_battle_score_events_f4b_rule_check');
   const functions = [
     'public.ensure_ledger_account', 'public.ledger_debit', 'public.ledger_credit', 'public.atomic_ledger_transfer',
@@ -93,6 +93,7 @@ try {
     'private.record_live_battle_score_locked', 'private.reconcile_live_battle_score_locked',
     'private.live_battle_transition', 'private.live_battle_reconcile_locked',
     'public.create_live_battle_invite', 'public.send_live_gift', 'public.send_live_battle_gift',
+    'private.reject_live_battle_like_mutation', 'private.validate_live_battle_like_event', 'public.send_live_battle_likes',
   ];
   for (const name of functions) await db.query(canonical(name));
   // Match deployed security hardening of the unchanged financial functions.
@@ -102,6 +103,13 @@ try {
   await db.query(`
     create trigger live_battles_sync_series_public_states after insert or update or delete on public.live_battles for each row execute function private.sync_live_battle_public_states();
     create trigger live_battle_score_states_rebuild_series after insert or update on public.live_battle_score_states for each row execute function private.live_battle_series_score_finalized_trigger();
+    create trigger live_battle_like_validate before insert on public.live_battle_like_score_events for each row execute function private.validate_live_battle_like_event();
+    create trigger live_battle_like_immutable before update or delete on public.live_battle_like_score_events for each row execute function private.reject_live_battle_like_mutation();
+    create trigger live_battle_like_no_truncate before truncate on public.live_battle_like_score_events for each statement execute function private.reject_live_battle_like_mutation();
+    alter table public.live_battle_like_score_events enable row level security;
+    revoke all on public.live_battle_like_score_events from public,anon,authenticated,service_role;
+    revoke all on function public.send_live_battle_likes(uuid,uuid,integer,text) from public,anon,authenticated,service_role;
+    grant execute on function public.send_live_battle_likes(uuid,uuid,integer,text) to authenticated;
     alter table public.live_gift_transactions enable row level security;
     alter table public.live_battle_score_states enable row level security;
     alter table public.live_battle_public_states enable row level security;
@@ -146,6 +154,16 @@ try {
   async function gift(p, key, battle=false, client=db, giftId='proof') {
     await auth(client,p.sender);
     return battle ? client.query('select * from public.send_live_battle_gift($1,$2,$3,$4)',[p.battle,p.host,giftId,key]) : client.query('select * from public.send_live_gift($1,$2,$3)',[p.first,giftId,key]);
+  }
+  async function likesPair() {
+    const p=await pair('active');
+    await db.query("update public.live_battles set accepted_at=now()-interval '4 seconds',countdown_started_at=now()-interval '4 seconds',scheduled_start_at=now()-interval '1 second',started_at=now()-interval '1 second',scheduled_end_at=now()+interval '299 seconds' where id=$1",[p.battle]);
+    await db.query("insert into public.live_participants(session_id,user_id,status) values($1,$2,'active')",[p.first,p.sender]);
+    return p;
+  }
+  async function likes(p,client=db,key='like-race',count=1) {
+    await auth(client,p.sender);
+    return client.query('select * from public.send_live_battle_likes($1,$2,$3,$4)',[p.first,p.battle,count,key]);
   }
   const orphan = await pair(); await transition(orphan,'expired');
   const migration = readFileSync(new URL(candidate[0],migrationDir),'utf8');
@@ -408,6 +426,80 @@ try {
     await db.query("select private.reconcile_live_battle_series_locked($1,clock_timestamp()+interval '31 seconds')",[p.series]);
     assert.equal((await state(p)).status,'completed');
     assert.equal((await db.query('select status from public.live_battle_rematch_requests where series_id=$1',[p.series])).rows[0].status,'expired');
+  });
+  for(const contender of ['gift','invite']) for(const likesFirst of [false,true]) await run(`likes versus ${contender}: ${likesFirst?'likes':'admission'} locks first`,async()=>{
+    const p=await likesPair(); const first=await connect(); const second=await connect();
+    await first.query('begin'); let pending;
+    async function admission(client){
+      if(contender==='gift') return gift(p,'like-gift-race',true,client);
+      await auth(client,p.host);
+      return client.query('select public.create_live_battle_invite($1,$2,$3)',[p.opponent,p.first,p.second]);
+    }
+    try {
+      if(likesFirst){
+        assert.deepEqual((await likes(p,first)).rows[0],{accepted_count:1,awarded_points:'5'});
+        pending=admission(second).then(value=>({value}),error=>({error}));
+        await waiting(db,second); await first.query('commit');
+        const result=await pending;
+        assert.notEqual(result.error?.code,'40P01',`${contender} deadlocked with likes`);
+        if(contender==='gift') assert.ok(result.value,result.error?.message);
+        else { assert.equal(result.error?.code,'PT409'); assert.equal(result.error?.message,'live_battle_pair_busy'); }
+      }else{
+        // Pause the canonical admission after its ordered user/session locks.
+        await first.query('select private.live_battle_lock_users($1,$2)',[p.host,p.opponent]);
+        await first.query('select private.live_battle_lock_sessions($1,$2)',[p.first,p.second]);
+        pending=likes(p,second).then(value=>({value}),error=>({error}));
+        await waiting(db,second);
+        if(contender==='gift'){ await admission(first); await first.query('commit'); }
+        else { await rejected(admission(first),'live_battle_pair_busy','PT409'); await first.query('rollback'); }
+        const result=await pending;
+        assert.notEqual(result.error?.code,'40P01','likes deadlocked with admission');
+        assert.deepEqual(result.value?.rows[0],{accepted_count:1,awarded_points:'5'},result.error?.message);
+      }
+      assert.deepEqual((await likes(p)).rows[0],{accepted_count:1,awarded_points:'5'});
+      if(contender==='gift') await gift(p,'like-gift-race',true);
+      assert.equal((await db.query('select count(*) from public.live_battle_like_score_events where battle_id=$1',[p.battle])).rows[0].count,'1');
+      assert.equal((await db.query('select count(*) from public.live_gift_transactions where battle_id=$1',[p.battle])).rows[0].count,contender==='gift'?'1':'0');
+      assert.equal((await db.query("select count(*) from public.financial_transactions where reference_type='live_battle' and reference_id=$1",[p.battle])).rows[0].count,contender==='gift'?'1':'0');
+      assert.deepEqual((await db.query('select challenger_score,score_version,outcome from public.live_battle_score_states where battle_id=$1',[p.battle])).rows[0],{challenger_score:contender==='gift'?'10005':'5',score_version:contender==='gift'?'2':'1',outcome:'pending'});
+    } finally { await first.query('rollback'); if(pending) await pending; }
+  });
+  await run('likes retains capped immutable replay and terminal zero without financial effects',async()=>{
+    const p=await likesPair(); const before=(await db.query('select count(*) from public.financial_transactions')).rows[0].count;
+    assert.deepEqual((await likes(p,db,'capped',64)).rows[0],{accepted_count:20,awarded_points:'100'});
+    assert.deepEqual((await likes(p,db,'exhausted',1)).rows[0],{accepted_count:0,awarded_points:'0'});
+    await rejected(likes(p,db,'capped',1),'live_battle_like_idempotency_conflict','22023');
+    await rejected(db.query('delete from public.live_battle_like_score_events where battle_id=$1',[p.battle]),'live_battle_like_immutable','55000');
+    await db.query("select private.live_battle_transition($1,'active','completed',null,'battle_duration_elapsed',clock_timestamp()+interval '301 seconds')",[p.battle]);
+    await db.query("update public.live_sessions set status='ended',ended_at=clock_timestamp() where id=$1",[p.first]);
+    assert.deepEqual((await likes(p,db,'terminal',1)).rows[0],{accepted_count:0,awarded_points:'0'});
+    await db.query("update public.live_participants set status='inactive' where session_id=$1 and user_id=$2",[p.first,p.sender]);
+    assert.deepEqual((await likes(p,db,'capped',64)).rows[0],{accepted_count:20,awarded_points:'100'});
+    assert.equal((await db.query('select count(*) from public.live_battle_like_score_events where battle_id=$1',[p.battle])).rows[0].count,'1');
+    assert.deepEqual((await db.query('select challenger_score,score_version,outcome,winner_user_id from public.live_battle_score_states where battle_id=$1',[p.battle])).rows[0],{challenger_score:'100',score_version:'1',outcome:'challenger',winner_user_id:p.host});
+    assert.equal((await db.query('select count(*) from public.financial_transactions')).rows[0].count,before);
+    const acl=(await db.query("select pg_get_userbyid(proowner)='postgres' and proconfig @> array['search_path=\"\"'] and has_function_privilege('authenticated',oid,'EXECUTE') and not has_function_privilege('anon',oid,'EXECUTE') and not has_function_privilege('service_role',oid,'EXECUTE') as ok from pg_proc where oid='public.send_live_battle_likes(uuid,uuid,integer,text)'::regprocedure")).rows[0]; assert.equal(acl.ok,true);
+  });
+  for(const change of ['deadline','completion','closure','membership','host']) await run(`likes revalidates ${change} after admission wait`,async()=>{
+    const p=await likesPair(); const first=await connect(); const second=await connect();
+    await first.query('begin');
+    if(change==='completion') await first.query('select id from public.live_battles where id=$1 for update',[p.battle]);
+    else await first.query('select id from public.live_sessions where id=$1 for update',[p.first]);
+    const pending=likes(p,second,'after-wait').then(value=>({value}),error=>({error}));
+    try {
+      await waiting(db,second);
+      if(change==='deadline') await first.query("update public.live_battles set accepted_at=now()-interval '303 seconds',countdown_started_at=now()-interval '303 seconds',scheduled_start_at=now()-interval '300 seconds',started_at=now()-interval '300 seconds',scheduled_end_at=now() where id=$1",[p.battle]);
+      else if(change==='completion') await first.query("select private.live_battle_transition($1,'active','completed',null,'battle_duration_elapsed',clock_timestamp()+interval '301 seconds')",[p.battle]);
+      else if(change==='closure') await first.query('update public.live_sessions set ended_at=clock_timestamp() where id=$1',[p.first]);
+      else if(change==='membership') await first.query("update public.live_participants set status='inactive' where session_id=$1 and user_id=$2",[p.first,p.sender]);
+      else await first.query('update public.live_sessions set host_id=$2 where id=$1',[p.first,p.opponent]);
+      await first.query('commit'); const result=await pending;
+      assert.notEqual(result.error?.code,'40P01');
+      if(change==='membership') assert.equal(result.error?.message,'live_participant_required');
+      else if(change==='host') assert.equal(result.error?.message,'live_battle_like_session_invalid');
+      else assert.deepEqual(result.value?.rows[0],{accepted_count:0,awarded_points:'0'},result.error?.message);
+      assert.equal((await db.query('select count(*) from public.live_battle_like_score_events where battle_id=$1',[p.battle])).rows[0].count,'0');
+    } finally { await first.query('rollback'); await pending; }
   });
   if(failures) throw new Error(`${failures} contractual/concurrency proofs failed`);
   console.log('PASS disposable PostgreSQL C1 contractual/concurrency proof (not full-schema E2E)');

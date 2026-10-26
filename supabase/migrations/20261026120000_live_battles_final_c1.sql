@@ -603,6 +603,82 @@ begin
 end;
 $$;
 
+create or replace function public.send_live_battle_likes(
+  p_session_id uuid, p_battle_id uuid, p_count integer, p_idempotency_key text
+)
+returns table (accepted_count integer, awarded_points bigint)
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_actor uuid := auth.uid();
+  v_battle public.live_battles%rowtype;
+  v_session public.live_sessions%rowtype;
+  v_rules public.live_battle_rule_sets%rowtype;
+  v_existing public.live_battle_like_score_events%rowtype;
+  v_target uuid;
+  v_used bigint;
+  v_accepted integer := 0;
+  v_now timestamptz;
+begin
+  if v_actor is null then
+    raise exception using errcode = '42501', message = 'live_auth_required';
+  end if;
+  if p_session_id is null or p_battle_id is null or p_count is null or p_count not between 1 and 64
+     or p_idempotency_key is null or p_idempotency_key !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$' then
+    raise exception using errcode = '22023', message = 'live_battle_like_input_invalid';
+  end if;
+  -- Share-lock the supplied session before Battle, matching gift/invite admission.
+  -- This snapshot cannot change during the Battle wait. Revalidate canonical
+  -- route, host, membership and eligibility below, after the replay fast path.
+  select * into v_session from public.live_sessions where id = p_session_id for share;
+  select * into v_battle from public.live_battles where id = p_battle_id for update;
+  if not found then
+    raise exception using errcode = '22023', message = 'live_battle_not_found';
+  end if;
+  select * into v_existing from public.live_battle_like_score_events as event
+  where event.battle_id = p_battle_id and event.actor_user_id = v_actor and event.idempotency_key = p_idempotency_key;
+  if v_existing.id is not null then
+    if v_existing.session_id <> p_session_id or v_existing.requested_count <> p_count then
+      raise exception using errcode = '22023', message = 'live_battle_like_idempotency_conflict';
+    end if;
+    return query select v_existing.accepted_count, v_existing.awarded_points;
+    return;
+  end if;
+  v_target := case p_session_id when v_battle.challenger_session_id then v_battle.challenger_user_id
+    when v_battle.opponent_session_id then v_battle.opponent_user_id else null end;
+  if v_target is null or v_session.id is null or v_session.host_id is distinct from v_target then
+    raise exception using errcode = '42501', message = 'live_battle_like_session_invalid';
+  end if;
+  if v_actor <> v_session.host_id and not exists (select 1 from public.live_participants
+      where session_id = p_session_id and user_id = v_actor and status = 'active') then
+    raise exception using errcode = '42501', message = 'live_participant_required';
+  end if;
+  select * into strict v_rules from public.live_battle_rule_sets where id = v_battle.battle_rule_set_id;
+  select coalesce(sum(event.accepted_count), 0) into v_used from public.live_battle_like_score_events as event
+  where event.battle_id = p_battle_id and event.actor_user_id = v_actor;
+  v_now := pg_catalog.clock_timestamp();
+  if v_battle.status = 'active' and v_session.status = 'live' and v_session.ended_at is null
+     and v_now >= v_battle.scheduled_start_at and v_now < v_battle.scheduled_end_at
+     and v_rules.like_points > 0
+     and v_actor not in (v_battle.challenger_user_id, v_battle.opponent_user_id) then
+    v_accepted := least(p_count::bigint, greatest(0, v_rules.max_scoreable_likes_per_viewer - v_used))::integer;
+  end if;
+  -- Terminal zero response: no journal row, projection write or reconciliation.
+  if v_accepted = 0 then
+    return query select 0, 0::bigint;
+    return;
+  end if;
+  insert into public.live_battle_like_score_events (
+    battle_id, actor_user_id, target_user_id, session_id, requested_count, accepted_count,
+    like_points, awarded_points, rule_set_id, rule_version, idempotency_key, created_at
+  ) values (p_battle_id, v_actor, v_target, p_session_id, p_count, v_accepted,
+    v_rules.like_points, v_accepted::bigint * v_rules.like_points, v_rules.id, v_rules.rule_version, p_idempotency_key, v_now);
+  if v_accepted > 0 then
+    perform private.reconcile_live_battle_score_locked(p_battle_id, v_now);
+  end if;
+  return query select v_accepted, v_accepted::bigint * v_rules.like_points;
+end;
+$$;
+
 -- Confirmed gifts are final economic facts. Session/Battle termination never
 -- refunds them; future reversals require a separately authorized compensating
 -- ledger contract. This migration adds no reversal authority.
@@ -699,6 +775,7 @@ alter function private.reconcile_due_live_battle_series(integer) owner to postgr
 alter function public.create_live_battle_invite(uuid, uuid, uuid) owner to postgres;
 alter function public.send_live_gift(uuid, text, text) owner to postgres;
 alter function public.send_live_battle_gift(uuid, uuid, text, text) owner to postgres;
+alter function public.send_live_battle_likes(uuid, uuid, integer, text) owner to postgres;
 revoke all on function private.prevent_confirmed_live_gift_mutation(),
   private.live_battle_lock_users(uuid, uuid),
   private.validate_live_battle_winner_identity(),
@@ -707,11 +784,13 @@ revoke all on function private.prevent_confirmed_live_gift_mutation(),
   from public, anon, authenticated, service_role;
 revoke all on function public.create_live_battle_invite(uuid, uuid, uuid),
   public.send_live_gift(uuid, text, text),
-  public.send_live_battle_gift(uuid, uuid, text, text)
+  public.send_live_battle_gift(uuid, uuid, text, text),
+  public.send_live_battle_likes(uuid, uuid, integer, text)
   from public, anon, authenticated, service_role;
 grant execute on function public.create_live_battle_invite(uuid, uuid, uuid),
   public.send_live_gift(uuid, text, text),
-  public.send_live_battle_gift(uuid, uuid, text, text) to authenticated;
+  public.send_live_battle_gift(uuid, uuid, text, text),
+  public.send_live_battle_likes(uuid, uuid, integer, text) to authenticated;
 
 -- Release guard and repair run under locks so scope/finance cannot change
 -- between validation and the canonical repair. No hard-coded production IDs.
