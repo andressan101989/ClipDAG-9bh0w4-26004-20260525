@@ -6,24 +6,34 @@ import test from 'node:test';
 
 const adapterUrl = new URL('../scripts/nelyon-production-snapshot-adapter.mjs', import.meta.url);
 const installedPolicy = JSON.parse(readFileSync(new URL('../.github/nelyon-production-release-policy.json', import.meta.url), 'utf8'));
+const FINANCE_OFF_POLICY = Object.freeze({
+  platform_fee_bps: 0,
+  purchase_enabled: false,
+  refunds_enabled: false,
+  subscription_enabled: false,
+});
 // Most adapter fixtures exercise the historical F3 transition itself. Keep those
 // fixtures anchored to the exact predecessor baseline after production promotion.
 const policy = structuredClone(installedPolicy);
 policy.baseline.sha = policy.finance_authority_transition.baseline_sha;
 policy.baseline.migration_count = 351;
 policy.baseline.latest_migration = '20261024173500_creator_premium_f2_complete_monetization';
+policy.supabase.finance_policy = { ...FINANCE_OFF_POLICY };
 const c2TransitionPolicy = structuredClone(installedPolicy);
 c2TransitionPolicy.baseline.sha = installedPolicy.finance_authority_c2_transition.baseline_sha;
 c2TransitionPolicy.baseline.migration_count = 352;
 c2TransitionPolicy.baseline.latest_migration = '20261025011000_creator_premium_f3_bounded_financial_activation';
+c2TransitionPolicy.supabase.finance_policy = { ...FINANCE_OFF_POLICY };
 const f4TransitionPolicy = structuredClone(installedPolicy);
 f4TransitionPolicy.baseline.sha = installedPolicy.finance_authority_f4_transition.baseline_sha;
 f4TransitionPolicy.baseline.migration_count = 354;
 f4TransitionPolicy.baseline.latest_migration = '20261025231500_creator_premium_f3_final_wallet_integration';
+f4TransitionPolicy.supabase.finance_policy = { ...FINANCE_OFF_POLICY };
 const walletTransitionPolicy = structuredClone(installedPolicy);
 walletTransitionPolicy.baseline.sha = '05cdd2ecbeda6132fffb7edc0cf4e7ab2848625a';
 walletTransitionPolicy.baseline.migration_count = 353;
 walletTransitionPolicy.baseline.latest_migration = '20261025160452_creator_premium_f3_c2_isolated_canary_governance';
+walletTransitionPolicy.supabase.finance_policy = { ...FINANCE_OFF_POLICY };
 // Authority hashes bind the canonical Git LF bytes, independent of Windows checkout conversion.
 const gitSql = path => execFileSync('git', ['show', `HEAD:${path}`], {
   cwd: new URL('../', import.meta.url), encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,

@@ -2,29 +2,29 @@
   "baseline": {
     "authority_source": "owner-control-plane",
     "blocked_resources": [],
-    "evidence": "9380542a20c0de7a2782c0544a6ec4fb5134f871567b691a32ff1dbb9a304197",
+    "evidence": "69f65a8572cde59734e466af010495d70c8da0c28a7ba2131cf539b66ac91933",
     "evidence_digests": {
-      "migrations": "5b3c40f204058d87698ad10abccde756296775b7d5a9a9df2cf65c9776f02bef",
+      "migrations": "90ec14e3a81752b992fce92b6e2dd9da045ebe973f2c2360950cd3e92c85afa8",
       "managed_functions": "a2e693b4083f343c2459cdb3e11cad295c9b084ecb6f8deeb457c71c91f0dd83",
       "unmanaged_functions": "26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc",
       "function_source_parity": "0980feb5ada4e589bc1b8ac9e4d0d6dcd4813420e573c8de726d78eb0f2ff917",
       "config_verify_jwt": "703749fce46f724c7c4e791f7a222915b166af0ded38f00f34f983798355ba15",
       "cron_security": "caad94f091360c63c3e62a5439706a43b4b64e9502f60176ef5b22d45e22d497",
-      "finance": "0dfaec137cad5e9580a719845e34cd462c8e6b38577f5ca8882503610779d665"
+      "finance": "f94d54264c5d7658dc04aba34b028c815e99d7eb8ccf2490410817d47566754f"
     },
-    "latest_migration": "20261025231500_creator_premium_f3_final_wallet_integration",
-    "migration_count": 354,
+    "latest_migration": "20261026030000_creator_premium_f4_general_bdag_activation",
+    "migration_count": 355,
     "prior_release": {
       "kind": "post-release",
-      "release_id": "nelyon-f3-final-wallet-release-20261025T205015Z",
-      "manifest_sha256": "c36a654aba1e66238a7bc9e6fda1290d5b13e81e715f534d40a7be73a85c5698",
-      "postcheck_evidence_sha256": "9380542a20c0de7a2782c0544a6ec4fb5134f871567b691a32ff1dbb9a304197"
+      "release_id": "nelyon-f4-general-activation-release-20261026T041943Z",
+      "manifest_sha256": "96d731beeef25b2de5077f525e406727e249a073008653def91b923d4e2e6c17",
+      "postcheck_evidence_sha256": "69f65a8572cde59734e466af010495d70c8da0c28a7ba2131cf539b66ac91933"
     },
     "requires_separate_policy_commit": true,
-    "reviewed_policy_sha256": "8f1476459169808ee653f2c67c2a6937e1c2c76cf8a678e6a7c67046dd683c6b",
-    "sha": "7721b50dafa6a54a131dd44ddad83ece250fe9e3",
+    "reviewed_policy_sha256": "9d45a98cf42c1bd9a48ec754e8d2053c66540ee90d33f166f87f1f766ecaeced",
+    "sha": "02c238618b05cd01c7388cc592ba7ac426973ce5",
     "state": "verified",
-    "verified_at": "2026-10-25T20:51:54.890Z",
+    "verified_at": "2026-10-26T05:13:31.563Z",
     "verified_by": "andressan101989"
   },
   "baseline_authority": {
@@ -2677,10 +2677,10 @@
     },
     "expected_remote_function_count": 34,
     "finance_policy": {
-      "platform_fee_bps": 0,
-      "purchase_enabled": false,
-      "refunds_enabled": false,
-      "subscription_enabled": false
+      "platform_fee_bps": 2000,
+      "purchase_enabled": true,
+      "refunds_enabled": true,
+      "subscription_enabled": true
     },
     "forbidden_functions": [
       "bdag-economy"
