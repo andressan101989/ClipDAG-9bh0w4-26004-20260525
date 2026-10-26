@@ -113,6 +113,40 @@ export type CreatorPremiumSubscriptionsProjection = Readonly<{
   next_cursor: Readonly<{ created_at: string; id: string }> | null;
 }>;
 
+export type CreatorPremiumAutoRenewalProjection = Readonly<{
+  enabled: boolean;
+  mandate_state: 'ENABLED' | 'PAUSED' | 'REVOKED' | null;
+  consented_at: string | null;
+  revoked_at: string | null;
+  next_charge_at: string | null;
+  authorized_price_bdag: ExactBdagDecimal | null;
+  authorized_plan_version: number | null;
+  retry_count: number;
+  last_result:
+    | 'revoked'
+    | 'renewed'
+    | 'adopted'
+    | 'cancelled'
+    | 'refunded'
+    | 'insufficient_balance'
+    | 'retryable_failure'
+    | 'plan_changed'
+    | 'safety_blocked'
+    | 'finance_unavailable'
+    | 'account_unavailable'
+    | 'binding_invalid'
+    | null;
+  last_attempt_at: string | null;
+}>;
+
+export type CreatorPremiumSubscriptionsProjectionV2 = Readonly<{
+  policy: CreatorPremiumFinancePolicyProjection;
+  items: readonly (CreatorPremiumSubscriptionsProjection['items'][number] & Readonly<{
+    auto_renewal: CreatorPremiumAutoRenewalProjection;
+  }>)[];
+  next_cursor: Readonly<{ created_at: string; id: string }> | null;
+}>;
+
 export type CreatorPremiumFinancialHistoryProjection = Readonly<{
   policy: CreatorPremiumFinancePolicyProjection;
   settlement_model: 'immediate_direct_credit';
@@ -226,6 +260,21 @@ export type CreatorPremiumCancellationReceipt = Readonly<{
   money_moved: false;
   replayed: boolean;
   already_cancelled: boolean;
+}> | Readonly<{
+  subscription_id: string;
+  status: 'expired';
+  paid_through_at: string;
+  money_moved: false;
+  replayed: boolean;
+  already_cancelled: false;
+  cancellation_effect: 'future_renewal_revoked_after_race';
+}>;
+
+export type CreatorPremiumAutoRenewalReceipt = Readonly<{
+  subscription_id: string;
+  auto_renewal: CreatorPremiumAutoRenewalProjection;
+  money_moved: false;
+  replayed: boolean;
 }>;
 
 export function parseCreatorPremiumPurchaseReceipt(
@@ -242,6 +291,12 @@ export function parseCreatorPremiumCancellationReceipt(
   value: unknown,
   expectedSubscriptionId: string,
 ): CreatorPremiumCancellationReceipt;
+
+export function parseCreatorPremiumAutoRenewalReceipt(
+  value: unknown,
+  expectedSubscriptionId: string,
+  expectedEnabled: boolean,
+): CreatorPremiumAutoRenewalReceipt;
 
 export function parseCreatorPremiumFinancePolicy(
   value: unknown,
@@ -271,4 +326,4 @@ export function parseCreatorPremiumCommerceV2(
 
 export function parseCreatorPremiumSubscriptionsPageV2(
   value: unknown,
-): CreatorPremiumSubscriptionsProjection;
+): CreatorPremiumSubscriptionsProjectionV2;

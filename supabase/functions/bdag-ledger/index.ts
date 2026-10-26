@@ -14,6 +14,7 @@
  *   creator_premium_purchase             → purchase_creator_premium_content_v1()
  *   creator_premium_subscribe            → subscribe_creator_premium_plan_v1()
  *   creator_premium_cancel_subscription  → cancel_creator_premium_subscription_v1()
+ *   creator_premium_set_auto_renewal     → set_creator_premium_auto_renewal_v1()
  *   gift      → atomic_ledger_transfer() (gift type)
  *   boost     → purchase_boost()
  *   balance   → get_user_bdag_balance()
@@ -36,6 +37,8 @@ const VELOCITY: Record<string, { maxOps: number; maxAmount: number; windowHours:
   marketplace_order_confirm_delivery: { maxOps: 20, maxAmount: 0, windowHours: 1 },
 };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const EXACT_POSITIVE_BDAG_RE = /^(?:0\.(?!0{8}$)\d{8}|[1-9]\d{0,29}\.\d{8})$/;
+const POSTGRES_INTEGER_MAX = 2_147_483_647;
 const CREATOR_PREMIUM_FINANCE_CLIENT_CONTRACT = 'creator-premium-f3-v2';
 const PREMIUM_CLIENT_AUTHORITY_FIELDS = new Set([
   'amount', 'price', 'gross', 'gross_amount', 'fee', 'platform_fee',
@@ -66,6 +69,36 @@ function validatePremiumCommand(
       || (targetField === 'content_id'
         && (typeof body.offer_version_id !== 'string' || !UUID_RE.test(body.offer_version_id)))) {
     return 'creator_premium_invalid_uuid';
+  }
+  return null;
+}
+
+function validatePremiumAutoRenewalCommand(body: Record<string, unknown>): string | null {
+  if (Object.keys(body).some(key => PREMIUM_CLIENT_AUTHORITY_FIELDS.has(key))) {
+    return 'creator_premium_client_financial_authority_forbidden';
+  }
+  const allowed = new Set([
+    'action',
+    'idempotency_key',
+    'subscription_id',
+    'enabled',
+    'expected_price_bdag',
+    'expected_plan_version',
+  ]);
+  if (Object.keys(body).some(key => !allowed.has(key))) {
+    return 'creator_premium_request_fields_invalid';
+  }
+  if (typeof body.idempotency_key !== 'string' || !UUID_RE.test(body.idempotency_key)
+      || typeof body.subscription_id !== 'string' || !UUID_RE.test(body.subscription_id)) {
+    return 'creator_premium_invalid_uuid';
+  }
+  if (typeof body.enabled !== 'boolean'
+      || typeof body.expected_price_bdag !== 'string'
+      || !EXACT_POSITIVE_BDAG_RE.test(body.expected_price_bdag)
+      || !Number.isSafeInteger(body.expected_plan_version)
+      || Number(body.expected_plan_version) < 1
+      || Number(body.expected_plan_version) > POSTGRES_INTEGER_MAX) {
+    return 'creator_premium_auto_renewal_invalid_input';
   }
   return null;
 }
@@ -203,6 +236,28 @@ Deno.serve(async (req) => {
       if (error) {
         const code = premiumRpcError(error.message);
         log('ERROR', 'creator_premium_cancel_subscription', { user_id: user.id, code });
+        return fail(code, premiumRpcStatus(code));
+      }
+      return ok(data);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // CREATOR PREMIUM — explicit automatic-renewal consent; never moves money
+    // ════════════════════════════════════════════════════════════════════
+    if (action === 'creator_premium_set_auto_renewal') {
+      const invalid = validatePremiumAutoRenewalCommand(body);
+      if (invalid) return fail(invalid, 400);
+      const { data, error } = await admin.rpc('set_creator_premium_auto_renewal_v1', {
+        p_subscriber_id: user.id,
+        p_subscription_id: body.subscription_id,
+        p_enabled: body.enabled,
+        p_expected_price_bdag: body.expected_price_bdag,
+        p_expected_plan_version: body.expected_plan_version,
+        p_idempotency_key: body.idempotency_key,
+      });
+      if (error) {
+        const code = premiumRpcError(error.message);
+        log('ERROR', 'creator_premium_set_auto_renewal', { user_id: user.id, code });
         return fail(code, premiumRpcStatus(code));
       }
       return ok(data);
