@@ -129,6 +129,20 @@ function asF4TransitionPolicy(policy) {
   return transitionPolicy;
 }
 
+function asF5TransitionPolicy(policy) {
+  const transitionPolicy = structuredClone(policy);
+  transitionPolicy.baseline.sha = policy.finance_authority_f5_transition.baseline_sha;
+  transitionPolicy.baseline.migration_count = 355;
+  transitionPolicy.baseline.latest_migration = '20261026030000_creator_premium_f4_general_bdag_activation';
+  transitionPolicy.supabase.finance_policy = {
+    platform_fee_bps: 2000,
+    purchase_enabled: true,
+    refunds_enabled: true,
+    subscription_enabled: true,
+  };
+  return transitionPolicy;
+}
+
 const F4_GENERAL_MIGRATION = '20261026030000_creator_premium_f4_general_bdag_activation';
 const F5_AUTONOMOUS_MIGRATION = '20261026072512_creator_premium_f5_autonomous_subscriptions';
 
@@ -207,7 +221,7 @@ test('F5 autonomous transition attests one exact migration, bdag-ledger, strict 
   )));
   assert.ok(policy.finance_authority.f5_autonomous.function_additions.some(row => (
     row.identity === 'private.process_creator_premium_auto_renewals_f5_v1(integer)'
-      && row.sha256 === 'e59968ee82dff45f46da3f35177eb05029bfe72c6e8d2466dee06cfb3b64190b'
+      && row.sha256 === 'c5e448e421ba77d64cd4bf8c69f424f9a6682c8f5d039918ab0fa419daf81f9e'
   )));
   const f5Projection = policy.finance_security_advisor.f5_rpc_additions[0];
   assert.equal(f5Projection.object.name, 'get_my_creator_premium_subscriptions_v3');
@@ -823,7 +837,12 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
   const adapter = await import(`${adapterUrl.href}?recovery=${Date.now()}-${Math.random()}`);
   const requestedSource = policy.postcheck_recovery.approved_sources[sourceIndex];
   const isF4Recovery = requestedSource.run_id === '40268500711';
-  const controlledPolicy = isF4Recovery ? asF4TransitionPolicy(policy) : asF3TransitionPolicy(policy);
+  const isF5Recovery = requestedSource.run_id === '40324910390';
+  const controlledPolicy = isF5Recovery
+    ? asF5TransitionPolicy(policy)
+    : isF4Recovery
+      ? asF4TransitionPolicy(policy)
+      : asF3TransitionPolicy(policy);
   const recoveryRequest = request({
     mode: 'postcheck_recovery',
     scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
@@ -854,19 +873,26 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     })),
     { version: latestMigration.slice(0, 14), name: latestMigration.slice(15) },
   ];
-  if (isF4Recovery) {
-    migrationRows[migrationRows.length - 4] = {
+  if (isF4Recovery || isF5Recovery) {
+    const phaseOffset = isF5Recovery ? 5 : 4;
+    migrationRows[migrationRows.length - phaseOffset] = {
       version: '20261025011000',
       name: 'creator_premium_f3_bounded_financial_activation',
     };
-    migrationRows[migrationRows.length - 3] = {
+    migrationRows[migrationRows.length - phaseOffset + 1] = {
       version: '20261025160452',
       name: 'creator_premium_f3_c2_isolated_canary_governance',
     };
-    migrationRows[migrationRows.length - 2] = {
+    migrationRows[migrationRows.length - phaseOffset + 2] = {
       version: '20261025231500',
       name: 'creator_premium_f3_final_wallet_integration',
     };
+    if (isF5Recovery) {
+      migrationRows[migrationRows.length - 2] = {
+        version: '20261026030000',
+        name: 'creator_premium_f4_general_bdag_activation',
+      };
+    }
   }
   const sourceFunctionNames = new Set(source.edge_functions.map(item => item.name));
   const stableManagedFunctions = controlledPolicy.supabase.managed_functions
@@ -895,10 +921,15 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       ezbr_sha256: String(index + 1).padStart(64, '0'),
     })),
   ];
-  if (['40166468648', '40268500711'].includes(source.run_id)) {
-    const baselineFunction = source.run_id === '40166468648'
+  if (['40166468648', '40268500711', '40324910390'].includes(source.run_id)) {
+    const baselineRunId = source.run_id === '40166468648'
+      ? '40139736749'
+      : source.run_id === '40324910390'
+        ? '40166468648'
+        : null;
+    const baselineFunction = baselineRunId
       ? controlledPolicy.postcheck_recovery.approved_sources
-        .find(item => item.run_id === '40139736749')
+        .find(item => item.run_id === baselineRunId)
         .edge_functions.find(item => item.name === 'bdag-ledger')
       : null;
     const baselineFunctionRows = baselineFunction
@@ -952,7 +983,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     orphan_ledger_entries: 0,
     premium_finance_policy_row_count_mismatch: 0,
   };
-  const financeTransactions = Array.from({ length: 928 }, (_, index) => ({
+  const financeTransactions = Array.from({ length: isF5Recovery ? 929 : 928 }, (_, index) => ({
     id: `transaction-${String(index).padStart(4, '0')}`,
     status: 'pending',
     currency: 'BDAG',
@@ -966,17 +997,18 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     database_time: '2026-10-17T22:00:00.000000Z',
     schema_sha256: '1'.repeat(64),
     watermark: { created_at: financeTransactions.at(-1).created_at, id: financeTransactions.at(-1).id },
-    policy: isF4Recovery
+    policy: (isF4Recovery || isF5Recovery)
       ? { purchase_enabled: true, subscription_enabled: true, refunds_enabled: true,
         platform_fee_bps: 2000, policy_version: 'creator-premium-f4-general-v1' }
       : { purchase_enabled: false, subscription_enabled: false, refunds_enabled: false,
         platform_fee_bps: 0, policy_version: 'creator-premium-b4-v1' },
-    transactions: { complete: true, count: 928, items: financeTransactions },
-    ledger_entries: { complete: true, count: 1918, items: Array.from({ length: 1918 }, (_, index) => ({ id: `entry-${index}` })) },
+    transactions: { complete: true, count: financeTransactions.length, items: financeTransactions },
+    ledger_entries: { complete: true, count: isF5Recovery ? 1921 : 1918,
+      items: Array.from({ length: isF5Recovery ? 1921 : 1918 }, (_, index) => ({ id: `entry-${index}` })) },
     ledger_accounts: {
       complete: true,
-      count: 131,
-      items: Array.from({ length: 131 }, (_, index) => ({
+      count: isF5Recovery ? 132 : 131,
+      items: Array.from({ length: isF5Recovery ? 132 : 131 }, (_, index) => ({
         id: `11111111-1111-4111-8111-${String(index + 1).padStart(12, '0')}`,
         owner_id_sha256: '2'.repeat(64),
         account_type: 'user',
@@ -984,10 +1016,10 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
         created_at: '2026-10-01T12:00:00.000000Z',
       })),
     },
-    premium_transaction_count: 0,
+    premium_transaction_count: isF5Recovery ? 1 : 0,
     premium_bindings: {
       purchase_receipts: { count: 0, sha256: '3'.repeat(64) },
-      subscription_periods: { count: 0, sha256: '4'.repeat(64) },
+      subscription_periods: { count: isF5Recovery ? 1 : 0, sha256: '4'.repeat(64) },
     },
     reconciliation: zeroReconciliations,
   };
@@ -996,15 +1028,21 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     'creator_premium_plan_contents', 'creator_premium_plans', 'creator_premium_purchase_receipts',
     'creator_premium_subscription_periods', 'creator_premium_subscriptions',
   ];
-  if (['39157300357', '39195966131', '40139736749', '40166468648', '40268500711'].includes(source.run_id)) {
+  if (['39157300357', '39195966131', '40139736749', '40166468648', '40268500711', '40324910390'].includes(source.run_id)) {
     relationNames.unshift('creator_premium_content_safety_context_evaluations');
   }
-  if (['40166468648', '40268500711'].includes(source.run_id)) {
+  if (['40166468648', '40268500711', '40324910390'].includes(source.run_id)) {
     relationNames.push('creator_premium_finance_authorizations');
   }
-  if (isF4Recovery) relationNames.push('creator_premium_finance_owner_attestations_f3_c2');
-  const captureMigrationRows = isF4Recovery
-    ? migrationRows.slice(0, -4)
+  if (isF4Recovery || isF5Recovery) relationNames.push('creator_premium_finance_owner_attestations_f3_c2');
+  if (isF5Recovery) relationNames.push(
+    'creator_premium_auto_renewal_attempts',
+    'creator_premium_auto_renewal_mandates',
+  );
+  const captureMigrationRows = isF5Recovery
+    ? migrationRows.slice(0, -5)
+    : isF4Recovery
+      ? migrationRows.slice(0, -4)
     : source.run_id === '40166468648'
       ? migrationRows.slice(0, -1)
       : migrationRows;
@@ -1029,7 +1067,23 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     if (pathname.endsWith('/database/query/read-only')) {
       const body = JSON.parse(options.body);
       if (body.query.includes('nelyon-finance-snapshot-v1')) return json([{ snapshot: finance }], 201);
-      if (body.query.includes('nelyon-cron-snapshot-v1')) return json([{ snapshot: { schema_version: 1, complete: true, query_id: 'nelyon-cron-snapshot-v1', count: 0, items: [] } }], 201);
+      if (body.query.includes('nelyon-cron-snapshot-v1')) {
+        const cronItems = isF5Recovery ? [{
+          active: true,
+          command_sha256: gate.sha256Hex(controlledPolicy.finance_authority_f5_transition.cron_job.command),
+          database: 'postgres',
+          jobid: '1',
+          jobname: 'creator-premium-auto-renewals-f5',
+          legacy_normalized_command_sha256:
+            controlledPolicy.finance_authority_f5_transition.cron_job.normalized_command_sha256,
+          nodename: 'localhost',
+          nodeport: 5432,
+          schedule: '*/5 * * * *',
+          username: 'postgres',
+        }] : [];
+        return json([{ snapshot: { schema_version: 1, complete: true,
+          query_id: 'nelyon-cron-snapshot-v1', count: cronItems.length, items: cronItems } }], 201);
+      }
       if (body.query.includes('pg_get_function_identity_arguments')) {
         return json(captureRecoveryExceptions
           .filter(exception => Array.isArray(exception.object.argument_types))
@@ -1077,7 +1131,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     observedAt: '2026-10-17T22:00:01.000Z',
     adapterSourceSha256,
   });
-  if (['40166468648', '40268500711'].includes(source.run_id)) {
+  if (['40166468648', '40268500711', '40324910390'].includes(source.run_id)) {
     currentEvidence.migrations = {
       complete: true,
       count: migrationRows.length,
@@ -1086,12 +1140,13 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       sha256: gate.sha256Hex(gate.canonicalJson(migrationRows)),
     };
     const financeQueries = adapter.selectFinanceSnapshotQueries(currentEvidence.migrations);
-    const authorityPhase = isF4Recovery ? 'f4_general' : 'f3_foundation';
+    const authorityPhase = isF5Recovery ? 'f5_autonomous' : isF4Recovery ? 'f4_general' : 'f3_foundation';
     const expectedAuthority = controlledPolicy.finance_authority[authorityPhase];
     const effectiveFunctions = new Map(controlledPolicy.finance_authority.f3_foundation.functions
       .map(item => [item.identity, item]));
-    if (isF4Recovery) {
-      for (const phase of ['f3_c2', 'f4_general']) {
+    if (isF4Recovery || isF5Recovery) {
+      const phases = isF5Recovery ? ['f3_c2', 'f4_general', 'f5_autonomous'] : ['f3_c2', 'f4_general'];
+      for (const phase of phases) {
         for (const item of controlledPolicy.finance_authority[phase].function_overrides) {
           effectiveFunctions.set(item.identity, item);
         }
@@ -1106,7 +1161,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       phase: authorityPhase,
       relations: [...expectedAuthority.relations]
         .sort((left, right) => left.identity.localeCompare(right.identity)),
-      functions: isF4Recovery
+      functions: (isF4Recovery || isF5Recovery)
         ? [...effectiveFunctions.values()].sort((left, right) => left.identity.localeCompare(right.identity))
         : expectedAuthority.functions,
       legacy_relations: ['public.financial_transactions', 'public.ledger_accounts', 'public.ledger_entries']
@@ -1124,7 +1179,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       schema_version: 1,
       complete: true,
       phase: authorityPhase,
-      policy: isF4Recovery ? {
+      policy: (isF4Recovery || isF5Recovery) ? {
         activation_mode: 'general',
         active_authorization_id: 'f4000000-0000-4000-8000-000000000001',
         purchase_enabled: true,
@@ -1136,13 +1191,13 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
         purchase_enabled: false, subscription_enabled: false,
         refunds_enabled: false, platform_fee_bps: 0,
       },
-      ...(isF4Recovery ? { attestations: [{
+      ...((isF4Recovery || isF5Recovery) ? { attestations: [{
         id: gate.sha256Hex('f4-general-attestation'),
         configuration_digest: configurationDigest,
         approval_digest: approvalDigest,
         fact_sha256: gate.sha256Hex('f4-general-attestation-fact'),
       }] } : {}),
-      authorizations: isF4Recovery ? [{
+      authorizations: (isF4Recovery || isF5Recovery) ? [{
         id: gate.sha256Hex('f4000000-0000-4000-8000-000000000001'),
         authorization_scope: 'GENERAL',
         client_contract: 'creator-premium-f3-v2',
@@ -1167,13 +1222,23 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
         refund_expires_at: null,
         fact_sha256: gate.sha256Hex('f4-general-authorization-fact'),
       }] : [],
+      ...(isF5Recovery ? { mandates: [], attempts: [] } : {}),
       receipts: [],
-      periods: [],
-      subscriptions: [],
-      transactions: [],
-      acquisition_exposure_bdag: '0.00000000',
+      periods: isF5Recovery ? [{
+        id: gate.sha256Hex('historical-period'),
+        fact_sha256: gate.sha256Hex('historical-period-fact'),
+      }] : [],
+      subscriptions: isF5Recovery ? [{
+        id: gate.sha256Hex('historical-subscription'),
+        fact_sha256: gate.sha256Hex('historical-subscription-fact'),
+      }] : [],
+      transactions: isF5Recovery ? [{
+        id: gate.sha256Hex('historical-premium-transaction'),
+        fact_sha256: gate.sha256Hex('historical-premium-transaction-fact'),
+      }] : [],
+      acquisition_exposure_bdag: isF5Recovery ? '100.00000000' : '0.00000000',
       release_movement_bdag: '0.00000000',
-      reconciliation: isF4Recovery ? {
+      reconciliation: (isF4Recovery || isF5Recovery) ? {
         purchase_binding_mismatches: 0,
         period_binding_mismatches: 0,
         orphan_premium_transactions: 0,
@@ -1230,9 +1295,12 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     items: advisorItems,
     sha256: gate.sha256Hex(gate.canonicalJson(advisorItems)),
   };
+  const reviewedCronItems = isF5Recovery
+    ? currentEvidence.cron_security.cron.items.filter(item => item.jobname !== 'creator-premium-auto-renewals-f5')
+    : currentEvidence.cron_security.cron.items;
   controlledPolicy.security_advisor.baseline.cron_security_sha256 = gate.sha256Hex(gate.canonicalJson({
     complete: true,
-    cron: currentEvidence.cron_security.cron.items,
+    cron: reviewedCronItems,
     security_findings: baselineAdvisorItems,
   }));
   const { evidence_sha256: ignored, ...unsignedEvidence } = currentEvidence;
@@ -1638,7 +1706,7 @@ test('phase-bound migration omission is bound to the exact reviewed blob and sou
 
 test('recovery source is exact immutable failed-postcheck authority', async () => {
   const { gate, policy } = await loadGateAndPolicy();
-  assert.equal(policy.postcheck_recovery.approved_sources.length, 6);
+  assert.equal(policy.postcheck_recovery.approved_sources.length, 7);
   for (const source of policy.postcheck_recovery.approved_sources) {
     assert.equal(gate.validateRecoverySource(source), true);
     assert.ok(source.expected_migrations.length >= 1);
@@ -1702,6 +1770,13 @@ test('recovery source is exact immutable failed-postcheck authority', async () =
   assert.equal(f4Source.expected_latest_migration, F4_GENERAL_MIGRATION);
   assert.deepEqual(f4Source.edge_functions, []);
   assert.deepEqual(f4Source.productive_resources, [`migration:${F4_GENERAL_MIGRATION}`]);
+  const f5Source = policy.postcheck_recovery.approved_sources.find(item => item.run_id === '40324910390');
+  assert.ok(f5Source);
+  assert.equal(f5Source.release_id, 'nelyon-f5-autonomous-releasefix-20261026T124453Z');
+  assert.equal(f5Source.source_sha, 'ec9e08227801c3ce59f7c01f8db3ed846831160e');
+  assert.equal(f5Source.expected_migration_count, 356);
+  assert.equal(f5Source.expected_latest_migration, F5_AUTONOMOUS_MIGRATION);
+  assert.deepEqual(f5Source.edge_functions.map(item => [item.name, item.version]), [['bdag-ledger', 47]]);
   for (const mutate of [
     candidate => { candidate.run_id = '39066492486'; },
     candidate => { candidate.postcheck_status = 'success'; },
@@ -2993,6 +3068,75 @@ test('postcheck recovery verifies the exact F4 general state after a snapshot-on
   assert.throws(() => verify(policyDrift), /FINANCE_POLICY_CHANGED|INVALID_FINANCE_SNAPSHOT/);
 });
 
+test('postcheck recovery verifies exact F5 authority, Edge, cron and zero release-attributed movement', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = await recoveryStateFixture(t, gate, policy, 6);
+  const verify = candidate => gate.verifyPostcheckRecovery({
+    policy: candidate.controlledPolicy,
+    recoveryRequest: candidate.recoveryRequest,
+    recoveryManifest: candidate.recoveryManifest,
+    sourceManifest: candidate.sourceManifest,
+    sourceObservation: candidate.sourceObservation,
+    currentEvidence: candidate.currentEvidence,
+    adapterSourceSha256: candidate.adapterSourceSha256,
+  });
+  const resign = candidate => {
+    const { evidence_sha256: ignored, ...unsigned } = candidate.currentEvidence;
+    candidate.currentEvidence.evidence_sha256 = gate.sha256Hex(gate.canonicalJson(unsigned));
+  };
+  const result = verify(fixture);
+  assert.equal(result.result, 'POSTCHECK_RECOVERY_SUCCESS');
+  assert.equal(result.source_run_id, '40324910390');
+  assert.equal(result.migrations.count, 356);
+  assert.equal(`${result.migrations.latest.version}_${result.migrations.latest.name}`,
+    F5_AUTONOMOUS_MIGRATION);
+  assert.deepEqual(result.functions.items.map(item => [item.name, item.version, item.source_sha256]), [[
+    'bdag-ledger',
+    47,
+    '0255ad56d7b56792dea46c333cb207dc0680bcdf25a1784d2925b7f85bf0bd8e',
+  ]]);
+  assert.deepEqual(result.finance.policy, {
+    purchase_enabled: true,
+    subscription_enabled: true,
+    refunds_enabled: true,
+    platform_fee_bps: 2000,
+  });
+  assert.equal(result.finance.premium_transaction_count, 1);
+  assert.equal(fixture.currentEvidence.finance_facts.phase, 'f5_autonomous');
+  assert.deepEqual(fixture.currentEvidence.finance_facts.mandates, []);
+  assert.deepEqual(fixture.currentEvidence.finance_facts.attempts, []);
+  assert.equal(fixture.currentEvidence.finance_facts.release_movement_bdag, '0.00000000');
+  assert.deepEqual(fixture.currentEvidence.cron_security.cron.items.map(item => ({
+    jobname: item.jobname,
+    schedule: item.schedule,
+    command_sha256: item.command_sha256,
+  })), [{
+    jobname: 'creator-premium-auto-renewals-f5',
+    schedule: '*/5 * * * *',
+    command_sha256: gate.sha256Hex('select private.process_creator_premium_auto_renewals_f5_v1(25);'),
+  }]);
+
+  for (const mutate of [
+    candidate => { candidate.currentEvidence.cron_security.cron.items = []; candidate.currentEvidence.cron_security.cron.count = 0; },
+    candidate => { candidate.currentEvidence.cron_security.cron.items[0].schedule = '*/10 * * * *'; },
+    candidate => { candidate.currentEvidence.cron_security.cron.items.push(structuredClone(
+      candidate.currentEvidence.cron_security.cron.items[0])); candidate.currentEvidence.cron_security.cron.items[1].jobid = '2';
+    candidate.currentEvidence.cron_security.cron.count = 2; },
+  ]) {
+    const drift = structuredClone(fixture);
+    mutate(drift);
+    resign(drift);
+    assertDenied(() => verify(drift), 'RECOVERY_POSTCHECK_FAILED');
+  }
+
+  const attributed = structuredClone(fixture);
+  attributed.currentEvidence.finance.transactions.items.at(-1).metadata = {
+    release_id: attributed.controlledPolicy.postcheck_recovery.approved_sources[6].release_id,
+  };
+  resign(attributed);
+  assertDenied(() => verify(attributed), 'RELEASE_ATTRIBUTED_FINANCE');
+});
+
 test('F3 recovery keeps the remote EZBR attestation distinct from the Git source contract', async t => {
   const { gate, policy } = await loadGateAndPolicy();
   const source = policy.postcheck_recovery.approved_sources.find(item => item.run_id === '40166468648');
@@ -4000,7 +4144,7 @@ test('F4 activation postcheck permits only the exact OFF to general policy chang
 });
 
 test('unchanged counters are not required when legitimate concurrent transactions reconcile', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const { gate } = await loadGateAndPolicy();
   const existingBefore = financeTransaction('txn-old', { status: 'pending', created_at: '2026-10-09T11:00:00.000Z' });
   const existingAfter = { ...existingBefore, status: 'completed', blockchain_txid_sha256: 'a'.repeat(64) };
   const createdDuring = financeTransaction('txn-new');
@@ -4029,7 +4173,7 @@ test('unchanged counters are not required when legitimate concurrent transaction
 });
 
 test('postcheck authority derives finance window from raw rows instead of trusting PASS', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const { gate } = await loadGateAndPolicy();
   const existingBefore = financeTransaction('txn-old', { status: 'pending', created_at: '2026-10-09T11:00:00.000Z' });
   const existingAfter = { ...existingBefore, status: 'completed', blockchain_txid_sha256: 'a'.repeat(64) };
   const entries = ledgerPair(existingAfter);
@@ -4056,7 +4200,7 @@ test('postcheck authority derives finance window from raw rows instead of trusti
 });
 
 test('finance postcheck requires the exact reconciliation inventory and monotonic database time', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const { gate } = await loadGateAndPolicy();
   const before = financeSnapshot({ databaseTime: '2026-10-09T12:00:05.000Z' });
   const after = financeSnapshot({ databaseTime: '2026-10-09T12:00:04.000Z' });
   const windowRows = { complete: true, transactions: [], ledger_entries: [] };
@@ -4131,7 +4275,7 @@ test('release-attributed financial transaction or ledger metadata denies', async
 });
 
 test('changed historical immutable rows frozen policy or platform fee denies', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const { gate } = await loadGateAndPolicy();
   const terminal = financeTransaction('txn-old', { created_at: '2026-10-09T11:00:00.000Z' });
   const before = financeSnapshot({ transactions: [terminal] });
   const changed = { ...terminal, amount: '99.00000000' };
@@ -4167,7 +4311,7 @@ test('transaction confirmation permits only null-to-hash and rejects hash replac
 });
 
 test('failed canonical reconciliation denies even when changes appear legitimate', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const { gate } = await loadGateAndPolicy();
   const transaction = financeTransaction('txn-new');
   const entries = ledgerPair(transaction);
   const before = financeSnapshot();
@@ -4183,7 +4327,7 @@ test('failed canonical reconciliation denies even when changes appear legitimate
 });
 
 test('snapshot count growth is reported separately from integrity verdict', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const { gate } = await loadGateAndPolicy();
   const transaction = financeTransaction('txn-new');
   const entries = ledgerPair(transaction);
   const before = financeSnapshot();

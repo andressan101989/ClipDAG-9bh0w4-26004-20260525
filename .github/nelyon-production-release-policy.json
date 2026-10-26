@@ -805,11 +805,11 @@
       "relations": [
         {
           "identity": "private.creator_premium_auto_renewal_attempts",
-          "sha256": "5d7df2557a0ad227ec1e5a3cb6dea06f82a7dff51ce40107f45eee6c2e4bd0f1"
+          "sha256": "2645410d83da67f398b794e45636ae2519b14bc12e948c09b918aeaefce54220"
         },
         {
           "identity": "private.creator_premium_auto_renewal_mandates",
-          "sha256": "0887f9b7045dee3b0380d1be8228be7b1e72dc70d4e6e0338300bb06a8c0724e"
+          "sha256": "770b9cd51ac1dd9738d9af83caa4b4cd05147d7e9d68ed637baf9cf04b5a81c0"
         },
         {
           "identity": "private.creator_premium_finance_authorizations",
@@ -829,7 +829,7 @@
         },
         {
           "identity": "private.creator_premium_subscription_periods",
-          "sha256": "8d4de014f24b9425fd0e79f6d58cd1b01cb78a267465ff407992b8841be99446"
+          "sha256": "24fdecd1e7b233d881c1e54906ea921073b1b4b9a4771d1c701f74839426041a"
         },
         {
           "identity": "private.creator_premium_subscriptions",
@@ -843,45 +843,45 @@
         },
         {
           "identity": "public.refund_creator_premium_subscription_period_v1(uuid, uuid, text)",
-          "sha256": "c780b51fa9f1f2e5bb05733a43a4b2259a639bf6d6581a17cfd0e1211ff443d1"
+          "sha256": "2efa8512ab91b1755eccd78d994ee32875b4a4aa94cc9cc325c38ecb94567a32"
         },
         {
           "identity": "public.subscribe_creator_premium_plan_v1(uuid, uuid, uuid, text)",
-          "sha256": "23fff2f69d1620c546195930aa9d4866b11d300ce0a63a2433aece50208a71f6"
+          "sha256": "e542a1f8b5545aeefe7517e89193cf1a8de482c60ba9a807706018402e45e327"
         }
       ],
       "function_additions": [
         {
           "identity": "private.cancel_creator_premium_subscription_f4_v1(uuid, uuid, uuid)",
-          "sha256": "c19d8e51d9eb22ee28a2891b03c8dbf475ee835e77d4e50c9eec33514eea7d96"
+          "sha256": "99b071ccec9ed575c5b79e5cc085042160cd1e3da834f61ba1360e93e8bd73c5"
         },
         {
           "identity": "private.creator_premium_auto_renewal_append_only_f5_v1()",
-          "sha256": "208533989061c0d59ad346dddf7594747b423bca443af030d985ade7a1fee681"
+          "sha256": "7bd02be90f0b37c9b8b1b329df4479af6f762796abe883096d8d1f13aa4327bc"
         },
         {
           "identity": "private.creator_premium_auto_renewal_command_id_f5_v1(uuid, integer, timestamp with time zone)",
-          "sha256": "58df660182f5e5f85c1aa362df3f099d7dd85f5a4a2c1b21f279b72780996fb4"
+          "sha256": "a36bc88d7346cb15bac25e342a8db2525fb664da1c4fe565186f14ef2377617f"
         },
         {
           "identity": "private.creator_premium_auto_renewal_projection_f5_v1(uuid)",
-          "sha256": "d27dc421b45fa8a50f4933f2ce83bbd332e4110205337ea9e991354d9620b2af"
+          "sha256": "0e6b5c80c0a3a8c449c4e121d33dd4a706ab90d25211d34adba739691f7ed8f1"
         },
         {
           "identity": "private.process_creator_premium_auto_renewals_f5_v1(integer)",
-          "sha256": "e59968ee82dff45f46da3f35177eb05029bfe72c6e8d2466dee06cfb3b64190b"
+          "sha256": "c5e448e421ba77d64cd4bf8c69f424f9a6682c8f5d039918ab0fa419daf81f9e"
         },
         {
           "identity": "private.record_creator_premium_auto_renewal_f5_v1(uuid, text, uuid)",
-          "sha256": "8fe26a114be0f76862256d6036c3698b2d6e1263311e3db3b9a6aec686f1d1d2"
+          "sha256": "e3b25b5651e5c4034dbe1c5ec21ee49870d614791201f306de14d639a3b89069"
         },
         {
           "identity": "private.refund_creator_premium_subscription_period_f4_v1(uuid, uuid, text)",
-          "sha256": "36de8d0d1cf46336eb149cb1e3ddc3997255ee36d8d5d41a02b70179a5831117"
+          "sha256": "236a1a932f81235921d3a041184d27994ef3c9248e2b6bb31c6a62540a714e9d"
         },
         {
           "identity": "private.subscribe_creator_premium_plan_f4_v1(uuid, uuid, uuid, text)",
-          "sha256": "6d37ecc1bfe2e6fbb7280db4ec02e9931922fc3dd9776ef7216720f9af6e8448"
+          "sha256": "70c226ca334ae4fbe6f68f8b5fb87d4610b98df3524899525aa640d02cf0058e"
         },
         {
           "identity": "public.get_my_creator_premium_subscriptions_v3(timestamp with time zone, uuid, integer)",
@@ -889,7 +889,7 @@
         },
         {
           "identity": "public.set_creator_premium_auto_renewal_v1(uuid, uuid, boolean, numeric, integer, text)",
-          "sha256": "f5f77e958cf933cb95d55efdebebc7710968fba79fee08a47c3b2479f471599e"
+          "sha256": "0fb3ea5a5b4099a1be1f1b8aa87d6e56bc4ffc30ea8552321e912bc98e6d3f60"
         }
       ],
       "schema_sha256": "781c180183bfe0c5d70f2782c2badad779e716539a1ea4cc0bc50966eeacc7be"
@@ -1717,6 +1717,56 @@
           "migration:20261026030000_creator_premium_f4_general_bdag_activation"
         ],
         "premium_relation_security_sha256": "ce78623224db34251b55ae8500eaea982d80912378cb3347ad9bf99ee24193a8",
+        "premium_legacy": {
+          "content_count": 9,
+          "pending_review_count": 0,
+          "deleted_count": 5
+        }
+      },
+      {
+        "run_id": "40324910390",
+        "run_attempt": 1,
+        "release_id": "nelyon-f5-autonomous-releasefix-20261026T124453Z",
+        "source_sha": "ec9e08227801c3ce59f7c01f8db3ed846831160e",
+        "repository": "andressan101989/ClipDAG-9bh0w4-26004-20260525",
+        "mutation_status": "completed",
+        "post_snapshot_status": "failure",
+        "postcheck_status": "skipped",
+        "gate_artifact": {
+          "id": "12650367997",
+          "name": "nelyon-gate-evidence-40324910390-1",
+          "digest": "sha256:eb70e20802eb55698b20b759ae39f64f063d394f9957cdb24c79cc06a538a06b"
+        },
+        "release_artifact": {
+          "id": "12649504845",
+          "name": "nelyon-release-40324910390-1",
+          "digest": "sha256:012bd9b546fd508410423ed4b94667e981e949904e3606e22505715241b286c6"
+        },
+        "manifest_sha256": "7f184407b0e5d06da1e28dda45870958736dbd972587fc487b029569dc4f1a9e",
+        "pre_snapshot_evidence_sha256": "02fbf2d5bb640823197bd79eaec4ae1d92db8bfd7424682a48382cc9da1c323a",
+        "post_snapshot_evidence_sha256": null,
+        "expected_migrations": [
+          {
+            "blob": "ca08f3a5224cea2ef6b4390bc625d55f378b2ca6",
+            "name": "20261026072512_creator_premium_f5_autonomous_subscriptions"
+          }
+        ],
+        "expected_migration_count": 356,
+        "expected_latest_migration": "20261026072512_creator_premium_f5_autonomous_subscriptions",
+        "edge_functions": [
+          {
+            "name": "bdag-ledger",
+            "source_sha256": "0255ad56d7b56792dea46c333cb207dc0680bcdf25a1784d2925b7f85bf0bd8e",
+            "status": "ACTIVE",
+            "verify_jwt": true,
+            "version": 47
+          }
+        ],
+        "productive_resources": [
+          "migration:20261026072512_creator_premium_f5_autonomous_subscriptions",
+          "function:bdag-ledger"
+        ],
+        "premium_relation_security_sha256": "a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0",
         "premium_legacy": {
           "content_count": 9,
           "pending_review_count": 0,
