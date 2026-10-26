@@ -851,8 +851,12 @@ test('F5 snapshot authority selects the autonomous phase and exact inherited cat
     .find(row => row.object.name === 'get_my_creator_premium_subscriptions_v2');
   assert.equal(beforeProjection.attestation.definition_sha256,
     '307938b5ec832f0bdc2c4ad4009180c6a1b3ae28a7cc1f617c5b856fa13210a9');
-  assert.equal(afterProjection.attestation.definition_sha256,
-    '2705216260908d75ca840c1c5d041601975c8b9b2f405233a398c75d93854421');
+  assert.deepEqual(afterProjection, beforeProjection);
+  const pre = adapter.advisorExceptionsForPhase(transitionPolicy, f5AutonomousManifest(), 'pre');
+  const post = adapter.advisorExceptionsForPhase(transitionPolicy, f5AutonomousManifest(), 'post');
+  assert.equal(pre.some(row => row.object.name === 'get_my_creator_premium_subscriptions_v3'), false);
+  assert.equal(post.find(row => row.object.name === 'get_my_creator_premium_subscriptions_v3').attestation.definition_sha256,
+    '246ab182de52bedd431e12a54ddf48923ecbd85e296ad6e138e54017f5ed7489');
   assert.equal(beforeProjection.advisor_fingerprint, afterProjection.advisor_fingerprint);
 });
 

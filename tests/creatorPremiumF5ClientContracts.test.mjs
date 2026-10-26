@@ -109,7 +109,7 @@ const subscriptionsV1 = Object.freeze({
   next_cursor: null,
 });
 
-const subscriptionsV2 = Object.freeze({
+const subscriptionsV3 = Object.freeze({
   policy,
   items: [{ ...subscriptionItem, auto_renewal: autoRenewalEnabled }],
   next_cursor: null,
@@ -490,13 +490,19 @@ function loadIntegrationMessages() {
   return module.exports;
 }
 
-test('F5 v2 subscription projection adds one exact auto-renewal object while v1 bytes stay unchanged', () => {
+test('F5 preserves the shipped exact v2 parser and exposes auto renewal only through v3', () => {
+  assert.deepEqual(finance.parseCreatorPremiumSubscriptionsPageV2(subscriptionsV1), subscriptionsV1);
+  assert.throws(() => finance.parseCreatorPremiumSubscriptionsPageV2(subscriptionsV3), /creator_premium_subscriptions_invalid/);
+  assert.deepEqual(finance.parseCreatorPremiumSubscriptionsPageV3(subscriptionsV3), subscriptionsV3);
+});
+
+test('F5 v3 subscription projection adds one exact auto-renewal object while v1 bytes stay unchanged', () => {
   assert.deepEqual(finance.parseCreatorPremiumSubscriptionsPage(subscriptionsV1), subscriptionsV1);
   assert.throws(
-    () => finance.parseCreatorPremiumSubscriptionsPage(subscriptionsV2),
+    () => finance.parseCreatorPremiumSubscriptionsPage(subscriptionsV3),
     /creator_premium_subscriptions_invalid/,
   );
-  assert.deepEqual(finance.parseCreatorPremiumSubscriptionsPageV2(subscriptionsV2), subscriptionsV2);
+  assert.deepEqual(finance.parseCreatorPremiumSubscriptionsPageV3(subscriptionsV3), subscriptionsV3);
 
   for (const auto_renewal of [
     { ...autoRenewalEnabled, extra: true },
@@ -511,18 +517,18 @@ test('F5 v2 subscription projection adds one exact auto-renewal object while v1 
     { ...autoRenewalAbsent, authorized_price_bdag: '100.00000000' },
   ]) {
     assert.throws(
-      () => finance.parseCreatorPremiumSubscriptionsPageV2({
-        ...subscriptionsV2,
-        items: [{ ...subscriptionsV2.items[0], auto_renewal }],
+      () => finance.parseCreatorPremiumSubscriptionsPageV3({
+        ...subscriptionsV3,
+        items: [{ ...subscriptionsV3.items[0], auto_renewal }],
       }),
       /creator_premium_subscriptions_invalid/,
     );
   }
 
-  const missing = structuredClone(subscriptionsV2);
+  const missing = structuredClone(subscriptionsV3);
   delete missing.items[0].auto_renewal.last_attempt_at;
   assert.throws(
-    () => finance.parseCreatorPremiumSubscriptionsPageV2(missing),
+    () => finance.parseCreatorPremiumSubscriptionsPageV3(missing),
     /creator_premium_subscriptions_invalid/,
   );
 });

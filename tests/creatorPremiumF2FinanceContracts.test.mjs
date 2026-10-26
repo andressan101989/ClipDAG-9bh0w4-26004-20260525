@@ -13,7 +13,7 @@ import {
   parseCreatorPremiumFinancePolicy,
   parseCreatorPremiumFinancialHistoryPage,
   parseCreatorPremiumSubscriptionsPage,
-  parseCreatorPremiumSubscriptionsPageV2,
+  parseCreatorPremiumSubscriptionsPageV3,
   parseCreatorPremiumPurchaseReceipt,
   parseCreatorPremiumSignedBdagText,
   parseCreatorPremiumSubscriptionReceipt,
@@ -227,7 +227,7 @@ const subscriptionsProjection = Object.freeze({
   },
 });
 
-const subscriptionsProjectionV2 = Object.freeze({
+const subscriptionsProjectionV3 = Object.freeze({
   ...subscriptionsProjection,
   items: subscriptionsProjection.items.map(item => Object.freeze({
     ...item,
@@ -749,7 +749,7 @@ function loadCreatorPremiumService(rpcResponses) {
           parseCreatorPremiumFinancialHistoryPage,
           parseCreatorPremiumSignedBdagText,
           parseCreatorPremiumSubscriptionsPage,
-          parseCreatorPremiumSubscriptionsPageV2,
+          parseCreatorPremiumSubscriptionsPageV3,
         };
       }
       if (specifier === '@/services/creatorPremiumMoney.mjs') {
@@ -768,7 +768,7 @@ test('Premium service fetchers return only strictly parsed commerce, summary and
   const service = loadCreatorPremiumService({
     get_creator_premium_commerce_v2: commerceProjection,
     get_my_creator_premium_commercial_summary_v1: summaryWithDeletedPerformance,
-    get_my_creator_premium_subscriptions_v2: subscriptionsProjectionV2,
+    get_my_creator_premium_subscriptions_v3: subscriptionsProjectionV3,
   });
   assert.deepEqual(
     structuredClone(await service.fetchMyCreatorPremiumCommercialSummary()),
@@ -781,11 +781,11 @@ test('Premium service fetchers return only strictly parsed commerce, summary and
   assert.deepEqual(
     structuredClone(await service.fetchMyCreatorPremiumSubscriptions()),
     {
-      policy: subscriptionsProjectionV2.policy,
-      items: subscriptionsProjectionV2.items,
+      policy: subscriptionsProjectionV3.policy,
+      items: subscriptionsProjectionV3.items,
       nextCursor: {
-        timestamp: subscriptionsProjectionV2.next_cursor.created_at,
-        id: subscriptionsProjectionV2.next_cursor.id,
+        timestamp: subscriptionsProjectionV3.next_cursor.created_at,
+        id: subscriptionsProjectionV3.next_cursor.id,
       },
     },
   );
@@ -802,9 +802,9 @@ test('Premium service fetchers return only strictly parsed commerce, summary and
         creator_net_bdag: '1999.00000000',
       }],
     },
-    get_my_creator_premium_subscriptions_v2: {
-      ...subscriptionsProjectionV2,
-      items: [{ ...subscriptionsProjectionV2.items[0], auto_renew: true }],
+    get_my_creator_premium_subscriptions_v3: {
+      ...subscriptionsProjectionV3,
+      items: [{ ...subscriptionsProjectionV3.items[0], auto_renew: true }],
     },
   });
   await assert.rejects(
@@ -822,8 +822,8 @@ test('Premium service fetchers return only strictly parsed commerce, summary and
 });
 
 test('Premium subscription readback follows bounded canonical pagination beyond the first page', async () => {
-  const firstPage = structuredClone(subscriptionsProjectionV2);
-  const secondItem = structuredClone(subscriptionsProjectionV2.items[0]);
+  const firstPage = structuredClone(subscriptionsProjectionV3);
+  const secondItem = structuredClone(subscriptionsProjectionV3.items[0]);
   secondItem.id = otherSubscriptionId;
   secondItem.plan.id = otherPlanId;
   secondItem.plan.relationship.id = otherSubscriptionId;
@@ -835,7 +835,7 @@ test('Premium subscription readback follows bounded canonical pagination beyond 
     next_cursor: null,
   };
   const service = loadCreatorPremiumService({
-    get_my_creator_premium_subscriptions_v2: [firstPage, secondPage],
+    get_my_creator_premium_subscriptions_v3: [firstPage, secondPage],
   });
 
   const snapshot = await service.fetchMyCreatorPremiumSubscriptionsSnapshot(101);
@@ -846,17 +846,17 @@ test('Premium subscription readback follows bounded canonical pagination beyond 
   );
   assert.equal(snapshot.nextCursor, null);
   assert.deepEqual(structuredClone(service.__testRpcCalls), [{
-    name: 'get_my_creator_premium_subscriptions_v2',
+    name: 'get_my_creator_premium_subscriptions_v3',
     args: {
       p_cursor_created_at: null,
       p_cursor_id: null,
       p_limit: 100,
     },
   }, {
-    name: 'get_my_creator_premium_subscriptions_v2',
+    name: 'get_my_creator_premium_subscriptions_v3',
     args: {
-      p_cursor_created_at: subscriptionsProjectionV2.next_cursor.created_at,
-      p_cursor_id: subscriptionsProjectionV2.next_cursor.id,
+      p_cursor_created_at: subscriptionsProjectionV3.next_cursor.created_at,
+      p_cursor_id: subscriptionsProjectionV3.next_cursor.id,
       p_limit: 100,
     },
   }]);

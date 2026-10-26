@@ -170,20 +170,24 @@ test('F5 autonomous transition attests one exact migration, bdag-ledger, strict 
   assert.deepEqual(gate.F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION, transition);
   assert.equal(transition.baseline_sha, '02c238618b05cd01c7388cc592ba7ac426973ce5');
   assert.equal(transition.reviewed_source_sha, 'a153e0fa0aaa945ea036e258ce25b1c575a2309f');
-  assert.equal(transition.migration_blob, 'ba832c2d06b40e2f6b76b75151690a42ea9e463c');
-  assert.equal(transition.migration_sha256, '728bdcb2a5ee74a3cddd74fae0dd1df9a296c69a5ce462ae9bdc9d93a3cddd66');
+  assert.equal(transition.migration_blob, 'ca08f3a5224cea2ef6b4390bc625d55f378b2ca6');
+  assert.equal(transition.migration_sha256, '5975e535f4818981e076f4f8617caa8e357852a4926a3f1c8c5e8879712299f3');
   assert.equal(transition.function_blob, 'e50f8109c6ec479483cb64f3da68812c446b0dda');
   assert.deepEqual(transition.client_sources, [
     {
       path: 'services/creatorPremiumFinanceContracts.mjs',
-      blob: 'a968127bab8e6cb80b5f8437bb10d2f963c41aee',
-      sha256: '07a455dd3dfaf9ed7f044a837d78649585b1fe7f3e6b03d6be419c5b4366778c',
+      blob: '116068dcb37812721b5960af158fc249a225b6ee',
+      sha256: '03774e0de62200f3734dc63a2995afdac02e19d4d8f6589995acca33c9a060b9',
     },
     {
       path: 'services/financial/ledgerClient.ts',
       blob: '01a8f7f622c78f637d15a8e3eadf4af71017a47b',
       sha256: '1f718c565a305366e614dc8905e87a5b1017832bcbdc416ad0d4e97d484e9c6f',
     },
+    { path: 'services/creatorPremiumFinanceContracts.d.mts', blob: 'b89adf820f389147e9f1fdaa8fdc1c003bfd3bd0',
+      sha256: '250d37537cc746e3eef726e72753c930dd1fe7d5f96a1afbdacfdd89e53aa107' },
+    { path: 'services/creatorPremiumService.ts', blob: '5899c8d9564b8d7691f7a3266f8050ec13e18bb7',
+      sha256: '979baec6879a6f8ce9fb579205e36cdd6a1f63da8eb17ee741b90739665ca7d7' },
   ]);
   assert.equal(policy.finance_authority.f5_autonomous.base_phase, 'f4_general');
   assert.deepEqual(policy.finance_authority.f5_autonomous.relations.map(row => row.identity), [
@@ -196,18 +200,19 @@ test('F5 autonomous transition attests one exact migration, bdag-ledger, strict 
     'private.creator_premium_subscription_periods',
     'private.creator_premium_subscriptions',
   ]);
-  assert.ok(policy.finance_authority.f5_autonomous.function_overrides.some(row => (
-    row.identity === 'public.get_my_creator_premium_subscriptions_v2(timestamp with time zone, uuid, integer)'
-      && row.sha256 === '22611e98606cc1f5339c8fea55fab1ebe39828140b9164d94990f2abb32f2b7c'
+  assert.equal(policy.finance_authority.f5_autonomous.function_overrides.some(row => row.identity.includes('get_my_creator_premium_subscriptions')), false);
+  assert.ok(policy.finance_authority.f5_autonomous.function_additions.some(row => (
+    row.identity === 'public.get_my_creator_premium_subscriptions_v3(timestamp with time zone, uuid, integer)'
+      && row.sha256 === 'f330b19ccbea0b419c451cf944feafcd040a27197e0b61fb639f2cdd267d154f'
   )));
   assert.ok(policy.finance_authority.f5_autonomous.function_additions.some(row => (
     row.identity === 'private.process_creator_premium_auto_renewals_f5_v1(integer)'
       && row.sha256 === 'e59968ee82dff45f46da3f35177eb05029bfe72c6e8d2466dee06cfb3b64190b'
   )));
-  const f5Projection = policy.finance_security_advisor.f5_rpc_replacements[0];
-  assert.equal(f5Projection.object.name, 'get_my_creator_premium_subscriptions_v2');
+  const f5Projection = policy.finance_security_advisor.f5_rpc_additions[0];
+  assert.equal(f5Projection.object.name, 'get_my_creator_premium_subscriptions_v3');
   assert.equal(f5Projection.attestation.definition_sha256,
-    '2705216260908d75ca840c1c5d041601975c8b9b2f405233a398c75d93854421');
+    '246ab182de52bedd431e12a54ddf48923ecbd85e296ad6e138e54017f5ed7489');
 
   for (const mutate of [
     candidate => { candidate.finance_authority_f5_transition.migration_sha256 = 'a'.repeat(64); },
@@ -217,7 +222,7 @@ test('F5 autonomous transition attests one exact migration, bdag-ledger, strict 
     candidate => { candidate.finance_authority_f5_transition.cron_job.schedule = '*/10 * * * *'; },
     candidate => { candidate.finance_authority.f5_autonomous.relations[0].sha256 = 'a'.repeat(64); },
     candidate => { candidate.finance_authority.f5_autonomous.function_additions[0].sha256 = 'a'.repeat(64); },
-    candidate => { candidate.finance_security_advisor.f5_rpc_replacements[0].attestation.definition_sha256 = 'a'.repeat(64); },
+    candidate => { candidate.finance_security_advisor.f5_rpc_additions[0].attestation.definition_sha256 = 'a'.repeat(64); },
   ]) {
     const candidate = structuredClone(policy);
     mutate(candidate);
@@ -259,7 +264,7 @@ test('F5 Git attestation and manifest reject every migration Edge config client 
   const transition = policy.finance_authority_f5_transition;
   const root = new URL('..', import.meta.url);
   const rootPath = decodeURIComponent(root.pathname.replace(/^\/([A-Za-z]:)/, '$1'));
-  const approvedSha = 'a153e0fa0aaa945ea036e258ce25b1c575a2309f';
+  const approvedSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
   const changes = [
     { status: 'M', path: 'supabase/functions/bdag-ledger/index.ts' },
     { status: 'A', path: transition.migration_path },

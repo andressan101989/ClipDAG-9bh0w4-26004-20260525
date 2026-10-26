@@ -45,9 +45,9 @@ export const FINANCE_POLICY_DIGESTS = Object.freeze({
   historical_transition: '18ba08389686a15aea9df1c7b4f974202e147167e5aa1d0f83412e1065ebc882',
   c2_transition: '2fc5ae800bf96aed59d78b953cfe628007f9603b48dd8e7a25dc915e88927af2',
   f4_transition: 'de7891ab96cd95280a5d1e80ad56b8411045b66bb54e71f610874f4cc280e36a',
-  f5_transition: '314cda23776c0c8612513d7e1a3658feb3c8562594ba9046b0f58090eb9cf5d6',
-  authority: '81112f116533e6ecd10d5eb00c39cb089482ab1ebcb9fa02e4c787a70bf01804',
-  security_advisor: '6f2c4a99d2990bf5dd87827edc8b4b67907aba73b3f31204964cf66b1ccf9c16',
+  f5_transition: 'd0007b7995d96246a51136948e44a97221fb0fc42845824bbea186ad695c9829',
+  authority: 'ea2c6ef88c685b684defae6233fa773c2a2b6dd8b4a488d768a4d193f6d8e934',
+  security_advisor: 'e2d18b540ee595bbad3dd64e04a6ad42a09aba71a80fe3dc92d4a8097e97cfbe',
 });
 
 export const FINANCE_SNAPSHOT_SQL = `with
@@ -2248,20 +2248,6 @@ const RPC_REPLACEMENT_PREDECESSOR_ATTESTATIONS = new Map([
       definition_sha256: '1b33026301062223a91c4e35000a44f8299b639d7a728834150fb32d23d6309a',
     },
   ],
-  [
-    '20261026072512_creator_premium_f5_autonomous_subscriptions|3da775663b576889fd8c250ade795a244518cb9a8385c4002153b1adf67b37d0',
-    {
-      security_definer: true,
-      owner: 'postgres',
-      search_path: ['search_path=""'],
-      acl: [
-        { grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false },
-        { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
-      ],
-      execute: { anon: false, authenticated: true, public: false, service_role: false },
-      definition_sha256: '307938b5ec832f0bdc2c4ad4009180c6a1b3ae28a7cc1f617c5b856fa13210a9',
-    },
-  ],
 ]);
 
 function exactRecoveryAuthorityPhase(policy, manifest, phase, { request, migrations } = {}) {
@@ -2359,9 +2345,8 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
         ...replacements];
     }
     if ((transition?.to_phase === 'f5_autonomous' && phase !== 'pre') || installedF5) {
-      const replacements = policy.finance_security_advisor.f5_rpc_replacements;
-      result = [...result.filter(exception => !replacements.some(item => item.object.name === exception.object.name)),
-        ...replacements];
+      const additions = policy.finance_security_advisor.f5_rpc_additions;
+      result = [...result, ...additions];
     }
     return phaseBoundRpcExceptions(result, manifest, phase, { policy, migrations: context.migrations });
   }

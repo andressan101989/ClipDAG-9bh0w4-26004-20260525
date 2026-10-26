@@ -875,6 +875,10 @@ export function parseCreatorPremiumSubscriptionsPage(value) {
 }
 
 export function parseCreatorPremiumSubscriptionsPageV2(value) {
+  return parseSubscriptionsPage(value, V2_BLOCKERS, false);
+}
+
+export function parseCreatorPremiumSubscriptionsPageV3(value) {
   return parseSubscriptionsPage(value, V2_BLOCKERS, true);
 }
 
