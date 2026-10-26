@@ -434,13 +434,14 @@ run attempt, release ID, source SHA, full artifact IDs and digests, canonical
 manifest digest, pre/post evidence digests, migration inventory, Edge
 attestations, Premium relation-security digest, and legacy counts. A source is
 normally eligible only when every mutation step and the post-snapshot succeeded
-and only the ordinary postcheck failed. The sole reviewed exception is F3 run
-`40166468648`: its pre-snapshot, verification, dry-run, migration, and Edge steps
-succeeded; its post-snapshot failed before emitting post evidence because the
-un-pinned PostgreSQL deparser rendered two already-correct `auth.users` foreign
-keys differently, and its postcheck was consequently skipped. Recovery for that
-exact immutable source may attest the already-applied state read-only; it cannot
-repeat SQL or Edge deployment. Historical artifacts contain sanitized
+and only the ordinary postcheck failed. Two reviewed exceptions are pinned. F3
+run `40166468648` completed its mutation steps before an un-pinned PostgreSQL
+deparser rendered two already-correct `auth.users` foreign keys differently.
+F4 run `40268500711` completed its sole migration, changed no Edge Functions,
+and then failed the post-snapshot because the static F4 finance catalog
+overdeclared inherited functions. Recovery for either exact immutable source may
+attest the already-applied state read-only; it cannot repeat SQL or Edge
+deployment. Historical artifacts contain sanitized
 verification records and evidence digests; they do not contain credentials or
 private rows.
 

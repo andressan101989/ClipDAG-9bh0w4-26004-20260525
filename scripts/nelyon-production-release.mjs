@@ -423,6 +423,32 @@ const EXPECTED_RECOVERY_SOURCES = [{
   ],
   premium_relation_security_sha256: '34e13339d4627b7684699288f789780267d7340afbd1c3de33029624e60a2f6a',
   premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
+}, {
+  run_id: '40268500711',
+  run_attempt: 1,
+  release_id: 'nelyon-f4-general-activation-release-20261026T041943Z',
+  source_sha: '02c238618b05cd01c7388cc592ba7ac426973ce5',
+  repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+  mutation_status: 'completed',
+  post_snapshot_status: 'failure',
+  postcheck_status: 'skipped',
+  gate_artifact: { id: '12627287792', name: 'nelyon-gate-evidence-40268500711-1', digest: 'sha256:f7fa77ea17764ed291d249e4c97978ca2547696595675f5a54cdfcebc5bd5d9f' },
+  release_artifact: { id: '12627322556', name: 'nelyon-release-40268500711-1', digest: 'sha256:85eef5c82a1812db5491a21a3eb3c0e60565906cf7f214fc5cbb54e48e95d122' },
+  manifest_sha256: '96d731beeef25b2de5077f525e406727e249a073008653def91b923d4e2e6c17',
+  pre_snapshot_evidence_sha256: '3053119dc99ee41e4019222468dd9ec43a393c49b94c4eff1c6e1dc80568f302',
+  post_snapshot_evidence_sha256: null,
+  expected_migrations: [{
+    blob: F4_GENERAL_FINANCE_AUTHORITY_TRANSITION.migration_blob,
+    name: '20261026030000_creator_premium_f4_general_bdag_activation',
+  }],
+  expected_migration_count: 355,
+  expected_latest_migration: '20261026030000_creator_premium_f4_general_bdag_activation',
+  edge_functions: [],
+  productive_resources: [
+    'migration:20261026030000_creator_premium_f4_general_bdag_activation',
+  ],
+  premium_relation_security_sha256: 'ce78623224db34251b55ae8500eaea982d80912378cb3347ad9bf99ee24193a8',
+  premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
 }];
 const REQUIRED_FINANCE_RECONCILIATIONS = [
   'account_balance_ledger_mismatch',
@@ -2486,12 +2512,15 @@ export function verifyPostcheckRecovery({
       version: actual.version,
     };
   });
-  if (source.run_id === '40166468648') {
-    const baselineSource = policy?.postcheck_recovery?.approved_sources?.find(item => item.run_id === '40139736749');
-    const functionTransitions = source.edge_functions.map(current => ({
-      current,
-      baseline: baselineSource?.edge_functions?.find(item => item.name === current.name),
-    }));
+  if (['40166468648', '40268500711'].includes(source.run_id)) {
+    const functionTransitions = source.run_id === '40166468648'
+      ? source.edge_functions.map(current => ({
+        current,
+        baseline: policy?.postcheck_recovery?.approved_sources
+          ?.find(item => item.run_id === '40139736749')
+          ?.edge_functions?.find(item => item.name === current.name),
+      }))
+      : [];
     try {
       verifyRecoveryInfrastructureBaseline({
         policy,
@@ -2549,7 +2578,9 @@ export function verifyPostcheckRecovery({
     after: finance,
     windowRows: { complete: true, transactions: [], ledger_entries: [] },
     reconciliationResults: finance.reconciliation,
-    expectedPolicy: policy.supabase.finance_policy,
+    expectedPolicy: source.run_id === '40268500711'
+      ? financePolicyShape(F4_GENERAL_FINANCE_AUTHORITY_TRANSITION.to_policy)
+      : policy.supabase.finance_policy,
     releaseIdentity: { releaseId: source.release_id, runId: source.run_id, runAttempt: source.run_attempt },
   });
 
