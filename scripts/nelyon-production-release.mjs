@@ -118,7 +118,7 @@ export const F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
   from_phase: 'f4_general',
   to_phase: 'f5_autonomous',
   baseline_sha: '02c238618b05cd01c7388cc592ba7ac426973ce5',
-  reviewed_source_sha: 'a153e0fa0aaa945ea036e258ce25b1c575a2309f',
+  reviewed_source_sha: '94de72a46558aab408c0f4d062f80462fd17f116',
   integration_base_sha: '8b869746ea4bbc08fb79d42fe06f316849a7bfb9',
   approved_sha_ancestry: 'verified_integration_base',
   migration_path: 'supabase/migrations/20261026072512_creator_premium_f5_autonomous_subscriptions.sql',

@@ -169,7 +169,7 @@ test('F5 autonomous transition attests one exact migration, bdag-ledger, strict 
   });
   assert.deepEqual(gate.F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION, transition);
   assert.equal(transition.baseline_sha, '02c238618b05cd01c7388cc592ba7ac426973ce5');
-  assert.equal(transition.reviewed_source_sha, 'a153e0fa0aaa945ea036e258ce25b1c575a2309f');
+  assert.equal(transition.reviewed_source_sha, '94de72a46558aab408c0f4d062f80462fd17f116');
   assert.equal(transition.migration_blob, 'ca08f3a5224cea2ef6b4390bc625d55f378b2ca6');
   assert.equal(transition.migration_sha256, '5975e535f4818981e076f4f8617caa8e357852a4926a3f1c8c5e8879712299f3');
   assert.equal(transition.function_blob, 'e50f8109c6ec479483cb64f3da68812c446b0dda');
