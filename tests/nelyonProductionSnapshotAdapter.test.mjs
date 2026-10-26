@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
@@ -16,6 +16,10 @@ const c2TransitionPolicy = structuredClone(installedPolicy);
 c2TransitionPolicy.baseline.sha = installedPolicy.finance_authority_c2_transition.baseline_sha;
 c2TransitionPolicy.baseline.migration_count = 352;
 c2TransitionPolicy.baseline.latest_migration = '20261025011000_creator_premium_f3_bounded_financial_activation';
+const f4TransitionPolicy = structuredClone(installedPolicy);
+f4TransitionPolicy.baseline.sha = installedPolicy.finance_authority_f4_transition.baseline_sha;
+f4TransitionPolicy.baseline.migration_count = 354;
+f4TransitionPolicy.baseline.latest_migration = '20261025231500_creator_premium_f3_final_wallet_integration';
 const walletTransitionPolicy = structuredClone(installedPolicy);
 walletTransitionPolicy.baseline.sha = '05cdd2ecbeda6132fffb7edc0cf4e7ab2848625a';
 walletTransitionPolicy.baseline.migration_count = 353;
@@ -29,6 +33,12 @@ const f3MigrationSql = () => gitSql(
 );
 const f3C2MigrationSql = () => gitSql(
   'supabase/migrations/20261025160452_creator_premium_f3_c2_isolated_canary_governance.sql',
+);
+const f3FinalWalletMigrationSql = () => gitSql(
+  'supabase/migrations/20261025231500_creator_premium_f3_final_wallet_integration.sql',
+);
+const f4GeneralMigrationSql = () => gitSql(
+  'supabase/migrations/20261026030000_creator_premium_f4_general_bdag_activation.sql',
 );
 const preF3CreatorPremiumMigrations = [
   '20261007035032_creator_premium_b1_canonical_foundation.sql',
@@ -84,6 +94,30 @@ function createPreF3GovernanceDatabase({ docker, sql, db }) {
     assert.equal(migrationSql.includes('\r'), false, `${migration} must use canonical Git LF bytes`);
     sql(migrationSql);
   }
+}
+
+function f4DisposablePostgres(db) {
+  assert.match(db, /^premium_f4_adapter_[a-z0-9_]+$/);
+  const wslPid = process.env.CREATOR_PREMIUM_PG_WSL_PID ?? '';
+  assert.ok(wslPid === '' || /^\d+$/.test(wslPid));
+  const container = process.env.CREATOR_PREMIUM_PG_CONTAINER || 'nelyon-ads-v2-d-compile';
+  const sh = (command, input = '', allowFailure = false) => {
+    const result = wslPid
+      ? spawnSync('wsl.exe', ['-d','docker-desktop','-u','root','-e','nsenter','-t',wslPid,
+        '-m','-u','-i','-n','-p','/bin/sh','-c',command],
+      { input, encoding: 'utf8', maxBuffer: 96 * 1024 * 1024 })
+      : spawnSync('docker', ['exec','-i',container,'/bin/sh','-c',command],
+      { input, encoding: 'utf8', maxBuffer: 96 * 1024 * 1024 });
+    if (!allowFailure) assert.equal(result.status, 0,
+      `${command}\n${result.stdout ?? ''}\n${result.stderr ?? ''}`);
+    return { status: result.status, stdout: (result.stdout ?? '').trim(), stderr: (result.stderr ?? '').trim() };
+  };
+  const quote = value => `'${String(value).replaceAll("'", "'\"'\"'")}'`;
+  const docker = args => sh(args.map(quote).join(' ')).stdout;
+  const sql = (input, allowFailure = false) => sh(
+    `psql -X -q -v ON_ERROR_STOP=1 -U supabase_admin -d ${db} -At`, input, allowFailure,
+  );
+  return { docker, sql };
 }
 
 async function loadAdapter() {
@@ -339,6 +373,227 @@ test('F3 fact envelopes execute as the Management API read-only role before and 
   } finally { docker(['dropdb','-U','supabase_admin','--force','--if-exists',db]); }
 });
 
+test('F4 read-only facts execute against refunded commerce and reject hostile provenance/reconciliation drift', {
+  skip: process.env.RUN_F4_SNAPSHOT_PG_LOCAL !== '1', timeout: 600000,
+}, async () => {
+  const adapter = await loadAdapter();
+  const db = `premium_f4_adapter_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+  const { docker, sql } = f4DisposablePostgres(db);
+  const id = Object.fromEntries([
+    'buyer','creator','content','offer','plan','scan','buyerAccount','platformAccount',
+  ].map(name => [name, randomUUID()]));
+  const boundFacts = adapter.FINANCE_FACTS_F4_GENERAL_SQL
+    .replaceAll('$1', "'f4-adapter-release'").replaceAll('$2', "'f4-adapter-run'");
+  const readFacts = mutation => {
+    const result = sql(`begin;
+      ${mutation || ''}
+      set local role supabase_read_only_user;
+      ${boundFacts}
+      rollback;`);
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  const expectClean = facts => assert.deepEqual(facts.reconciliation, {
+    purchase_binding_mismatches: 0,
+    period_binding_mismatches: 0,
+    orphan_premium_transactions: 0,
+    orphan_premium_ledger_entries: 0,
+    subscriptions_without_period: 0,
+    multiple_periods_per_relationship: 0,
+    duplicate_open_relationships: 0,
+  });
+  const service = statement => `begin;
+    set local request.jwt.claim.role='service_role';
+    set local role service_role;
+    ${statement};
+    commit;`;
+  try {
+    createPreF3GovernanceDatabase({ docker, sql: input => sql(input).stdout, db });
+    const preAuthority = JSON.parse(sql(adapter.FINANCE_AUTHORITY_SQL).stdout);
+    sql([
+      ...preAuthority.relations.filter(row => row.authority.owner === 'supabase_admin')
+        .map(row => `alter table ${row.identity} owner to postgres;`),
+      ...preAuthority.functions.filter(row => row.authority.owner === 'supabase_admin')
+        .map(row => `alter function ${row.identity} owner to postgres;`),
+      'truncate public.ledger_entries,public.financial_transactions,public.ledger_accounts cascade;',
+    ].join('\n'));
+    sql(f3MigrationSql());
+    sql(f3C2MigrationSql());
+    sql(f3FinalWalletMigrationSql());
+    const actors = [id.buyer, id.creator];
+    sql(`alter table auth.users disable trigger on_auth_user_age_eligibility;
+      insert into auth.users(id,is_anonymous) values
+        ('${id.buyer}',false),('${id.creator}',false);
+      alter table auth.users enable trigger on_auth_user_age_eligibility;
+      insert into public.user_profiles(id,username) values
+        ('${id.buyer}','f4_adapter_buyer'),('${id.creator}','f4_adapter_creator');
+      insert into private.user_age_eligibility(
+        user_id,status,minimum_age,policy_version,evaluated_at,source,age_band,birth_date)
+      select fixture.id,'eligible',policy.minimum_age,policy.policy_version,clock_timestamp(),
+        'signup_metadata','age_18_plus',current_date-interval '25 years'
+      from (values ${actors.map(actor => `('${actor}'::uuid)`).join(',')}) fixture(id)
+      cross join private.age_eligibility_policy policy where policy.singleton;
+      insert into private.content_safety_scans(
+        id,target_type,target_id,owner_user_id,content_fingerprint,status,
+        requested_reason,detector_version,text_status,audio_status,visual_status,reports_status,
+        attempt_count,available_at,started_at,completed_at,created_at,updated_at)
+      values('${id.scan}','creator_premium','${id.content}','${id.creator}',repeat('a',64),'completed',
+        'content_created','f4-adapter-v1','analyzed','not_applicable','not_applicable','analyzed',1,
+        current_timestamp,current_timestamp,current_timestamp,current_timestamp,current_timestamp);
+      insert into private.creator_premium_contents(
+        id,creator_id,title,content_kind,access_mode,lifecycle_status,submitted_at,published_at,
+        verification_generation,verification_scan_id,verification_fingerprint,verification_status,
+        verification_requested_at,verification_completed_at)
+      values('${id.content}','${id.creator}','F4 adapter synthetic','image','purchase_or_subscription','published',
+        clock_timestamp(),clock_timestamp(),1,'${id.scan}',repeat('a',64),'passed',clock_timestamp(),clock_timestamp());
+      insert into private.creator_premium_offer_versions(
+        id,content_id,creator_id,version,price_bdag,status,activated_at)
+      values('${id.offer}','${id.content}','${id.creator}',1,10,'active',clock_timestamp());
+      insert into private.creator_premium_plans(
+        id,creator_id,plan_key,version,name,price_bdag,currency,status,billing_period_days)
+      values('${id.plan}','${id.creator}','f4_adapter',1,'F4 adapter',20,'BDAG','draft',30);
+      insert into private.creator_premium_plan_contents(plan_id,content_id,creator_id)
+      values('${id.plan}','${id.content}','${id.creator}');
+      update private.creator_premium_plans set status='active',activated_at=clock_timestamp()
+      where id='${id.plan}';
+      insert into public.ledger_accounts(id,owner_id,account_type,currency,balance,frozen)
+      values('${id.platformAccount}',null,'platform','BDAG',0,false),
+        ('${id.buyerAccount}','${id.buyer}','user','BDAG',100,false);
+      grant usage,create on schema public,private to postgres;
+      alter table private.creator_premium_finance_policy owner to postgres;
+      set role postgres;
+      ${f4GeneralMigrationSql()}
+      reset role;`);
+    const purchase = JSON.parse(sql(service(`select public.purchase_creator_premium_content_v1(
+      '${id.buyer}','${id.content}','${id.offer}','${randomUUID()}','creator-premium-f3-v2')`)).stdout);
+    const subscription = JSON.parse(sql(service(`select public.subscribe_creator_premium_plan_v1(
+      '${id.buyer}','${id.plan}','${randomUUID()}','creator-premium-f3-v2')`)).stdout);
+    let facts = readFacts('');
+    expectClean(facts);
+    assert.equal(adapter.validateFinanceFacts(facts, 'f4_general'), facts);
+    sql(service(`select public.refund_creator_premium_purchase_v1(
+      '${purchase.receipt_id}','${randomUUID()}','owner_approved')`));
+    sql(service(`select public.refund_creator_premium_subscription_period_v1(
+      '${subscription.period_id}','${randomUUID()}','owner_approved')`));
+    facts = readFacts('');
+    expectClean(facts);
+    assert.equal(adapter.validateFinanceFacts(facts, 'f4_general'), facts);
+
+    const authTamper = readFacts(`
+      alter table private.creator_premium_finance_authorizations disable trigger all;
+      update private.creator_premium_finance_authorizations
+      set configuration_digest=repeat('0',64) where authorization_scope='GENERAL';`);
+    assert.ok(authTamper.reconciliation.purchase_binding_mismatches > 0);
+    assert.ok(authTamper.reconciliation.period_binding_mismatches > 0);
+
+    const orphanTransaction = readFacts(`
+      alter table public.financial_transactions disable trigger all;
+      update public.financial_transactions
+      set reference_id='${randomUUID()}'
+      where id=(select financial_transaction_id from private.creator_premium_purchase_receipts limit 1);`);
+    assert.ok(orphanTransaction.reconciliation.orphan_premium_transactions > 0);
+
+    const orphanLedger = readFacts(`
+      alter table public.ledger_entries disable trigger all;
+      update public.ledger_entries set metadata=metadata||jsonb_build_object('reference_id','${randomUUID()}')
+      where ctid=(select ctid from public.ledger_entries
+        where txn_id=(select financial_transaction_id from private.creator_premium_purchase_receipts limit 1)
+        limit 1);`);
+    assert.ok(orphanLedger.reconciliation.orphan_premium_ledger_entries > 0);
+
+    const legacyBeforeCutoff = readFacts(`
+      alter table private.creator_premium_purchase_receipts disable trigger all;
+      alter table private.creator_premium_subscription_periods disable trigger all;
+      update private.creator_premium_purchase_receipts set finance_authorization_id=null,
+        created_at=(select created_at-interval '1 microsecond'
+          from private.creator_premium_finance_authorizations where authorization_scope='GENERAL');
+      update private.creator_premium_subscription_periods set finance_authorization_id=null,
+        created_at=(select created_at-interval '1 microsecond'
+          from private.creator_premium_finance_authorizations where authorization_scope='GENERAL');`);
+    expectClean(legacyBeforeCutoff);
+    const legacyAfterCutoff = readFacts(`
+      alter table private.creator_premium_purchase_receipts disable trigger all;
+      alter table private.creator_premium_subscription_periods disable trigger all;
+      update private.creator_premium_purchase_receipts set finance_authorization_id=null,
+        created_at=(select created_at+interval '1 microsecond'
+          from private.creator_premium_finance_authorizations where authorization_scope='GENERAL');
+      update private.creator_premium_subscription_periods set finance_authorization_id=null,
+        created_at=(select created_at+interval '1 microsecond'
+          from private.creator_premium_finance_authorizations where authorization_scope='GENERAL');`);
+    assert.ok(legacyAfterCutoff.reconciliation.purchase_binding_mismatches > 0);
+    assert.ok(legacyAfterCutoff.reconciliation.period_binding_mismatches > 0);
+
+    const canaryBinding = readFacts(`
+      alter table private.creator_premium_finance_authorizations disable trigger all;
+      alter table private.creator_premium_finance_owner_attestations_f3_c2 disable trigger all;
+      update private.creator_premium_finance_authorizations envelope set
+        authorization_scope='CANARY',buyer_id='${id.buyer}',creator_id='${id.creator}',
+        buyer_account_id='${id.buyerAccount}',
+        creator_account_id=(select id from public.ledger_accounts
+          where owner_id='${id.creator}' and account_type='user' and currency='BDAG'),
+        purchase_content_id='${id.content}',purchase_offer_version_id='${id.offer}',
+        subscription_plan_id='${id.plan}',purchase_amount_bdag=10,subscription_amount_bdag=20,
+        max_purchase_count=1,max_subscription_count=1,max_refund_count=2,max_gross_bdag=30,
+        charge_expires_at=envelope.charge_starts_at+interval '30 minutes',
+        refund_expires_at=envelope.charge_starts_at+interval '60 minutes',
+        configuration_digest=repeat('0',64),approval_digest=repeat('0',64)
+      where authorization_scope='GENERAL';
+      update private.creator_premium_finance_authorizations envelope
+      set configuration_digest=private.creator_premium_finance_configuration_digest_f3_c2_v1(to_jsonb(envelope));
+      update private.creator_premium_finance_owner_attestations_f3_c2 attestation
+      set configuration_digest=envelope.configuration_digest,approval_digest=repeat('0',64)
+      from private.creator_premium_finance_authorizations envelope;
+      update private.creator_premium_finance_owner_attestations_f3_c2 attestation
+      set approval_digest=private.creator_premium_finance_attestation_digest_f3_c2_v1(to_jsonb(attestation));
+      update private.creator_premium_finance_authorizations envelope set approval_digest=attestation.approval_digest
+      from private.creator_premium_finance_owner_attestations_f3_c2 attestation;`);
+    expectClean(canaryBinding);
+
+    const orphanRelationship = readFacts(`
+      alter table private.creator_premium_subscriptions disable trigger all;
+      insert into private.creator_premium_subscriptions
+      select (jsonb_populate_record(null::private.creator_premium_subscriptions,
+        to_jsonb(relationship)||jsonb_build_object(
+          'id','${randomUUID()}','idempotency_key','${randomUUID()}',
+          'status','expired','ended_at',clock_timestamp(),'updated_at',clock_timestamp()))).*
+      from private.creator_premium_subscriptions relationship limit 1;`);
+    assert.equal(orphanRelationship.reconciliation.subscriptions_without_period, 1);
+
+    const multiplePeriods = readFacts(`
+      alter table private.creator_premium_subscription_periods disable trigger all;
+      alter table private.creator_premium_subscription_periods
+        drop constraint creator_premium_subscription_periods_transaction_key;
+      insert into private.creator_premium_subscription_periods
+      select (jsonb_populate_record(null::private.creator_premium_subscription_periods,
+        to_jsonb(period)||jsonb_build_object(
+          'id','${randomUUID()}','idempotency_key','${randomUUID()}',
+          'refund_idempotency_key','${randomUUID()}',
+          'starts_at',period.starts_at-interval '60 days',
+          'paid_through_at',period.paid_through_at-interval '60 days',
+          'created_at',period.created_at-interval '60 days',
+          'updated_at',period.updated_at-interval '60 days'))).*
+      from private.creator_premium_subscription_periods period limit 1;`);
+    assert.equal(multiplePeriods.reconciliation.multiple_periods_per_relationship, 1);
+
+    const duplicateOpen = readFacts(`
+      drop index private.creator_premium_subscriptions_one_open_relationship_uidx;
+      alter table private.creator_premium_subscriptions disable trigger all;
+      update private.creator_premium_subscriptions set status='active',
+        started_at=coalesce(started_at,clock_timestamp()),cancelled_at=null,ended_at=null,
+        updated_at=clock_timestamp();
+      insert into private.creator_premium_subscriptions
+      select (jsonb_populate_record(null::private.creator_premium_subscriptions,
+        to_jsonb(relationship)||jsonb_build_object(
+          'id','${randomUUID()}','idempotency_key','${randomUUID()}',
+          'status','active','started_at',clock_timestamp(),
+          'cancelled_at',null,'ended_at',null,'updated_at',clock_timestamp()))).*
+      from private.creator_premium_subscriptions relationship limit 1;`);
+    assert.equal(duplicateOpen.reconciliation.duplicate_open_relationships, 1);
+  } finally {
+    docker(['dropdb','-U','supabase_admin','--force','--if-exists',db]);
+  }
+});
+
 test('F3 selects attested SQL only from complete migration inventory and rejects phase mismatch', async () => {
   const adapter = await loadAdapter();
   const inventory = items => ({ complete: true, count: items.length, items,
@@ -460,11 +715,37 @@ function f3C2Manifest() {
   } };
 }
 
+function f4GeneralManifest() {
+  const t = installedPolicy.finance_authority_f4_transition;
+  return { ...manifest(), baseline: { sha: t.baseline_sha }, delta: { files: [
+    { path: t.migration_path, status: 'A' },
+  ] }, resources: {
+    functions: [],
+    config_changed: false,
+    function_contracts: [],
+    migrations: [{ version: '20261026030000', path: t.migration_path, blob: t.migration_blob, sha256: t.migration_sha256 }],
+    finance_authority_transition: {
+      id: t.id,
+      from_phase: t.from_phase,
+      to_phase: t.to_phase,
+      baseline_sha: t.baseline_sha,
+      reviewed_source_sha: t.reviewed_source_sha,
+      integration_base_sha: t.integration_base_sha,
+      approved_sha: request().approvedSha,
+      baseline_descendant_verified: true,
+      integration_base_descendant_verified: true,
+      migration_blob: t.migration_blob,
+      migration_sha256: t.migration_sha256,
+    },
+  } };
+}
+
 test('F3-C2 successor authority pins the new relation, changed Admin RPC, empty facts and exact phase', async () => {
   const adapter = await loadAdapter();
   assert.deepEqual(adapter.FINANCE_POLICY_DIGESTS, {
     historical_transition: sha256(canonicalJson(installedPolicy.finance_authority_transition)),
     c2_transition: sha256(canonicalJson(installedPolicy.finance_authority_c2_transition)),
+    f4_transition: sha256(canonicalJson(installedPolicy.finance_authority_f4_transition)),
     authority: sha256(canonicalJson(installedPolicy.finance_authority)),
     security_advisor: sha256(canonicalJson(installedPolicy.finance_security_advisor)),
   });
@@ -493,7 +774,10 @@ test('F3-C2 successor authority pins the new relation, changed Admin RPC, empty 
       subscription_enabled: false, refunds_enabled: false, platform_fee_bps: 0 },
     attestations: [], authorizations: [], receipts: [], periods: [], subscriptions: [], transactions: [],
     acquisition_exposure_bdag: '0.00000000', release_movement_bdag: '0.00000000',
-    reconciliation: { purchase_binding_mismatches: 0, period_binding_mismatches: 0 },
+    reconciliation: {
+      purchase_binding_mismatches: 0,
+      period_binding_mismatches: 0,
+    },
   };
   assert.equal(adapter.validateFinanceFacts(empty, 'f3_c2'), empty);
   assert.throws(() => adapter.validateFinanceFacts({
@@ -512,6 +796,49 @@ test('F3-C2 successor authority pins the new relation, changed Admin RPC, empty 
   assert.equal(post.filter(row => (
     row.object.name === 'creator_premium_finance_owner_attestations_f3_c2'
   )).length, 1);
+});
+
+test('F4 successor pins exact general authority and phase-bound Admin RPC replacement', async () => {
+  const adapter = await loadAdapter();
+  const transition = adapter.activeFinanceAuthorityTransition(f4TransitionPolicy, f4GeneralManifest());
+  assert.equal(transition.to_phase, 'f4_general');
+
+  const foundation = new Map(installedPolicy.finance_authority.f3_foundation.functions
+    .map(row => [row.identity, row]));
+  for (const row of installedPolicy.finance_authority.f3_c2.function_overrides) foundation.set(row.identity, row);
+  for (const row of installedPolicy.finance_authority.f3_c2.function_additions) foundation.set(row.identity, row);
+  for (const row of installedPolicy.finance_authority.f4_general.function_overrides) foundation.set(row.identity, row);
+  for (const row of installedPolicy.finance_authority.f4_general.function_additions) foundation.set(row.identity, row);
+  const unsigned = {
+    schema_version: 1,
+    complete: true,
+    phase: 'f4_general',
+    relations: [...installedPolicy.finance_authority.f4_general.relations]
+      .sort((left, right) => left.identity.localeCompare(right.identity)),
+    functions: [...foundation.values()].sort((left, right) => left.identity.localeCompare(right.identity)),
+    legacy_functions: installedPolicy.finance_authority.f3_foundation.legacy_function_identities
+      .map(identity => ({ identity, sha256: 'a'.repeat(64) })),
+    legacy_relations: ['public.financial_transactions','public.ledger_accounts','public.ledger_entries']
+      .map(identity => ({ identity, sha256: 'a'.repeat(64) })),
+  };
+  const authority = { ...unsigned, sha256: sha256(canonicalJson(unsigned)) };
+  assert.equal(adapter.validateFinanceAuthority(authority, installedPolicy, 'f4_general'), true);
+  const hostile = structuredClone(authority);
+  hostile.relations[0].sha256 = 'b'.repeat(64);
+  hostile.sha256 = sha256(canonicalJson(Object.fromEntries(Object.entries(hostile)
+    .filter(([key]) => key !== 'sha256'))));
+  assert.throws(() => adapter.validateFinanceAuthority(hostile, installedPolicy, 'f4_general'), /FINANCE_AUTHORITY/);
+
+  const pre = adapter.advisorExceptionsForPhase(f4TransitionPolicy, f4GeneralManifest(), 'pre');
+  const post = adapter.advisorExceptionsForPhase(f4TransitionPolicy, f4GeneralManifest(), 'post');
+  const predecessor = installedPolicy.finance_security_advisor.rpc_attestations.find(row => (
+    row.object.name === 'get_admin_creator_premium_finance_activation_v1'
+  ));
+  const successor = installedPolicy.finance_security_advisor.f4_rpc_replacements[0];
+  assert.equal(pre.find(row => row.object.name === predecessor.object.name)
+    .attestation.definition_sha256, predecessor.attestation.definition_sha256);
+  assert.equal(post.find(row => row.object.name === successor.object.name)
+    .attestation.definition_sha256, successor.attestation.definition_sha256);
 });
 
 test('F3 phase authority admits exact pinned static evidence and rejects extra or altered records', async () => {
@@ -2400,4 +2727,186 @@ test('postcheck advisor delta accepts only exact phase-approved fingerprints', a
     /REMOTE_POSTCHECK_FAILED/,
   );
   assert.throws(() => adapter.validateSecurityAdvisorDelta(pre, pre, [allowed]), /REMOTE_POSTCHECK_FAILED/);
+});
+
+test('F4 inventory selects the general finance facts contract only after its exact migration chain', async () => {
+  const adapter = await loadAdapter();
+  const inventory = items => ({ complete: true, count: items.length, items,
+    latest: items.at(-1) ?? null, sha256: sha256(canonicalJson(items)) });
+  const foundation = { version: '20261025011000', name: 'creator_premium_f3_bounded_financial_activation' };
+  const c2 = { version: '20261025160452', name: 'creator_premium_f3_c2_isolated_canary_governance' };
+  const f4 = { version: '20261026030000', name: 'creator_premium_f4_general_bdag_activation' };
+  const selected = adapter.selectFinanceSnapshotQueries(inventory([foundation, c2, f4]));
+  assert.equal(selected.phase, 'f4_general');
+  assert.equal(selected.facts, adapter.FINANCE_FACTS_F4_GENERAL_SQL);
+  assert.match(selected.facts, /authorization_scope='GENERAL'/);
+  assert.match(selected.facts, /receipt\.finance_authorization_id/);
+  assert.match(selected.facts, /period\.finance_authorization_id/);
+  assert.doesNotMatch(selected.facts,
+    /private\.creator_premium_(?:purchase|period)_binding_is_valid_v1/,
+    'Management API read-only evidence must not require EXECUTE on private helpers');
+  assert.throws(
+    () => adapter.selectFinanceSnapshotQueries(inventory([foundation, f4])),
+    /FINANCE_AUTHORITY_MISMATCH/,
+  );
+});
+
+test('F4 general finance facts accept reconciled nonempty commerce and reject binding drift', async () => {
+  const adapter = await loadAdapter();
+  const digest = value => createHash('sha256').update(value).digest('hex');
+  const configurationDigest = digest('configuration-digest');
+  const approvalDigest = digest('approval-digest');
+  const fact = (kind, amount) => ({
+    id: digest(`${kind}-id`),
+    gross_amount_bdag: amount,
+    fact_sha256: digest(`${kind}-fact`),
+  });
+  const facts = {
+    schema_version: 1,
+    complete: true,
+    phase: 'f4_general',
+    policy: {
+      activation_mode: 'general', active_authorization_id: 'f4000000-0000-4000-8000-000000000001',
+      purchase_enabled: true, subscription_enabled: true,
+      refunds_enabled: true, platform_fee_bps: 2000,
+    },
+    attestations: [{
+      id: digest('attestation-id'), configuration_digest: configurationDigest,
+      approval_digest: approvalDigest, fact_sha256: digest('attestation-fact'),
+    }],
+    authorizations: [{
+      id: digest('f4000000-0000-4000-8000-000000000001'),
+      authorization_scope: 'GENERAL', client_contract: 'creator-premium-f3-v2', status: 'OPEN',
+      platform_fee_bps: 2000, configuration_digest: configurationDigest,
+      approval_digest: approvalDigest,
+      buyer_id: null, creator_id: null, buyer_account_id: null, creator_account_id: null,
+      purchase_content_id: null, purchase_offer_version_id: null, subscription_plan_id: null,
+      purchase_amount_bdag: null, subscription_amount_bdag: null,
+      max_purchase_count: null, max_subscription_count: null, max_refund_count: null,
+      max_gross_bdag: null, charge_expires_at: null, refund_expires_at: null,
+      fact_sha256: digest('authorization-fact'),
+    }],
+    receipts: [fact('receipt', '1500.00000000')],
+    periods: [fact('period', '1500.00000000')],
+    subscriptions: [{ id: digest('subscription-id'), fact_sha256: digest('subscription-fact') }],
+    transactions: [{ id: digest('transaction-id'), amount: '1500.00000000', fact_sha256: digest('transaction-fact') }],
+    acquisition_exposure_bdag: '3000.00000000',
+    release_movement_bdag: '0.00000000',
+    reconciliation: {
+      purchase_binding_mismatches: 0,
+      period_binding_mismatches: 0,
+      orphan_premium_transactions: 0,
+      orphan_premium_ledger_entries: 0,
+      subscriptions_without_period: 0,
+      multiple_periods_per_relationship: 0,
+      duplicate_open_relationships: 0,
+    },
+  };
+  assert.equal(adapter.validateFinanceFacts(facts, 'f4_general'), facts);
+  for (const hostile of [
+    { ...facts, reconciliation: { ...facts.reconciliation, purchase_binding_mismatches: 1 } },
+    { ...facts, reconciliation: { ...facts.reconciliation, orphan_premium_transactions: 1 } },
+    { ...facts, reconciliation: { ...facts.reconciliation, orphan_premium_ledger_entries: 1 } },
+    { ...facts, reconciliation: { ...facts.reconciliation, subscriptions_without_period: 1 } },
+    { ...facts, reconciliation: { ...facts.reconciliation, multiple_periods_per_relationship: 1 } },
+    { ...facts, reconciliation: { ...facts.reconciliation, duplicate_open_relationships: 1 } },
+    { ...facts, release_movement_bdag: '0.00000001' },
+    { ...facts, policy: { ...facts.policy, platform_fee_bps: 1999 } },
+    { ...facts, authorizations: [{ ...facts.authorizations[0], id: digest('wrong-authorization') }] },
+    { ...facts, authorizations: [{ ...facts.authorizations[0], buyer_id: digest('forbidden-buyer') }] },
+    { ...facts, authorizations: [{ ...facts.authorizations[0], client_contract: 'creator-premium-f3-v1' }] },
+    { ...facts, authorizations: [{ ...facts.authorizations[0], approval_digest: digest('wrong-approval') }] },
+  ]) assert.throws(() => adapter.validateFinanceFacts(hostile, 'f4_general'), /FINANCE_FACTS_REJECTED/);
+});
+
+test('F4 read-only reconciliation covers canonical refunded facts, reversals, accounts and ledger legs', async () => {
+  const adapter = await loadAdapter();
+  const sql = adapter.FINANCE_FACTS_F4_GENERAL_SQL;
+  for (const alias of ['receipt', 'period']) {
+    assert.match(sql, new RegExp(`original\\.status=case\\s+when ${alias}\\.access_state='refunded' then 'reversed'\\s+else 'completed' end`));
+    assert.match(sql, new RegExp(`${alias}\\.access_state='refunded'[\\s\\S]+?reversal\\.status='completed'`));
+    assert.match(sql, new RegExp(`reversal\\.id=${alias}\\.reversal_financial_transaction_id`));
+    assert.match(sql, new RegExp(`original\\.id=${alias}\\.financial_transaction_id`));
+  }
+  for (const leg of [
+    'payer_gross_debit', 'creator_net_credit', 'platform_fee_credit',
+    'creator_net_debit', 'platform_fee_debit', 'payer_gross_credit',
+  ]) assert.match(sql, new RegExp(`financial_leg'='${leg}'`));
+  assert.match(sql, /payer_account\.owner_id=receipt\.buyer_id/);
+  assert.match(sql, /creator_account\.owner_id=period\.creator_id/);
+  assert.match(sql, /platform_account\.account_type='platform'/);
+  assert.match(sql, /when 'GENERAL' then pg_catalog\.encode\(pg_catalog\.sha256/);
+  assert.match(sql, /attestation\.approval_digest=pg_catalog\.encode\(pg_catalog\.sha256/);
+  assert.match(sql, /attestation\.registered_by='postgres'/);
+  assert.match(sql, /receipt\.buyer_id<>receipt\.creator_id/);
+  assert.match(sql, /receipt\.content_id is not null and receipt\.offer_version_id is not null/);
+  assert.match(sql, /period\.subscriber_id<>period\.creator_id/);
+  assert.match(sql, /period\.plan_id is not null/);
+  assert.match(sql, /receipt\.gross_amount_bdag<=1000000000000/);
+  assert.match(sql, /period\.gross_amount_bdag<=1000000000000/);
+  assert.match(sql, /finance_authorization_id is null and receipt\.created_at<\(/);
+  assert.match(sql, /finance_authorization_id is null and period\.created_at<\(/);
+  assert.match(sql, /'orphan_premium_transactions'/);
+  assert.match(sql, /'orphan_premium_ledger_entries'/);
+  assert.match(sql, /'subscriptions_without_period'/);
+  assert.match(sql, /'multiple_periods_per_relationship'/);
+  assert.match(sql, /'duplicate_open_relationships'/);
+  assert.match(sql, /transaction_row\.operation_type='creator_premium_purchase_refund'/);
+  assert.match(sql, /entry\.metadata->>'fin_txn_id'=transaction_row\.id::text/);
+  assert.match(sql, /envelope\.authorization_scope='CANARY'/);
+  assert.match(sql, /envelope\.purchase_content_id=receipt\.content_id/);
+  assert.match(sql, /envelope\.subscription_plan_id=period\.plan_id/);
+  assert.match(sql, /receipt\.gross_amount_bdag=receipt\.creator_net_bdag\+receipt\.platform_fee_bdag/);
+  assert.match(sql, /period\.gross_amount_bdag=period\.creator_net_bdag\+period\.platform_fee_bdag/);
+});
+
+test('F4 promoted baseline finance digest is stable across reconciled commerce growth', async () => {
+  const adapter = await loadAdapter();
+  const activePolicy = structuredClone(installedPolicy);
+  activePolicy.baseline.latest_migration = '20261026030000_creator_premium_f4_general_bdag_activation';
+  activePolicy.baseline.migration_count = 355;
+  activePolicy.baseline.blocked_resources = [];
+  activePolicy.supabase.finance_policy = {
+    purchase_enabled: true, subscription_enabled: true,
+    refunds_enabled: true, platform_fee_bps: 2000,
+  };
+  activePolicy.supabase.managed_functions = [];
+  activePolicy.security_advisor.exceptions = [];
+  const migrations = [{ version: '20261026030000', name: 'creator_premium_f4_general_bdag_activation' }];
+  const evidence = finance => ({
+    migrations: { complete: true, count: 1, items: migrations, latest: migrations[0], sha256: sha256(canonicalJson(migrations)) },
+    functions: { complete: true, count: 0, items: [], sha256: sha256(canonicalJson([])) },
+    cron_security: {
+      cron: cronSnapshot(),
+      advisors: { complete: true, count: 0, items: [], sha256: sha256(canonicalJson([])) },
+    },
+    finance,
+    rpc_security: { complete: true, count: 0, items: [], sha256: sha256(canonicalJson([])) },
+  });
+  const activeFinance = financeSnapshot({
+    policy: {
+      purchase_enabled: true, subscription_enabled: true,
+      refunds_enabled: true, platform_fee_bps: 2000,
+      policy_version: 'creator-premium-f4-general-v1',
+    },
+    premium_transaction_count: 2,
+    premium_bindings: {
+      purchase_receipts: { count: 1, sha256: '5'.repeat(64) },
+      subscription_periods: { count: 1, sha256: '6'.repeat(64) },
+    },
+  });
+  const before = adapter.buildProductionBaselineDigests({ evidence: evidence(activeFinance), policy: activePolicy });
+  const after = adapter.buildProductionBaselineDigests({
+    evidence: evidence({
+      ...activeFinance,
+      premium_transaction_count: 4,
+      premium_bindings: {
+        purchase_receipts: { count: 2, sha256: '7'.repeat(64) },
+        subscription_periods: { count: 2, sha256: '8'.repeat(64) },
+      },
+    }),
+    policy: activePolicy,
+  });
+  assert.equal(before.finance, after.finance,
+    'legitimate reconciled commerce must not invalidate an active steady-state baseline');
 });

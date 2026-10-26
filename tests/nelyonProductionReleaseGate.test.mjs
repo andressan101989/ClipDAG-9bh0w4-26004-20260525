@@ -111,6 +111,84 @@ function asF3C2TransitionPolicy(policy) {
   return transitionPolicy;
 }
 
+const F4_GENERAL_MIGRATION = '20261026030000_creator_premium_f4_general_bdag_activation';
+
+test('F4 general transition is one exact migration from F3-C2 with Finance enabled at 2000 bps', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.finance_authority_f4_transition;
+  assert.deepEqual(transition && {
+    from_phase: transition.from_phase,
+    to_phase: transition.to_phase,
+    migration_path: transition.migration_path,
+    productive_paths: transition.productive_paths,
+    from_policy: transition.from_policy,
+    to_policy: transition.to_policy,
+  }, {
+    from_phase: 'f3_c2',
+    to_phase: 'f4_general',
+    migration_path: `supabase/migrations/${F4_GENERAL_MIGRATION}.sql`,
+    productive_paths: [`supabase/migrations/${F4_GENERAL_MIGRATION}.sql`],
+    from_policy: {
+      activation_mode: 'off', active_authorization_id: null,
+      platform_fee_bps: 0, purchase_enabled: false, refunds_enabled: false,
+      subscription_enabled: false,
+    },
+    to_policy: {
+      activation_mode: 'general', active_authorization_id: 'f4000000-0000-4000-8000-000000000001',
+      platform_fee_bps: 2000, purchase_enabled: true, refunds_enabled: true,
+      subscription_enabled: true,
+    },
+  });
+  assert.deepEqual(gate.F4_GENERAL_FINANCE_AUTHORITY_TRANSITION, transition);
+  assert.equal(policy.finance_authority.f4_general.base_phase, 'f3_c2');
+  assert.equal(policy.finance_authority.f4_general.relations.length, 6);
+  assert.equal(policy.finance_authority.f4_general.function_additions.length, 2);
+  assert.ok(policy.finance_authority.f4_general.function_overrides.some(row => (
+    row.identity === 'private.creator_premium_authorization_binding_f3_v1(uuid, text, uuid, uuid, uuid, uuid, numeric, integer, uuid, uuid, uuid)'
+      && row.sha256 === '6bdc07ee66247d453454b05cc0d7e713f2d96f3e60f6c31855dafb20c9d239f3'
+  )));
+  const f4Admin = policy.finance_security_advisor.f4_rpc_replacements[0];
+  assert.deepEqual(f4Admin.origin, {
+    migration: F4_GENERAL_MIGRATION,
+    migration_blob: transition.migration_blob,
+    source_sha: transition.reviewed_source_sha,
+  });
+  assert.equal(f4Admin.attestation.definition_sha256,
+    '8b5ab66edb413295e289df69f25f6ede7c128ee5cad2aaefade28ff4c235adee');
+
+  for (const mutate of [
+    candidate => { candidate.finance_authority_f4_transition.migration_sha256 = 'a'.repeat(64); },
+    candidate => { candidate.finance_authority.f4_general.relations[0].sha256 = 'a'.repeat(64); },
+    candidate => { candidate.finance_security_advisor.f4_rpc_replacements[0]
+      .attestation.definition_sha256 = 'a'.repeat(64); },
+  ]) {
+    const candidate = structuredClone(policy);
+    mutate(candidate);
+    assertDenied(() => gate.validatePolicy(candidate), 'INVALID_FINANCE_AUTHORITY_TRANSITION');
+  }
+
+  const promoted = structuredClone(policy);
+  promoted.baseline.latest_migration = F4_GENERAL_MIGRATION;
+  promoted.baseline.migration_count = 355;
+  promoted.supabase.finance_policy = {
+    platform_fee_bps: 2000,
+    purchase_enabled: true,
+    refunds_enabled: true,
+    subscription_enabled: true,
+  };
+  assert.equal(gate.validatePolicy(promoted), true);
+
+  for (const unsafe of [
+    { ...promoted.supabase.finance_policy, platform_fee_bps: 1999 },
+    { ...promoted.supabase.finance_policy, refunds_enabled: false },
+    { ...promoted.supabase.finance_policy, purchase_enabled: false },
+  ]) {
+    const candidate = structuredClone(promoted);
+    candidate.supabase.finance_policy = unsafe;
+    assertDenied(() => gate.validatePolicy(candidate), 'INVALID_MANAGED_SCOPE_TRANSITION');
+  }
+});
+
 test('F3 foundation transition attests exact committed migration and sole existing Edge closure', async () => {
   const { gate, policy: installedPolicy } = await loadGateAndPolicy();
   const policy = asF3TransitionPolicy(installedPolicy);
@@ -3163,6 +3241,42 @@ test('candidate baseline accepts canonical finance snapshot policy metadata', as
   assert.equal(verified.finance.policy.policy_version, 'creator-premium-b4-v1');
 });
 
+test('F4 promoted baseline accepts reconciled nonzero commerce under the exact general policy', async () => {
+  const loaded = await loadGateAndPolicy();
+  const { gate } = loaded;
+  const policy = asCandidatePolicy(loaded.policy);
+  policy.baseline.migration_count = 355;
+  policy.baseline.latest_migration = F4_GENERAL_MIGRATION;
+  policy.supabase.finance_policy = {
+    purchase_enabled: true, subscription_enabled: true,
+    refunds_enabled: true, platform_fee_bps: 2000,
+  };
+  const snapshot = baselineSnapshot(policy);
+  snapshot.finance = {
+    ...snapshot.finance,
+    policy: { ...policy.supabase.finance_policy, policy_version: 'creator-premium-f4-general-v1' },
+    premium_transaction_count: 4,
+  };
+  const evidence = gate.buildBaselineEvidence(snapshot);
+  const verified = gate.verifyBaselineEvidence({
+    candidate: policy.baseline,
+    evidence,
+    expected: {
+      projectRef: PROJECT_REF,
+      sha: policy.baseline.sha,
+      migrationCount: 355,
+      latestMigration: F4_GENERAL_MIGRATION,
+      managedFunctions: MANAGED_FUNCTIONS,
+      remoteFunctionCount: 34,
+      financePolicy: policy.supabase.finance_policy,
+      reviewedPolicySha256: 'f'.repeat(64),
+      evidenceDigests: evidence.digests,
+      blockedResources: evidence.blocked_resources,
+    },
+  });
+  assert.equal(verified.finance.premium_transaction_count, 4);
+});
+
 test('Git SHA equality alone cannot verify baseline', async () => {
   const loaded = await loadGateAndPolicy();
   const { gate } = loaded;
@@ -3439,6 +3553,58 @@ function zeroReconciliation(overrides = {}) {
     ...overrides,
   };
 }
+
+test('F4 activation postcheck permits only the exact OFF to general policy change with zero financial delta', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const off = {
+    purchase_enabled: false, subscription_enabled: false,
+    refunds_enabled: false, platform_fee_bps: 0,
+  };
+  const general = {
+    purchase_enabled: true, subscription_enabled: true,
+    refunds_enabled: true, platform_fee_bps: 2000,
+  };
+  const before = financeSnapshot({ policy: off });
+  const after = financeSnapshot({ policy: general, databaseTime: '2026-10-09T12:00:06.000Z' });
+  const unchangedWindow = {
+    integrity: 'PASS', count_growth: { transactions: 0, ledger_entries: 0 },
+    new_transaction_ids: [], preexisting_confirmed_after_snapshot: [], findings: [],
+  };
+  const verified = gate.verifyFinancePostcheck({
+    before,
+    after,
+    window: unchangedWindow,
+    reconciliationResults: zeroReconciliation(),
+    expectedBeforePolicy: off,
+    expectedAfterPolicy: general,
+    requireNoFinancialMovement: true,
+  });
+  assert.equal(verified.integrity, 'PASS');
+  assert.deepEqual(verified.policy_transition, { before: off, after: general });
+
+  const transaction = financeTransaction('txn-during-f4');
+  const entries = ledgerPair(transaction);
+  const movedAfter = financeSnapshot({
+    transactions: [transaction], ledgerEntries: entries, policy: general,
+    databaseTime: '2026-10-09T12:00:06.000Z',
+  });
+  const movedWindow = gate.classifyFinanceWindow({
+    before,
+    after: movedAfter,
+    transactions: [transaction],
+    ledgerEntries: entries,
+    releaseIdentity: releaseIdentity(),
+  });
+  assertDenied(() => gate.verifyFinancePostcheck({
+    before,
+    after: movedAfter,
+    window: movedWindow,
+    reconciliationResults: zeroReconciliation(),
+    expectedBeforePolicy: off,
+    expectedAfterPolicy: general,
+    requireNoFinancialMovement: true,
+  }), 'FINANCE_MOVEMENT_DURING_POLICY_ACTIVATION');
+});
 
 test('unchanged counters are not required when legitimate concurrent transactions reconcile', async () => {
   const { gate, policy } = await loadGateAndPolicy();

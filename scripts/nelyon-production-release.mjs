@@ -78,6 +78,38 @@ export const F3_C2_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
   ],
   requires_separate_baseline_promotion: true,
 });
+export const F4_GENERAL_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
+  id: 'creator-premium-f4-general-bdag-activation-v1',
+  from_phase: 'f3_c2',
+  to_phase: 'f4_general',
+  baseline_sha: '7721b50dafa6a54a131dd44ddad83ece250fe9e3',
+  reviewed_source_sha: 'fc70374445471ad63411b6de3ea7fd86a6730bd6',
+  integration_base_sha: 'aa31271700f54f8d3c27a9fa89b592d8b56ddad1',
+  approved_sha_ancestry: 'verified_integration_base',
+  migration_path: 'supabase/migrations/20261026030000_creator_premium_f4_general_bdag_activation.sql',
+  migration_blob: '8197f838edd56d9b5e52c69f2b039bec4fbcc5f6',
+  migration_sha256: 'da78d4f1a45b86692c82693af1a30373dfebfde4152a3ab16da9ddb6fd00b16e',
+  productive_paths: [
+    'supabase/migrations/20261026030000_creator_premium_f4_general_bdag_activation.sql',
+  ],
+  from_policy: {
+    activation_mode: 'off',
+    active_authorization_id: null,
+    platform_fee_bps: 0,
+    purchase_enabled: false,
+    refunds_enabled: false,
+    subscription_enabled: false,
+  },
+  to_policy: {
+    activation_mode: 'general',
+    active_authorization_id: 'f4000000-0000-4000-8000-000000000001',
+    platform_fee_bps: 2000,
+    purchase_enabled: true,
+    refunds_enabled: true,
+    subscription_enabled: true,
+  },
+  requires_separate_baseline_promotion: true,
+});
 export const F3_C2_ADMIN_FINANCE_NEGATIVE_AUTHORIZATION_EVIDENCE = Object.freeze({
   version: 'creator-premium-f3-c2-admin-finance-negative-authorization-v1',
   migration_path: F3_C2_FINANCE_AUTHORITY_TRANSITION.migration_path,
@@ -591,13 +623,32 @@ export function validatePolicy(policy) {
     deny('INVALID_FINANCE_AUTHORITY_TRANSITION',
       'C2 Admin Finance authorization evidence must match the reproducible negative-test contract');
   }
+  const f4AdminFinanceRpc = policy.finance_security_advisor?.f4_rpc_replacements?.find(exception =>
+    exception?.object?.schema === 'public'
+      && exception?.object?.name === 'get_admin_creator_premium_finance_activation_v1');
+  if (policy.finance_security_advisor?.f4_rpc_replacements?.length !== 1
+    || f4AdminFinanceRpc?.advisor_fingerprint
+      !== '2818544a84b6844679779d5b23a03199e75c18d5d36d6d160aca9c8191c41097'
+    || f4AdminFinanceRpc?.attestation?.definition_sha256
+      !== '8b5ab66edb413295e289df69f25f6ede7c128ee5cad2aaefade28ff4c235adee'
+    || f4AdminFinanceRpc?.origin?.migration
+      !== '20261026030000_creator_premium_f4_general_bdag_activation'
+    || f4AdminFinanceRpc?.origin?.migration_blob
+      !== F4_GENERAL_FINANCE_AUTHORITY_TRANSITION.migration_blob
+    || f4AdminFinanceRpc?.origin?.source_sha
+      !== F4_GENERAL_FINANCE_AUTHORITY_TRANSITION.reviewed_source_sha) {
+    deny('INVALID_FINANCE_AUTHORITY_TRANSITION',
+      'F4 Admin Finance replacement must match the exact phase-bound catalog evidence');
+  }
   if (canonicalJson(policy.finance_authority_transition) !== canonicalJson(F3_FINANCE_AUTHORITY_TRANSITION)
     || canonicalJson(policy.finance_authority_c2_transition) !== canonicalJson(F3_C2_FINANCE_AUTHORITY_TRANSITION)
+    || canonicalJson(policy.finance_authority_f4_transition) !== canonicalJson(F4_GENERAL_FINANCE_AUTHORITY_TRANSITION)
     || sha256Hex(canonicalJson(policy.finance_authority_transition)) !== FINANCE_POLICY_DIGESTS.historical_transition
     || sha256Hex(canonicalJson(policy.finance_authority_c2_transition)) !== FINANCE_POLICY_DIGESTS.c2_transition
+    || sha256Hex(canonicalJson(policy.finance_authority_f4_transition)) !== FINANCE_POLICY_DIGESTS.f4_transition
     || sha256Hex(canonicalJson(policy.finance_authority)) !== FINANCE_POLICY_DIGESTS.authority
     || sha256Hex(canonicalJson(policy.finance_security_advisor)) !== FINANCE_POLICY_DIGESTS.security_advisor) {
-    deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'F3 and C2 finance authority must match the exact audited contracts');
+    deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'F3, C2, and F4 finance authority must match the exact audited contracts');
   }
   if (policy.owner !== 'andressan101989') deny('INVALID_POLICY_OWNER', 'unexpected policy owner');
   if (policy.repository !== 'andressan101989/ClipDAG-9bh0w4-26004-20260525') {
@@ -683,12 +734,22 @@ export function validatePolicy(policy) {
     refunds_enabled: false,
     subscription_enabled: false,
   };
+  const financeGeneral = {
+    platform_fee_bps: 2000,
+    purchase_enabled: true,
+    refunds_enabled: true,
+    subscription_enabled: true,
+  };
+  const expectedFinancePolicy = policy.baseline?.latest_migration
+    >= '20261026030000_creator_premium_f4_general_bdag_activation'
+    ? financeGeneral
+    : financeOff;
   if (canonicalJson(policy.managed_scope_transitions) !== canonicalJson([F2_MANAGED_SCOPE_TRANSITION])
     || !policy.supabase.managed_functions.includes(F2_MANAGED_SCOPE_TRANSITION.resource)
-    || canonicalJson(policy.supabase.finance_policy) !== canonicalJson(financeOff)) {
+    || canonicalJson(policy.supabase.finance_policy) !== canonicalJson(expectedFinancePolicy)) {
     deny(
       'INVALID_MANAGED_SCOPE_TRANSITION',
-      'managed scope transition must match the exact F2 evidence and preserve Finance OFF',
+      'managed scope transition or phase-bound Premium Finance policy differs',
     );
   }
   if (policy.baseline.state === 'verified') {
@@ -1125,6 +1186,56 @@ export function attestManagedScopeTransition({
 
 export function attestFinanceAuthorityTransition({ mode, policy, approvedSha, changes, migrations, affectedFunctions, runGit, cwd }) {
   if (mode === 'postcheck_recovery') return { migrations, attestation: null };
+  const f4 = F4_GENERAL_FINANCE_AUTHORITY_TRANSITION;
+  const f4Candidate = migrations?.some(item => item.version === '20261026030000' || item.path === f4?.migration_path)
+    || changes?.some(item => item.path === f4?.migration_path);
+  if (f4Candidate) {
+    const code = 'INVALID_FINANCE_AUTHORITY_TRANSITION';
+    if (canonicalJson(policy?.finance_authority_f4_transition) !== canonicalJson(f4)
+      || policy?.baseline?.sha !== f4.baseline_sha || !SHA_PATTERN.test(approvedSha ?? '')
+      || canonicalJson(affectedFunctions) !== canonicalJson([]) || migrations.length !== 1
+      || migrations[0].path !== f4.migration_path || migrations[0].version !== '20261026030000'
+      || typeof runGit !== 'function') deny(code, 'F4 is inapplicable or its productive scope differs');
+    const classified = classifyChangedPaths(changes);
+    const productive = classified.productive;
+    if (classified.config.length !== 0
+      || canonicalJson(productive.map(item => item.path).sort()) !== canonicalJson(f4.productive_paths)
+      || productive.some(item => item.status !== 'A')) {
+      deny(code, 'F4 permits exactly its one migration and no Edge/config changes');
+    }
+    try {
+      runGit(['cat-file', '-e', `${approvedSha}^{commit}`], { cwd });
+      runGit(['merge-base', '--is-ancestor', f4.baseline_sha, f4.integration_base_sha], { cwd });
+      runGit(['merge-base', '--is-ancestor', f4.integration_base_sha, approvedSha], { cwd });
+      const migrationBlob = gitText(runGit, ['rev-parse', `${approvedSha}:${f4.migration_path}`], cwd);
+      if (migrationBlob !== f4.migration_blob
+        || fileTypeAtCommit(runGit, cwd, approvedSha, f4.migration_path) !== 'file') {
+        deny(code, 'F4 committed migration blob/path differs');
+      }
+      const migrationBytes = runGit(['show', `${approvedSha}:${f4.migration_path}`], { cwd });
+      if (sha256Hex(migrationBytes) !== f4.migration_sha256) deny(code, 'F4 migration bytes differ');
+      const actualChanges = parseNameStatusZ(runGit([
+        'diff', '--name-status', '-z', f4.integration_base_sha, approvedSha, '--', 'supabase/',
+      ], { cwd }));
+      if (canonicalJson(actualChanges.map(item => ({ path: item.path, status: item.status })).sort((a,b) => a.path.localeCompare(b.path)))
+        !== canonicalJson(productive.map(item => ({ path: item.path, status: item.status })).sort((a,b) => a.path.localeCompare(b.path)))) {
+        deny(code, 'F4 Git productive closure differs from supplied evidence');
+      }
+    } catch (error) {
+      if (error?.code === code) throw error;
+      deny(code, 'approved commit does not attest the exact F4 ancestry and bytes');
+    }
+    const attestation = {
+      id: f4.id, from_phase: f4.from_phase, to_phase: f4.to_phase, baseline_sha: f4.baseline_sha,
+      reviewed_source_sha: f4.reviewed_source_sha, integration_base_sha: f4.integration_base_sha,
+      approved_sha: approvedSha, baseline_descendant_verified: true, integration_base_descendant_verified: true,
+      migration_blob: f4.migration_blob, migration_sha256: f4.migration_sha256,
+    };
+    return {
+      migrations: migrations.map(item => ({ ...item, blob: f4.migration_blob, sha256: f4.migration_sha256 })),
+      attestation,
+    };
+  }
   const c2 = F3_C2_FINANCE_AUTHORITY_TRANSITION;
   const c2Candidate = migrations?.some(item => item.version === '20261025160452' || item.path === c2.migration_path)
     || changes?.some(item => item.path === c2.migration_path);
@@ -1900,8 +2011,31 @@ export function buildManifest({
   } else if (managedScopeTransition !== undefined && managedScopeTransition !== null) {
     deny('INVALID_MANAGED_SCOPE_TRANSITION', 'managed scope transition attestation is not applicable');
   }
+  const f4 = F4_GENERAL_FINANCE_AUTHORITY_TRANSITION;
+  const f4Candidate = !recoveryMode && migrations?.some(item => item.version === '20261026030000'
+    || item.path === f4.migration_path);
+  if (f4Candidate) {
+    const expected = {
+      id: f4.id, from_phase: f4.from_phase, to_phase: f4.to_phase, baseline_sha: f4.baseline_sha,
+      reviewed_source_sha: f4.reviewed_source_sha, integration_base_sha: f4.integration_base_sha,
+      approved_sha: request.approvedSha, baseline_descendant_verified: true,
+      integration_base_descendant_verified: true, migration_blob: f4.migration_blob,
+      migration_sha256: f4.migration_sha256,
+    };
+    if (canonicalJson(policy?.finance_authority_f4_transition) !== canonicalJson(f4)
+      || policy.baseline.sha !== f4.baseline_sha
+      || canonicalJson(financeAuthorityTransition ?? null) !== canonicalJson(expected)
+      || gitState.approvedSha !== request.approvedSha || gitState.originMainSha !== request.approvedSha
+      || gitState.baselineSha !== f4.baseline_sha
+      || canonicalJson(classified.productive.map(item => item.path).sort()) !== canonicalJson(f4.productive_paths)
+      || migrations.length !== 1 || migrations[0].path !== f4.migration_path
+      || migrations[0].blob !== f4.migration_blob || migrations[0].sha256 !== f4.migration_sha256
+      || functionNames.length !== 0 || contracts.length !== 0 || classified.config.length !== 0) {
+      deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'manifest lacks the exact F4 ancestry/bytes/closure attestation');
+    }
+  }
   const c2 = F3_C2_FINANCE_AUTHORITY_TRANSITION;
-  const c2Candidate = !recoveryMode && migrations?.some(item => item.version === '20261025160452'
+  const c2Candidate = !f4Candidate && !recoveryMode && migrations?.some(item => item.version === '20261025160452'
     || item.path === c2.migration_path);
   if (c2Candidate) {
     const expected = {
@@ -1923,7 +2057,7 @@ export function buildManifest({
     }
   }
   const f3 = F3_FINANCE_AUTHORITY_TRANSITION;
-  const f3Candidate = !c2Candidate && !recoveryMode && (migrations?.some(item => item.version === '20261025011000' || item.path === f3.migration_path)
+  const f3Candidate = !f4Candidate && !c2Candidate && !recoveryMode && (migrations?.some(item => item.version === '20261025011000' || item.path === f3.migration_path)
     || (policy.baseline.sha === f3.baseline_sha && functionNames.includes(f3.function)));
   if (f3Candidate) {
     const expected = { id: f3.id, phase: f3.phase, baseline_sha: f3.baseline_sha,
@@ -1943,7 +2077,7 @@ export function buildManifest({
       || contracts[0]?.source_sha256 !== f3.function_source_sha256 || classified.config.length !== 0) {
       deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'manifest lacks the exact foundation ancestry/bytes/closure attestation');
     }
-  } else if (!c2Candidate && financeAuthorityTransition != null) deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'foundation attestation is inapplicable');
+  } else if (!f4Candidate && !c2Candidate && financeAuthorityTransition != null) deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'foundation attestation is inapplicable');
   if (!generatedAt || Number.isNaN(Date.parse(generatedAt))) {
     deny('INVALID_MANIFEST_TIME', 'manifest generation time is invalid');
   }
@@ -2725,10 +2859,14 @@ export function verifyBaselineEvidence({ candidate, evidence, expected }) {
     || managedNames.length + (evidence.functions?.unmanaged ?? []).length !== expected?.remoteFunctionCount) {
     deny('BASELINE_EVIDENCE_MISMATCH', 'remote function inventory does not match the controlled scope');
   }
+  const activeF4Baseline = expected?.latestMigration
+    >= '20261026030000_creator_premium_f4_general_bdag_activation';
   if (canonicalJson(financePolicyShape(evidence.finance?.policy)) !== canonicalJson(expected?.financePolicy)
-    || evidence.finance?.premium_transaction_count !== 0
+    || (!activeF4Baseline && evidence.finance?.premium_transaction_count !== 0)
+    || (activeF4Baseline && (!Number.isInteger(evidence.finance?.premium_transaction_count)
+      || evidence.finance.premium_transaction_count < 0))
     || evidence.finance?.c2_attributed_bdag_movement !== 0) {
-    deny('BASELINE_EVIDENCE_MISMATCH', 'finance baseline does not match the disabled zero-activity bootstrap');
+    deny('BASELINE_EVIDENCE_MISMATCH', 'finance baseline does not match its exact phase policy and movement contract');
   }
   const reviewedPolicySha256 = expected?.reviewedPolicyBytes !== undefined
     ? sha256Hex(expected.reviewedPolicyBytes)
@@ -3004,14 +3142,23 @@ function exactReconciliationsZero(value) {
   return REQUIRED_FINANCE_RECONCILIATIONS.every(key => Number.isFinite(value[key]) && value[key] === 0);
 }
 
-export function verifyFinancePostcheck({ before, after, window, reconciliationResults, expectedPolicy }) {
+export function verifyFinancePostcheck({
+  before,
+  after,
+  window,
+  reconciliationResults,
+  expectedPolicy,
+  expectedBeforePolicy = expectedPolicy,
+  expectedAfterPolicy = expectedPolicy,
+  requireNoFinancialMovement = false,
+}) {
   validateFinanceSnapshot(before);
   validateFinanceSnapshot(after);
   if (Date.parse(after.database_time) < Date.parse(before.database_time)) {
     deny('INVALID_FINANCE_WINDOW', 'post-snapshot database time precedes the pre-snapshot');
   }
-  if (canonicalJson(financePolicyShape(before.policy)) !== canonicalJson(expectedPolicy)
-    || canonicalJson(financePolicyShape(after.policy)) !== canonicalJson(expectedPolicy)) {
+  if (canonicalJson(financePolicyShape(before.policy)) !== canonicalJson(expectedBeforePolicy)
+    || canonicalJson(financePolicyShape(after.policy)) !== canonicalJson(expectedAfterPolicy)) {
     deny('FINANCE_POLICY_CHANGED', 'Premium Finance switches or platform fee changed');
   }
   if (window?.integrity !== 'PASS' || !exactReconciliationsZero(reconciliationResults)) {
@@ -3024,7 +3171,19 @@ export function verifyFinancePostcheck({ before, after, window, reconciliationRe
   if (growth.transactions < 0 || growth.ledger_entries < 0 || canonicalJson(growth) !== canonicalJson(window.count_growth)) {
     deny('FINANCE_RECONCILIATION_FAILED', 'reported finance growth does not match complete snapshots');
   }
-  return { integrity: 'PASS', count_growth: growth, concurrent_activity: growth.transactions > 0 || window.preexisting_confirmed_after_snapshot.length > 0 };
+  if (requireNoFinancialMovement && (growth.transactions !== 0 || growth.ledger_entries !== 0
+    || window.new_transaction_ids.length !== 0
+    || window.preexisting_confirmed_after_snapshot.length !== 0)) {
+    deny('FINANCE_MOVEMENT_DURING_POLICY_ACTIVATION', 'F4 activation requires a zero-movement finance window');
+  }
+  return {
+    integrity: 'PASS',
+    count_growth: growth,
+    concurrent_activity: growth.transactions > 0 || window.preexisting_confirmed_after_snapshot.length > 0,
+    ...(expectedBeforePolicy !== expectedAfterPolicy
+      ? { policy_transition: { before: expectedBeforePolicy, after: expectedAfterPolicy } }
+      : {}),
+  };
 }
 
 export function verifyFinancePostcheckFromRaw({
@@ -3033,6 +3192,9 @@ export function verifyFinancePostcheckFromRaw({
   windowRows,
   reconciliationResults,
   expectedPolicy,
+  expectedBeforePolicy = expectedPolicy,
+  expectedAfterPolicy = expectedPolicy,
+  requireNoFinancialMovement = false,
   releaseIdentity,
 }) {
   if (!windowRows || windowRows.complete !== true
@@ -3053,6 +3215,9 @@ export function verifyFinancePostcheckFromRaw({
     window,
     reconciliationResults,
     expectedPolicy,
+    expectedBeforePolicy,
+    expectedAfterPolicy,
+    requireNoFinancialMovement,
   });
   return { finance, window };
 }
@@ -3252,12 +3417,24 @@ async function runCli(argv) {
       )),
       ledger_entries: afterEvidence.finance.ledger_entries.items.filter(item => !beforeLedger.has(item.id)),
     };
+    const f4Activation = manifest?.resources?.finance_authority_transition?.to_phase === 'f4_general';
+    const publicFinancePolicy = value => ({
+      platform_fee_bps: value.platform_fee_bps,
+      purchase_enabled: value.purchase_enabled,
+      refunds_enabled: value.refunds_enabled,
+      subscription_enabled: value.subscription_enabled,
+    });
     const financeVerification = verifyFinancePostcheckFromRaw({
       before: beforeEvidence.finance,
       after: afterEvidence.finance,
       windowRows,
       reconciliationResults: afterEvidence.finance.reconciliation,
       expectedPolicy: policy.supabase.finance_policy,
+      ...(f4Activation ? {
+        expectedBeforePolicy: publicFinancePolicy(policy.finance_authority_f4_transition.from_policy),
+        expectedAfterPolicy: publicFinancePolicy(policy.finance_authority_f4_transition.to_policy),
+        requireNoFinancialMovement: true,
+      } : {}),
       releaseIdentity: {
         releaseId: releaseRequest.releaseId,
         runId: String(releaseRequest.runId),
