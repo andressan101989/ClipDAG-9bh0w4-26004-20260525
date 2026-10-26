@@ -56,7 +56,7 @@ test('Battle admission locks participants and sessions before Battle then comput
   const sessions = sql.indexOf('private.live_battle_lock_sessions');
   const battle = sql.indexOf('for update;', sql.indexOf('select battle.* into v_battle'));
   assert.ok(users > 0 && users < sessions && sessions < battle);
-  assert.match(sql, /participant.id in \(v_sender, v_route.challenger_user_id, v_route.opponent_user_id\)[\s\S]*order by participant.id[\s\S]*for update;/);
+  assert.match(sql, /participant.id in \(v_sender, v_route.challenger_user_id, v_route.opponent_user_id\)[\s\S]*order by participant.id[\s\S]*for no key update;/);
   assert.ok(battle < sql.indexOf('v_server_now := pg_catalog.clock_timestamp()'));
   assert.ok(sql.indexOf('if found then') < sql.indexOf("v_battle.status is distinct from 'active'"));
   assert.match(sql, /catalog.active and catalog.enabled/);

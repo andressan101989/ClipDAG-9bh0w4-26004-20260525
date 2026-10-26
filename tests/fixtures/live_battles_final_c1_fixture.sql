@@ -71,5 +71,17 @@ create table public.live_battle_public_states(
   series_champion_user_id uuid, series_version bigint, rematch_request_id uuid,
   rematch_request_after_battle_id uuid, rematch_request_status text,
   rematch_requested_by_user_id uuid, rematch_request_expires_at timestamptz,
-  rematch_window_expires_at timestamptz, server_clock_at timestamptz
+  rematch_window_expires_at timestamptz, server_clock_at timestamptz,
+  constraint live_battle_public_states_winner_check check (
+    (outcome in ('pending', 'tie', 'cancelled') and winner_user_id is null) or
+    (outcome in ('challenger', 'opponent') and winner_user_id in (
+      local_host_user_id, opponent_host_user_id
+    ))
+  ),
+  constraint live_battle_public_states_result_check check (
+    outcome in ('pending', 'cancelled') or
+    (outcome = 'challenger' and challenger_score > opponent_score) or
+    (outcome = 'opponent' and opponent_score > challenger_score) or
+    (outcome = 'tie' and challenger_score = opponent_score)
+  )
 );
