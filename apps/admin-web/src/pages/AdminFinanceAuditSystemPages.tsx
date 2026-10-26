@@ -76,18 +76,24 @@ export function AdminCreatorPremiumFinancePage(){
     }catch(reason){if(requestGeneration.current===generation)setError(reason instanceof Error?reason.message:"No se pudo cargar la página siguiente")}finally{if(requestGeneration.current===generation)setLoadingMore(false)}
   };
   const financeOff=activation?.mode==="off";
+  const generalActivation=activation?.mode==="general";
   const applySearch=(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();setQuery(queryDraft.trim())};
   return <Frame eyebrow="CREATOR PREMIUM · READ ONLY" title="Finance · Creator Premium" detail="Compras, periodos, reembolsos y conciliación desde la autoridad financiera canónica.">
     <div data-capability={creatorPremiumFinanceCapability}>
       <section className="detail-card" aria-label="Activación Finance Premium">
-        <AdminStatusPanel title={financeOff?"Finance OFF":activation?.mode==="canary"?"Canary limitado":"UNKNOWN"} detail={activation===null?"No se pudo verificar la proyección de activación.":financeOff?"Las operaciones financieras están deshabilitadas.":"Autorización finita y limitada, aplicada por el servidor."} tone={activation?.mode==="canary"?"warning":"neutral"}/>
-        <p>Sin activación pública. Esta vista es de solo lectura.</p>
+        <AdminStatusPanel title={financeOff?"Finance OFF":activation?.mode==="canary"?"Canary limitado":generalActivation?"Activación general":"UNKNOWN"} detail={activation===null?"No se pudo verificar la proyección de activación.":financeOff?"Las operaciones financieras están deshabilitadas.":generalActivation?"Autorización general aplicada por el servidor.":"Autorización finita y limitada, aplicada por el servidor."} tone={activation?.mode==="canary"?"warning":generalActivation?"success":"neutral"}/>
+        <p>{generalActivation?"La autoridad financiera reporta alcance general. Esta vista es de solo lectura.":"Sin activación pública. Esta vista es de solo lectura."}</p>
         {activation?.mode==="canary"?<>
           <AdminFactGrid><AdminFact label="Inicio de cargos" value={date(activation.charge_starts_at)}/><AdminFact label="Fin de cargos" value={date(activation.charge_expires_at)}/><AdminFact label="Fin de reembolsos" value={date(activation.refund_expires_at)}/>
           <AdminFact label="Compras autorizadas" value={activation.operations.purchase_enabled?"Sí":"No"}/><AdminFact label="Suscripciones autorizadas" value={activation.operations.subscription_enabled?"Sí":"No"}/><AdminFact label="Reembolsos autorizados" value={activation.operations.refunds_enabled?"Sí":"No"}/>
           <AdminFact label="Importe por compra" value={formatAdminExactMoney(activation.limits.purchase_amount_bdag,"BDAG")}/><AdminFact label="Importe por suscripción" value={formatAdminExactMoney(activation.limits.subscription_amount_bdag,"BDAG")}/>
           <AdminFact label="Exposición máxima" value={formatAdminExactMoney(activation.limits.gross_bdag,"BDAG")}/><AdminFact label="Exposición consumida" value={formatAdminExactMoney(activation.consumed.gross_bdag,"BDAG")}/><AdminFact label="Exposición restante" value={formatAdminExactMoney(activation.remaining.gross_bdag,"BDAG")}/></AdminFactGrid>
           {(["purchase_count","subscription_count","refund_count"] as const).map((key,index)=><p key={key}>{["Compras","Suscripciones","Reembolsos"][index]}: límite {activation.limits[key]} · consumidos {activation.consumed[key]} · restantes {activation.remaining[key]}</p>)}
+        </>:activation?.mode==="general"?<>
+          <AdminFactGrid><AdminFact label="Alcance" value={activation.scope}/><AdminFact label="Inicio de cargos" value={date(activation.charge_starts_at)}/>
+          <AdminFact label="Compras autorizadas" value={activation.operations.purchase_enabled?"Sí":"No"}/><AdminFact label="Suscripciones autorizadas" value={activation.operations.subscription_enabled?"Sí":"No"}/><AdminFact label="Reembolsos autorizados" value={activation.operations.refunds_enabled?"Sí":"No"}/>
+          <AdminFact label="Comisión" value={result===null?"—":`${result.policy.platform_fee_bps} bps`}/><AdminFact label="Consumo bruto" value={formatAdminExactMoney(activation.consumed.gross_bdag,"BDAG")}/></AdminFactGrid>
+          <p>Compras consumidas: {activation.consumed.purchase_count}</p><p>Suscripciones consumidas: {activation.consumed.subscription_count}</p><p>Reembolsos consumidos: {activation.consumed.refund_count}</p>
         </>:null}
       </section>
       <form className="filters" onSubmit={applySearch}>
