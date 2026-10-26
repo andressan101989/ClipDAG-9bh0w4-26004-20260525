@@ -3328,3 +3328,58 @@ test('F4 promoted baseline finance digest is stable across reconciled commerce g
   assert.equal(before.finance, after.finance,
     'legitimate reconciled commerce must not invalidate an active steady-state baseline');
 });
+
+test('F4 promoted baseline preserves the owner-reviewed raw cron command identity', async () => {
+  const adapter = await loadAdapter();
+  const activePolicy = structuredClone(installedPolicy);
+  activePolicy.baseline.latest_migration = '20261026030000_creator_premium_f4_general_bdag_activation';
+  activePolicy.baseline.migration_count = 355;
+  activePolicy.baseline.blocked_resources = [];
+  activePolicy.supabase.finance_policy = {
+    purchase_enabled: true, subscription_enabled: true,
+    refunds_enabled: true, platform_fee_bps: 2000,
+  };
+  activePolicy.supabase.managed_functions = [];
+  activePolicy.security_advisor.exceptions = [];
+  const migrations = [{ version: '20261026030000', name: 'creator_premium_f4_general_bdag_activation' }];
+  const cronItem = {
+    jobid: '4', jobname: 'call-incoming-dispatch-history-retention', schedule: '0 5 * * *',
+    database: 'postgres', username: 'postgres', active: true,
+    nodename: 'localhost', nodeport: 5432,
+    command_sha256: 'a'.repeat(64),
+    legacy_normalized_command_sha256: 'b'.repeat(64),
+  };
+  const evidence = {
+    migrations: { complete: true, count: 1, items: migrations, latest: migrations[0], sha256: sha256(canonicalJson(migrations)) },
+    functions: { complete: true, count: 0, items: [], sha256: sha256(canonicalJson([])) },
+    cron_security: {
+      cron: { ...cronSnapshot(), count: 1, items: [cronItem] },
+      advisors: { complete: true, count: 0, items: [], sha256: sha256(canonicalJson([])) },
+    },
+    finance: financeSnapshot({
+      policy: {
+        purchase_enabled: true, subscription_enabled: true,
+        refunds_enabled: true, platform_fee_bps: 2000,
+        policy_version: 'creator-premium-f4-general-v1',
+      },
+    }),
+    rpc_security: { complete: true, count: 0, items: [], sha256: sha256(canonicalJson([])) },
+  };
+  const rawCronItem = { ...cronItem };
+  delete rawCronItem.legacy_normalized_command_sha256;
+  const legacyCronItem = { ...rawCronItem, command_sha256: cronItem.legacy_normalized_command_sha256 };
+  const expectedRawDigest = sha256(canonicalJson({
+    complete: true,
+    cron: [rawCronItem],
+    security_findings: [],
+  }));
+  const legacyDigest = sha256(canonicalJson({
+    complete: true,
+    cron: [legacyCronItem],
+    security_findings: [],
+  }));
+  assert.notEqual(expectedRawDigest, legacyDigest);
+  const digests = adapter.buildProductionBaselineDigests({ evidence, policy: activePolicy });
+  assert.equal(digests.cron_security, expectedRawDigest,
+    'the promoted F4 baseline was signed over raw cron command bytes');
+});

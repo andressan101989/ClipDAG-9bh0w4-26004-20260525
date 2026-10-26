@@ -1685,14 +1685,11 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
     .map(exception => exception.advisor_fingerprint));
   const historicalAdvisorItems = evidence.cron_security.advisors.items
     .filter(item => !deployedExceptionFingerprints.has(item.fingerprint));
-  // The promoted baseline predates raw command identities. Preserve its exact
-  // normalized shape while signed pre/post evidence and transition checks use
-  // command_sha256 (the raw command bytes) as the preservation authority.
-  const baselineUsesRawCronIdentity = policy?.baseline?.latest_migration
-    >= '20261026072512_creator_premium_f5_autonomous_subscriptions';
+  // Production baselines are signed over the exact cron command bytes. Keep
+  // the legacy normalized identity only for validating the F5 cron contract.
   const baselineCronItems = projectCronBaselineItems(
     evidence.cron_security.cron.items,
-    baselineUsesRawCronIdentity,
+    true,
   );
   const cronSecurity = {
     complete: true,
