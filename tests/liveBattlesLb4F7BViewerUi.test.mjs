@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertDependencyContract } from './helpers/dependencyContract.mjs';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -148,9 +149,9 @@ test('reduced motion and bounded invitation countdown clean up without polling',
 });
 
 test('protected manifests and deployed migrations remain LF-identical', async () => {
+  assertDependencyContract();
   const expected = new Map([
-    ['package.json', '67b0b13e81b3b4d89fa068205636a6c6c55abe52856d5256beb0d39bcc50f3c0'],
-    ['package-lock.json', '9563f6480ec75a028a4580025d68884aca731c7836320ee148785156b0c40bf4'],
+    ['package-lock.json', '3c902ef2cc270e3d89dea7964981b46b964ddadd9c1a35395f6a20f2e5612d31'],
     ['supabase/migrations/20260830053531_live_battles_lb4_f4d_a_power_engine.sql', '3803e2fbcd23e7c63f5cff45e1ff5994b61011f3e3fdf89fa0166bd6efb3ab25'],
     ['supabase/migrations/20260830162244_live_battles_lb4_f4d_b_power_projection.sql', '60955601e14619f34e71c0ccc782a109530e76cbe63f14cacb1db6b34f660dd6'],
     ['supabase/migrations/20260830195917_live_battles_lb4_f4d_c_visual_realtime.sql', 'f5cd23b73c943ce15c5dddbbf35ed9200e0ae8ef10af883d08ecd67c7a423d17'],

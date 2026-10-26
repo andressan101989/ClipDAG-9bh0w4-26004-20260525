@@ -85,6 +85,54 @@ const row = (overrides = {}) => ({
   ...overrides,
 });
 
+for (const localSide of ['challenger', 'opponent']) {
+  const participant = side => side === localSide ? HOST : OPPONENT;
+  for (const outcome of ['challenger', 'opponent']) {
+    test(`C1 ${localSide} projection binds ${outcome} winner to that exact participant`, () => {
+      const { service } = loadService();
+      const completed = row({
+        local_battle_side: localSide, status: 'completed', outcome,
+        started_at: '2026-08-26T12:00:03.000Z', scheduled_end_at: '2026-08-26T12:03:03.000Z',
+        ended_at: '2026-08-26T12:03:03.000Z',
+        challenger_score: outcome === 'challenger' ? 20 : 10,
+        opponent_score: outcome === 'opponent' ? 20 : 10,
+        winner_user_id: participant(outcome),
+      });
+      assert.equal(service.parseLiveBattlePublicState(completed).winnerUserId, participant(outcome));
+      for (const winner of [null, participant(outcome === 'challenger' ? 'opponent' : 'challenger')]) {
+        assert.throws(() => service.parseLiveBattlePublicState({ ...completed, winner_user_id: winner }),
+          { code: 'live_battle_public_invalid_result' });
+      }
+    });
+  }
+  for (const [challengerWins, opponentWins, leader] of [[1, 0, 'challenger'], [0, 1, 'opponent'], [1, 1, null]]) {
+    for (const status of ['active', 'awaiting_rematch', 'rematch_pending', 'completed', 'cancelled']) {
+      test(`C1 ${localSide} ${status} series ${challengerWins}-${opponentWins} requires exact champion`, () => {
+        const { service } = loadService();
+        const expected = status === 'completed' && leader ? participant(leader) : null;
+        const seriesRow = row({
+          local_battle_side: localSide,
+          series_id: BATTLE_B, series_format: 'best_of_5', round_number: 2,
+          series_max_rounds: 5, series_wins_required: 3,
+          challenger_series_wins: challengerWins, opponent_series_wins: opponentWins,
+          series_ties: 0, series_rounds_completed: challengerWins + opponentWins,
+          series_status: status, series_champion_user_id: expected, series_version: 1,
+          rematch_request_id: null, rematch_request_after_battle_id: null,
+          rematch_request_status: null, rematch_requested_by_user_id: null,
+          rematch_request_expires_at: null,
+          rematch_window_expires_at: ['awaiting_rematch', 'rematch_pending'].includes(status)
+            ? '2026-08-26T12:04:00.000Z' : null,
+        });
+        assert.equal(service.parseLiveBattlePublicState(seriesRow).series.championUserId, expected);
+        for (const champion of [null, HOST, OPPONENT].filter(value => value !== expected)) {
+          assert.throws(() => service.parseLiveBattlePublicState({ ...seriesRow, series_champion_user_id: champion }),
+            { code: 'live_battle_public_invalid_series' });
+        }
+      });
+    }
+  }
+}
+
 function clientHarness(snapshot = row()) {
   let currentSnapshot = snapshot;
   const realtimeRegistrations = [];

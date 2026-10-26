@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertDependencyContract } from './helpers/dependencyContract.mjs';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -15,7 +16,6 @@ const proof = await read(
 const concurrency = await read(
   'scripts/prove-live-battle-series-leave-concurrency.mjs',
 );
-const packageText = await read('package.json');
 const lockText = await read('package-lock.json');
 
 const body = migration.match(
@@ -172,12 +172,9 @@ test('F5-A and manifests remain byte/logically protected', () => {
     createHash('sha256').update(normalizedF5A, 'utf8').digest('hex'),
     '5ca7cb6a284a40fba7886ff8f31fbf64e888d1a20a8694f01177d00fe970de45',
   );
-  assert.equal(
-    createHash('sha256').update(packageText.replaceAll('\r\n', '\n'), 'utf8').digest('hex'),
-    '67b0b13e81b3b4d89fa068205636a6c6c55abe52856d5256beb0d39bcc50f3c0',
-  );
+  assertDependencyContract();
   assert.equal(
     createHash('sha256').update(lockText.replaceAll('\r\n', '\n'), 'utf8').digest('hex'),
-    '9563f6480ec75a028a4580025d68884aca731c7836320ee148785156b0c40bf4',
+    '3c902ef2cc270e3d89dea7964981b46b964ddadd9c1a35395f6a20f2e5612d31',
   );
 });

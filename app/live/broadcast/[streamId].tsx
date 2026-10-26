@@ -1172,6 +1172,7 @@ export default function LiveBroadcasterScreen() {
               hostUserId={user.id}
               liveSessionId={streamId}
               presentationTick={liveSeconds}
+              clockAnchor={battleProjection.clockAnchor}
               snapshot={battleRuntime.snapshot}
               actionPending={battleRuntime.actionPending}
               actionError={battleRuntime.actionError}
