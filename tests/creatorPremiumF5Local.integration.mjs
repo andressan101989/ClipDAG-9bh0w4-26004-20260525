@@ -6,7 +6,11 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
 import * as finance from '../services/creatorPremiumFinanceContracts.mjs';
-import { FINANCE_AUTHORITY_SQL, normalizeFinanceAuthority } from '../scripts/nelyon-production-snapshot-adapter.mjs';
+import {
+  FINANCE_AUTHORITY_SQL,
+  normalizeFinanceAuthority,
+  validateFinanceAuthority,
+} from '../scripts/nelyon-production-snapshot-adapter.mjs';
 
 // Frozen shipped F4 parser: compatibility must not be judged by a parser changed in F5.
 const frozenSource = spawnSync('git', ['show', '8b869746ea4bbc08fb79d42fe06f316849a7bfb9:services/creatorPremiumFinanceContracts.mjs'], { encoding: 'utf8' });
@@ -30,6 +34,7 @@ const suffixes = [
   '_creator_premium_b4_c1_exact_fee_snapshot_binding.sql',
   '_creator_premium_b5_creator_management_ux.sql',
   '_creator_premium_b7_full_functional_commercial_completion.sql',
+  '_creator_premium_qa_final_f1.sql',
   '_creator_premium_f2_complete_monetization.sql',
   '_creator_premium_f3_bounded_financial_activation.sql',
   '_creator_premium_f3_c2_isolated_canary_governance.sql',
@@ -105,13 +110,22 @@ function denied(result, expected = /creator_premium_|permission denied|violates/
   assert.match(result.stderr, expected);
   assert.doesNotMatch(result.stderr, /does not exist|syntax error|deadlock detected|statement timeout/i);
 }
+function canonicalMigrationBlob(name) {
+  const path = `supabase/migrations/${name}`;
+  const blob = spawnSync('git', ['show', `HEAD:${path}`], { encoding: 'utf8', maxBuffer: 96 * 1024 * 1024 });
+  assert.equal(blob.status, 0, `${path}\n${blob.stderr}`);
+  assert.doesNotMatch(blob.stdout, /\r\n/, `${path} must be replayed from canonical Git LF bytes`);
+  return blob.stdout;
+}
 function applyMigrationIfMissing(db, name) {
   const version = name.split('_', 1)[0];
   const hasHistory = sql(db,
     `select to_regclass('supabase_migrations.schema_migrations') is not null`).stdout === 't';
   const applied = hasHistory && sql(db,
     `select exists(select 1 from supabase_migrations.schema_migrations where version='${version}')`).stdout === 't';
-  if (!applied) sql(db, readFileSync(new URL(name, migrations), 'utf8'));
+  if (!applied) {
+    sql(db, `set role postgres;\n${canonicalMigrationBlob(name)}\nreset role;`);
+  }
 }
 function insertSyntheticUsers(db, actorIds) {
   const hasAgeTrigger = sql(db, `select exists(select 1 from pg_trigger
@@ -162,6 +176,10 @@ test('F5 real PostgreSQL consent, charge, retries, concurrency and security cont
     docker(`createdb -U supabase_admin -T ${template} ${db}`);
     created=true;
     sql(db, 'drop schema cron cascade; create extension pg_cron; grant usage on schema cron to postgres;');
+    sql(db, `grant usage,create on schema public,private to postgres;
+      grant all on all tables in schema public,private to postgres;
+      grant all on all sequences in schema public,private to postgres;
+      grant execute on all functions in schema public,private to postgres;`);
     for (let index = 0; index < 6; index += 1) applyMigrationIfMissing(db, chainFiles[index]);
     sql(db, `insert into private.admin_roles(
         role_code,display_name,description,is_assignable,is_root,is_exclusive)
@@ -176,12 +194,12 @@ test('F5 real PostgreSQL consent, charge, retries, concurrency and security cont
       values('SUPER_ADMIN','content.items.moderate'),('SUPER_ADMIN','finance.ledger.read'),
         ('MODERATOR','content.items.moderate')
       on conflict do nothing;`);
-    for (let index = 6; index < 8; index += 1) applyMigrationIfMissing(db, chainFiles[index]);
+    for (let index = 6; index < 9; index += 1) applyMigrationIfMissing(db, chainFiles[index]);
     sql(db, 'truncate public.ledger_entries,public.financial_transactions,public.ledger_accounts cascade;');
     sql(db, `grant usage on schema public,private to postgres;
       grant all on all tables in schema public,private to postgres;
       grant execute on all functions in schema public,private to postgres;`);
-    for (let index = 8; index < chainFiles.length; index += 1) applyMigrationIfMissing(db, chainFiles[index]);
+    for (let index = 9; index < chainFiles.length; index += 1) applyMigrationIfMissing(db, chainFiles[index]);
 
     const actors = [id.admin, id.buyer, id.subscriber, id.lateBuyer, id.creator];
     insertSyntheticUsers(db, actors);
@@ -237,9 +255,7 @@ test('F5 real PostgreSQL consent, charge, retries, concurrency and security cont
     assert.equal(sql(db, `select count(*) from public.ledger_accounts
       where owner_id='${id.creator}' and account_type='user'`).stdout, '0',
     'fixture must prove canonical creator-account provisioning');
-    sql(db, `set role postgres;
-      ${readFileSync(new URL(f4Files[0], migrations), 'utf8')}
-      reset role;`);
+    sql(db, `set role postgres;\n${canonicalMigrationBlob(f4Files[0])}\nreset role;`);
     assert.equal(monetarySnapshot(), beforeMigration,
       'F4 activation itself moved BDAG or created commercial facts');
     assert.equal(sql(db, `select count(*) from public.ledger_accounts
@@ -276,21 +292,45 @@ test('F5 real PostgreSQL consent, charge, retries, concurrency and security cont
     const legacyProjections = [1,2].map(version => authenticated(db,id.subscriber,`select public.get_my_creator_premium_subscriptions_v${version}()`).stdout);
     const f5File = files.find(name => name.endsWith('_creator_premium_f5_autonomous_subscriptions.sql'));
     // Release attestation binds Git LF bytes, independent of Windows checkout conversion.
-    if (f5File) sql(db, `set role postgres;${readFileSync(new URL(f5File,migrations),'utf8').replace(/\r\n/g,'\n')}reset role;`);
+    if (f5File) {
+      sql(db, `set role postgres;\n${canonicalMigrationBlob(f5File)}\nreset role;`);
+      // The reusable compile template predates production's private-relation
+      // ownership normalization. Reproduce the live owner/ACL baseline before
+      // comparing the complete immutable catalog.
+      sql(db, `alter table private.creator_premium_purchase_receipts owner to postgres;
+        alter table private.creator_premium_subscriptions owner to postgres;
+        alter table private.creator_premium_subscription_periods owner to postgres;
+        revoke all on private.creator_premium_purchase_receipts,
+          private.creator_premium_subscriptions,
+          private.creator_premium_subscription_periods
+          from public,anon,authenticated,service_role,supabase_admin;`);
+    }
     assert.equal(sql(db,`select to_regclass('private.creator_premium_auto_renewal_mandates') is not null`).stdout,'t','missing F5 mandate table');
     assert.equal(monetarySnapshot(),beforeF5);
-    await t.test('real PostgreSQL cancellation and v3 authority match the exact release catalog', () => {
+    await t.test('real PostgreSQL complete F5 authority matches the exact release catalog', () => {
       const policy=JSON.parse(readFileSync(new URL('../.github/nelyon-production-release-policy.json',import.meta.url),'utf8'));
       const authority=normalizeFinanceAuthority(json(db,FINANCE_AUTHORITY_SQL),'f5_autonomous');
-      for(const identity of [
-        'public.cancel_creator_premium_subscription_v1(uuid, uuid, uuid)',
-        'public.get_my_creator_premium_subscriptions_v3(timestamp with time zone, uuid, integer)',
-      ]) {
-        const expected=[...policy.finance_authority.f5_autonomous.function_overrides,
-          ...policy.finance_authority.f5_autonomous.function_additions].find(row=>row.identity===identity);
-        assert.deepEqual(authority.functions.find(row=>row.identity===identity),expected);
+      assert.equal(authority.relations.length,8);
+      const expectedFunctions=new Map(policy.finance_authority.f3_foundation.functions
+        .map(row=>[row.identity,row]));
+      for(const phase of ['f3_c2','f4_general','f5_autonomous']) {
+        for(const row of policy.finance_authority[phase].function_overrides) expectedFunctions.set(row.identity,row);
+        for(const row of policy.finance_authority[phase].function_additions) expectedFunctions.set(row.identity,row);
       }
+      assert.deepEqual(authority.relations,
+        [...policy.finance_authority.f5_autonomous.relations]
+          .sort((left,right)=>left.identity.localeCompare(right.identity)));
+      assert.deepEqual(authority.functions.map(row=>row.identity),
+        [...expectedFunctions.keys()].sort((left,right)=>left.localeCompare(right)));
+      assert.deepEqual(authority.functions,
+        [...expectedFunctions.values()].sort((left,right)=>left.identity.localeCompare(right.identity)));
+      assert.equal(validateFinanceAuthority(authority,policy,'f5_autonomous'),true);
       assert.equal(policy.finance_authority.f5_autonomous.function_overrides.some(row=>/get_my_creator_premium_subscriptions_v[12]\(/.test(row.identity)),false);
+      for (const key of ['relations','functions']) {
+        const drift=structuredClone(authority);
+        drift[key][0].sha256='f'.repeat(64);
+        assert.throws(() => validateFinanceAuthority(drift,policy,'f5_autonomous'),/FINANCE_AUTHORITY_MISMATCH/);
+      }
     });
     await t.test('frozen pre-F5 v1 and v2 endpoint bytes and exact parsers remain compatible', () => {
       for (const version of [1,2]) {

@@ -13,6 +13,7 @@ import {
   verifyProductionPreSnapshot,
   verifyProductionRecoverySnapshot,
   verifyProductionSnapshotPair,
+  verifyCronSnapshotTransition,
   verifyRecoveryInfrastructureBaseline,
 } from './nelyon-production-snapshot-adapter.mjs';
 
@@ -494,6 +495,39 @@ const EXPECTED_RECOVERY_SOURCES = [{
     'migration:20261026030000_creator_premium_f4_general_bdag_activation',
   ],
   premium_relation_security_sha256: 'ce78623224db34251b55ae8500eaea982d80912378cb3347ad9bf99ee24193a8',
+  premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
+}, {
+  run_id: '40324910390',
+  run_attempt: 1,
+  release_id: 'nelyon-f5-autonomous-releasefix-20261026T124453Z',
+  source_sha: 'ec9e08227801c3ce59f7c01f8db3ed846831160e',
+  repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+  mutation_status: 'completed',
+  post_snapshot_status: 'failure',
+  postcheck_status: 'skipped',
+  gate_artifact: { id: '12650367997', name: 'nelyon-gate-evidence-40324910390-1', digest: 'sha256:eb70e20802eb55698b20b759ae39f64f063d394f9957cdb24c79cc06a538a06b' },
+  release_artifact: { id: '12649504845', name: 'nelyon-release-40324910390-1', digest: 'sha256:012bd9b546fd508410423ed4b94667e981e949904e3606e22505715241b286c6' },
+  manifest_sha256: '7f184407b0e5d06da1e28dda45870958736dbd972587fc487b029569dc4f1a9e',
+  pre_snapshot_evidence_sha256: '02fbf2d5bb640823197bd79eaec4ae1d92db8bfd7424682a48382cc9da1c323a',
+  post_snapshot_evidence_sha256: null,
+  expected_migrations: [{
+    blob: 'ca08f3a5224cea2ef6b4390bc625d55f378b2ca6',
+    name: '20261026072512_creator_premium_f5_autonomous_subscriptions',
+  }],
+  expected_migration_count: 356,
+  expected_latest_migration: '20261026072512_creator_premium_f5_autonomous_subscriptions',
+  edge_functions: [{
+    name: 'bdag-ledger',
+    source_sha256: '0255ad56d7b56792dea46c333cb207dc0680bcdf25a1784d2925b7f85bf0bd8e',
+    status: 'ACTIVE',
+    verify_jwt: true,
+    version: 47,
+  }],
+  productive_resources: [
+    'migration:20261026072512_creator_premium_f5_autonomous_subscriptions',
+    'function:bdag-ledger',
+  ],
+  premium_relation_security_sha256: 'a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0',
   premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
 }];
 const REQUIRED_FINANCE_RECONCILIATIONS = [
@@ -2689,12 +2723,17 @@ export function verifyPostcheckRecovery({
       version: actual.version,
     };
   });
-  if (['40166468648', '40268500711'].includes(source.run_id)) {
-    const functionTransitions = source.run_id === '40166468648'
+  if (['40166468648', '40268500711', '40324910390'].includes(source.run_id)) {
+    const transitionBaselineRunId = source.run_id === '40166468648'
+      ? '40139736749'
+      : source.run_id === '40324910390'
+        ? '40166468648'
+        : null;
+    const functionTransitions = transitionBaselineRunId
       ? source.edge_functions.map(current => ({
         current,
         baseline: policy?.postcheck_recovery?.approved_sources
-          ?.find(item => item.run_id === '40139736749')
+          ?.find(item => item.run_id === transitionBaselineRunId)
           ?.edge_functions?.find(item => item.name === current.name),
       }))
       : [];
@@ -2720,9 +2759,25 @@ export function verifyPostcheckRecovery({
   const exceptionByFingerprint = new Map(recoveryExceptions.map(item => [item.advisor_fingerprint, item]));
   const presentExceptions = advisorItems.filter(item => exceptionFingerprints.has(item.fingerprint));
   const baselineItems = advisorItems.filter(item => !exceptionFingerprints.has(item.fingerprint));
+  let baselineCronItems = currentEvidence.cron_security.cron.items;
+  if (source.run_id === '40324910390') {
+    const currentCron = currentEvidence.cron_security.cron;
+    const expectedJob = policy?.finance_authority_f5_transition?.cron_job;
+    const matchingJobs = currentCron.items.filter(item => item.jobname === expectedJob?.jobname);
+    if (matchingJobs.length !== 1) {
+      deny(code, 'F5 recovery requires exactly one approved autonomous-renewal cron job');
+    }
+    baselineCronItems = currentCron.items.filter(item => item.jobname !== expectedJob.jobname);
+    const baselineCron = { ...currentCron, count: baselineCronItems.length, items: baselineCronItems };
+    try {
+      verifyCronSnapshotTransition(baselineCron, currentCron, policy.finance_authority_f5_transition);
+    } catch (error) {
+      deny(code, String(error?.message ?? 'F5 cron recovery verification failed'));
+    }
+  }
   const reconstructedBaseline = {
     complete: true,
-    cron: currentEvidence.cron_security.cron.items,
+    cron: baselineCronItems,
     security_findings: baselineItems,
   };
   if (presentExceptions.length !== exceptionFingerprints.size
@@ -2742,8 +2797,10 @@ export function verifyPostcheckRecovery({
   }
 
   const finance = currentEvidence.finance;
+  const f5Recovery = source.run_id === '40324910390';
   if (finance.transactions.count < 928 || finance.ledger_entries.count < 1918
-    || finance.ledger_accounts.count < 131 || finance.premium_transaction_count !== 0
+    || finance.ledger_accounts.count < 131
+    || (!f5Recovery && finance.premium_transaction_count !== 0)
     || [...finance.transactions.items, ...finance.ledger_entries.items].some(item => containsReleaseIdentity(item, {
       releaseId: source.release_id,
       runId: source.run_id,
@@ -2755,7 +2812,7 @@ export function verifyPostcheckRecovery({
     after: finance,
     windowRows: { complete: true, transactions: [], ledger_entries: [] },
     reconciliationResults: finance.reconciliation,
-    expectedPolicy: source.run_id === '40268500711'
+    expectedPolicy: ['40268500711', '40324910390'].includes(source.run_id)
       ? financePolicyShape(F4_GENERAL_FINANCE_AUTHORITY_TRANSITION.to_policy)
       : policy.supabase.finance_policy,
     releaseIdentity: { releaseId: source.release_id, runId: source.run_id, runAttempt: source.run_attempt },

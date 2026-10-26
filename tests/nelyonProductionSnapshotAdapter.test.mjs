@@ -29,6 +29,16 @@ f4TransitionPolicy.baseline.sha = installedPolicy.finance_authority_f4_transitio
 f4TransitionPolicy.baseline.migration_count = 354;
 f4TransitionPolicy.baseline.latest_migration = '20261025231500_creator_premium_f3_final_wallet_integration';
 f4TransitionPolicy.supabase.finance_policy = { ...FINANCE_OFF_POLICY };
+const f5TransitionPolicy = structuredClone(installedPolicy);
+f5TransitionPolicy.baseline.sha = installedPolicy.finance_authority_f5_transition.baseline_sha;
+f5TransitionPolicy.baseline.migration_count = 355;
+f5TransitionPolicy.baseline.latest_migration = '20261026030000_creator_premium_f4_general_bdag_activation';
+f5TransitionPolicy.supabase.finance_policy = {
+  platform_fee_bps: 2000,
+  purchase_enabled: true,
+  refunds_enabled: true,
+  subscription_enabled: true,
+};
 const walletTransitionPolicy = structuredClone(installedPolicy);
 walletTransitionPolicy.baseline.sha = '05cdd2ecbeda6132fffb7edc0cf4e7ab2848625a';
 walletTransitionPolicy.baseline.migration_count = 353;
@@ -1249,6 +1259,74 @@ test('F4 recovery selects the exact general successor only for the immutable fai
     );
     assert.notEqual(fallback.find(item => item.object.name === f4Admin.object.name)
       .attestation.definition_sha256, f4Admin.attestation.definition_sha256);
+  }
+});
+
+test('F5 recovery selects the autonomous successor only for the immutable failed-postcheck source', async () => {
+  const adapter = await loadAdapter();
+  const controlledPolicy = structuredClone(f5TransitionPolicy);
+  const source = controlledPolicy.postcheck_recovery.approved_sources
+    .find(item => item.run_id === '40324910390');
+  assert.ok(source);
+  const recoveryRequest = {
+    ...request(),
+    mode: 'postcheck_recovery',
+    scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
+    recoverySourceRunId: source.run_id,
+  };
+  const recoveryManifest = {
+    ...manifest(),
+    identity: { ...manifest().identity, mode: 'postcheck_recovery' },
+    resources: { functions: [], function_contracts: [], migrations: [], config_changed: false },
+  };
+  const rows = [
+    ...Array.from({ length: source.expected_migration_count - 5 }, (_, index) => ({
+      version: `2025${String(index).padStart(10, '0')}`,
+      name: `historical_${String(index).padStart(3, '0')}`,
+    })),
+    { version: '20261025011000', name: 'creator_premium_f3_bounded_financial_activation' },
+    { version: '20261025160452', name: 'creator_premium_f3_c2_isolated_canary_governance' },
+    { version: '20261025231500', name: 'creator_premium_f3_final_wallet_integration' },
+    { version: '20261026030000', name: 'creator_premium_f4_general_bdag_activation' },
+    { version: '20261026072512', name: 'creator_premium_f5_autonomous_subscriptions' },
+  ];
+  const migrations = {
+    complete: true,
+    count: rows.length,
+    items: rows,
+    latest: rows.at(-1),
+    sha256: sha256(canonicalJson(rows)),
+  };
+  controlledPolicy.baseline.evidence_digests.migrations = sha256(canonicalJson(
+    rows.slice(0, -1).map(item => `${item.version}_${item.name}`),
+  ));
+  const selected = adapter.advisorExceptionsForPhase(
+    controlledPolicy,
+    recoveryManifest,
+    'recovery',
+    { request: recoveryRequest, migrations },
+  );
+  for (const addition of controlledPolicy.finance_security_advisor.f5_rpc_additions) {
+    assert.equal(selected.some(item => item.advisor_fingerprint === addition.advisor_fingerprint), true);
+  }
+  assert.equal(selected.some(item => (
+    item.object.name === 'creator_premium_finance_owner_attestations_f3_c2'
+  )), true);
+
+  for (const options of [
+    { request: { ...recoveryRequest, recoverySourceRunId: '40268500711' }, migrations },
+    { request: recoveryRequest, migrations: { ...migrations, count: migrations.count - 1 } },
+    { request: recoveryRequest, migrations: { ...migrations, latest: rows.at(-2) } },
+  ]) {
+    const fallback = adapter.advisorExceptionsForPhase(
+      controlledPolicy,
+      recoveryManifest,
+      'recovery',
+      options,
+    );
+    assert.equal(controlledPolicy.finance_security_advisor.f5_rpc_additions.every(addition => (
+      !fallback.some(item => item.advisor_fingerprint === addition.advisor_fingerprint)
+    )), true);
   }
 });
 

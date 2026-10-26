@@ -46,7 +46,7 @@ export const FINANCE_POLICY_DIGESTS = Object.freeze({
   c2_transition: '2fc5ae800bf96aed59d78b953cfe628007f9603b48dd8e7a25dc915e88927af2',
   f4_transition: 'de7891ab96cd95280a5d1e80ad56b8411045b66bb54e71f610874f4cc280e36a',
   f5_transition: '3829cb90de13c8aece7b40f6d70364f02635a79163d32668229382665a83d051',
-  authority: 'ea2c6ef88c685b684defae6233fa773c2a2b6dd8b4a488d768a4d193f6d8e934',
+  authority: '64fc55b66c681bb901dd79e610a33cd3dc689a330a65c88c4a8619bc9b668fbf',
   security_advisor: '3c53134f7f1764d1808b88d5b58d7bac44d46ed3b014afbd30de0c61a34be7db',
 });
 
@@ -2266,6 +2266,10 @@ function exactRecoveryAuthorityPhase(policy, manifest, phase, { request, migrati
       expectedLatestMigration: '20261026030000_creator_premium_f4_general_bdag_activation',
       phase: 'f4_general',
     }],
+    ['40324910390', {
+      expectedLatestMigration: '20261026072512_creator_premium_f5_autonomous_subscriptions',
+      phase: 'f5_autonomous',
+    }],
   ]);
   const requestedRunId = String(request?.recoverySourceRunId ?? '');
   const recovery = recoveryPhases.get(requestedRunId);
@@ -2330,18 +2334,19 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
     let result = [...exceptions.filter(exception => !successors.some(item => item.object.name === exception.object.name)),
       ...successors, policy.finance_security_advisor.relation_exception];
     if ((transition?.to_phase === 'f3_c2' && phase !== 'pre') || installedC2
-      || ['f3_c2', 'f4_general'].includes(exactRecoveryPhase)) {
+      || ['f3_c2', 'f4_general', 'f5_autonomous'].includes(exactRecoveryPhase)) {
       const replacements = policy.finance_security_advisor.c2_rpc_replacements;
       result = [...result.filter(exception => !replacements.some(item => item.object.name === exception.object.name)),
         ...replacements, policy.finance_security_advisor.c2_relation_exception];
     }
     if ((transition?.to_phase === 'f4_general' && phase !== 'pre') || installedF4
-      || exactRecoveryPhase === 'f4_general') {
+      || ['f4_general', 'f5_autonomous'].includes(exactRecoveryPhase)) {
       const replacements = policy.finance_security_advisor.f4_rpc_replacements;
       result = [...result.filter(exception => !replacements.some(item => item.object.name === exception.object.name)),
         ...replacements];
     }
-    if ((transition?.to_phase === 'f5_autonomous' && phase !== 'pre') || installedF5) {
+    if ((transition?.to_phase === 'f5_autonomous' && phase !== 'pre') || installedF5
+      || exactRecoveryPhase === 'f5_autonomous') {
       const additions = policy.finance_security_advisor.f5_rpc_additions;
       result = [...result, ...additions];
     }
