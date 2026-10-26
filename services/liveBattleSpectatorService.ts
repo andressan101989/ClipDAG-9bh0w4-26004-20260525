@@ -256,7 +256,7 @@ function powerWindow(
 export function parseLiveBattleSeriesProjection(
   row: LiveBattlePublicStateRow,
   battleId: string,
-  participantIds: readonly string[],
+  participantIds: readonly [challengerUserId: string, opponentUserId: string],
 ): LiveBattleSeriesProjection | null {
   const values = [
     row.series_id,
@@ -349,7 +349,9 @@ export function parseLiveBattleSeriesProjection(
   const expectedFormat = format === 'single'
     ? { maxRounds: 1, winsRequired: 1 }
     : { maxRounds: 5, winsRequired: 3 };
-  const terminal = status === 'completed' || status === 'cancelled';
+  const expectedChampionUserId = status !== 'completed' || challengerWins === opponentWins
+    ? null
+    : challengerWins > opponentWins ? participantIds[0] : participantIds[1];
 
   if (
     roundNumber < 1 ||
@@ -360,8 +362,7 @@ export function parseLiveBattleSeriesProjection(
     opponentWins > winsRequired ||
     challengerWins + opponentWins + ties !== roundsCompleted ||
     roundsCompleted > maxRounds ||
-    (championUserId !== null && !participantIds.includes(championUserId)) ||
-    (!terminal && championUserId !== null) ||
+    championUserId !== expectedChampionUserId ||
     hasPartialRequest ||
     (rematchRequestedByUserId !== null && !participantIds.includes(rematchRequestedByUserId)) ||
     ((status === 'awaiting_rematch' || status === 'rematch_pending')
@@ -594,10 +595,12 @@ export function parseLiveBattlePublicState(value: unknown): LiveBattlePublicStat
   const challengerScore = nonnegativeSafeInteger(row.challenger_score, 'challenger_score');
   const opponentScore = nonnegativeSafeInteger(row.opponent_score, 'opponent_score');
   const winnerUserId = nullableUuid(row.winner_user_id, 'winner_user_id');
+  const challengerUserId = localBattleSide === 'challenger' ? localHostUserId : opponentHostUserId;
+  const opponentUserId = localBattleSide === 'opponent' ? localHostUserId : opponentHostUserId;
   if (
     (outcome === 'pending' && winnerUserId !== null) ||
-    (outcome === 'challenger' && (winnerUserId === null || challengerScore <= opponentScore)) ||
-    (outcome === 'opponent' && (winnerUserId === null || opponentScore <= challengerScore)) ||
+    (outcome === 'challenger' && (winnerUserId !== challengerUserId || challengerScore <= opponentScore)) ||
+    (outcome === 'opponent' && (winnerUserId !== opponentUserId || opponentScore <= challengerScore)) ||
     (outcome === 'tie' && (winnerUserId !== null || challengerScore !== opponentScore)) ||
     (outcome === 'cancelled' && winnerUserId !== null) ||
     (winnerUserId !== null && winnerUserId !== localHostUserId && winnerUserId !== opponentHostUserId) ||
@@ -699,7 +702,7 @@ export function parseLiveBattlePublicState(value: unknown): LiveBattlePublicStat
     series = parseLiveBattleSeriesProjection(
       row,
       battleId,
-      [localHostUserId, opponentHostUserId],
+      [challengerUserId, opponentUserId],
     );
   } catch {
     throw new LiveBattleSpectatorError('live_battle_public_invalid_series');

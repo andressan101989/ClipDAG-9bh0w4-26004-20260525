@@ -93,6 +93,7 @@ const KNOWN_ERROR_CODES = new Set([
   'live_battle_opponent_not_host',
   'live_battle_session_not_live',
   'live_battle_pair_busy',
+  'live_battle_series_pair_busy',
   'live_battle_participant_busy',
   'live_battle_not_found',
   'live_battle_forbidden',

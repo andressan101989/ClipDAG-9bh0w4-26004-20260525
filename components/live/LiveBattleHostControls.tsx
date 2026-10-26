@@ -19,6 +19,10 @@ import {
   type LiveBattlePublicProfile,
 } from '@/services/liveBattleService';
 import type { LiveBattleRuntimeSnapshot } from '@/services/liveBattleRuntimeController';
+import {
+  estimateLiveBattleServerNow,
+  type LiveBattleServerClockAnchor,
+} from '@/services/liveBattleSpectatorService';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 
 type BattleAction = (battleId: string) => Promise<LiveBattle | null>;
@@ -28,6 +32,7 @@ type Props = {
   hostUserId: string;
   liveSessionId: string;
   presentationTick: number;
+  clockAnchor: LiveBattleServerClockAnchor | null;
   snapshot: LiveBattleRuntimeSnapshot;
   actionPending: boolean;
   actionError: string | null;
@@ -44,11 +49,12 @@ type Props = {
   dismissTerminalBattle: () => void;
 };
 
-function secondsUntil(timestamp: string | null): number | null {
+function secondsUntil(timestamp: string | null, anchor: LiveBattleServerClockAnchor | null): number | null {
   if (!timestamp) return null;
   const value = Date.parse(timestamp);
-  if (!Number.isFinite(value)) return null;
-  return Math.max(0, Math.ceil((value - Date.now()) / 1000));
+  const serverNow = estimateLiveBattleServerNow(anchor);
+  if (!Number.isFinite(value) || serverNow === null || !Number.isFinite(serverNow)) return null;
+  return Math.max(0, Math.ceil((value - serverNow) / 1000));
 }
 
 function formatClock(seconds: number | null): string {
@@ -64,7 +70,7 @@ function safeActionMessage(code: string | null): string | null {
   if (code.includes('expired') || code.includes('terminal') || code.includes('state_invalid')) {
     return 'La invitación ya no está disponible.';
   }
-  if (code === 'live_battle_pair_busy' || code === 'live_battle_participant_busy') {
+  if (code === 'live_battle_pair_busy' || code === 'live_battle_series_pair_busy' || code === 'live_battle_participant_busy') {
     return 'La Battle cambió; estado actualizado.';
   }
   return 'No se pudo completar la acción. Estado actualizado.';
@@ -84,6 +90,7 @@ export function LiveBattleHostControls({
   hostUserId,
   liveSessionId,
   presentationTick,
+  clockAnchor,
   snapshot,
   actionPending,
   actionError,
@@ -188,23 +195,23 @@ export function LiveBattleHostControls({
   const pendingSeconds = useMemo(
     () => {
       void presentationTick;
-      return secondsUntil(battle?.status === 'pending' ? battle.inviteExpiresAt : null);
+      return secondsUntil(battle?.status === 'pending' ? battle.inviteExpiresAt : null, clockAnchor);
     },
-    [battle?.inviteExpiresAt, battle?.status, presentationTick],
+    [battle?.inviteExpiresAt, battle?.status, clockAnchor, presentationTick],
   );
   const countdownSeconds = useMemo(
     () => {
       void presentationTick;
-      return secondsUntil(battle?.status === 'countdown' ? battle.scheduledStartAt : null);
+      return secondsUntil(battle?.status === 'countdown' ? battle.scheduledStartAt : null, clockAnchor);
     },
-    [battle?.scheduledStartAt, battle?.status, presentationTick],
+    [battle?.scheduledStartAt, battle?.status, clockAnchor, presentationTick],
   );
   const activeSeconds = useMemo(
     () => {
       void presentationTick;
-      return secondsUntil(battle?.status === 'active' ? battle.scheduledEndAt : null);
+      return secondsUntil(battle?.status === 'active' ? battle.scheduledEndAt : null, clockAnchor);
     },
-    [battle?.scheduledEndAt, battle?.status, presentationTick],
+    [battle?.scheduledEndAt, battle?.status, clockAnchor, presentationTick],
   );
 
   const statusLabel = battle?.status === 'pending'
@@ -316,7 +323,7 @@ export function LiveBattleHostControls({
                   <Text style={styles.statusText}>{isChallenger ? 'Lista para iniciar' : 'Esperando que el challenger inicie'}</Text>
                 ) : null}
                 {battle.status === 'countdown' ? (
-                  <Text style={styles.countdown}>{Math.max(1, countdownSeconds ?? 1)}</Text>
+                  <Text style={styles.countdown}>{countdownSeconds === null ? '--:--' : Math.max(1, countdownSeconds)}</Text>
                 ) : null}
                 {battle.status === 'active' ? (
                   <Text style={styles.activeTimer}>{formatClock(activeSeconds)}</Text>

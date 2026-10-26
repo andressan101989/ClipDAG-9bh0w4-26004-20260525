@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertDependencyContract } from './helpers/dependencyContract.mjs';
 import { after, test } from 'node:test';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -245,9 +246,9 @@ test('visual engine has no database, scoring, boost, or financial authority', as
 });
 
 test('protected manifests and deployed F6-A migration remain byte-equivalent after LF normalization', async () => {
+  assertDependencyContract(JSON.parse(await read('package.json')));
   const expected = new Map([
-    ['package.json', 'a12ecc79b9df462feb361123dc56c4ce558dc2105819997bcb254a81b8eb522f'],
-    ['package-lock.json', '9563f6480ec75a028a4580025d68884aca731c7836320ee148785156b0c40bf4'],
+    ['package-lock.json', '3c902ef2cc270e3d89dea7964981b46b964ddadd9c1a35395f6a20f2e5612d31'],
     ['supabase/migrations/20260902141502_live_battles_lb4_f6_a_gift_catalog_expansion.sql', '8adfe6b93e1164dd53242523a3e5b3096e71f5e1ab8869d49c7e2e628c629dbf'],
   ]);
   for (const [file, hash] of expected) {

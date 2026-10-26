@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertDependencyContract } from './helpers/dependencyContract.mjs';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -24,7 +25,6 @@ const proof = await read(
 const harness = await read(
   'scripts/prove-live-battle-series-leave-bounded-concurrency.mjs',
 );
-const packageText = await read('package.json');
 const lockText = await read('package-lock.json');
 const migrationNames = (await readdir(new URL('../supabase/migrations', import.meta.url)))
   .filter(name => name.endsWith('.sql') && name <= '20260906053652_live_battle_gift_like_scoring.sql')
@@ -192,10 +192,9 @@ test('protected migrations and manifests use canonical LF hashes', () => {
     '64b94397de5a7f31449f6a025eb458a41b35f0e936b23eeb79ae379e0b7751bd');
   assert.equal(sha256Lf(c3c1),
     '1da58dbf6ab85c5953c227d6cc2b2904bc4346a58ff5ca58054b010000bb5237');
-  assert.equal(sha256Lf(packageText),
-    '67b0b13e81b3b4d89fa068205636a6c6c55abe52856d5256beb0d39bcc50f3c0');
+  assertDependencyContract();
   assert.equal(sha256Lf(lockText),
-    '9563f6480ec75a028a4580025d68884aca731c7836320ee148785156b0c40bf4');
+    '3c902ef2cc270e3d89dea7964981b46b964ddadd9c1a35395f6a20f2e5612d31');
 });
 
 test('migration stays outside product, Realtime and financial authority', () => {

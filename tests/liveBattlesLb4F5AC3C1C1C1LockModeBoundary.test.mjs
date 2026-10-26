@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertDependencyContract } from './helpers/dependencyContract.mjs';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -20,7 +21,6 @@ const protectedFiles = {
   c3: await read('supabase/migrations/20260901201459_live_battles_lb4_f5_a_c3_active_series_leave.sql'),
   c3c1: await read('supabase/migrations/20260901211549_live_battles_lb4_f5_a_c3_c1_bounded_leave_retry.sql'),
   c3c1c1: await read('supabase/migrations/20260901231742_live_battles_lb4_f5_a_c3_c1_c1_strict_leave_lock_budget.sql'),
-  package: await read('package.json'),
   lock: await read('package-lock.json'),
 };
 const migrationNames = (await readdir(new URL('../supabase/migrations', import.meta.url)))
@@ -154,9 +154,9 @@ test('protected migrations and manifests remain byte-logically canonical', () =>
     c3: '64b94397de5a7f31449f6a025eb458a41b35f0e936b23eeb79ae379e0b7751bd',
     c3c1: '1da58dbf6ab85c5953c227d6cc2b2904bc4346a58ff5ca58054b010000bb5237',
     c3c1c1: 'dc1e075772ae152cd27cba7707efa263fe7ab3510e32a1bed2aa95278fae96f9',
-    package: '67b0b13e81b3b4d89fa068205636a6c6c55abe52856d5256beb0d39bcc50f3c0',
-    lock: '9563f6480ec75a028a4580025d68884aca731c7836320ee148785156b0c40bf4',
+    lock: '3c902ef2cc270e3d89dea7964981b46b964ddadd9c1a35395f6a20f2e5612d31',
   };
+  assertDependencyContract();
   for (const [name, text] of Object.entries(protectedFiles)) {
     assert.equal(sha256Lf(text), expected[name], name);
   }
