@@ -3,6 +3,7 @@ const EXACT_BDAG_RE = /^(?:0|[1-9]\d{0,29})\.\d{8}$/;
 const EXACT_SIGNED_BDAG_RE = /^-?(?:0|[1-9]\d{0,29})\.\d{8}$/;
 const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
 const BDAG_SCALE = 100_000_000n;
+const POSTGRES_INTEGER_MAX = 2_147_483_647;
 
 const PURCHASE_KEYS = Object.freeze([
   'receipt_id',
@@ -890,7 +891,7 @@ function parseAutoRenewal(value, code) {
       : exactBdag(record.authorized_price_bdag, code),
     authorized_plan_version: record.authorized_plan_version === null
       ? null
-      : exactInteger(record.authorized_plan_version, code, 1, Number.MAX_SAFE_INTEGER),
+      : exactInteger(record.authorized_plan_version, code, 1, POSTGRES_INTEGER_MAX),
     retry_count: exactInteger(record.retry_count, code, 0, 3),
     last_result: exactNullableEnum(record.last_result, AUTO_RENEWAL_RESULTS, code),
     last_attempt_at: exactNullableTimestamp(record.last_attempt_at, code),
@@ -1175,5 +1176,8 @@ export function parseCreatorPremiumAutoRenewalReceipt(
     replayed: exactBoolean(record.replayed, code),
   };
   if (parsed.money_moved || parsed.auto_renewal.enabled !== expectedEnabled) invalid(code);
+  if (!expectedEnabled
+      && parsed.auto_renewal.mandate_state !== null
+      && parsed.auto_renewal.mandate_state !== 'REVOKED') invalid(code);
   return Object.freeze(parsed);
 }
