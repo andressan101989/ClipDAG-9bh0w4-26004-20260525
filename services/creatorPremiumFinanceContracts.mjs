@@ -45,6 +45,31 @@ const CANCELLATION_KEYS = Object.freeze([
   'already_cancelled',
 ]);
 
+const CANCELLATION_RACE_KEYS = Object.freeze([
+  ...CANCELLATION_KEYS,
+  'cancellation_effect',
+]);
+
+const AUTO_RENEWAL_KEYS = Object.freeze([
+  'enabled',
+  'mandate_state',
+  'consented_at',
+  'revoked_at',
+  'next_charge_at',
+  'authorized_price_bdag',
+  'authorized_plan_version',
+  'retry_count',
+  'last_result',
+  'last_attempt_at',
+]);
+
+const AUTO_RENEWAL_RECEIPT_KEYS = Object.freeze([
+  'subscription_id',
+  'auto_renewal',
+  'money_moved',
+  'replayed',
+]);
+
 const POLICY_KEYS = Object.freeze([
   'purchase_enabled',
   'subscription_enabled',
@@ -146,6 +171,10 @@ const SUBSCRIPTION_ITEM_KEYS = Object.freeze([
   'created_at',
   'updated_at',
 ]);
+const SUBSCRIPTION_ITEM_V2_KEYS = Object.freeze([
+  ...SUBSCRIPTION_ITEM_KEYS,
+  'auto_renewal',
+]);
 const PERIOD_KEYS = Object.freeze([
   'id',
   'starts_at',
@@ -204,6 +233,21 @@ const ACCESS_MODES = Object.freeze(['purchase', 'subscription', 'purchase_or_sub
 const PLAN_STATUSES = Object.freeze(['draft', 'active', 'retired']);
 const RELATIONSHIP_STATUSES = Object.freeze(['pending', 'active', 'cancelled', 'expired', 'revoked']);
 const ACCESS_STATES = Object.freeze(['active', 'expired', 'revoked', 'refunded']);
+const AUTO_RENEWAL_STATES = Object.freeze(['ENABLED', 'PAUSED', 'REVOKED']);
+const AUTO_RENEWAL_RESULTS = Object.freeze([
+  'revoked',
+  'renewed',
+  'adopted',
+  'cancelled',
+  'refunded',
+  'insufficient_balance',
+  'retryable_failure',
+  'plan_changed',
+  'safety_blocked',
+  'finance_unavailable',
+  'account_unavailable',
+  'binding_invalid',
+]);
 const CONTENT_LIFECYCLES = Object.freeze([
   'draft',
   'pending_review',
@@ -826,21 +870,78 @@ function parseSubscriptionPeriod(value, code) {
 }
 
 export function parseCreatorPremiumSubscriptionsPage(value) {
-  return parseSubscriptionsPage(value, V1_BLOCKERS);
+  return parseSubscriptionsPage(value, V1_BLOCKERS, false);
 }
 
 export function parseCreatorPremiumSubscriptionsPageV2(value) {
-  return parseSubscriptionsPage(value, V2_BLOCKERS);
+  return parseSubscriptionsPage(value, V2_BLOCKERS, true);
 }
 
-function parseSubscriptionsPage(value, blockers) {
+function parseAutoRenewal(value, code) {
+  const record = exactRecord(value, AUTO_RENEWAL_KEYS, code);
+  const autoRenewal = {
+    enabled: exactBoolean(record.enabled, code),
+    mandate_state: exactNullableEnum(record.mandate_state, AUTO_RENEWAL_STATES, code),
+    consented_at: exactNullableTimestamp(record.consented_at, code),
+    revoked_at: exactNullableTimestamp(record.revoked_at, code),
+    next_charge_at: exactNullableTimestamp(record.next_charge_at, code),
+    authorized_price_bdag: record.authorized_price_bdag === null
+      ? null
+      : exactBdag(record.authorized_price_bdag, code),
+    authorized_plan_version: record.authorized_plan_version === null
+      ? null
+      : exactInteger(record.authorized_plan_version, code, 1, Number.MAX_SAFE_INTEGER),
+    retry_count: exactInteger(record.retry_count, code, 0, 3),
+    last_result: exactNullableEnum(record.last_result, AUTO_RENEWAL_RESULTS, code),
+    last_attempt_at: exactNullableTimestamp(record.last_attempt_at, code),
+  };
+  const noMandate = autoRenewal.mandate_state === null;
+  if (noMandate) {
+    if (autoRenewal.enabled
+        || autoRenewal.consented_at !== null
+        || autoRenewal.revoked_at !== null
+        || autoRenewal.next_charge_at !== null
+        || autoRenewal.authorized_price_bdag !== null
+        || autoRenewal.authorized_plan_version !== null
+        || autoRenewal.retry_count !== 0
+        || autoRenewal.last_result !== null
+        || autoRenewal.last_attempt_at !== null) invalid(code);
+    return Object.freeze(autoRenewal);
+  }
+  if (autoRenewal.consented_at === null
+      || autoRenewal.authorized_price_bdag === null
+      || bdagAtomicUnits(autoRenewal.authorized_price_bdag) <= 0n
+      || autoRenewal.authorized_plan_version === null) invalid(code);
+  if (autoRenewal.mandate_state === 'ENABLED') {
+    if (!autoRenewal.enabled
+        || autoRenewal.revoked_at !== null
+        || autoRenewal.next_charge_at === null
+        || autoRenewal.retry_count >= 3) invalid(code);
+  } else if (autoRenewal.enabled || autoRenewal.next_charge_at !== null) {
+    invalid(code);
+  }
+  if ((autoRenewal.mandate_state === 'REVOKED') !== (autoRenewal.revoked_at !== null)) {
+    invalid(code);
+  }
+  if (autoRenewal.revoked_at !== null
+      && timestampMicros(autoRenewal.revoked_at, code) < timestampMicros(autoRenewal.consented_at, code)) {
+    invalid(code);
+  }
+  return Object.freeze(autoRenewal);
+}
+
+function parseSubscriptionsPage(value, blockers, includeAutoRenewal) {
   const code = 'creator_premium_subscriptions_invalid';
   const record = exactRecord(value, SUBSCRIPTIONS_PAGE_KEYS, code);
   const policy = parseFinancePolicy(record.policy, code);
   if (!Array.isArray(record.items) || record.items.length > 100) invalid(code);
 
   const items = record.items.map(valueItem => {
-    const itemRecord = exactRecord(valueItem, SUBSCRIPTION_ITEM_KEYS, code);
+    const itemRecord = exactRecord(
+      valueItem,
+      includeAutoRenewal ? SUBSCRIPTION_ITEM_V2_KEYS : SUBSCRIPTION_ITEM_KEYS,
+      code,
+    );
     const id = exactUuid(itemRecord.id, code);
     const creator = parseProfile(itemRecord.creator, code);
     const plan = parsePlan(itemRecord.plan, code, false, blockers);
@@ -920,7 +1021,7 @@ function parseSubscriptionsPage(value, blockers) {
           || accessActive
         ))) invalid(code);
 
-    return Object.freeze({
+    const item = {
       id,
       creator,
       plan,
@@ -937,7 +1038,9 @@ function parseSubscriptionsPage(value, blockers) {
       is_latest_relationship: isLatestRelationship,
       created_at: createdAt,
       updated_at: updatedAt,
-    });
+    };
+    if (includeAutoRenewal) item.auto_renewal = parseAutoRenewal(itemRecord.auto_renewal, code);
+    return Object.freeze(item);
   });
 
   if (new Set(items.map(item => item.id)).size !== items.length) invalid(code);
@@ -1025,7 +1128,15 @@ export function parseCreatorPremiumSubscriptionReceipt(value, expectedPlanId) {
 
 export function parseCreatorPremiumCancellationReceipt(value, expectedSubscriptionId) {
   const code = 'creator_premium_cancellation_receipt_invalid';
-  const record = exactRecord(value, CANCELLATION_KEYS, code);
+  const isRaceAcknowledgement = Boolean(
+    value && typeof value === 'object' && !Array.isArray(value)
+      && Object.hasOwn(value, 'cancellation_effect'),
+  );
+  const record = exactRecord(
+    value,
+    isRaceAcknowledgement ? CANCELLATION_RACE_KEYS : CANCELLATION_KEYS,
+    code,
+  );
   const parsed = {
     subscription_id: exactTarget(record.subscription_id, expectedSubscriptionId, code),
     status: record.status,
@@ -1034,7 +1145,35 @@ export function parseCreatorPremiumCancellationReceipt(value, expectedSubscripti
     replayed: exactBoolean(record.replayed, code),
     already_cancelled: exactBoolean(record.already_cancelled, code),
   };
-  if (parsed.status !== 'cancelled' || parsed.money_moved !== false) invalid(code);
+  if (parsed.money_moved !== false) invalid(code);
+  if (isRaceAcknowledgement) {
+    if (parsed.status !== 'expired'
+        || parsed.already_cancelled
+        || record.cancellation_effect !== 'future_renewal_revoked_after_race') invalid(code);
+    return Object.freeze({
+      ...parsed,
+      cancellation_effect: 'future_renewal_revoked_after_race',
+    });
+  }
+  if (parsed.status !== 'cancelled') invalid(code);
   if (parsed.replayed && !parsed.already_cancelled) invalid(code);
+  return Object.freeze(parsed);
+}
+
+export function parseCreatorPremiumAutoRenewalReceipt(
+  value,
+  expectedSubscriptionId,
+  expectedEnabled,
+) {
+  const code = 'creator_premium_auto_renewal_receipt_invalid';
+  if (typeof expectedEnabled !== 'boolean') invalid(code);
+  const record = exactRecord(value, AUTO_RENEWAL_RECEIPT_KEYS, code);
+  const parsed = {
+    subscription_id: exactTarget(record.subscription_id, expectedSubscriptionId, code),
+    auto_renewal: parseAutoRenewal(record.auto_renewal, code),
+    money_moved: exactBoolean(record.money_moved, code),
+    replayed: exactBoolean(record.replayed, code),
+  };
+  if (parsed.money_moved || parsed.auto_renewal.enabled !== expectedEnabled) invalid(code);
   return Object.freeze(parsed);
 }

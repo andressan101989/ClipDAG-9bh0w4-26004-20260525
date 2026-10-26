@@ -205,7 +205,7 @@ function CreatorPremiumOfferScreenContent() {
     subscriptionAttempts.current.set(planId, idempotencyKey);
     try {
       if (!await confirmCharge(renewing ? 'Renovar periodo' : 'Confirmar suscripción',
-        `${renewing ? 'Renovar' : 'Iniciar'} un periodo de ${days} días por ${amount} BDAG. La renovación es manual; no hay renovación automática. Sujeto a autorización limitada del servidor, sin disponibilidad pública.`)) return;
+        `${renewing ? 'Renovar' : 'Iniciar'} un periodo de ${days} días por ${amount} BDAG. La renovación manual sigue disponible; la renovación automática es opcional y esta operación no la activa. Podrás habilitarla después desde Mis suscripciones.`)) return;
       if (generation !== contextGeneration.current) return;
       const currentPlan = commerceRef.current?.plans.find(item => item.id === planId);
       if (!commerceRef.current?.policy.subscription_enabled || currentPlan?.price_bdag !== amount
@@ -371,7 +371,7 @@ function CreatorPremiumOfferScreenContent() {
                       <View style={styles.flex}>
                         <Text style={styles.cardTitle}>{plan.name}</Text>
                         <Text style={styles.muted}>{plan.description || "Plan del creador"}</Text>
-                        <Text style={styles.period}>Cada {plan.billing_period_days} días · renovación manual</Text>
+                        <Text style={styles.period}>Cada {plan.billing_period_days} días · renovación manual o automática opcional</Text>
                         {plan.relationship ? (
                           <Text style={styles.period}>
                             Relación {plan.relationship.status} · acceso hasta {plan.relationship.paid_through_at ?? "sin periodo vigente"}

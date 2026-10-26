@@ -227,6 +227,25 @@ const subscriptionsProjection = Object.freeze({
   },
 });
 
+const subscriptionsProjectionV2 = Object.freeze({
+  ...subscriptionsProjection,
+  items: subscriptionsProjection.items.map(item => Object.freeze({
+    ...item,
+    auto_renewal: Object.freeze({
+      enabled: false,
+      mandate_state: null,
+      consented_at: null,
+      revoked_at: null,
+      next_charge_at: null,
+      authorized_price_bdag: null,
+      authorized_plan_version: null,
+      retry_count: 0,
+      last_result: null,
+      last_attempt_at: null,
+    }),
+  })),
+});
+
 const commercialSummaryProjection = Object.freeze({
   range: {
     from: '2026-10-01T00:00:00.000Z',
@@ -749,7 +768,7 @@ test('Premium service fetchers return only strictly parsed commerce, summary and
   const service = loadCreatorPremiumService({
     get_creator_premium_commerce_v2: commerceProjection,
     get_my_creator_premium_commercial_summary_v1: summaryWithDeletedPerformance,
-    get_my_creator_premium_subscriptions_v2: subscriptionsProjection,
+    get_my_creator_premium_subscriptions_v2: subscriptionsProjectionV2,
   });
   assert.deepEqual(
     structuredClone(await service.fetchMyCreatorPremiumCommercialSummary()),
@@ -762,11 +781,11 @@ test('Premium service fetchers return only strictly parsed commerce, summary and
   assert.deepEqual(
     structuredClone(await service.fetchMyCreatorPremiumSubscriptions()),
     {
-      policy: subscriptionsProjection.policy,
-      items: subscriptionsProjection.items,
+      policy: subscriptionsProjectionV2.policy,
+      items: subscriptionsProjectionV2.items,
       nextCursor: {
-        timestamp: subscriptionsProjection.next_cursor.created_at,
-        id: subscriptionsProjection.next_cursor.id,
+        timestamp: subscriptionsProjectionV2.next_cursor.created_at,
+        id: subscriptionsProjectionV2.next_cursor.id,
       },
     },
   );
@@ -784,8 +803,8 @@ test('Premium service fetchers return only strictly parsed commerce, summary and
       }],
     },
     get_my_creator_premium_subscriptions_v2: {
-      ...subscriptionsProjection,
-      items: [{ ...subscriptionsProjection.items[0], auto_renew: true }],
+      ...subscriptionsProjectionV2,
+      items: [{ ...subscriptionsProjectionV2.items[0], auto_renew: true }],
     },
   });
   await assert.rejects(
@@ -803,8 +822,8 @@ test('Premium service fetchers return only strictly parsed commerce, summary and
 });
 
 test('Premium subscription readback follows bounded canonical pagination beyond the first page', async () => {
-  const firstPage = structuredClone(subscriptionsProjection);
-  const secondItem = structuredClone(subscriptionsProjection.items[0]);
+  const firstPage = structuredClone(subscriptionsProjectionV2);
+  const secondItem = structuredClone(subscriptionsProjectionV2.items[0]);
   secondItem.id = otherSubscriptionId;
   secondItem.plan.id = otherPlanId;
   secondItem.plan.relationship.id = otherSubscriptionId;
@@ -836,8 +855,8 @@ test('Premium subscription readback follows bounded canonical pagination beyond 
   }, {
     name: 'get_my_creator_premium_subscriptions_v2',
     args: {
-      p_cursor_created_at: subscriptionsProjection.next_cursor.created_at,
-      p_cursor_id: subscriptionsProjection.next_cursor.id,
+      p_cursor_created_at: subscriptionsProjectionV2.next_cursor.created_at,
+      p_cursor_id: subscriptionsProjectionV2.next_cursor.id,
       p_limit: 100,
     },
   }]);

@@ -15,11 +15,13 @@
 import { getSupabaseClient } from '@/template';
 import { getWithdrawalConfigFromBackend } from '@/services/walletApi';
 import {
+  parseCreatorPremiumAutoRenewalReceipt,
   parseCreatorPremiumCancellationReceipt,
   parseCreatorPremiumPurchaseReceipt,
   parseCreatorPremiumSubscriptionReceipt,
 } from '@/services/creatorPremiumFinanceContracts.mjs';
 import type {
+  CreatorPremiumAutoRenewalReceipt,
   CreatorPremiumCancellationReceipt,
   CreatorPremiumPurchaseReceipt,
   CreatorPremiumSubscriptionReceipt,
@@ -28,6 +30,8 @@ import { FunctionsHttpError } from '@supabase/supabase-js';
 
 const supabase = () => getSupabaseClient();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const EXACT_POSITIVE_BDAG_RE = /^(?:0\.(?!0{8}$)\d{8}|[1-9]\d{0,29}\.\d{8})$/;
+const POSTGRES_INTEGER_MAX = 2_147_483_647;
 const CREATOR_PREMIUM_FINANCE_CLIENT_CONTRACT = 'creator-premium-f3-v2';
 
 // ── Idempotency key factory ───────────────────────────────────────────────
@@ -330,6 +334,68 @@ export async function cancelCreatorPremiumSubscription(params: {
     };
   } catch {
     return { success: false, error: 'creator_premium_cancellation_receipt_invalid' };
+  }
+}
+
+/** Explicitly opt in to or revoke automatic renewal without moving money. */
+export async function setCreatorPremiumAutoRenewal(params: {
+  subscriptionId: string;
+  enabled: boolean;
+  expectedPriceBdag: string;
+  expectedPlanVersion: number;
+  idempotencyKey?: string;
+}): Promise<
+  | { success: true; data: CreatorPremiumAutoRenewalReceipt }
+  | { success: false; error: string }
+> {
+  if (Object.keys(params).some(key => ![
+    'subscriptionId',
+    'enabled',
+    'expectedPriceBdag',
+    'expectedPlanVersion',
+    'idempotencyKey',
+  ].includes(key))) {
+    return { success: false, error: 'creator_premium_request_fields_invalid' };
+  }
+  if (!UUID_RE.test(params.subscriptionId)) {
+    return { success: false, error: 'creator_premium_invalid_subscription_id' };
+  }
+  if (typeof params.enabled !== 'boolean'
+      || typeof params.expectedPriceBdag !== 'string'
+      || !EXACT_POSITIVE_BDAG_RE.test(params.expectedPriceBdag)
+      || !Number.isSafeInteger(params.expectedPlanVersion)
+      || params.expectedPlanVersion < 1
+      || params.expectedPlanVersion > POSTGRES_INTEGER_MAX) {
+    return { success: false, error: 'creator_premium_auto_renewal_invalid_input' };
+  }
+  if (params.idempotencyKey !== undefined
+      && (typeof params.idempotencyKey !== 'string' || !UUID_RE.test(params.idempotencyKey))) {
+    return { success: false, error: 'invalid idempotency key' };
+  }
+  const result = await invokeLedger(
+    'creator_premium_set_auto_renewal',
+    {
+      subscription_id: params.subscriptionId,
+      enabled: params.enabled,
+      expected_price_bdag: params.expectedPriceBdag,
+      expected_plan_version: params.expectedPlanVersion,
+    },
+    { uuidIdempotency: true, idempotencyKey: params.idempotencyKey },
+  );
+  if (!result.success || !result.data) {
+    return { success: false, error: result.error ?? 'creator_premium_auto_renewal_failed' };
+  }
+  try {
+    return {
+      success: true,
+      data: parseCreatorPremiumAutoRenewalReceipt(
+        result.data,
+        params.subscriptionId,
+        params.enabled,
+      ),
+    };
+  } catch {
+    return { success: false, error: 'creator_premium_auto_renewal_receipt_invalid' };
   }
 }
 

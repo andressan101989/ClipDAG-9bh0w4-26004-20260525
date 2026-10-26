@@ -10,6 +10,7 @@ import {
   parseCreatorPremiumCommercialSummary,
   parseCreatorPremiumFinancialHistoryPage,
   parseCreatorPremiumSubscriptionsPageV2,
+  type CreatorPremiumAutoRenewalProjection,
 } from '@/services/creatorPremiumFinanceContracts.mjs';
 import { normalizeCreatorPremiumPriceBdag } from '@/services/creatorPremiumMoney.mjs';
 
@@ -260,6 +261,7 @@ export interface CreatorPremiumSubscriptionItem {
   };
   access_active: boolean;
   auto_renew: false;
+  auto_renewal: CreatorPremiumAutoRenewalProjection;
   renewal_supported: boolean;
   renewal_available: boolean;
   renewal_blocker: string | null;

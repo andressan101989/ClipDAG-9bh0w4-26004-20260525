@@ -15,6 +15,18 @@ const policy = {
   purchase_enabled: true, subscription_enabled: true, refunds_enabled: true,
   platform_fee_bps: 1000, policy_version: 'creator-premium-f3-v1',
 };
+const autoRenewalAbsent = Object.freeze({
+  enabled: false,
+  mandate_state: null,
+  consented_at: null,
+  revoked_at: null,
+  next_charge_at: null,
+  authorized_price_bdag: null,
+  authorized_plan_version: null,
+  retry_count: 0,
+  last_result: null,
+  last_attempt_at: null,
+});
 const commerce = {
   content: { id: id.content, creator_id: id.creator, title: 'Synthetic canary', description: '',
     content_kind: 'image', access_mode: 'purchase_or_subscription',
@@ -177,6 +189,7 @@ for (const operation of ['purchase', 'subscription', 'renewal', 'changed_offer',
     status: 'cancelled', started_at: '2026-09-26T00:00:00Z', cancelled_at: '2026-10-25T00:00:00Z', ended_at: null,
     period: { id: uuid(31), starts_at: '2026-09-26T00:00:00Z', paid_through_at: '2026-10-26T00:00:00Z', access_state: 'expired', gross_amount_bdag: '20.00000000' },
     access_active: false, auto_renew: false, renewal_supported: true, renewal_available: true, renewal_blocker: null,
+    auto_renewal: autoRenewalAbsent,
     is_latest_relationship: true, created_at: '2026-09-26T00:00:00Z', updated_at: '2026-10-25T00:00:00Z' };
   if (history) finance.parseCreatorPremiumSubscriptionsPageV2({ policy, items: [subscription], next_cursor: null });
   else finance.parseCreatorPremiumCommerceV2(projection, id.content);
@@ -262,6 +275,7 @@ function consentFixture(operation) {
     status: 'cancelled', started_at: '2026-09-26T00:00:00Z', cancelled_at: '2026-10-25T00:00:00Z', ended_at: null,
     period: { id: uuid(31), starts_at: '2026-09-26T00:00:00Z', paid_through_at: '2026-10-26T00:00:00Z', access_state: 'expired', gross_amount_bdag: '20.00000000' },
     access_active: false, auto_renew: false, renewal_supported: true, renewal_available: true, renewal_blocker: null,
+    auto_renewal: autoRenewalAbsent,
     is_latest_relationship: true, created_at: '2026-09-26T00:00:00Z', updated_at: '2026-10-25T00:00:00Z' } : undefined;
   if (history) finance.parseCreatorPremiumSubscriptionsPageV2({ policy, items: [subscription], next_cursor: null });
   else finance.parseCreatorPremiumCommerceV2(projection, id.content);
@@ -355,6 +369,7 @@ test('current parsers preserve truthful acquired rights while exact frozen F2 by
     period: { id: uuid(31), starts_at: '2026-09-26T00:00:00Z', paid_through_at: relationship.paid_through_at,
       access_state: 'expired', gross_amount_bdag: '20.00000000' },
     access_active: false, auto_renew: false, renewal_supported: true,
+    auto_renewal: autoRenewalAbsent,
     renewal_available: false, renewal_blocker: 'creator_premium_canary_limit_reached',
     is_latest_relationship: true, created_at: '2026-09-26T00:00:00Z', updated_at: relationship.cancelled_at,
   }], next_cursor: null };
@@ -366,6 +381,7 @@ test('current parsers preserve truthful acquired rights while exact frozen F2 by
   acquired.items[0].plan.subscription_blocker = 'creator_premium_already_subscribed';
   assert.deepEqual(finance.parseCreatorPremiumSubscriptionsPageV2(acquired), acquired);
   const currentV1Acquired = structuredClone(acquired);
+  delete currentV1Acquired.items[0].auto_renewal;
   currentV1Acquired.policy = { ...policy, purchase_enabled: false, subscription_enabled: false,
     refunds_enabled: false, platform_fee_bps: 0 };
   currentV1Acquired.items[0].plan.renewal_blocker = 'creator_premium_subscription_disabled';
