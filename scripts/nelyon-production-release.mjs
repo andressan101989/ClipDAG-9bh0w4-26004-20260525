@@ -6,9 +6,10 @@ import { isAbsolute, join, posix, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   advisorExceptionsForPhase,
-  cronCommandSha256,
+  normalizedCronCommandSha256,
   FINANCE_POLICY_DIGESTS,
   normalizeCronCommand,
+  projectCronBaselineItems,
   verifyProductionPreSnapshot,
   verifyProductionRecoverySnapshot,
   verifyProductionSnapshotPair,
@@ -726,7 +727,7 @@ export function validatePolicy(policy) {
   }
   const f5Cron = policy.finance_authority_f5_transition?.cron_job;
   if (normalizeCronCommand(f5Cron?.command ?? '') !== f5Cron?.command
-    || cronCommandSha256(f5Cron.command) !== f5Cron.normalized_command_sha256) {
+    || normalizedCronCommandSha256(f5Cron.command) !== f5Cron.normalized_command_sha256) {
     deny('INVALID_FINANCE_AUTHORITY_TRANSITION', 'F5 cron command must match the exact normalized digest');
   }
   if (canonicalJson(policy.finance_authority_transition) !== canonicalJson(F3_FINANCE_AUTHORITY_TRANSITION)
@@ -3006,6 +3007,12 @@ export function buildBaselineEvidence(snapshot) {
   const unmanaged = [...snapshot.functions.unmanaged].sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const blockedResources = managed.filter(item => item.source_parity !== true).map(item => item.name).sort();
   const digestOf = value => sha256Hex(canonicalJson(value));
+  const baselineUsesRawCronIdentity = snapshot.migrations.latest
+    >= '20261026072512_creator_premium_f5_autonomous_subscriptions';
+  const cronSecurity = {
+    ...snapshot.cron_security,
+    cron: projectCronBaselineItems(snapshot.cron_security.cron, baselineUsesRawCronIdentity),
+  };
   const payload = {
     schema_version: 1,
     complete: true,
@@ -3022,7 +3029,7 @@ export function buildBaselineEvidence(snapshot) {
     },
     functions: { managed, unmanaged },
     config: snapshot.config,
-    cron_security: snapshot.cron_security,
+    cron_security: cronSecurity,
     finance: snapshot.finance,
     health: snapshot.health,
     prior_release: prior,
@@ -3033,7 +3040,7 @@ export function buildBaselineEvidence(snapshot) {
       unmanaged_functions: digestOf(unmanaged),
       function_source_parity: digestOf(managed.map(item => ({ name: item.name, source_sha256: item.source_sha256, source_parity: item.source_parity }))),
       config_verify_jwt: digestOf(snapshot.config),
-      cron_security: digestOf(snapshot.cron_security),
+      cron_security: digestOf(cronSecurity),
       finance: digestOf(snapshot.finance),
     },
   };
