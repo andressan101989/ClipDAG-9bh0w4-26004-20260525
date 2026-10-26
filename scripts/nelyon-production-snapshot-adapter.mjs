@@ -45,9 +45,9 @@ export const FINANCE_POLICY_DIGESTS = Object.freeze({
   historical_transition: '18ba08389686a15aea9df1c7b4f974202e147167e5aa1d0f83412e1065ebc882',
   c2_transition: '2fc5ae800bf96aed59d78b953cfe628007f9603b48dd8e7a25dc915e88927af2',
   f4_transition: 'de7891ab96cd95280a5d1e80ad56b8411045b66bb54e71f610874f4cc280e36a',
-  f5_transition: 'd0007b7995d96246a51136948e44a97221fb0fc42845824bbea186ad695c9829',
+  f5_transition: '3829cb90de13c8aece7b40f6d70364f02635a79163d32668229382665a83d051',
   authority: 'ea2c6ef88c685b684defae6233fa773c2a2b6dd8b4a488d768a4d193f6d8e934',
-  security_advisor: 'e2d18b540ee595bbad3dd64e04a6ad42a09aba71a80fe3dc92d4a8097e97cfbe',
+  security_advisor: '3c53134f7f1764d1808b88d5b58d7bac44d46ed3b014afbd30de0c61a34be7db',
 });
 
 export const FINANCE_SNAPSHOT_SQL = `with
