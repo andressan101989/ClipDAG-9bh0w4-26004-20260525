@@ -11,6 +11,7 @@ import {
   FINANCE_POLICY_DIGESTS,
   normalizeCronCommand,
   projectCronBaselineItems,
+  projectProductionBaselineFinance,
   verifyProductionPreSnapshot,
   verifyProductionRecoverySnapshot,
   verifyProductionSnapshotPair,
@@ -3082,6 +3083,10 @@ export function buildBaselineEvidence(snapshot) {
     ...snapshot.cron_security,
     cron: projectCronBaselineItems(snapshot.cron_security.cron, baselineUsesRawCronIdentity),
   };
+  const baselineFinance = projectProductionBaselineFinance(
+    snapshot.finance,
+    snapshot.migrations.latest,
+  );
   const payload = {
     schema_version: 1,
     complete: true,
@@ -3110,7 +3115,7 @@ export function buildBaselineEvidence(snapshot) {
       function_source_parity: digestOf(managed.map(item => ({ name: item.name, source_sha256: item.source_sha256, source_parity: item.source_parity }))),
       config_verify_jwt: digestOf(snapshot.config),
       cron_security: digestOf(cronSecurity),
-      finance: digestOf(snapshot.finance),
+      finance: digestOf(baselineFinance),
     },
   };
   return { ...payload, evidence_sha256: digestOf(payload) };

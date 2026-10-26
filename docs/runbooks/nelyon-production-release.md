@@ -200,7 +200,7 @@ still requires the Environment boundary and every automated technical gate.
 
 ## Baseline candidate to verified
 
-The current expanded 18-function baseline is `verified`. A later managed-scope
+The current expanded 19-function baseline is `verified`. A later managed-scope
 change returns it to `candidate`; equality with GitHub `main` is not enough.
 Capture a complete read-only owner-control-plane snapshot covering:
 
