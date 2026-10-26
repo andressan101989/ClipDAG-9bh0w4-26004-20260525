@@ -227,6 +227,20 @@ test('F5 autonomous transition attests one exact migration, bdag-ledger, strict 
   assert.equal(f5Projection.object.name, 'get_my_creator_premium_subscriptions_v3');
   assert.equal(f5Projection.attestation.definition_sha256,
     '246ab182de52bedd431e12a54ddf48923ecbd85e296ad6e138e54017f5ed7489');
+  assert.deepEqual(policy.finance_security_advisor.f5_relation_additions, [
+    {
+      advisor_fingerprint: '70d2706125a8861824f9c876848c472a28bde6db0813543ba97ec3409516967f',
+      advisor_type: 'table',
+      advisor_severity: 'INFO',
+      object: { schema: 'private', name: 'creator_premium_auto_renewal_attempts' },
+    },
+    {
+      advisor_fingerprint: 'd37d10aa8c56fc907ce6ce86f44aafcb36f8bd6c7d719cc33032fe1561eee56d',
+      advisor_type: 'table',
+      advisor_severity: 'INFO',
+      object: { schema: 'private', name: 'creator_premium_auto_renewal_mandates' },
+    },
+  ]);
 
   for (const mutate of [
     candidate => { candidate.finance_authority_f5_transition.migration_sha256 = 'a'.repeat(64); },
@@ -237,6 +251,8 @@ test('F5 autonomous transition attests one exact migration, bdag-ledger, strict 
     candidate => { candidate.finance_authority.f5_autonomous.relations[0].sha256 = 'a'.repeat(64); },
     candidate => { candidate.finance_authority.f5_autonomous.function_additions[0].sha256 = 'a'.repeat(64); },
     candidate => { candidate.finance_security_advisor.f5_rpc_additions[0].attestation.definition_sha256 = 'a'.repeat(64); },
+    candidate => { candidate.finance_security_advisor.f5_relation_additions[0].advisor_fingerprint = 'a'.repeat(64); },
+    candidate => { candidate.finance_security_advisor.f5_relation_additions[1].object.name = 'unexpected_relation'; },
   ]) {
     const candidate = structuredClone(policy);
     mutate(candidate);
@@ -1284,11 +1300,25 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     level: 'WARN',
     resource_kind: 'table',
   }));
+  const expectedF5RelationFindings = isF5Recovery ? [
+    {
+      fingerprint: '70d2706125a8861824f9c876848c472a28bde6db0813543ba97ec3409516967f',
+      level: 'INFO',
+      resource_kind: 'table',
+    },
+    {
+      fingerprint: 'd37d10aa8c56fc907ce6ce86f44aafcb36f8bd6c7d719cc33032fe1561eee56d',
+      level: 'INFO',
+      resource_kind: 'table',
+    },
+  ] : [];
+  const selectedFingerprints = new Set(recoveryExceptions.map(exception => exception.advisor_fingerprint));
   const advisorItems = [...baselineAdvisorItems, ...recoveryExceptions.map(exception => ({
     fingerprint: exception.advisor_fingerprint,
     level: exception.advisor_severity,
     resource_kind: exception.advisor_type,
-  }))].sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+  })), ...expectedF5RelationFindings.filter(item => !selectedFingerprints.has(item.fingerprint))]
+    .sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
   currentEvidence.cron_security.advisors = {
     complete: true,
     count: advisorItems.length,
@@ -1300,7 +1330,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     : currentEvidence.cron_security.cron.items;
   controlledPolicy.security_advisor.baseline.cron_security_sha256 = gate.sha256Hex(gate.canonicalJson({
     complete: true,
-    cron: reviewedCronItems,
+    cron: adapter.projectCronBaselineItems(reviewedCronItems, true),
     security_findings: baselineAdvisorItems,
   }));
   const { evidence_sha256: ignored, ...unsignedEvidence } = currentEvidence;
