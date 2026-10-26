@@ -36,7 +36,7 @@ describe("F2 read-only Creator Premium finance console",()=>{
     vi.clearAllMocks();
     vi.mocked(searchAdminCreatorPremiumFinance).mockResolvedValue(baseResponse);
     vi.mocked(getAdminCreatorPremiumFinanceActivation).mockResolvedValue({activation:{
-      mode:"off",authorization_id:null,charge_starts_at:null,charge_expires_at:null,refund_expires_at:null,
+      mode:"off",scope:null,authorization_id:null,charge_starts_at:null,charge_expires_at:null,refund_expires_at:null,
       operations:{purchase_enabled:false,subscription_enabled:false,refunds_enabled:false},
       limits:{purchase_count:0,subscription_count:0,refund_count:0,purchase_amount_bdag:"0.00000000",subscription_amount_bdag:"0.00000000",gross_bdag:"0.00000000"},
       consumed:{purchase_count:0,subscription_count:0,refund_count:0,gross_bdag:"0.00000000"},
@@ -55,7 +55,7 @@ describe("F2 read-only Creator Premium finance console",()=>{
 
   it("shows only finite canary scope, exact exposure and permanent consumption without an activation control",async()=>{
     vi.mocked(getAdminCreatorPremiumFinanceActivation).mockResolvedValue({activation:{
-      mode:"canary",authorization_id:"90000000-0000-4000-8000-000000000001",
+      mode:"canary",scope:"CANARY",authorization_id:"90000000-0000-4000-8000-000000000001",
       charge_starts_at:"2026-10-25T00:00:00Z",charge_expires_at:"2026-10-25T00:30:00Z",refund_expires_at:"2026-10-25T01:00:00Z",
       operations:{purchase_enabled:true,subscription_enabled:true,refunds_enabled:true},
       limits:{purchase_count:1,subscription_count:1,refund_count:1,purchase_amount_bdag:"10.00000000",subscription_amount_bdag:"20.00000000",gross_bdag:"30.00000000"},
@@ -70,6 +70,63 @@ describe("F2 read-only Creator Premium finance console",()=>{
     expect(within(scope).getByText("Fin de cargos")).toBeInTheDocument();
     expect(scope.textContent).not.toContain("90000000-0000-4000-8000-000000000001");
     expect(within(scope).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("shows a general activation with exact consumption and no invented limits or deadlines",async()=>{
+    const generalActivation={activation:{
+      mode:"general" as const,scope:"GENERAL" as const,authorization_id:"90000000-0000-4000-8000-000000000002",
+      charge_starts_at:"2026-10-26T03:00:00Z",charge_expires_at:null,refund_expires_at:null,
+      operations:{purchase_enabled:true,subscription_enabled:true,refunds_enabled:true},
+      limits:null,
+      consumed:{purchase_count:12,subscription_count:3,refund_count:1,gross_bdag:"4500.00000000"},
+      remaining:null,
+    }};
+    const actualApi=await vi.importActual<typeof import("../lib/adminObservabilityApi")>("../lib/adminObservabilityApi");
+    expect(actualApi.parseAdminCreatorPremiumFinanceActivation(generalActivation)).toEqual(generalActivation);
+    expect(()=>actualApi.parseAdminCreatorPremiumFinanceActivation({activation:{
+      ...generalActivation.activation,
+      limits:{purchase_count:0,subscription_count:0,refund_count:0,purchase_amount_bdag:"0.00000000",subscription_amount_bdag:"0.00000000",gross_bdag:"0.00000000"},
+    }})).toThrow(/Respuesta inválida/);
+    expect(()=>actualApi.parseAdminCreatorPremiumFinanceActivation({activation:{
+      ...generalActivation.activation,
+      operations:{purchase_enabled:true,subscription_enabled:true,refunds_enabled:false},
+    }})).toThrow(/Respuesta inválida/);
+
+    vi.mocked(searchAdminCreatorPremiumFinance).mockResolvedValue({...baseResponse,policy:{...baseResponse.policy,purchase_enabled:true,subscription_enabled:true,platform_fee_bps:2000,policy_version:"creator-premium-f4"}});
+    vi.mocked(getAdminCreatorPremiumFinanceActivation).mockResolvedValue(generalActivation);
+    render(<MemoryRouter><AdminCreatorPremiumFinancePage/></MemoryRouter>);
+    expect(await screen.findByText("Activación general")).toBeInTheDocument();
+    const scope=screen.getByRole("region",{name:"Activación Finance Premium"});
+    expect(within(scope).getByText("GENERAL")).toBeInTheDocument();
+    expect(within(scope).getByText("2000 bps")).toBeInTheDocument();
+    expect(within(scope).getByText("4,500.00000000 BDAG")).toBeInTheDocument();
+    expect(within(scope).getByText("Compras autorizadas").parentElement).toHaveTextContent("Sí");
+    expect(within(scope).getByText("Suscripciones autorizadas").parentElement).toHaveTextContent("Sí");
+    expect(within(scope).getByText("Reembolsos autorizados").parentElement).toHaveTextContent("Sí");
+    expect(within(scope).getByText("Compras consumidas: 12")).toBeInTheDocument();
+    expect(within(scope).getByText("Suscripciones consumidas: 3")).toBeInTheDocument();
+    expect(within(scope).getByText("Reembolsos consumidos: 1")).toBeInTheDocument();
+    expect(scope.textContent).not.toContain("límite");
+    expect(scope.textContent).not.toContain("restantes");
+    expect(within(scope).queryByText("Fin de cargos")).not.toBeInTheDocument();
+    expect(within(scope).queryByText("Fin de reembolsos")).not.toBeInTheDocument();
+  });
+
+  it("accepts the exact pre-F4 OFF projection while requiring scope for GENERAL",async()=>{
+    const actualApi=await vi.importActual<typeof import("../lib/adminObservabilityApi")>("../lib/adminObservabilityApi");
+    const legacyOff={activation:{
+      mode:"off",authorization_id:null,charge_starts_at:null,charge_expires_at:null,refund_expires_at:null,
+      operations:{purchase_enabled:false,subscription_enabled:false,refunds_enabled:false},
+      limits:{purchase_count:0,subscription_count:0,refund_count:0,purchase_amount_bdag:"0.00000000",subscription_amount_bdag:"0.00000000",gross_bdag:"0.00000000"},
+      consumed:{purchase_count:0,subscription_count:0,refund_count:0,gross_bdag:"0.00000000"},
+      remaining:{purchase_count:0,subscription_count:0,refund_count:0,gross_bdag:"0.00000000"},
+    }};
+    expect(actualApi.parseAdminCreatorPremiumFinanceActivation(legacyOff)).toEqual(legacyOff);
+    expect(()=>actualApi.parseAdminCreatorPremiumFinanceActivation({activation:{
+      ...legacyOff.activation,mode:"general",authorization_id:"90000000-0000-4000-8000-000000000002",
+      charge_starts_at:"2026-10-26T03:00:00Z",limits:null,remaining:null,
+      operations:{purchase_enabled:true,subscription_enabled:true,refunds_enabled:true},
+    }})).toThrow(/Respuesta inválida/);
   });
 
   it("shows authoritative Finance OFF policy, exact commerce facts and reconciliation without write controls",async()=>{

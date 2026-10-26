@@ -86,19 +86,21 @@ const financeIdentity=(value:unknown,name:string):AdminCreatorPremiumFinanceIden
 };
 
 type ActivationCounts={purchase_count:number;subscription_count:number;refund_count:number;gross_bdag:string};
-export type AdminCreatorPremiumFinanceActivation={
-  mode:"off"|"canary";authorization_id:string|null;
-  charge_starts_at:string|null;charge_expires_at:string|null;refund_expires_at:string|null;
-  operations:{purchase_enabled:boolean;subscription_enabled:boolean;refunds_enabled:boolean};
-  limits:ActivationCounts&{purchase_amount_bdag:string;subscription_amount_bdag:string};
-  consumed:ActivationCounts;remaining:ActivationCounts;
-};
+type ActivationLimits=ActivationCounts&{purchase_amount_bdag:string;subscription_amount_bdag:string};
+type ActivationOperations={purchase_enabled:boolean;subscription_enabled:boolean;refunds_enabled:boolean};
+export type AdminCreatorPremiumFinanceActivation=
+  |{mode:"off";scope?:null;authorization_id:null;charge_starts_at:null;charge_expires_at:null;refund_expires_at:null;operations:ActivationOperations;limits:ActivationLimits;consumed:ActivationCounts;remaining:ActivationCounts}
+  |{mode:"canary";scope?:"CANARY";authorization_id:string;charge_starts_at:string;charge_expires_at:string;refund_expires_at:string;operations:ActivationOperations;limits:ActivationLimits;consumed:ActivationCounts;remaining:ActivationCounts}
+  |{mode:"general";scope:"GENERAL";authorization_id:string;charge_starts_at:string;charge_expires_at:null;refund_expires_at:null;operations:ActivationOperations;limits:null;consumed:ActivationCounts;remaining:null};
 export function parseAdminCreatorPremiumFinanceActivation(value:unknown):{activation:AdminCreatorPremiumFinanceActivation|null}{
   const name="creator_premium_finance.activation",outer=record(value,name);
   if(Object.keys(outer).length===0)return{activation:null};
   const root=exactRecord(outer,name,["activation"]);
-  const raw=exactRecord(root.activation,name,["mode","authorization_id","charge_starts_at","charge_expires_at","refund_expires_at","operations","limits","consumed","remaining"]);
-  const mode=enumValue(raw.mode,name,["off","canary"] as const);
+  const activationRecord=record(root.activation,name),hasScope=Object.prototype.hasOwnProperty.call(activationRecord,"scope");
+  const raw=exactRecord(root.activation,name,["mode",...(hasScope?["scope"]:[]),"authorization_id","charge_starts_at","charge_expires_at","refund_expires_at","operations","limits","consumed","remaining"]);
+  const mode=enumValue(raw.mode,name,["off","canary","general"] as const);
+  if(mode==="general"&&!hasScope)throw new Error(`Respuesta inválida: ${name}.scope`);
+  const scope=hasScope?nullableEnum(raw.scope,`${name}.scope`,["CANARY","GENERAL"] as const):(mode==="canary"?"CANARY":null);
   const authorizationId=nullableUuid(raw.authorization_id,name);
   const starts=nullableTimestamp(raw.charge_starts_at,name),expires=nullableTimestamp(raw.charge_expires_at,name),refundExpires=nullableTimestamp(raw.refund_expires_at,name);
   const operationsRecord=exactRecord(raw.operations,name,["purchase_enabled","subscription_enabled","refunds_enabled"]);
@@ -110,21 +112,27 @@ export function parseAdminCreatorPremiumFinanceActivation(value:unknown):{activa
     if(countKeys.some(key=>!Number.isSafeInteger(counts[key])))throw new Error(`Respuesta inválida: ${name}.counts`);
     return counts;
   };
-  const limitsRecord=record(raw.limits,name);
-  const limits={...parseCounts(raw.limits,true),purchase_amount_bdag:money(limitsRecord.purchase_amount_bdag,name),subscription_amount_bdag:money(limitsRecord.subscription_amount_bdag,name)};
-  const consumed=parseCounts(raw.consumed),remaining=parseCounts(raw.remaining);
+  const limits=raw.limits===null?null:(()=>{const limitsRecord=record(raw.limits,name);return{...parseCounts(raw.limits,true),purchase_amount_bdag:money(limitsRecord.purchase_amount_bdag,name),subscription_amount_bdag:money(limitsRecord.subscription_amount_bdag,name)}})();
+  const consumed=parseCounts(raw.consumed),remaining=raw.remaining===null?null:parseCounts(raw.remaining);
   const units=(amount:string)=>BigInt(amount.replace(".",""));
-  if(countKeys.some(key=>consumed[key]>limits[key]||remaining[key]!==limits[key]-consumed[key])
-    ||units(consumed.gross_bdag)>units(limits.gross_bdag)
-    ||units(remaining.gross_bdag)!==units(limits.gross_bdag)-units(consumed.gross_bdag)
-    ||units(consumed.gross_bdag)!==BigInt(consumed.purchase_count)*units(limits.purchase_amount_bdag)+BigInt(consumed.subscription_count)*units(limits.subscription_amount_bdag)
-    ||consumed.refund_count>consumed.purchase_count+consumed.subscription_count)throw new Error(`Respuesta inválida: ${name}.consumption`);
+  const validateBoundedConsumption=(boundedLimits:ActivationLimits,boundedRemaining:ActivationCounts)=>{
+    if(countKeys.some(key=>consumed[key]>boundedLimits[key]||boundedRemaining[key]!==boundedLimits[key]-consumed[key])
+      ||units(consumed.gross_bdag)>units(boundedLimits.gross_bdag)
+      ||units(boundedRemaining.gross_bdag)!==units(boundedLimits.gross_bdag)-units(consumed.gross_bdag)
+      ||units(consumed.gross_bdag)!==BigInt(consumed.purchase_count)*units(boundedLimits.purchase_amount_bdag)+BigInt(consumed.subscription_count)*units(boundedLimits.subscription_amount_bdag)
+      ||consumed.refund_count>consumed.purchase_count+consumed.subscription_count)throw new Error(`Respuesta inválida: ${name}.consumption`);
+  };
   if(mode==="off"){
-    if(authorizationId!==null||starts!==null||expires!==null||refundExpires!==null
+    if(scope!==null||authorizationId!==null||starts!==null||expires!==null||refundExpires!==null||limits===null||remaining===null
       ||Object.values(operations).some(Boolean)||countKeys.some(key=>limits[key]!==0)
       ||[limits.gross_bdag,limits.purchase_amount_bdag,limits.subscription_amount_bdag].some(amount=>units(amount)!==0n))throw new Error(`Respuesta inválida: ${name}.off`);
-  }else{
-    if(authorizationId===null||starts===null||expires===null||refundExpires===null)throw new Error(`Respuesta inválida: ${name}.authorization`);
+    validateBoundedConsumption(limits,remaining);
+    const activation={mode,...(hasScope?{scope}:{}),authorization_id:authorizationId,charge_starts_at:starts,charge_expires_at:expires,refund_expires_at:refundExpires,operations,limits,consumed,remaining};
+    return{activation};
+  }
+  if(mode==="canary"){
+    if(scope!=="CANARY"||authorizationId===null||starts===null||expires===null||refundExpires===null||limits===null||remaining===null)throw new Error(`Respuesta inválida: ${name}.authorization`);
+    validateBoundedConsumption(limits,remaining);
     const startTime=timestampMicros(starts,name),expiryTime=timestampMicros(expires,name),refundTime=timestampMicros(refundExpires,name);
     if(expiryTime<=startTime||expiryTime-startTime>3_600_000_000n||refundTime<expiryTime||refundTime-expiryTime>86_400_000_000n
       ||limits.purchase_count<1||limits.purchase_count>100||limits.subscription_count<1||limits.subscription_count>100
@@ -132,8 +140,13 @@ export function parseAdminCreatorPremiumFinanceActivation(value:unknown):{activa
       ||[limits.purchase_amount_bdag,limits.subscription_amount_bdag].some(amount=>units(amount)<=0n||units(amount)>100_000_000_000_000_000_000n)
       ||units(limits.gross_bdag)<units(limits.purchase_amount_bdag)||units(limits.gross_bdag)<units(limits.subscription_amount_bdag)
       ||units(limits.gross_bdag)>BigInt(limits.purchase_count)*units(limits.purchase_amount_bdag)+BigInt(limits.subscription_count)*units(limits.subscription_amount_bdag))throw new Error(`Respuesta inválida: ${name}.canary`);
+    const activation={mode,...(hasScope?{scope}:{}),authorization_id:authorizationId,charge_starts_at:starts,charge_expires_at:expires,refund_expires_at:refundExpires,operations,limits,consumed,remaining};
+    return{activation};
   }
-  return{activation:{mode,authorization_id:authorizationId,charge_starts_at:starts,charge_expires_at:expires,refund_expires_at:refundExpires,operations,limits,consumed,remaining}};
+  if(scope!=="GENERAL"||authorizationId===null||starts===null||expires!==null||refundExpires!==null||limits!==null||remaining!==null
+    ||operations.purchase_enabled!==operations.subscription_enabled
+    ||(operations.purchase_enabled&&!operations.refunds_enabled))throw new Error(`Respuesta inválida: ${name}.general`);
+  return{activation:{mode,scope,authorization_id:authorizationId,charge_starts_at:starts,charge_expires_at:expires,refund_expires_at:refundExpires,operations,limits,consumed,remaining}};
 }
 
 export async function getAdminCreatorPremiumFinanceActivation(){
