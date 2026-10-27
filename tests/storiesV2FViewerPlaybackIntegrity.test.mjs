@@ -194,7 +194,10 @@ test('web photo gets readiness-based pause/resume and index-zero restart', () =>
 });
 
 test('F preserves the existing D and E viewer/delete authorities', () => {
-  assert.match(nativeViewer, /if \(visible && currentStoryId && onMarkViewed\) void onMarkViewed\(currentStoryId\)/i);
+  for (const viewer of [nativeViewer, webViewer]) {
+    assert.match(viewer, /if \(visible && currentStoryId && !isAdvertisingStory && onMarkViewed\) void onMarkViewed\(currentStoryId\)/i);
+    assert.match(viewer, /\[currentStoryId, isAdvertisingStory, onMarkViewed, visible\]/);
+  }
   assert.match(nativeViewer, /await onDeleteStory\(currentStory\.id\)/i);
   assert.match(nativeViewer, /<StoryViewersSheet/i);
   assert.doesNotMatch(nativeViewer + webViewer, /\.from\('stories'\)|\.from\('story_views'\)|rpc\(/i);

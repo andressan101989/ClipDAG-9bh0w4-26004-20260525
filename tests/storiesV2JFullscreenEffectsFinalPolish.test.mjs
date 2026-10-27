@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const gitOptions = { encoding: 'utf8', cwd: fileURLToPath(new URL('..', import.meta.url)) };
 
 const BASE = 'f045b970c133e70a8ff78dbe7a59535696cbeb31';
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
@@ -18,11 +21,11 @@ const context = read('contexts/StoriesContext.tsx');
 const i1 = read('tests/storiesV2I1OriginalNavigationEditorValidation.test.mjs');
 
 function baseFile(path) {
-  return execFileSync('git', ['show', `${BASE}:${path}`], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
+  return execFileSync('git', ['show', `${BASE}:${path}`], gitOptions).replace(/\r\n/g, '\n');
 }
 
 function headFile(path) {
-  return execFileSync('git', ['show', `HEAD:${path}`], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
+  return execFileSync('git', ['show', `HEAD:${path}`], gitOptions).replace(/\r\n/g, '\n');
 }
 
 function assertPackageAuthoritiesUnchanged() {
@@ -37,16 +40,16 @@ function assertPackageAuthoritiesUnchanged() {
 }
 
 function nativeAuthorityChanges() {
-  return execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'android', 'ios'], { encoding: 'utf8' })
+  return execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'android', 'ios'], gitOptions)
     .split(/\r?\n/)
     .filter(Boolean)
     .filter(path => !/android\/app\/src\/main\/res\/|ios\/onspaceapp\/Images\.xcassets\/|ios\/onspaceapp\/Info\.plist$|ios\/onspaceapp\.xcodeproj\/project\.pbxproj$/.test(path));
 }
 
 test('J starts from the exact approved I1 base without package or database changes', () => {
-  assert.equal(execFileSync('git', ['merge-base', 'HEAD', BASE], { encoding: 'utf8' }).trim(), BASE);
+  assert.equal(execFileSync('git', ['merge-base', 'HEAD', BASE], gitOptions).trim(), BASE);
   assertPackageAuthoritiesUnchanged();
-  assert.equal(execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'supabase'], { encoding: 'utf8' }).trim(), '');
+  assert.equal(execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'supabase'], gitOptions).trim(), '');
 });
 
 test('one shared effect renderer covers the exact six canonical reactions', () => {

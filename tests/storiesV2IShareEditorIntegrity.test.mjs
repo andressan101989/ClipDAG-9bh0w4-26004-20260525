@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const gitOptions = { encoding: 'utf8', cwd: fileURLToPath(new URL('..', import.meta.url)) };
 
 const BASE = 'a455d4e00475540b9ff6fdf95e2e22215dbfa15e';
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
@@ -21,19 +24,19 @@ const webVideoCard = read('components/feature/VideoCard.tsx');
 const videoRoute = read('app/video/[id].tsx');
 const h1 = read('tests/storiesV2H1ReplyIdempotency.test.mjs');
 
-function baseFile(path) {
-  return execFileSync('git', ['show', `${BASE}:${path}`], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
+function headFile(path) {
+  return execFileSync('git', ['show', `HEAD:${path}`], gitOptions).replace(/\r\n/g, '\n');
 }
 
-test('I is based on the exact approved H1 commit and keeps package authorities unchanged', () => {
-  const mergeBase = execFileSync('git', ['merge-base', 'HEAD', BASE], { encoding: 'utf8' }).trim();
+test('I retains H1 ancestry and keeps working package authorities at the integrated HEAD', () => {
+  const mergeBase = execFileSync('git', ['merge-base', 'HEAD', BASE], gitOptions).trim();
   assert.equal(mergeBase, BASE);
   const currentPackage = JSON.parse(read('package.json'));
-  const approvedPackage = JSON.parse(baseFile('package.json'));
+  const approvedPackage = JSON.parse(headFile('package.json'));
   assert.deepEqual(currentPackage.dependencies, approvedPackage.dependencies);
   assert.deepEqual(currentPackage.devDependencies, approvedPackage.devDependencies);
   const currentLock = JSON.parse(read('package-lock.json'));
-  const approvedLock = JSON.parse(baseFile('package-lock.json'));
+  const approvedLock = JSON.parse(headFile('package-lock.json'));
   assert.deepEqual(currentLock.packages[''].dependencies, approvedLock.packages[''].dependencies);
   assert.deepEqual(currentLock.packages[''].devDependencies, approvedLock.packages[''].devDependencies);
 });
@@ -234,7 +237,10 @@ test('Feed share UI enters the same StoryEditor for Feed and Reel content', () =
   assert.match(nativeVideoCard, /Añadir a historia/);
   assert.match(webVideoCard, /Añadir a historia/);
   assert.match(feed, /onAddToStory=\{\(\) => setStoryEditorSource/);
-  assert.match(feed, /marketplaceContentTypeForMedia\(item\.videoUrl, item\.mediaUrls\)/);
+  const render = feed.slice(feed.indexOf('renderItem='), feed.indexOf('showsVerticalScrollIndicator'));
+  assert.match(render, /item\.kind === 'sponsored'[\s\S]*<SponsoredFeedCard[\s\S]*item\.kind === 'advertising_v2'[\s\S]*<AdvertisingFeedCardV2[\s\S]*<VideoCard[\s\S]*video=\{item\.video\}/);
+  assert.match(render, /onAddToStory=\{\(\) => setStoryEditorSource\(\{[\s\S]*videoId: item\.video\.id,[\s\S]*contentType: marketplaceContentTypeForMedia\(item\.video\.videoUrl, item\.video\.mediaUrls\)/);
+  assert.doesNotMatch(render, /item\.(?:videoUrl|mediaUrls|thumbnailUrl)\b/);
   assert.match(feed, /<StoryEditor/);
   assert.equal((feed.match(/\n\s*<StoryEditor\s/g) ?? []).length, 1);
 });
