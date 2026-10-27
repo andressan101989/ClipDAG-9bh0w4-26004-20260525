@@ -140,6 +140,18 @@ test('B1 disposable PostgreSQL behavior and isolation', {skip:!enabled}, async t
       assert.equal(run(`select count(*) from public.messages where sender_id='${viewer}' and client_message_id='${key}'`),'1');
       assert.equal(run(`select sum(count) from public.velocity_counters where user_id='${viewer}' and operation_type='story_reply'`),'1');
     });
+    await t.test('legacy reaction retry preserves its timestamp and consumes one rate unit',()=>{
+      const before=Number(run(`select coalesce(sum(count),0) from public.velocity_counters where user_id='${viewer}' and operation_type='story_interaction'`));
+      const sql=`select row_to_json(r) from public.set_story_reaction('${story}','heart') r`;
+      const first=json(viewer,sql);
+      run(`select pg_catalog.pg_sleep(0.01)`);
+      const replay=json(viewer,sql);
+      assert.equal(first.status,'set');
+      assert.equal(replay.status,'unchanged');
+      assert.equal(replay.reaction,first.reaction);
+      assert.equal(replay.updated_at,first.updated_at);
+      assert.equal(Number(run(`select coalesce(sum(count),0) from public.velocity_counters where user_id='${viewer}' and operation_type='story_interaction'`)),before+1);
+    });
     await t.test('response table constraints reject invalid payloads even through privileged SQL',()=>{
       const invalid=run(`begin; insert into private.story_interactive_responses(story_id,element_id,respondent_id,payload) values('${story}','${element(3)}','${other}','{"value":2}'); rollback;`,db,true);
       assert.notEqual(invalid.status,0);
@@ -207,8 +219,17 @@ test('B1 disposable PostgreSQL behavior and isolation', {skip:!enabled}, async t
         assert.equal(run(`select proconfig @> array['search_path=""'] from pg_catalog.pg_proc where oid='private.${signature}'::regprocedure`),'t');
       }
       assert.equal(run(`select proconfig::text from pg_catalog.pg_proc where oid='public.respond_to_story_element(uuid,uuid,uuid,jsonb)'::regprocedure`),'{"search_path=\\"\\""}');
-      const revisions=run(as(viewer,`select row_to_json(r) from public.story_interactive_revisions r limit 1`));
-      assert.doesNotMatch(revisions,/respondent|payload|answer|total/);
+      const visibleRevisions=json(viewer,`select coalesce(jsonb_agg(row_to_json(r) order by element_id),'[]') from public.story_interactive_revisions r where story_id='${story}'`);
+      assert.ok(visibleRevisions.length>0);
+      const visibleRevision=visibleRevisions[0];
+      assert.equal(visibleRevision.story_id,story);
+      assert.doesNotMatch(JSON.stringify(visibleRevision),/respondent|payload|answer|total/);
+      run(`insert into public.blocked_users(blocker_id,blocked_id) values('${owner}','${viewer}')`);
+      try {
+        assert.equal(run(as(viewer,`select count(*) from public.story_interactive_revisions where story_id='${story}'`)).split(/\r?\n/).at(-1),'0');
+      } finally {
+        run(`delete from public.blocked_users where blocker_id='${owner}' and blocked_id='${viewer}'`);
+      }
     });
     await t.test('blocks, safety, moderation, expiry and deletion fail closed',()=>{
       run(`insert into public.blocked_users(blocker_id,blocked_id) values('${owner}','${viewer}')`);
