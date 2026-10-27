@@ -606,11 +606,15 @@ alter function private.story_set_reaction_core(uuid,text) set search_path = '';
 revoke all on function private.story_set_reaction_core(uuid,text) from public, anon, authenticated, service_role;
 create function public.set_story_reaction(p_story_id uuid,p_reaction text)
 returns table(status text,reaction text,updated_at timestamptz) language plpgsql security definer set search_path = '' as $$
-declare v_prior text;
+declare v_prior text; v_prior_updated_at timestamptz;
 begin
   if not private.story_can_access(p_story_id,false) then raise exception using errcode='42501',message='story_not_visible'; end if;
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('story-legacy-reaction:'||auth.uid()::text||':'||p_story_id::text,0));
-  select r.reaction into v_prior from public.story_reactions r where r.story_id=p_story_id and r.reactor_id=auth.uid();
+  select r.reaction,r.updated_at into v_prior,v_prior_updated_at from public.story_reactions r where r.story_id=p_story_id and r.reactor_id=auth.uid();
+  if found and v_prior is not distinct from p_reaction then
+    return query select 'unchanged'::text,v_prior,v_prior_updated_at;
+    return;
+  end if;
   if v_prior is distinct from p_reaction then perform private.story_consume_velocity(auth.uid(),'interaction'); end if;
   return query select * from private.story_set_reaction_core(p_story_id,p_reaction);
 end;
