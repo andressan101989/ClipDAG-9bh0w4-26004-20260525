@@ -704,7 +704,14 @@ export function StoryViewer({
             onReset={handleMediaReset}
           />
         )}
-        {!isAdvertisingStory && <StoryCompositionOverlay composition={currentStory.composition} width={viewportWidth} height={viewportHeight} />}
+        {!isAdvertisingStory && (
+          <StoryCompositionOverlay
+            composition={currentStory.composition}
+            width={viewportWidth}
+            height={viewportHeight}
+            safeInsets={interactiveStageInsets}
+          />
+        )}
         {!isAdvertisingStory
           && onGetInteractiveState
           && onRespondToInteractiveElement

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   LayoutChangeEvent,
+  PanResponder,
   Pressable,
   StyleSheet,
   Text,
@@ -13,7 +14,9 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import type { StoryComposition, StoryInteractivePlacement } from './storyInteractiveTypes';
 import {
   normalizeStorySliderValue,
+  stepStorySliderValue,
   storyInteractionPayloadKey,
+  storySliderValueAt,
 } from './storyViewerRuntime';
 import { StoryInteractiveResultsSheet } from './StoryInteractiveResultsSheet';
 import {
@@ -72,6 +75,96 @@ interface InteractiveCardProps {
   onOpenResults: (element: StoryInteractiveElementState) => void;
 }
 
+function SliderControl({
+  prompt,
+  emoji,
+  value,
+  disabled,
+  aggregateAverage,
+  onChange,
+  onCommit,
+  onInteractionFocus,
+}: {
+  prompt: string;
+  emoji: string;
+  value: number;
+  disabled: boolean;
+  aggregateAverage?: number;
+  onChange: (value: number) => void;
+  onCommit: (value: number) => void;
+  onInteractionFocus: (focused: boolean) => void;
+}) {
+  const widthRef = useRef(1);
+  const valueRef = useRef(value);
+  valueRef.current = value;
+
+  const updateFromLocation = useCallback((locationX: number) => {
+    const next = storySliderValueAt(locationX, widthRef.current);
+    valueRef.current = next;
+    onChange(next);
+    return next;
+  }, [onChange]);
+
+  const commitAdjustedValue = useCallback((direction: 'increment' | 'decrement') => {
+    if (disabled) return;
+    const next = stepStorySliderValue(valueRef.current, direction);
+    valueRef.current = next;
+    onChange(next);
+    onCommit(next);
+  }, [disabled, onChange, onCommit]);
+
+  const responder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => !disabled,
+    onMoveShouldSetPanResponder: () => !disabled,
+    onPanResponderGrant: event => {
+      onInteractionFocus(true);
+      updateFromLocation(event.nativeEvent.locationX);
+    },
+    onPanResponderMove: event => {
+      updateFromLocation(event.nativeEvent.locationX);
+    },
+    onPanResponderRelease: event => {
+      const finalValue = updateFromLocation(event.nativeEvent.locationX);
+      onCommit(finalValue);
+      onInteractionFocus(false);
+    },
+    onPanResponderTerminate: () => {
+      onInteractionFocus(false);
+    },
+    onPanResponderTerminationRequest: () => false,
+  }), [disabled, onCommit, onInteractionFocus, updateFromLocation]);
+
+  return (
+    <View
+      {...responder.panHandlers}
+      accessible
+      accessibilityRole="adjustable"
+      accessibilityLabel={`${prompt}, ${Math.round(value * 100)} por ciento`}
+      accessibilityState={{ disabled }}
+      accessibilityValue={{ min: 0, max: 100, now: Math.round(value * 100) }}
+      accessibilityActions={[
+        { name: 'increment', label: 'Aumentar reacción' },
+        { name: 'decrement', label: 'Disminuir reacción' },
+      ]}
+      onAccessibilityAction={event => {
+        const action = event.nativeEvent.actionName;
+        if (action === 'increment' || action === 'decrement') commitAdjustedValue(action);
+      }}
+      onLayout={event => {
+        widthRef.current = Math.max(1, event.nativeEvent.layout.width);
+      }}
+      style={styles.slider}
+    >
+      <View style={styles.sliderTrack} />
+      <View style={[styles.sliderFill, { width: `${value * 100}%` }]} />
+      <Text style={[styles.sliderEmoji, { left: `${Math.max(2, Math.min(92, value * 100))}%` }]}>{emoji}</Text>
+      {aggregateAverage !== undefined ? (
+        <Text style={styles.aggregate}>Promedio {Math.round(aggregateAverage * 100)}%</Text>
+      ) : null}
+    </View>
+  );
+}
+
 function InteractiveCard({
   storyId: _storyId,
   elementState,
@@ -87,7 +180,6 @@ function InteractiveCard({
     const value = payload && 'value' in payload ? payload.value : undefined;
     return typeof value === 'number' ? normalizeStorySliderValue(value) : 0.5;
   });
-  const [sliderWidth, setSliderWidth] = useState(1);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   const responsePayload = elementState.response?.payload;
@@ -115,7 +207,9 @@ function InteractiveCard({
     const count = aggregate?.options?.[optionId] ?? 0;
     return aggregate && aggregate.total > 0 ? Math.round((count / aggregate.total) * 100) : 0;
   };
-  const onSliderLayout = (event: LayoutChangeEvent) => setSliderWidth(Math.max(1, event.nativeEvent.layout.width));
+  const commitSlider = useCallback((sliderValue: number) => {
+    void submit({ value: sliderValue });
+  }, [submit]);
 
   return (
     <View
@@ -154,27 +248,16 @@ function InteractiveCard({
           ) : null}
         </View>
       ) : definition.type === 'slider' ? (
-        <Pressable
-          accessibilityRole="adjustable"
-          accessibilityLabel={`${definition.prompt}, ${Math.round(sliderValue * 100)} por ciento`}
-          accessibilityState={{ disabled: pending || isOwner }}
+        <SliderControl
+          prompt={definition.prompt}
+          emoji={definition.emoji}
+          value={sliderValue}
           disabled={pending || isOwner}
-          onLayout={onSliderLayout}
-          onPress={event => {
-            const nextValue = normalizeStorySliderValue(event.nativeEvent.locationX / sliderWidth);
-            setSliderValue(nextValue);
-            // Use the rendered value as the canonical client response; the
-            // server independently validates its normalized numeric range.
-            const sliderValue = nextValue;
-            void submit({ value: sliderValue });
-          }}
-          style={styles.slider}
-        >
-          <View style={styles.sliderTrack} />
-          <View style={[styles.sliderFill, { width: `${sliderValue * 100}%` }]} />
-          <Text style={[styles.sliderEmoji, { left: `${Math.max(2, Math.min(92, sliderValue * 100))}%` }]}>{definition.emoji}</Text>
-          {elementState.aggregate ? <Text style={styles.aggregate}>Promedio {Math.round((elementState.aggregate.average ?? 0) * 100)}%</Text> : null}
-        </Pressable>
+          aggregateAverage={elementState.aggregate?.average ?? undefined}
+          onChange={setSliderValue}
+          onCommit={commitSlider}
+          onInteractionFocus={onInteractionFocus}
+        />
       ) : definition.type === 'question' ? (
         isOwner ? (
           <Pressable accessibilityRole="button" accessibilityLabel="Ver respuestas privadas" onPress={() => onOpenResults(elementState)} style={styles.resultsButton}>
