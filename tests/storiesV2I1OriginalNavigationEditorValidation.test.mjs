@@ -7,6 +7,18 @@ import { fileURLToPath } from 'node:url';
 const gitOptions = { encoding: 'utf8', cwd: fileURLToPath(new URL('..', import.meta.url)) };
 
 const BASE = '3766a15cf2e815e2fcf1de0eeb76ff58fd9a1da0';
+const STORIES_B1_BASE = '9a436857664c1862c6f16807d45834f107076380';
+const STORIES_B1_SUPABASE_SCOPE = [
+  'supabase/functions/_shared/premiumStreamSecurity.ts',
+  'supabase/functions/cleanup-stale-media-uploads/index.ts',
+  'supabase/functions/content-safety-scan/audioPipeline.mjs',
+  'supabase/functions/content-safety-scan/index.ts',
+  'supabase/functions/create-media-upload/index.ts',
+  'supabase/functions/create-stream-upload/index.ts',
+  'supabase/functions/get-stream-playback/index.ts',
+  'supabase/functions/stream-webhook/index.ts',
+  'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql',
+];
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 const feedContext = read('contexts/FeedContext.tsx');
 const videoPresentation = read('services/videoPresentation.ts');
@@ -186,7 +198,7 @@ test('server composition validation remains unchanged', () => {
   assert.equal(migration, baseFile(migrationPath));
 });
 
-test('I data model and package authorities are untouched', () => {
+test('I package authorities remain untouched and B1 owns the exact authorized Supabase scope', () => {
   const headFile = path => execFileSync('git', ['show', `HEAD:${path}`], gitOptions).replace(/\r\n/g, '\n');
   const currentPackage = JSON.parse(read('package.json'));
   const approvedPackage = JSON.parse(headFile('package.json'));
@@ -196,7 +208,12 @@ test('I data model and package authorities are untouched', () => {
   const approvedLock = JSON.parse(headFile('package-lock.json'));
   assert.deepEqual(currentLock.packages[''].dependencies, approvedLock.packages[''].dependencies);
   assert.deepEqual(currentLock.packages[''].devDependencies, approvedLock.packages[''].devDependencies);
-  assert.equal(execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'supabase'], gitOptions).trim(), '');
+  const supabaseChanges = execFileSync(
+    'git',
+    ['diff', '--name-only', STORIES_B1_BASE, '--', 'supabase'],
+    gitOptions,
+  ).trim().split(/\r?\n/).filter(Boolean).sort();
+  assert.deepEqual(supabaseChanges, [...STORIES_B1_SUPABASE_SCOPE].sort());
 });
 
 test('no second Feed store, video route, player or StoryEditor was introduced', () => {

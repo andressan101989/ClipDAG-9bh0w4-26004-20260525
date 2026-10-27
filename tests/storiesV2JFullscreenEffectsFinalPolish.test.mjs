@@ -7,6 +7,18 @@ import { fileURLToPath } from 'node:url';
 const gitOptions = { encoding: 'utf8', cwd: fileURLToPath(new URL('..', import.meta.url)) };
 
 const BASE = 'f045b970c133e70a8ff78dbe7a59535696cbeb31';
+const STORIES_B1_BASE = '9a436857664c1862c6f16807d45834f107076380';
+const STORIES_B1_SUPABASE_SCOPE = [
+  'supabase/functions/_shared/premiumStreamSecurity.ts',
+  'supabase/functions/cleanup-stale-media-uploads/index.ts',
+  'supabase/functions/content-safety-scan/audioPipeline.mjs',
+  'supabase/functions/content-safety-scan/index.ts',
+  'supabase/functions/create-media-upload/index.ts',
+  'supabase/functions/create-stream-upload/index.ts',
+  'supabase/functions/get-stream-playback/index.ts',
+  'supabase/functions/stream-webhook/index.ts',
+  'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql',
+];
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 const effect = read('components/feature/StoryReactionEffect.tsx');
 const reactions = read('components/feature/storyReactions.ts');
@@ -46,10 +58,15 @@ function nativeAuthorityChanges() {
     .filter(path => !/android\/app\/src\/main\/res\/|ios\/onspaceapp\/Images\.xcassets\/|ios\/onspaceapp\/Info\.plist$|ios\/onspaceapp\.xcodeproj\/project\.pbxproj$/.test(path));
 }
 
-test('J starts from the exact approved I1 base without package or database changes', () => {
+test('J keeps its approved I1 base while B1 owns the exact authorized Supabase scope', () => {
   assert.equal(execFileSync('git', ['merge-base', 'HEAD', BASE], gitOptions).trim(), BASE);
   assertPackageAuthoritiesUnchanged();
-  assert.equal(execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'supabase'], gitOptions).trim(), '');
+  const supabaseChanges = execFileSync(
+    'git',
+    ['diff', '--name-only', STORIES_B1_BASE, '--', 'supabase'],
+    gitOptions,
+  ).trim().split(/\r?\n/).filter(Boolean).sort();
+  assert.deepEqual(supabaseChanges, [...STORIES_B1_SUPABASE_SCOPE].sort());
 });
 
 test('one shared effect renderer covers the exact six canonical reactions', () => {

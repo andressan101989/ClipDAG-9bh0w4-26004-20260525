@@ -6,6 +6,7 @@ const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 const nativeViewer = read('components/feature/StoryViewer.native.tsx');
 const webViewer = read('components/feature/StoryViewer.tsx');
 const mediaUrlHook = read('components/feature/useStoryMediaUrl.ts');
+const interactiveMigration = read('supabase/migrations/20261027042552_stories_v2_interactive_b1.sql');
 const expoVideoPackage = JSON.parse(read('node_modules/expo-video/package.json'));
 const expoVideoTypes = read('node_modules/expo-video/build/VideoPlayer.types.d.ts');
 const expoVideoEvents = read('node_modules/expo-video/build/VideoPlayerEvents.types.d.ts');
@@ -72,7 +73,7 @@ test('video readiness comes from statusChange and duration comes from sourceLoad
 
 test('video end is the sole native video auto-next authority', () => {
   assert.match(nativeViewer, /addListener\?\.\('playToEnd', \(\) => onEnd\(storyId\)\)/i);
-  assert.match(nativeViewer, /const handleVideoEnd[\s\S]*goNext\(storyId, playbackGeneration\.current\)/i);
+  assert.match(nativeViewer, /const handleVideoEnd[\s\S]*goNext\(storyId, playbackGeneration\.current, 'completion'\)/i);
 });
 
 test('stale Story and stale generation events cannot advance', () => {
@@ -128,8 +129,9 @@ test('AppState inactive/background pauses and active can resume safely', () => {
 test('previous navigation restarts index zero instead of freezing', () => {
   for (const viewer of [nativeViewer, webViewer]) {
     const previous = viewer.slice(viewer.indexOf('const goPrev'), viewer.indexOf('const requestDelete'));
-    assert.match(previous, /currentIndex > 0[\s\S]*setCurrentIndex/i);
-    assert.match(previous, /else\s*\{?\s*restartCurrentStory\(\)/i);
+    assert.match(previous, /storyNavigationTarget\(stories, activeStoryId, 'previous'\)/i);
+    assert.match(previous, /if \(targetId\)[\s\S]*setCurrentStoryId\(targetId\)/i);
+    assert.match(previous, /else\s*\{[\s\S]*recordViewerEvent\('replay'[\s\S]*restartCurrentStory\(\)/i);
     assert.match(viewer, /setRestartToken\(token => token \+ 1\)/i);
   }
 });
@@ -148,7 +150,7 @@ test('long press pauses, release resumes and navigation is suppressed', () => {
 
 test('tap zones are disabled behind viewer and delete overlays', () => {
   for (const viewer of [nativeViewer, webViewer]) {
-    assert.match(viewer, /pointerEvents=\{deleteConfirmVisible \|\| viewersVisible \? 'none' : 'box-none'\}/i);
+    assert.match(viewer, /pointerEvents=\{deleteConfirmVisible \|\| viewersVisible \|\| interactionFocused \? 'none' : 'box-none'\}/i);
   }
 });
 
@@ -190,14 +192,19 @@ test('web video remains a manual placeholder and never requests a signed URL', (
 test('web photo gets readiness-based pause/resume and index-zero restart', () => {
   assert.match(webViewer, /onLoad=\{\(\) => onReadyChange\(story\.id, true\)\}/i);
   assert.match(webViewer, /currentMediaType !== 'photo' \|\| shouldPausePlayback/i);
-  assert.match(webViewer, /else restartCurrentStory\(\)/i);
+  const previous = webViewer.slice(webViewer.indexOf('const goPrev'), webViewer.indexOf('const requestDelete'));
+  assert.match(previous, /storyNavigationTarget\(stories, activeStoryId, 'previous'\)/i);
+  assert.match(previous, /else\s*\{[\s\S]*restartCurrentStory\(\)/i);
 });
 
 test('F preserves the existing D and E viewer/delete authorities', () => {
   for (const viewer of [nativeViewer, webViewer]) {
-    assert.match(viewer, /if \(visible && currentStoryId && !isAdvertisingStory && onMarkViewed\) void onMarkViewed\(currentStoryId\)/i);
-    assert.match(viewer, /\[currentStoryId, isAdvertisingStory, onMarkViewed, visible\]/);
+    assert.match(viewer, /if \(!visible \|\| !mediaReady \|\| !resolvedStoryId \|\| isAdvertisingStory\) return;/i);
+    assert.match(viewer, /recordStoryEvent\('impression', resolvedStoryId, 'media-ready'\)/i);
+    assert.match(viewer, /if \(!storyId \|\| !onRecordStoryEvent \|\| isAdvertisingStory \|\| isOwnStory\) return;/i);
   }
+  assert.match(interactiveMigration, /if p_event_type='impression' then perform public\.mark_story_viewed\(p_story_id\); end if;/i);
+  assert.match(interactiveMigration, /if v_owner=v_actor then[\s\S]*'owner_ignored'[\s\S]*end if;[\s\S]*insert into private\.story_analytics_events/i);
   assert.match(nativeViewer, /await onDeleteStory\(currentStory\.id\)/i);
   assert.match(nativeViewer, /<StoryViewersSheet/i);
   assert.doesNotMatch(nativeViewer + webViewer, /\.from\('stories'\)|\.from\('story_views'\)|rpc\(/i);
