@@ -971,6 +971,7 @@ select pg_catalog.jsonb_build_object(
 ) snapshot;`;
 
 const STORIES_B1_MIGRATION = '20261027042552_stories_v2_interactive_b1';
+const STORIES_SAFETY_C1_MIGRATION = '20261027120000_stories_v2_safety_c1_technical_policy_prep';
 const STORIES_B1_RELATION_NAMES = Object.freeze([
   'story_analytics_events',
   'story_b1_worker_lane_state',
@@ -1071,6 +1072,102 @@ select pg_catalog.jsonb_build_object(
     'force_rls',force_rls,'acl',acl
   ) order by schema,name) from relation_rows),'[]'::jsonb)
 ) snapshot from counts;`;
+
+export const STORIES_SAFETY_C1_STATE_SQL = `with expected(identity) as (
+  values
+    ('private.content_safety_target_snapshot(text,uuid)'),
+    ('private.content_safety_visual_source(text,uuid)'),
+    ('private.enqueue_content_safety_scan(text,uuid,text)'),
+    ('private.story_author_text_bundle_c1_v1(uuid)'),
+    ('private.story_can_access(uuid,boolean)'),
+    ('private.story_content_safety_candidate_c1_v1(uuid)'),
+    ('private.story_content_safety_control_c1_v1()'),
+    ('private.story_content_safety_policy_c1_v1()'),
+    ('private.story_current_fingerprint(uuid)'),
+    ('private.story_enqueue_media_safety_v1(uuid)'),
+    ('private.story_refresh_safety_from_transcript_c1_v1()'),
+    ('private.story_sync_safety_from_scan_v1()')
+), function_rows as (
+  select n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' identity,
+    owner_role.rolname owner,p.prosecdef security_definer,coalesce(pg_catalog.to_jsonb(p.proconfig),'[]'::jsonb) search_path,
+    pg_catalog.jsonb_build_object(
+      'anon',pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE'),
+      'authenticated',pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE'),
+      'public',pg_catalog.has_function_privilege('public',p.oid,'EXECUTE'),
+      'service_role',pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE')
+    ) execute,
+    coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable
+    ) order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      acl.privilege_type,acl.is_grantable)
+      from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+      left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee),'[]'::jsonb) acl,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex') definition_sha256,
+    p.prosrc
+  from pg_catalog.pg_proc p
+  join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
+  join expected e on e.identity=n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')'
+), trigger_rows as (
+  select t.tgname name,n.nspname||'.'||c.relname table_name,t.tgenabled enabled,
+    fnn.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' function_identity,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_triggerdef(t.oid,true),'UTF8')),'hex') definition_sha256
+  from pg_catalog.pg_trigger t
+  join pg_catalog.pg_class c on c.oid=t.tgrelid
+  join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+  join pg_catalog.pg_proc p on p.oid=t.tgfoid
+  join pg_catalog.pg_namespace fnn on fnn.oid=p.pronamespace
+  where not t.tgisinternal and t.tgname='content_safety_story_transcript_refresh_c1'
+), installed_state as (
+  select (select pg_catalog.count(*) from function_rows)=12
+    and (select pg_catalog.count(*) from trigger_rows)=1 installed
+), control_source as (
+  select prosrc from function_rows where identity='private.story_content_safety_control_c1_v1()'
+), policy_source as (
+  select prosrc from function_rows where identity='private.story_content_safety_policy_c1_v1()'
+), story_inventory as (
+  select pg_catalog.count(*)::integer count,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.string_agg(
+      pg_catalog.to_jsonb(story)::text,E'\\n' order by story.id),''),'UTF8')),'hex') sha256
+  from public.stories story
+), safety_inventory as (
+  select pg_catalog.count(*)::integer count,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.string_agg(
+      pg_catalog.to_jsonb(state)::text,E'\\n' order by state.story_id),''),'UTF8')),'hex') sha256
+  from private.story_safety_state state
+)
+select pg_catalog.jsonb_build_object(
+  'schema_version',1,'complete',true,'installed',installed_state.installed,
+  'policy_id',case when installed_state.installed then
+    (select pg_catalog.substring(prosrc,'"policy_id"[[:space:]]*:[[:space:]]*"([^"]+)"') from policy_source) end,
+  'policy_artifact_sha256',case when installed_state.installed then
+    (select pg_catalog.substring(prosrc,'"policy_artifact_sha256"[[:space:]]*:[[:space:]]*"([a-f0-9]{64})"') from control_source) end,
+  'control',case when installed_state.installed then pg_catalog.jsonb_build_object(
+    'policy_artifact_sha256',(select pg_catalog.substring(prosrc,'"policy_artifact_sha256"[[:space:]]*:[[:space:]]*"([a-f0-9]{64})"') from control_source),
+    'activation',coalesce((select prosrc~'"activation"[[:space:]]*:[[:space:]]*true' from control_source),false),
+    'owner_approved_policy',coalesce((select prosrc~'"owner_approved_policy"[[:space:]]*:[[:space:]]*true' from control_source),false),
+    'auto_publish_enabled',coalesce((select prosrc~'"auto_publish_enabled"[[:space:]]*:[[:space:]]*true' from control_source),false),
+    'mode',(select pg_catalog.substring(prosrc,'"mode"[[:space:]]*:[[:space:]]*"([^"]+)"') from control_source),
+    'automatic_allow_authorized',coalesce((select prosrc~'"automatic_allow_authorized"[[:space:]]*:[[:space:]]*true' from control_source),false),
+    'automatic_block_authorized',coalesce((select prosrc~'"automatic_block_authorized"[[:space:]]*:[[:space:]]*true' from control_source),false)
+  ) end,
+  'approved_story_rule_count',(select pg_catalog.count(*)::integer from private.content_safety_rules rule
+    where rule.approval_state='approved'
+      and rule.scopes&&array['story_image','story_video','story_audio','story_text']::text[]),
+  'passed_count',(select pg_catalog.count(*)::integer from private.story_safety_state where state='passed'),
+  'policy_digest_count',(select pg_catalog.count(*)::integer from private.story_safety_state where policy_digest is not null),
+  'story_count',story_inventory.count,'safety_state_count',safety_inventory.count,
+  'story_inventory_sha256',story_inventory.sha256,'safety_inventory_sha256',safety_inventory.sha256,
+  'transcript_refresh_trigger_installed',(select pg_catalog.count(*)=1 from trigger_rows),
+  'trigger',case when installed_state.installed then (select pg_catalog.jsonb_build_object(
+    'name',name,'table',table_name,'enabled',enabled,'function_identity',function_identity,
+    'definition_sha256',definition_sha256) from trigger_rows) end,
+  'helpers',case when installed_state.installed then coalesce((select pg_catalog.jsonb_agg(
+    pg_catalog.jsonb_build_object('identity',identity,'owner',owner,'security_definer',security_definer,
+      'search_path',search_path,'execute',execute,'acl',acl,'definition_sha256',definition_sha256)
+    order by identity) from function_rows),'[]'::jsonb) else '[]'::jsonb end
+) snapshot from installed_state cross join story_inventory cross join safety_inventory;`;
 
 function normalizeCanonical(value, seen = new Set()) {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
@@ -1175,6 +1272,36 @@ function storiesB1StateRequirement(policy, manifest, phase, context = {}) {
     recovery,
     query: usePredecessor ? STORIES_B1_PRE_STATE_SQL : STORIES_B1_POST_STATE_SQL,
     query_id: `nelyon-stories-b1-${usePredecessor ? 'pre' : 'post'}-state-v1`,
+  };
+}
+
+function storiesSafetyC1Transition(policy, manifest) {
+  const expected = policy?.stories_safety_c1_transition;
+  const attestation = manifest?.resources?.stories_safety_c1_transition;
+  if (!attestation) return null;
+  const expectedAttestation = expected && {
+    ...expected,
+    approved_sha: manifest?.identity?.approved_sha,
+    baseline_descendant_verified: true,
+    integration_base_descendant_verified: true,
+    reviewed_source_descendant_verified: true,
+  };
+  if (!expected || canonicalJson(attestation) !== canonicalJson(expectedAttestation)) {
+    fail('INVALID_STORIES_SAFETY_C1_TRANSITION',
+      'Stories Safety C1 manifest attestation differs from policy');
+  }
+  return expected;
+}
+
+function storiesSafetyC1StateRequirement(policy, manifest) {
+  const transition = storiesSafetyC1Transition(policy, manifest);
+  const installed = String(policy?.baseline?.latest_migration ?? '') >= STORIES_SAFETY_C1_MIGRATION;
+  return {
+    required: Boolean(transition) || installed,
+    transition,
+    installed,
+    query: STORIES_SAFETY_C1_STATE_SQL,
+    query_id: 'nelyon-stories-safety-c1-state-v1',
   };
 }
 
@@ -1307,6 +1434,170 @@ function validateStoriesB1InstalledState(snapshot) {
     fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 installed state is not exact fail-closed infrastructure');
   }
   return stories;
+}
+
+function normalizeStoriesSafetyC1Helpers(rows) {
+  if (!Array.isArray(rows)) {
+    fail('STORIES_SAFETY_C1_POSTCHECK_FAILED', 'Stories Safety C1 helper evidence must be an array');
+  }
+  const items = rows.map(row => {
+    exactKeys(row, [
+      'acl', 'definition_sha256', 'execute', 'identity', 'owner', 'search_path', 'security_definer',
+    ], 'STORIES_SAFETY_C1_POSTCHECK_FAILED');
+    exactKeys(row.execute, ['anon', 'authenticated', 'public', 'service_role'],
+      'STORIES_SAFETY_C1_POSTCHECK_FAILED');
+    if (typeof row.identity !== 'string' || !HASH_PATTERN.test(row.definition_sha256 ?? '')
+      || typeof row.owner !== 'string' || typeof row.security_definer !== 'boolean'
+      || !Array.isArray(row.search_path) || row.search_path.some(item => typeof item !== 'string')
+      || Object.values(row.execute).some(value => typeof value !== 'boolean')) {
+      fail('STORIES_SAFETY_C1_POSTCHECK_FAILED', 'Stories Safety C1 helper evidence is malformed');
+    }
+    return {
+      identity: row.identity,
+      definition_sha256: row.definition_sha256,
+      owner: row.owner,
+      security_definer: row.security_definer,
+      search_path: [...row.search_path].sort(),
+      acl: normalizeAcl(row.acl, 'STORIES_SAFETY_C1_POSTCHECK_FAILED'),
+      execute: {
+        anon: row.execute.anon,
+        authenticated: row.execute.authenticated,
+        public: row.execute.public,
+        service_role: row.execute.service_role,
+      },
+    };
+  }).sort((left, right) => left.identity.localeCompare(right.identity));
+  if (new Set(items.map(item => item.identity)).size !== items.length) {
+    fail('STORIES_SAFETY_C1_POSTCHECK_FAILED', 'Stories Safety C1 helper identities are duplicate');
+  }
+  return items;
+}
+
+function normalizeStoriesSafetyC1Trigger(value) {
+  if (value === null) return null;
+  exactKeys(value, ['definition_sha256', 'enabled', 'function_identity', 'name', 'table'],
+    'STORIES_SAFETY_C1_POSTCHECK_FAILED');
+  if (!HASH_PATTERN.test(value.definition_sha256 ?? '') || typeof value.enabled !== 'string'
+    || typeof value.function_identity !== 'string' || typeof value.name !== 'string'
+    || typeof value.table !== 'string') {
+    fail('STORIES_SAFETY_C1_POSTCHECK_FAILED', 'Stories Safety C1 trigger evidence is malformed');
+  }
+  return { ...value };
+}
+
+export function normalizeStoriesSafetyC1State(snapshot) {
+  const withDigest = Object.hasOwn(snapshot ?? {}, 'sha256');
+  exactKeys(snapshot, [
+    'schema_version', 'complete', 'installed', 'policy_id', 'policy_artifact_sha256', 'control',
+    'approved_story_rule_count', 'passed_count', 'policy_digest_count', 'story_count',
+    'safety_state_count', 'story_inventory_sha256', 'safety_inventory_sha256',
+    'transcript_refresh_trigger_installed', 'trigger', 'helpers',
+    ...(withDigest ? ['sha256'] : []),
+  ], 'STORIES_SAFETY_C1_POSTCHECK_FAILED');
+  const integerFields = [
+    snapshot.approved_story_rule_count, snapshot.passed_count, snapshot.policy_digest_count,
+    snapshot.story_count, snapshot.safety_state_count,
+  ];
+  if (snapshot.schema_version !== 1 || snapshot.complete !== true
+    || typeof snapshot.installed !== 'boolean'
+    || typeof snapshot.transcript_refresh_trigger_installed !== 'boolean'
+    || integerFields.some(value => !Number.isInteger(value) || value < 0)
+    || !HASH_PATTERN.test(snapshot.story_inventory_sha256 ?? '')
+    || !HASH_PATTERN.test(snapshot.safety_inventory_sha256 ?? '')) {
+    fail('STORIES_SAFETY_C1_POSTCHECK_FAILED', 'Stories Safety C1 snapshot shape or count is invalid');
+  }
+  let control = null;
+  if (snapshot.control !== null) {
+    exactKeys(snapshot.control, [
+      'activation', 'automatic_allow_authorized', 'automatic_block_authorized',
+      'auto_publish_enabled', 'mode', 'owner_approved_policy', 'policy_artifact_sha256',
+    ], 'STORIES_SAFETY_C1_POSTCHECK_FAILED');
+    if (!HASH_PATTERN.test(snapshot.control.policy_artifact_sha256 ?? '')
+      || typeof snapshot.control.activation !== 'boolean'
+      || typeof snapshot.control.owner_approved_policy !== 'boolean'
+      || typeof snapshot.control.auto_publish_enabled !== 'boolean'
+      || typeof snapshot.control.automatic_allow_authorized !== 'boolean'
+      || typeof snapshot.control.automatic_block_authorized !== 'boolean'
+      || typeof snapshot.control.mode !== 'string') {
+      fail('STORIES_SAFETY_C1_POSTCHECK_FAILED', 'Stories Safety C1 control evidence is malformed');
+    }
+    control = { ...snapshot.control };
+  }
+  const helpers = normalizeStoriesSafetyC1Helpers(snapshot.helpers);
+  const trigger = normalizeStoriesSafetyC1Trigger(snapshot.trigger);
+  const { sha256: claimed, ...rawUnsigned } = snapshot;
+  const unsigned = { ...rawUnsigned, control, helpers, trigger };
+  const digest = sha256(canonicalJson(unsigned));
+  if (withDigest && (!HASH_PATTERN.test(claimed ?? '') || claimed !== digest)) {
+    fail('STORIES_SAFETY_C1_POSTCHECK_FAILED', 'Stories Safety C1 snapshot digest differs');
+  }
+  return { ...unsigned, sha256: digest };
+}
+
+function expectedStoriesSafetyC1Helpers(transition) {
+  return (transition?.helper_attestations ?? []).map(item => ({
+    ...item,
+    acl: [
+      ...(item.execute?.authenticated
+        ? [{ grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false }]
+        : []),
+      { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+    ],
+  })).sort((left, right) => left.identity.localeCompare(right.identity));
+}
+
+function validateStoriesSafetyC1InstalledState(snapshot, transition) {
+  const state = normalizeStoriesSafetyC1State(snapshot);
+  const expectedControl = {
+    policy_artifact_sha256: transition?.policy_artifact?.sha256,
+    activation: false,
+    owner_approved_policy: false,
+    auto_publish_enabled: false,
+    mode: 'fail_closed_review',
+    automatic_allow_authorized: false,
+    automatic_block_authorized: false,
+  };
+  if (state.installed !== true
+    || state.policy_id !== transition?.policy_artifact?.policy_id
+    || state.policy_artifact_sha256 !== transition?.policy_artifact?.sha256
+    || canonicalJson(state.control) !== canonicalJson(expectedControl)
+    || state.approved_story_rule_count !== 0 || state.passed_count !== 0
+    || state.policy_digest_count !== 0
+    || state.transcript_refresh_trigger_installed !== true
+    || canonicalJson(state.trigger) !== canonicalJson(transition?.trigger_attestation ?? null)
+    || canonicalJson(state.helpers) !== canonicalJson(expectedStoriesSafetyC1Helpers(transition))) {
+    fail('STORIES_SAFETY_C1_POSTCHECK_FAILED',
+      'Stories Safety C1 installed state is not exact fail-closed technical preparation');
+  }
+  return state;
+}
+
+export function validateStoriesSafetyC1StateTransition(preSnapshot, postSnapshot, transition) {
+  const pre = normalizeStoriesSafetyC1State(preSnapshot);
+  const post = validateStoriesSafetyC1InstalledState(postSnapshot, transition);
+  if (transition?.from_phase !== 'stories_v2_interactive_b1_fail_closed'
+    || transition?.to_phase !== 'stories_v2_safety_c1_technical_prep_fail_closed'
+    || canonicalJson(transition?.safety ?? null) !== canonicalJson({
+      activation: false,
+      automatic_allow_authorized: false,
+      automatic_block_authorized: false,
+      auto_publish_enabled: false,
+      decisions: ['pending', 'review'],
+      mode: 'fail_closed_review',
+      owner_approved_policy: false,
+    })
+    || pre.installed !== false || pre.policy_id !== null
+    || pre.policy_artifact_sha256 !== null || pre.control !== null
+    || pre.approved_story_rule_count !== 0 || pre.passed_count !== 0
+    || pre.policy_digest_count !== 0 || pre.transcript_refresh_trigger_installed !== false
+    || pre.trigger !== null || pre.helpers.length !== 0
+    || post.story_count !== pre.story_count || post.safety_state_count !== pre.safety_state_count
+    || post.story_inventory_sha256 !== pre.story_inventory_sha256
+    || post.safety_inventory_sha256 !== pre.safety_inventory_sha256) {
+    fail('STORIES_SAFETY_C1_POSTCHECK_FAILED',
+      'Stories Safety C1 release activated policy or mutated protected Story inventories');
+  }
+  return true;
 }
 
 function validateInventory(inventory, label) {
@@ -1702,12 +1993,15 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   });
   const requireStoriesB1 = storiesRequirement.required;
   const storiesQuery = storiesRequirement.query;
+  const storiesSafetyRequirement = storiesSafetyC1StateRequirement(policy, manifest);
+  const requireStoriesSafetyC1 = storiesSafetyRequirement.required;
   exactKeys(evidence, [
     'adapter', 'backup', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
     'health', 'identity', 'migrations', 'observed_at', 'phase', 'premium_state', 'project_ref',
     'requests', 'rpc_security', 'schema_version',
     ...(requireFinanceAuthority ? ['finance_authority','finance_facts'] : []),
     ...(requireStoriesB1 ? ['stories_b1_state'] : []),
+    ...(requireStoriesSafetyC1 ? ['stories_safety_c1_state'] : []),
   ], 'INVALID_SNAPSHOT');
   const { evidence_sha256: claimedDigest, ...unsigned } = evidence;
   if (!HASH_PATTERN.test(claimedDigest ?? '') || claimedDigest !== sha256(canonicalJson(unsigned))) {
@@ -1735,6 +2029,10 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       id: storiesRequirement.query_id,
       sha256: sha256(storiesQuery),
     }] : []),
+    ...(requireStoriesSafetyC1 ? [{
+      id: storiesSafetyRequirement.query_id,
+      sha256: sha256(STORIES_SAFETY_C1_STATE_SQL),
+    }] : []),
   ];
   if (!HASH_PATTERN.test(adapterSourceSha256 ?? '')
     || evidence.adapter.source_sha256 !== adapterSourceSha256
@@ -1757,6 +2055,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     ['POST', `${base}/database/query/read-only`, 201], ['POST', `${base}/database/query/read-only`, 201],
   );
   if (requireStoriesB1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
+  if (requireStoriesSafetyC1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (!Array.isArray(evidence.requests) || evidence.requests.length !== expectedRequests.length
     || evidence.requests.some((receipt, index) => {
       try {
@@ -1823,6 +2122,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   validateRpcIdentitySet(evidence.rpc_security, phaseExceptions);
   validatePremiumPostcheckState(evidence.premium_state);
   if (requireStoriesB1) normalizeStoriesB1State(evidence.stories_b1_state);
+  if (requireStoriesSafetyC1) normalizeStoriesSafetyC1State(evidence.stories_safety_c1_state);
   return evidence;
 }
 
@@ -2041,6 +2341,19 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
       fail('REMOTE_BASELINE_MISMATCH', 'Stories B1 baseline evidence is not exact fail-closed infrastructure');
     }
   }
+  const storiesSafetyC1Installed = (evidence.migrations?.items ?? [])
+    .some(item => baselineMigrationName(item) === STORIES_SAFETY_C1_MIGRATION);
+  if (storiesSafetyC1Installed) {
+    try {
+      validateStoriesSafetyC1InstalledState(
+        evidence.stories_safety_c1_state,
+        policy?.stories_safety_c1_transition,
+      );
+    } catch {
+      fail('REMOTE_BASELINE_MISMATCH',
+        'Stories Safety C1 baseline evidence is not exact fail-closed technical preparation');
+    }
+  }
   const attestedRpcIdentities = new Set((evidence.rpc_security?.items ?? []).map(rpcIdentity));
   if (storiesB1Installed) {
     const expectedStoriesRpcIdentities = storiesAdvisor.introduced_exceptions
@@ -2127,6 +2440,24 @@ export function verifyProductionPreSnapshot({ pre, policy, request, manifest, ad
     migrations: pre.migrations,
   }).required) {
     validateStoriesB1InstalledState(pre.stories_b1_state);
+  }
+  const storiesSafetyTransition = storiesSafetyC1Transition(policy, manifest);
+  if (storiesSafetyTransition) {
+    const storiesSafety = normalizeStoriesSafetyC1State(pre.stories_safety_c1_state);
+    if (storiesSafety.installed !== false || storiesSafety.policy_id !== null
+      || storiesSafety.policy_artifact_sha256 !== null || storiesSafety.control !== null
+      || storiesSafety.approved_story_rule_count !== 0 || storiesSafety.passed_count !== 0
+      || storiesSafety.policy_digest_count !== 0
+      || storiesSafety.transcript_refresh_trigger_installed !== false
+      || storiesSafety.trigger !== null || storiesSafety.helpers.length !== 0) {
+      fail('STORIES_SAFETY_C1_POSTCHECK_FAILED',
+        'Stories Safety C1 pre-snapshot is not the exact B1 fail-closed predecessor');
+    }
+  } else if (storiesSafetyC1StateRequirement(policy, manifest).required) {
+    validateStoriesSafetyC1InstalledState(
+      pre.stories_safety_c1_state,
+      policy?.stories_safety_c1_transition,
+    );
   }
   const baseline = policy?.baseline;
   if (baseline?.state !== 'verified'
@@ -2218,6 +2549,19 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
     migrations: post.migrations,
   }).required) {
     validateStoriesB1InstalledState(post.stories_b1_state);
+  }
+  const storiesSafetyTransition = storiesSafetyC1Transition(policy, manifest);
+  if (storiesSafetyTransition) {
+    validateStoriesSafetyC1StateTransition(
+      pre.stories_safety_c1_state,
+      post.stories_safety_c1_state,
+      storiesSafetyTransition,
+    );
+  } else if (storiesSafetyC1StateRequirement(policy, manifest).required) {
+    validateStoriesSafetyC1InstalledState(
+      post.stories_safety_c1_state,
+      policy?.stories_safety_c1_transition,
+    );
   }
   validatePremiumStateTransition(pre.premium_state, post.premium_state, manifest, policy);
   if (Date.parse(post.observed_at) < Date.parse(pre.observed_at)
@@ -2403,6 +2747,12 @@ export function verifyProductionRecoverySnapshot({ recovery, policy, request, ma
     migrations: recovery.migrations,
   }).required) {
     validateStoriesB1InstalledState(recovery.stories_b1_state);
+  }
+  if (storiesSafetyC1StateRequirement(policy, manifest).required) {
+    validateStoriesSafetyC1InstalledState(
+      recovery.stories_safety_c1_state,
+      policy?.stories_safety_c1_transition,
+    );
   }
   return {
     result: 'RECOVERY_SNAPSHOT_VERIFIED',
@@ -3163,6 +3513,8 @@ export async function captureProductionSnapshot({
   const initialStoriesRequirement = storiesB1StateRequirement(policy, manifest, phase, { request });
   const storiesQuery = initialStoriesRequirement.query;
   if (initialStoriesRequirement.required) assertReadOnlySql(storiesQuery);
+  const storiesSafetyRequirement = storiesSafetyC1StateRequirement(policy, manifest);
+  if (storiesSafetyRequirement.required) assertReadOnlySql(STORIES_SAFETY_C1_STATE_SQL);
   const base = `/v1/projects/${PRODUCTION_PROJECT_REF}`;
   const calls = [];
   const get = async (path, label) => {
@@ -3228,6 +3580,13 @@ export async function captureProductionSnapshot({
       'Stories B1 fail-closed state',
     )
     : null;
+  const storiesSafetyC1State = storiesSafetyRequirement.required
+    ? singleSnapshot(
+      await sql(STORIES_SAFETY_C1_STATE_SQL, null, 'Stories Safety C1 fail-closed state'),
+      normalizeStoriesSafetyC1State,
+      'Stories Safety C1 fail-closed state',
+    )
+    : null;
   const rpcSecurity = normalizeRpcSecurityAttestations(rpcSecurityBody);
   validateRpcIdentitySet(rpcSecurity, phaseExceptions);
   const evidence = {
@@ -3251,6 +3610,10 @@ export async function captureProductionSnapshot({
           id: storiesRequirement.query_id,
           sha256: sha256(storiesQuery),
         }] : []),
+        ...(storiesSafetyRequirement.required ? [{
+          id: storiesSafetyRequirement.query_id,
+          sha256: sha256(STORIES_SAFETY_C1_STATE_SQL),
+        }] : []),
       ],
     },
     observed_at: new Date(observedAt).toISOString(),
@@ -3268,6 +3631,9 @@ export async function captureProductionSnapshot({
     rpc_security: rpcSecurity,
     premium_state: singleSnapshot(premiumStateBody, normalizePremiumPostcheckState, 'Premium postcheck state'),
     ...(storiesRequirement.required ? { stories_b1_state: storiesB1State } : {}),
+    ...(storiesSafetyRequirement.required
+      ? { stories_safety_c1_state: storiesSafetyC1State }
+      : {}),
     requests: calls,
   };
   return { ...evidence, evidence_sha256: sha256(canonicalJson(evidence)) };

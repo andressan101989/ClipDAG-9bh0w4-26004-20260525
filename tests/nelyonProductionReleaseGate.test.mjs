@@ -97,6 +97,10 @@ const STORIES_B1_FUNCTIONS = [
   'get-stream-playback',
   'stream-webhook',
 ];
+const STORIES_SAFETY_C1_MIGRATION_PATH =
+  'supabase/migrations/20261027120000_stories_v2_safety_c1_technical_policy_prep.sql';
+const STORIES_SAFETY_C1_ARTIFACT_PATH =
+  'docs/stories-v2-content-safety-policy-candidate-v1.json';
 
 test('Stories B1 policy binds one migration, six Edge contracts, and fail-closed non-activation', async () => {
   const { gate, policy } = await loadGateAndPolicy();
@@ -226,7 +230,7 @@ test('Stories B1 Git attestation rejects altered migration, Edge, config, or Sup
     encoding: args.includes('-z') ? 'buffer' : 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  const approvedSha = String(runGit(['rev-parse', 'HEAD'])).trim();
+  const approvedSha = transition.reviewed_source_sha;
   const changes = transition.productive_paths.map(path => ({
     path,
     status: path === transition.migration_path ? 'A' : 'M',
@@ -293,6 +297,152 @@ test('Stories B1 phase gate does not reactivate after baseline promotion for an 
     affectedFunctions: [...STORIES_B1_FUNCTIONS],
     runGit: () => { throw new Error('scope validation must fail before Git attestation'); },
   }), 'INVALID_STORIES_B1_TRANSITION');
+});
+
+test('Stories Safety C1 policy adds an exact inactive one-migration zero-Edge transition', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.stories_safety_c1_transition;
+  assert.deepEqual(transition, gate.STORIES_SAFETY_C1_RELEASE_TRANSITION);
+  assert.deepEqual(transition && {
+    from_phase: transition.from_phase,
+    to_phase: transition.to_phase,
+    baseline_sha: transition.baseline_sha,
+    reviewed_source_sha: transition.reviewed_source_sha,
+    integration_base_sha: transition.integration_base_sha,
+    migration_path: transition.migration_path,
+    migration_blob: transition.migration_blob,
+    migration_sha256: transition.migration_sha256,
+    productive_paths: transition.productive_paths,
+    functions: transition.functions,
+    config_changed: transition.config_changed,
+    policy_artifact: transition.policy_artifact,
+    safety: transition.safety,
+    finance_policy: transition.finance_policy,
+  }, {
+    from_phase: 'stories_v2_interactive_b1_fail_closed',
+    to_phase: 'stories_v2_safety_c1_technical_prep_fail_closed',
+    baseline_sha: '01dd6467484d11ad11aeb611374437e212fb7401',
+    reviewed_source_sha: '12fda00e0e5f90dd2cae7a4eef5350f13aac076b',
+    integration_base_sha: '69ba61b04a1329231dcc9f22363f1c273e5b524c',
+    migration_path: STORIES_SAFETY_C1_MIGRATION_PATH,
+    migration_blob: '65f092b525bae0117d894df04ed6fb43bd1280f5',
+    migration_sha256: 'a5a016570a07710b3d7c1376b14ea731c52b7bef1b084b4035522feba6b4fa1d',
+    productive_paths: [STORIES_SAFETY_C1_MIGRATION_PATH],
+    functions: [],
+    config_changed: false,
+    policy_artifact: {
+      path: STORIES_SAFETY_C1_ARTIFACT_PATH,
+      blob: '193ffe8d48ddb7314283ceba795f489c33deaf7c',
+      sha256: '90961e8f5c4859bfdc38e851c0b5518b69e114c53896b740b30e4da491291ee4',
+      policy_id: 'nelyon.stories.general.safety.candidate.v1',
+    },
+    safety: {
+      activation: false,
+      automatic_allow_authorized: false,
+      automatic_block_authorized: false,
+      auto_publish_enabled: false,
+      decisions: ['pending', 'review'],
+      mode: 'fail_closed_review',
+      owner_approved_policy: false,
+    },
+    finance_policy: {
+      platform_fee_bps: 2000,
+      purchase_enabled: true,
+      refunds_enabled: true,
+      subscription_enabled: true,
+    },
+  });
+  assert.equal(gate.validatePolicy(policy), true);
+
+  for (const mutate of [
+    value => { value.safety.activation = true; },
+    value => { value.safety.owner_approved_policy = true; },
+    value => { value.safety.decisions.push('passed'); },
+    value => { value.functions.push('content-safety-scan'); },
+    value => { value.productive_paths.push('supabase/config.toml'); },
+    value => { value.policy_artifact.sha256 = '0'.repeat(64); },
+    value => { value.migration_sha256 = '0'.repeat(64); },
+    value => { value.finance_policy.platform_fee_bps = 0; },
+  ]) {
+    const hostile = structuredClone(policy);
+    mutate(hostile.stories_safety_c1_transition);
+    assertDenied(() => gate.validatePolicy(hostile), 'INVALID_STORIES_SAFETY_C1_TRANSITION');
+  }
+});
+
+test('Stories Safety C1 Git attestation binds reviewed migration and policy artifact bytes', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.stories_safety_c1_transition;
+  const root = new URL('..', import.meta.url);
+  const runGit = args => execFileSync('git', args, {
+    cwd: root,
+    encoding: args.includes('-z') ? 'buffer' : 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const approvedSha = transition.reviewed_source_sha;
+  const input = {
+    cwd: root,
+    policy,
+    mode: 'plan_only',
+    approvedSha,
+    changes: [{ path: transition.migration_path, status: 'A' }],
+    migrations: [{ path: transition.migration_path, version: '20261027120000' }],
+    affectedFunctions: [],
+    runGit,
+  };
+  const attested = gate.attestStoriesSafetyC1Transition(input);
+  assert.equal(attested.attestation.approved_sha, approvedSha);
+  assert.equal(attested.migrations[0].blob, transition.migration_blob);
+  assert.equal(attested.migrations[0].sha256, transition.migration_sha256);
+
+  const alteredRunGit = args => {
+    if (args[0] === 'rev-parse' && args[1] === `${approvedSha}:${transition.policy_artifact.path}`) {
+      return `${'0'.repeat(40)}\n`;
+    }
+    return runGit(args);
+  };
+  assertDenied(() => gate.attestStoriesSafetyC1Transition({ ...input, runGit: alteredRunGit }),
+    'INVALID_STORIES_SAFETY_C1_TRANSITION');
+});
+
+test('Stories Safety C1 manifest accepts only the attested migration and no Edge or config changes', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.stories_safety_c1_transition;
+  const approvedSha = 'b'.repeat(40);
+  const changes = [{ status: 'A', path: transition.migration_path, fileType: 'file' }];
+  const classified = gate.classifyChangedPaths(changes);
+  const attestation = {
+    ...structuredClone(transition),
+    approved_sha: approvedSha,
+    baseline_descendant_verified: true,
+    integration_base_descendant_verified: true,
+    reviewed_source_descendant_verified: true,
+  };
+  const input = manifestInput(policy, {
+    request: request({ approvedSha, mainSha: approvedSha }),
+    gitState: { baselineSha: transition.baseline_sha, approvedSha, originMainSha: approvedSha, changes },
+    classified,
+    migrations: [{
+      version: '20261027120000', path: transition.migration_path,
+      blob: transition.migration_blob, sha256: transition.migration_sha256,
+    }],
+    affectedFunctions: [],
+    functionContracts: [],
+    storiesSafetyC1Transition: attestation,
+  });
+  const manifest = gate.buildManifest(input);
+  assert.deepEqual(manifest.resources.stories_safety_c1_transition, attestation);
+  assert.deepEqual(manifest.resources.functions, []);
+  assert.deepEqual(manifest.resources.migrations, input.migrations);
+  assert.equal(manifest.resources.config_changed, false);
+  assert.equal(manifest.result, 'PLAN READY');
+
+  assertDenied(() => gate.buildManifest({ ...input, affectedFunctions: ['content-safety-scan'] }),
+    'FUNCTION_CONTRACT_MISMATCH');
+  assertDenied(() => gate.buildManifest({
+    ...input,
+    storiesSafetyC1Transition: { ...attestation, migration_sha256: '0'.repeat(64) },
+  }), 'INVALID_STORIES_SAFETY_C1_TRANSITION');
 });
 
 async function loadGateAndPolicy() {

@@ -382,6 +382,67 @@ export const STORIES_B1_RELEASE_TRANSITION = Object.freeze({
   },
   requires_separate_baseline_promotion: true,
 });
+
+export const STORIES_SAFETY_C1_RELEASE_TRANSITION = Object.freeze({
+  id: 'stories-v2-safety-c1-technical-policy-prep-v1',
+  from_phase: 'stories_v2_interactive_b1_fail_closed',
+  to_phase: 'stories_v2_safety_c1_technical_prep_fail_closed',
+  baseline_sha: '01dd6467484d11ad11aeb611374437e212fb7401',
+  reviewed_source_sha: '12fda00e0e5f90dd2cae7a4eef5350f13aac076b',
+  integration_base_sha: '69ba61b04a1329231dcc9f22363f1c273e5b524c',
+  approved_sha_ancestry: 'verified_integration_base',
+  migration_path: 'supabase/migrations/20261027120000_stories_v2_safety_c1_technical_policy_prep.sql',
+  migration_blob: '65f092b525bae0117d894df04ed6fb43bd1280f5',
+  migration_sha256: 'a5a016570a07710b3d7c1376b14ea731c52b7bef1b084b4035522feba6b4fa1d',
+  productive_paths: [
+    'supabase/migrations/20261027120000_stories_v2_safety_c1_technical_policy_prep.sql',
+  ],
+  functions: [],
+  config_changed: false,
+  policy_artifact: {
+    path: 'docs/stories-v2-content-safety-policy-candidate-v1.json',
+    blob: '193ffe8d48ddb7314283ceba795f489c33deaf7c',
+    sha256: '90961e8f5c4859bfdc38e851c0b5518b69e114c53896b740b30e4da491291ee4',
+    policy_id: 'nelyon.stories.general.safety.candidate.v1',
+  },
+  helper_attestations: [
+    { identity: 'private.content_safety_target_snapshot(text,uuid)', definition_sha256: '28a12d9cf823eeebe68017a687f038a68e926bcc9dbb63101f3a0405f8b1a04b', owner: 'postgres', security_definer: true, search_path: ['search_path=""'], execute: { anon: false, authenticated: false, public: false, service_role: false } },
+    { identity: 'private.content_safety_visual_source(text,uuid)', definition_sha256: '7006dbf8f506852b9a251a891d0329f64f22383a54a5b7e89d4873e152f5666d', owner: 'postgres', security_definer: true, search_path: ['search_path=""'], execute: { anon: false, authenticated: false, public: false, service_role: false } },
+    { identity: 'private.enqueue_content_safety_scan(text,uuid,text)', definition_sha256: '563b156d7716e01615334ed51a6a380480fa477521eec1593ab1cf81af995d3c', owner: 'postgres', security_definer: true, search_path: ['search_path=""'], execute: { anon: false, authenticated: false, public: false, service_role: false } },
+    { identity: 'private.story_author_text_bundle_c1_v1(uuid)', definition_sha256: '43d2612fde3e2c88fb65d98ae1990e35762156b852a0385dce259218bbaf0c6f', owner: 'postgres', security_definer: true, search_path: ['search_path=""'], execute: { anon: false, authenticated: false, public: false, service_role: false } },
+    { identity: 'private.story_can_access(uuid,boolean)', definition_sha256: 'dbe04e1de005c3a4b5428866c4a750c7abc6c8df4dd9272b10b0b9fd0aa00aa7', owner: 'postgres', security_definer: true, search_path: ['search_path=""'], execute: { anon: false, authenticated: true, public: false, service_role: false } },
+    { identity: 'private.story_content_safety_candidate_c1_v1(uuid)', definition_sha256: '6eb36a146908d378eeebdb0ca7a24f33ac1cb3876213bafb74f79ccfb2b0be9d', owner: 'postgres', security_definer: true, search_path: ['search_path=""'], execute: { anon: false, authenticated: false, public: false, service_role: false } },
+    { identity: 'private.story_content_safety_control_c1_v1()', definition_sha256: 'b4eb4d0cdd537ceef2acbe0e3f4059efa993708d83e0d2c231b17accba07b024', owner: 'postgres', security_definer: true, search_path: ['search_path=""'], execute: { anon: false, authenticated: false, public: false, service_role: false } },
+    { identity: 'private.story_content_safety_policy_c1_v1()', definition_sha256: '1b3dbfd0ad299a934346f1b106f5cbb5ad8ff11093ad84d008f75edb9f4a5cb0', owner: 'postgres', security_definer: true, search_path: ['search_path=""'], execute: { anon: false, authenticated: false, public: false, service_role: false } },
+    { identity: 'private.story_current_fingerprint(uuid)', definition_sha256: 'c2b07454cd20c94c9b669fc1b662daede4a89b0a64fd1954eae651e1e2c30014', owner: 'postgres', security_definer: true, search_path: ['search_path=""'], execute: { anon: false, authenticated: false, public: false, service_role: false } },
+    { identity: 'private.story_enqueue_media_safety_v1(uuid)', definition_sha256: '9be19b0ae8f8232f68d47202fc5e2a33a2548c5c68ed59b5021221e8cd0f2ca9', owner: 'postgres', security_definer: true, search_path: ['search_path=""'], execute: { anon: false, authenticated: false, public: false, service_role: false } },
+    { identity: 'private.story_refresh_safety_from_transcript_c1_v1()', definition_sha256: '56dd495f6fe8197f234c2d5ca55134f0f529b9a949ce7c61dae73c42d6910dcb', owner: 'postgres', security_definer: true, search_path: ['search_path=""'], execute: { anon: false, authenticated: false, public: false, service_role: false } },
+    { identity: 'private.story_sync_safety_from_scan_v1()', definition_sha256: 'a416c9b346ab371a285a75ffe6e985f9ba7636b73a0a8fc910aba01046c58695', owner: 'postgres', security_definer: true, search_path: ['search_path=""'], execute: { anon: false, authenticated: false, public: false, service_role: false } },
+  ],
+  trigger_attestation: {
+    name: 'content_safety_story_transcript_refresh_c1',
+    table: 'private.content_safety_audio_transcripts',
+    enabled: 'O',
+    function_identity: 'private.story_refresh_safety_from_transcript_c1_v1()',
+    definition_sha256: '5af6160fc3312ff676295ec876b7b5d1d75fef56e9b81a70aa99028626252de5',
+  },
+  safety: {
+    activation: false,
+    automatic_allow_authorized: false,
+    automatic_block_authorized: false,
+    auto_publish_enabled: false,
+    decisions: ['pending', 'review'],
+    mode: 'fail_closed_review',
+    owner_approved_policy: false,
+  },
+  finance_policy: {
+    platform_fee_bps: 2000,
+    purchase_enabled: true,
+    refunds_enabled: true,
+    subscription_enabled: true,
+  },
+  requires_separate_baseline_promotion: true,
+});
 export const F3_C2_ADMIN_FINANCE_NEGATIVE_AUTHORIZATION_EVIDENCE = Object.freeze({
   version: 'creator-premium-f3-c2-admin-finance-negative-authorization-v1',
   migration_path: F3_C2_FINANCE_AUTHORITY_TRANSITION.migration_path,
@@ -999,6 +1060,13 @@ export function validatePolicy(policy) {
     deny(
       'INVALID_STORIES_B1_TRANSITION',
       'Stories B1 release authority must match the exact reviewed fail-closed contract',
+    );
+  }
+  if (canonicalJson(policy.stories_safety_c1_transition ?? null)
+    !== canonicalJson(STORIES_SAFETY_C1_RELEASE_TRANSITION)) {
+    deny(
+      'INVALID_STORIES_SAFETY_C1_TRANSITION',
+      'Stories Safety C1 authority must match the exact reviewed technical-preparation contract',
     );
   }
   const c2AdminFinanceRpc = policy.finance_security_advisor?.c2_rpc_replacements?.find(exception =>
@@ -1667,6 +1735,84 @@ export function attestStoriesB1Transition({
   } catch (error) {
     if (error?.code === code) throw error;
     deny(code, 'approved commit does not attest the exact Stories B1 ancestry and bytes');
+  }
+  return {
+    migrations: migrations.map(item => ({
+      ...item,
+      blob: transition.migration_blob,
+      sha256: transition.migration_sha256,
+    })),
+    attestation: {
+      ...stableCopy(transition),
+      approved_sha: approvedSha,
+      baseline_descendant_verified: true,
+      integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true,
+    },
+  };
+}
+
+export function attestStoriesSafetyC1Transition({
+  cwd,
+  policy,
+  mode,
+  approvedSha,
+  changes,
+  migrations,
+  affectedFunctions,
+  runGit,
+}) {
+  if (mode === 'postcheck_recovery') return { migrations, attestation: null };
+  const transition = STORIES_SAFETY_C1_RELEASE_TRANSITION;
+  const supabaseChanges = (changes ?? [])
+    .filter(item => item?.path?.startsWith('supabase/'))
+    .map(item => ({ path: item.path, status: item.status }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const expectedChanges = [{ path: transition.migration_path, status: 'A' }];
+  const hasExactMigration = migrations?.some(item => item?.path === transition.migration_path);
+  const hasCompletePredecessorScope = policy?.baseline?.sha === transition.baseline_sha
+    && (affectedFunctions ?? []).length === 0
+    && canonicalJson(supabaseChanges) === canonicalJson(expectedChanges);
+  const candidate = hasExactMigration || hasCompletePredecessorScope;
+  if (!candidate) return { migrations, attestation: null };
+  const code = 'INVALID_STORIES_SAFETY_C1_TRANSITION';
+  if (canonicalJson(policy?.stories_safety_c1_transition ?? null) !== canonicalJson(transition)
+    || policy?.baseline?.sha !== transition.baseline_sha
+    || canonicalJson(policy?.supabase?.finance_policy ?? null) !== canonicalJson(transition.finance_policy)
+    || !SHA_PATTERN.test(approvedSha ?? '') || typeof runGit !== 'function'
+    || migrations?.length !== 1 || migrations[0]?.path !== transition.migration_path
+    || migrations[0]?.version !== '20261027120000'
+    || (affectedFunctions ?? []).length !== 0
+    || canonicalJson(supabaseChanges) !== canonicalJson(expectedChanges)) {
+    deny(code, 'Stories Safety C1 permits exactly one migration, zero Edge Functions, and no config drift');
+  }
+  try {
+    runGit(['cat-file', '-e', `${approvedSha}^{commit}`], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.baseline_sha, transition.integration_base_sha], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.integration_base_sha, approvedSha], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.reviewed_source_sha, approvedSha], { cwd });
+    for (const source of [
+      { path: transition.migration_path, blob: transition.migration_blob, sha256: transition.migration_sha256 },
+      transition.policy_artifact,
+    ]) {
+      for (const ref of [transition.reviewed_source_sha, approvedSha]) {
+        if (gitText(runGit, ['rev-parse', `${ref}:${source.path}`], cwd) !== source.blob
+          || fileTypeAtCommit(runGit, cwd, ref, source.path) !== 'file'
+          || sha256Hex(runGit(['show', `${ref}:${source.path}`], { cwd })) !== source.sha256) {
+          deny(code, `Stories Safety C1 Git blob differs from reviewed bytes: ${source.path}`);
+        }
+      }
+    }
+    const actualChanges = parseNameStatusZ(runGit([
+      'diff', '--name-status', '-z', transition.integration_base_sha, approvedSha, '--', 'supabase/',
+    ], { cwd })).map(item => ({ path: item.path, status: item.status }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    if (canonicalJson(actualChanges) !== canonicalJson(expectedChanges)) {
+      deny(code, 'Stories Safety C1 committed Supabase closure differs from the one-migration authority');
+    }
+  } catch (error) {
+    if (error?.code === code) throw error;
+    deny(code, 'approved commit does not attest the exact Stories Safety C1 ancestry and bytes');
   }
   return {
     migrations: migrations.map(item => ({
@@ -2485,6 +2631,16 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     affectedFunctions,
     runGit,
   });
+  const storiesSafetyC1Transition = attestStoriesSafetyC1Transition({
+    cwd,
+    policy,
+    mode: request.mode,
+    approvedSha: request.approvedSha,
+    changes: gitState.changes,
+    migrations: storiesB1Transition.migrations,
+    affectedFunctions,
+    runGit,
+  });
   const risk = classifyRisk({
     affectedFunctions,
     changedPaths: gitState.changes.map(change => change.path),
@@ -2496,10 +2652,11 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   return {
     gitState,
     classified,
-    migrations: storiesB1Transition.migrations,
+    migrations: storiesSafetyC1Transition.migrations,
     managedScopeTransition: transitionEvidence.attestation,
     financeAuthorityTransition: financeTransition.attestation,
     storiesB1Transition: storiesB1Transition.attestation,
+    storiesSafetyC1Transition: storiesSafetyC1Transition.attestation,
     affectedFunctions,
     functionContracts,
     reproducibility,
@@ -2527,6 +2684,7 @@ export function buildManifest({
   managedScopeTransition,
   financeAuthorityTransition,
   storiesB1Transition,
+  storiesSafetyC1Transition,
   affectedFunctions,
   functionContracts,
   reproducibility,
@@ -2627,6 +2785,43 @@ export function buildManifest({
     }
   } else if (storiesB1Transition !== undefined && storiesB1Transition !== null) {
     deny('INVALID_STORIES_B1_TRANSITION', 'Stories B1 transition attestation is not applicable');
+  }
+  const storiesSafety = STORIES_SAFETY_C1_RELEASE_TRANSITION;
+  const storiesSafetyCandidate = !recoveryMode
+    && migrations?.some(item => item?.path === storiesSafety.migration_path);
+  if (storiesSafetyCandidate) {
+    const expectedAttestation = {
+      ...stableCopy(storiesSafety),
+      approved_sha: request.approvedSha,
+      baseline_descendant_verified: true,
+      integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true,
+    };
+    if (canonicalJson(policy?.stories_safety_c1_transition ?? null) !== canonicalJson(storiesSafety)
+      || policy.baseline.sha !== storiesSafety.baseline_sha
+      || gitState.approvedSha !== request.approvedSha || gitState.originMainSha !== request.approvedSha
+      || gitState.baselineSha !== storiesSafety.baseline_sha || risk.level !== 'HIGH'
+      || migrations.length !== 1 || migrations[0].path !== storiesSafety.migration_path
+      || migrations[0].blob !== storiesSafety.migration_blob
+      || migrations[0].sha256 !== storiesSafety.migration_sha256
+      || functionNames.length !== 0 || contracts.length !== 0
+      || canonicalJson(storiesSafetyC1Transition ?? null) !== canonicalJson(expectedAttestation)
+      || classified.config.length !== 0
+      || canonicalJson(classified.productive.map(item => item.path).sort())
+        !== canonicalJson(storiesSafety.productive_paths)
+      || canonicalJson(policy.supabase.finance_policy) !== canonicalJson(storiesSafety.finance_policy)
+      || storiesSafety.safety.activation !== false
+      || storiesSafety.safety.owner_approved_policy !== false
+      || storiesSafety.safety.auto_publish_enabled !== false
+      || storiesSafety.safety.automatic_allow_authorized !== false
+      || storiesSafety.safety.automatic_block_authorized !== false
+      || canonicalJson(storiesSafety.safety.decisions) !== canonicalJson(['pending', 'review'])) {
+      deny('INVALID_STORIES_SAFETY_C1_TRANSITION',
+        'manifest lacks the exact Stories Safety C1 fail-closed technical-preparation attestation');
+    }
+  } else if (storiesSafetyC1Transition !== undefined && storiesSafetyC1Transition !== null) {
+    deny('INVALID_STORIES_SAFETY_C1_TRANSITION',
+      'Stories Safety C1 transition attestation is not applicable');
   }
   const f5 = F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION;
   const f5Candidate = !recoveryMode && migrations?.some(item => item.version === '20261026072512'
@@ -2792,6 +2987,9 @@ export function buildManifest({
       ...(managedScopeTransition ? { managed_scope_transition: stableCopy(managedScopeTransition) } : {}),
       ...(financeAuthorityTransition ? { finance_authority_transition: stableCopy(financeAuthorityTransition) } : {}),
       ...(storiesB1Transition ? { stories_b1_transition: stableCopy(storiesB1Transition) } : {}),
+      ...(storiesSafetyC1Transition
+        ? { stories_safety_c1_transition: stableCopy(storiesSafetyC1Transition) }
+        : {}),
     },
     risk: stableCopy(risk),
     blockers,

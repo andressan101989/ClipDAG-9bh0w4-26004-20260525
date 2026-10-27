@@ -250,6 +250,101 @@ test('Stories B1 snapshot contract is fail-closed and rejects policy activation 
   }
 });
 
+test('Stories Safety C1 snapshot attests inactive controls, private helpers, and unchanged inventories', async () => {
+  const adapter = await loadAdapter();
+  assert.equal(adapter.assertReadOnlySql(adapter.STORIES_SAFETY_C1_STATE_SQL), true);
+  assert.match(adapter.STORIES_SAFETY_C1_STATE_SQL,
+    /where rule\.approval_state='approved'\s+and rule\.scopes/);
+  assert.doesNotMatch(adapter.STORIES_SAFETY_C1_STATE_SQL,
+    /rule\.approval_state='approved'\s+and rule\.enabled/);
+  const transition = installedPolicy.stories_safety_c1_transition;
+  const helperRows = transition.helper_attestations.map(item => ({
+    ...item,
+    owner: 'postgres',
+    security_definer: true,
+    search_path: ['search_path=""'],
+    execute: {
+      anon: false,
+      authenticated: item.identity === 'private.story_can_access(uuid,boolean)',
+      public: false,
+      service_role: false,
+    },
+    acl: [
+      ...(item.identity === 'private.story_can_access(uuid,boolean)'
+        ? [{ grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false }]
+        : []),
+      { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+    ],
+  }));
+  const pre = adapter.normalizeStoriesSafetyC1State({
+    schema_version: 1,
+    complete: true,
+    installed: false,
+    policy_id: null,
+    policy_artifact_sha256: null,
+    control: null,
+    approved_story_rule_count: 0,
+    passed_count: 0,
+    policy_digest_count: 0,
+    story_count: 0,
+    safety_state_count: 0,
+    story_inventory_sha256: '1'.repeat(64),
+    safety_inventory_sha256: '2'.repeat(64),
+    transcript_refresh_trigger_installed: false,
+    trigger: null,
+    helpers: [],
+  });
+  const post = adapter.normalizeStoriesSafetyC1State({
+    schema_version: 1,
+    complete: true,
+    installed: true,
+    policy_id: transition.policy_artifact.policy_id,
+    policy_artifact_sha256: transition.policy_artifact.sha256,
+    control: {
+      policy_artifact_sha256: transition.policy_artifact.sha256,
+      activation: false,
+      owner_approved_policy: false,
+      auto_publish_enabled: false,
+      mode: 'fail_closed_review',
+      automatic_allow_authorized: false,
+      automatic_block_authorized: false,
+    },
+    approved_story_rule_count: 0,
+    passed_count: 0,
+    policy_digest_count: 0,
+    story_count: 0,
+    safety_state_count: 0,
+    story_inventory_sha256: pre.story_inventory_sha256,
+    safety_inventory_sha256: pre.safety_inventory_sha256,
+    transcript_refresh_trigger_installed: true,
+    trigger: transition.trigger_attestation,
+    helpers: helperRows,
+  });
+  assert.equal(adapter.validateStoriesSafetyC1StateTransition(pre, post, transition), true);
+
+  for (const mutate of [
+    value => { value.control.activation = true; },
+    value => { value.control.owner_approved_policy = true; },
+    value => { value.passed_count = 1; },
+    value => { value.policy_digest_count = 1; },
+    value => { value.approved_story_rule_count = 1; },
+    value => { value.story_inventory_sha256 = '3'.repeat(64); },
+    value => { value.transcript_refresh_trigger_installed = false; },
+    value => { value.helpers[0].owner = 'authenticated'; },
+    value => { value.helpers[0].definition_sha256 = '0'.repeat(64); },
+    value => { value.helpers[0].execute.authenticated = true; },
+  ]) {
+    const hostile = structuredClone(post);
+    delete hostile.sha256;
+    mutate(hostile);
+    assert.throws(() => adapter.validateStoriesSafetyC1StateTransition(
+      pre,
+      adapter.normalizeStoriesSafetyC1State(hostile),
+      transition,
+    ), /STORIES_SAFETY_C1_POSTCHECK_FAILED/);
+  }
+});
+
 test('Stories B1 advisor transition is phase-bound to exact introduced and replaced findings', async () => {
   const adapter = await loadAdapter();
   const transition = installedPolicy.stories_b1_transition;
