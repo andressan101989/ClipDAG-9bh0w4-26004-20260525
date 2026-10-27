@@ -14,8 +14,10 @@
     "story_video": true,
     "story_audio": true,
     "story_text": true,
+    "story_stickers": true,
     "interactive_prompts": true,
     "interactive_options": true,
+    "interactive_reaction_stickers": true,
     "viewer_question_responses": true,
     "creator_premium_policy_changed": false,
     "live_battles_policy_changed": false,
@@ -87,10 +89,18 @@
         "story_author_text_bundle"
       ]
     },
+    "story_sticker": {
+      "required": [
+        "allowlisted_local_preset",
+        "composition_identity",
+        "display_value"
+      ]
+    },
     "interactive_definition": {
       "required": [
         "prompt_text",
         "option_labels",
+        "allowlisted_reaction_emoji_when_applicable",
         "definition_digest"
       ],
       "private_quiz_answer_is_not_classifier_input": true
