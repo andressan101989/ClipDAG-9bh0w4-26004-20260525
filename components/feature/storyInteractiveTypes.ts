@@ -1,0 +1,153 @@
+import type { StoryStickerElement, StoryTextElement } from './storyComposition';
+
+export type StoryInteractiveKind = 'poll' | 'slider' | 'quiz' | 'question' | 'reaction';
+export interface StoryInteractiveOption { id: string; label: string }
+
+interface StoryInteractiveDefinitionBase {
+  version: 1;
+  element_id: string;
+  prompt: string;
+}
+
+// Public configuration only. Answers, responses and aggregates come from authorized RPCs.
+export type StoryInteractiveDefinition = StoryInteractiveDefinitionBase & (
+  | { type: 'poll' | 'quiz'; options: StoryInteractiveOption[] }
+  | { type: 'slider' | 'reaction'; emoji: string }
+  | { type: 'question' }
+);
+
+export interface StoryInteractivePlacement {
+  id: string;
+  type: 'interactive';
+  element_id: string;
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+}
+
+export type StoryStaticElement = StoryTextElement | StoryStickerElement;
+export type StoryCompositionElement = StoryStaticElement | StoryInteractivePlacement;
+export type StoryComposition =
+  | { version: 1; elements: StoryStaticElement[] }
+  | { version: 2; elements: StoryCompositionElement[] };
+
+export const STORY_INTERACTIVE_MAX_OPTIONS = 6;
+export const STORY_INTERACTIVE_MAX_PROMPT_LENGTH = 200;
+export const STORY_INTERACTIVE_MAX_OPTION_LENGTH = 80;
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const OPTION_ID = /^[a-z0-9_-]{1,64}$/i;
+const URL = /(?:\b[a-z][a-z0-9+.-]*:\/\/|\b(?:javascript|data):|\bwww\.)/i;
+const STICKERS = ['❤️', '😂', '😮', '😢', '🔥', '👏', '✨', '⭐', '💯', '🎉', '😍'];
+const COLORS = ['#FFFFFF', '#111111', '#FF2D78', '#7C5CFF', '#00D4FF', '#FFD60A'];
+const GEOMETRY_KEYS = ['id', 'type', 'x', 'y', 'scale', 'rotation'];
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+}
+
+function keys(value: Record<string, unknown>, allowed: string[]): boolean {
+  return Object.keys(value).every(key => allowed.includes(key));
+}
+
+function uuid(value: unknown): string | null {
+  return typeof value === 'string' && UUID.test(value) ? value.toLowerCase() : null;
+}
+
+function text(value: unknown, maximum: number, forbidUrls = true): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (!normalized || [...normalized].length > maximum || /[<>]/.test(normalized)
+    || (forbidUrls && URL.test(normalized))) return null;
+  return normalized;
+}
+
+function range(value: unknown, minimum: number, maximum: number): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum;
+}
+
+/** Invalid input rejects the whole definition; unknown keys are never silently stripped. */
+export function parseStoryInteractiveDefinition(value: unknown): StoryInteractiveDefinition | null {
+  if (!record(value) || value.version !== 1) return null;
+  const element_id = uuid(value.element_id);
+  const prompt = text(value.prompt, STORY_INTERACTIVE_MAX_PROMPT_LENGTH);
+  if (!element_id || prompt === null) return null;
+  const allowed = ['version', 'element_id', 'type', 'prompt'];
+  const base = { version: 1 as const, element_id, prompt };
+  if (value.type === 'poll' || value.type === 'quiz') {
+    if (!keys(value, [...allowed, 'options']) || !Array.isArray(value.options)
+      || value.options.length < 2 || value.options.length > STORY_INTERACTIVE_MAX_OPTIONS) return null;
+    const options: StoryInteractiveOption[] = [];
+    const ids = new Set<string>();
+    for (const option of value.options) {
+      if (!record(option) || !keys(option, ['id', 'label'])
+        || typeof option.id !== 'string' || !OPTION_ID.test(option.id) || ids.has(option.id)) return null;
+      const label = text(option.label, STORY_INTERACTIVE_MAX_OPTION_LENGTH);
+      if (label === null) return null;
+      ids.add(option.id);
+      options.push({ id: option.id, label });
+    }
+    return { ...base, type: value.type, options };
+  }
+  if (value.type === 'slider' || value.type === 'reaction') {
+    if (!keys(value, [...allowed, 'emoji']) || typeof value.emoji !== 'string' || !STICKERS.includes(value.emoji)) return null;
+    return { ...base, type: value.type, emoji: value.emoji };
+  }
+  if (value.type === 'question' && keys(value, allowed)) return { ...base, type: 'question' };
+  return null;
+}
+
+function parseElement(value: unknown, version: 1 | 2): StoryCompositionElement | null {
+  if (!record(value)) return null;
+  const id = uuid(value.id);
+  if (!id || !range(value.x, 0, 1) || !range(value.y, 0, 1)
+    || !range(value.scale, 0.5, 4) || !range(value.rotation, -180, 180)) return null;
+  const base = { id, x: value.x, y: value.y, scale: value.scale, rotation: value.rotation };
+  if (value.type === 'interactive' && version === 2 && keys(value, [...GEOMETRY_KEYS, 'element_id'])) {
+    const element_id = uuid(value.element_id);
+    return element_id ? { ...base, type: 'interactive', element_id } : null;
+  }
+  if (value.type === 'text' && keys(value, [...GEOMETRY_KEYS, 'text', 'color', 'align', 'size'])) {
+    // Preserve v1's plain-text contract; URL-bearing object keys remain forbidden.
+    const normalized = text(value.text, 200, false);
+    if (normalized === null || typeof value.color !== 'string' || !COLORS.includes(value.color)
+      || (value.align !== 'left' && value.align !== 'center' && value.align !== 'right')
+      || (value.size !== 'small' && value.size !== 'medium' && value.size !== 'large')) return null;
+    return { ...base, type: 'text', text: normalized, color: value.color as StoryTextElement['color'],
+      align: value.align, size: value.size };
+  }
+  if (value.type === 'sticker' && keys(value, [...GEOMETRY_KEYS, 'value'])
+    && typeof value.value === 'string' && STICKERS.includes(value.value)) {
+    return { ...base, type: 'sticker', value: value.value as StoryStickerElement['value'] };
+  }
+  return null;
+}
+
+/** Placement is always relative to the full media frame, never device pixels or safe areas. */
+export function parseStoryComposition(value: unknown): StoryComposition | null {
+  if (!record(value) || !keys(value, ['version', 'elements'])
+    || (value.version !== 1 && value.version !== 2) || !Array.isArray(value.elements)
+    || value.elements.length > 32) return null;
+  const elements: StoryCompositionElement[] = [];
+  const ids = new Set<string>();
+  const references = new Set<string>();
+  let texts = 0;
+  let stickers = 0;
+  for (const input of value.elements) {
+    const element = parseElement(input, value.version);
+    if (!element || ids.has(element.id)) return null;
+    ids.add(element.id);
+    if (element.type === 'text' && ++texts > 10) return null;
+    if (element.type === 'sticker' && ++stickers > 24) return null;
+    if (element.type === 'interactive') {
+      if (references.has(element.element_id)) return null;
+      references.add(element.element_id);
+    }
+    elements.push(element);
+  }
+  return value.version === 1
+    ? { version: 1, elements: elements as StoryStaticElement[] }
+    : { version: 2, elements };
+}

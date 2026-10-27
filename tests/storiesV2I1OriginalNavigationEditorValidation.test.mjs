@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const gitOptions = { encoding: 'utf8', cwd: fileURLToPath(new URL('..', import.meta.url)) };
 
 const BASE = '3766a15cf2e815e2fcf1de0eeb76ff58fd9a1da0';
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
@@ -16,7 +19,7 @@ const migration = read(migrationPath);
 const visibilityMigration = read('supabase/migrations/20260811024000_marketplace_creator_content_product_tags.sql');
 
 function baseFile(path) {
-  return execFileSync('git', ['show', `${BASE}:${path}`], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
+  return execFileSync('git', ['show', `${BASE}:${path}`], gitOptions).replace(/\r\n/g, '\n');
 }
 
 function ensureBody() {
@@ -34,7 +37,7 @@ function deepLinkBody() {
 }
 
 test('I1 starts from the exact approved I SHA', () => {
-  assert.equal(execFileSync('git', ['merge-base', 'HEAD', BASE], { encoding: 'utf8' }).trim(), BASE);
+  assert.equal(execFileSync('git', ['merge-base', 'HEAD', BASE], gitOptions).trim(), BASE);
 });
 
 test('/video/[id] keeps the canonical route and forwards ID only', () => {
@@ -183,7 +186,7 @@ test('server composition validation remains unchanged', () => {
 });
 
 test('I data model and package authorities are untouched', () => {
-  const headFile = path => execFileSync('git', ['show', `HEAD:${path}`], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
+  const headFile = path => execFileSync('git', ['show', `HEAD:${path}`], gitOptions).replace(/\r\n/g, '\n');
   const currentPackage = JSON.parse(read('package.json'));
   const approvedPackage = JSON.parse(headFile('package.json'));
   assert.deepEqual(currentPackage.dependencies, approvedPackage.dependencies);
@@ -192,11 +195,11 @@ test('I data model and package authorities are untouched', () => {
   const approvedLock = JSON.parse(headFile('package-lock.json'));
   assert.deepEqual(currentLock.packages[''].dependencies, approvedLock.packages[''].dependencies);
   assert.deepEqual(currentLock.packages[''].devDependencies, approvedLock.packages[''].devDependencies);
-  assert.equal(execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'supabase'], { encoding: 'utf8' }).trim(), '');
+  assert.equal(execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'supabase'], gitOptions).trim(), '');
 });
 
 test('no second Feed store, video route, player or StoryEditor was introduced', () => {
-  const changed = execFileSync('git', ['diff', '--name-only', BASE], { encoding: 'utf8' });
+  const changed = execFileSync('git', ['diff', '--name-only', BASE], gitOptions);
   assert.doesNotMatch(changed, /VideoDetailContext|SharedVideoService|StoryNavigationService/);
   assert.equal((feedContext.match(/createContext<FeedContextType/g) ?? []).length, 1);
   assert.equal((editor.match(/export function StoryEditor/g) ?? []).length, 1);

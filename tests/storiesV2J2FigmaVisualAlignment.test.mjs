@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const gitOptions = { encoding: 'utf8', cwd: fileURLToPath(new URL('..', import.meta.url)) };
 
 const BASE = '8e77cee677aaa30047037743b5f19bf29074bac8';
 const FIGMA_FILE_KEY = 'ckco6L81Y77fGFR0tgUtRi';
@@ -19,11 +22,11 @@ const context = read('contexts/StoriesContext.tsx');
 const i1 = read('contexts/FeedContext.tsx');
 
 function baseFile(path) {
-  return execFileSync('git', ['show', `${BASE}:${path}`], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
+  return execFileSync('git', ['show', `${BASE}:${path}`], gitOptions).replace(/\r\n/g, '\n');
 }
 
 function headFile(path) {
-  return execFileSync('git', ['show', `HEAD:${path}`], { encoding: 'utf8' }).replace(/\r\n/g, '\n');
+  return execFileSync('git', ['show', `HEAD:${path}`], gitOptions).replace(/\r\n/g, '\n');
 }
 
 function assertPackageAuthoritiesUnchanged() {
@@ -38,14 +41,14 @@ function assertPackageAuthoritiesUnchanged() {
 }
 
 function nativeAuthorityChanges() {
-  return execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'android', 'ios'], { encoding: 'utf8' })
+  return execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'android', 'ios'], gitOptions)
     .split(/\r?\n/)
     .filter(Boolean)
     .filter(path => !/android\/app\/src\/main\/res\/|ios\/onspaceapp\/Images\.xcassets\/|ios\/onspaceapp\/Info\.plist$|ios\/onspaceapp\.xcodeproj\/project\.pbxproj$/.test(path));
 }
 
 test('J2 starts from the exact approved J base with client-only scope', () => {
-  assert.equal(execFileSync('git', ['merge-base', 'HEAD', BASE], { encoding: 'utf8' }).trim(), BASE);
+  assert.equal(execFileSync('git', ['merge-base', 'HEAD', BASE], gitOptions).trim(), BASE);
   assertPackageAuthoritiesUnchanged();
   assert.deepEqual(nativeAuthorityChanges(), []);
 });
