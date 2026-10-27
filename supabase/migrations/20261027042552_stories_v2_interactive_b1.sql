@@ -602,19 +602,49 @@ grant execute on function public.get_story_shared_content(uuid) to authenticated
 
 alter function public.set_story_reaction(uuid,text) set schema private;
 alter function private.set_story_reaction(uuid,text) rename to story_set_reaction_core;
-alter function private.story_set_reaction_core(uuid,text) set search_path = '';
+create or replace function private.story_set_reaction_core(p_story_id uuid,p_reaction text)
+returns table(status text,reaction text,updated_at timestamptz)
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_actor uuid:=auth.uid(); v_owner uuid; v_expires_at timestamptz; v_prior text;
+  v_updated_at timestamptz; v_deleted boolean;
+begin
+  if v_actor is null then raise exception using errcode='42501',message='authentication_required'; end if;
+  if p_story_id is null or (p_reaction is not null and p_reaction not in('heart','laugh','wow','sad','fire','clap')) then
+    raise exception using errcode='22023',message='invalid_story_reaction';
+  end if;
+  select s.user_id,s.expires_at into v_owner,v_expires_at from public.stories s
+    where s.id=p_story_id and private.admin_content_is_visible('story',s.id) for share;
+  if v_owner is null or v_expires_at<=pg_catalog.now() then raise exception using errcode='42501',message='story_not_available'; end if;
+  if v_owner=v_actor then raise exception using errcode='42501',message='story_owner_cannot_react'; end if;
+  if not private.story_can_view_owner(v_owner) then raise exception using errcode='42501',message='story_not_visible'; end if;
+  if p_reaction is null then
+    delete from public.story_reactions r where r.story_id=p_story_id and r.reactor_id=v_actor
+      returning r.updated_at into v_updated_at;
+    v_deleted:=found;
+    return query select case when v_deleted then 'removed' else 'unchanged' end::text,null::text,v_updated_at;
+    return;
+  end if;
+  select r.reaction into v_prior from public.story_reactions r
+    where r.story_id=p_story_id and r.reactor_id=v_actor for update;
+  insert into public.story_reactions as r(story_id,reactor_id,reaction)
+    values(p_story_id,v_actor,p_reaction)
+    on conflict(story_id,reactor_id) do update set
+      reaction=excluded.reaction,
+      updated_at=case when r.reaction is distinct from excluded.reaction
+        then pg_catalog.clock_timestamp() else r.updated_at end
+    returning r.updated_at into v_updated_at;
+  return query select case when v_prior=p_reaction then 'unchanged' else 'set' end::text,p_reaction,v_updated_at;
+end;
+$$;
 revoke all on function private.story_set_reaction_core(uuid,text) from public, anon, authenticated, service_role;
 create function public.set_story_reaction(p_story_id uuid,p_reaction text)
 returns table(status text,reaction text,updated_at timestamptz) language plpgsql security definer set search_path = '' as $$
-declare v_prior text; v_prior_updated_at timestamptz;
+declare v_prior text;
 begin
   if not private.story_can_access(p_story_id,false) then raise exception using errcode='42501',message='story_not_visible'; end if;
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('story-legacy-reaction:'||auth.uid()::text||':'||p_story_id::text,0));
-  select r.reaction,r.updated_at into v_prior,v_prior_updated_at from public.story_reactions r where r.story_id=p_story_id and r.reactor_id=auth.uid();
-  if found and v_prior is not distinct from p_reaction then
-    return query select 'unchanged'::text,v_prior,v_prior_updated_at;
-    return;
-  end if;
+  select r.reaction into v_prior from public.story_reactions r where r.story_id=p_story_id and r.reactor_id=auth.uid();
   if v_prior is distinct from p_reaction then perform private.story_consume_velocity(auth.uid(),'interaction'); end if;
   return query select * from private.story_set_reaction_core(p_story_id,p_reaction);
 end;

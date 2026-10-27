@@ -152,6 +152,14 @@ test('B1 disposable PostgreSQL behavior and isolation', {skip:!enabled}, async t
       assert.equal(replay.updated_at,first.updated_at);
       assert.equal(Number(run(`select coalesce(sum(count),0) from public.velocity_counters where user_id='${viewer}' and operation_type='story_interaction'`)),before+1);
     });
+    await t.test('legacy reaction replay cannot bypass owner authorization',()=>{
+      run(`insert into public.story_reactions(story_id,reactor_id,reaction) values('${story}','${owner}','heart')`);
+      try {
+        fail(owner,`select * from public.set_story_reaction('${story}','heart')`,/story_owner_cannot_react/);
+      } finally {
+        run(`delete from public.story_reactions where story_id='${story}' and reactor_id='${owner}'`);
+      }
+    });
     await t.test('response table constraints reject invalid payloads even through privileged SQL',()=>{
       const invalid=run(`begin; insert into private.story_interactive_responses(story_id,element_id,respondent_id,payload) values('${story}','${element(3)}','${other}','{"value":2}'); rollback;`,db,true);
       assert.notEqual(invalid.status,0);
@@ -223,6 +231,7 @@ test('B1 disposable PostgreSQL behavior and isolation', {skip:!enabled}, async t
       assert.ok(visibleRevisions.length>0);
       const visibleRevision=visibleRevisions[0];
       assert.equal(visibleRevision.story_id,story);
+      assert.deepEqual(Object.keys(visibleRevision).sort(),['element_id','revision','story_id','updated_at']);
       assert.doesNotMatch(JSON.stringify(visibleRevision),/respondent|payload|answer|total/);
       run(`insert into public.blocked_users(blocker_id,blocked_id) values('${owner}','${viewer}')`);
       try {
