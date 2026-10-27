@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const gitOptions = { encoding: 'utf8', cwd: fileURLToPath(new URL('..', import.meta.url)) };
 
 const BASE = 'a455d4e00475540b9ff6fdf95e2e22215dbfa15e';
+const PACKAGE_BASE = '9a436857664c1862c6f16807d45834f107076380';
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 const migrationName = readdirSync('supabase/migrations').find(name => name.endsWith('_stories_v2_i_share_editor_integrity.sql'));
 assert.ok(migrationName, 'I migration must exist');
@@ -24,19 +25,22 @@ const webVideoCard = read('components/feature/VideoCard.tsx');
 const videoRoute = read('app/video/[id].tsx');
 const h1 = read('tests/storiesV2H1ReplyIdempotency.test.mjs');
 
-function headFile(path) {
-  return execFileSync('git', ['show', `HEAD:${path}`], gitOptions).replace(/\r\n/g, '\n');
+function approvedPackageFile(path) {
+  return execFileSync('git', ['show', `${PACKAGE_BASE}:${path}`], gitOptions).replace(/\r\n/g, '\n');
 }
 
-test('I retains H1 ancestry and keeps working package authorities at the integrated HEAD', () => {
+test('I retains H1 ancestry', () => {
   const mergeBase = execFileSync('git', ['merge-base', 'HEAD', BASE], gitOptions).trim();
   assert.equal(mergeBase, BASE);
+});
+
+test('I keeps package authorities at the immutable approved integrated checkpoint', () => {
   const currentPackage = JSON.parse(read('package.json'));
-  const approvedPackage = JSON.parse(headFile('package.json'));
+  const approvedPackage = JSON.parse(approvedPackageFile('package.json'));
   assert.deepEqual(currentPackage.dependencies, approvedPackage.dependencies);
   assert.deepEqual(currentPackage.devDependencies, approvedPackage.devDependencies);
   const currentLock = JSON.parse(read('package-lock.json'));
-  const approvedLock = JSON.parse(headFile('package-lock.json'));
+  const approvedLock = JSON.parse(approvedPackageFile('package-lock.json'));
   assert.deepEqual(currentLock.packages[''].dependencies, approvedLock.packages[''].dependencies);
   assert.deepEqual(currentLock.packages[''].devDependencies, approvedLock.packages[''].devDependencies);
 });
