@@ -1,10 +1,11 @@
-import {render,screen,waitFor} from "@testing-library/react";
+import {act,fireEvent,render,screen,waitFor} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import {MemoryRouter,Route,Routes} from "react-router-dom";
+import {Link,MemoryRouter,Route,Routes} from "react-router-dom";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
 import {
   getAdminMediaUrl,
+  getAdminStoryVideoGrant,
   getAdminStoryDetail,
   moderateAdminStory,
   searchAdminStories,
@@ -15,7 +16,7 @@ import {AdminStoriesPage,AdminStoryDetailPage} from "../pages/AdminStoriesPages"
 vi.mock("../auth/AdminAuthProvider",()=>({useAdminAuth:vi.fn()}));
 vi.mock("../lib/adminApi",async(importOriginal)=>{
   const original=await importOriginal<typeof import("../lib/adminApi")>();
-  return {...original,getAdminMediaUrl:vi.fn(),getAdminStoryDetail:vi.fn(),moderateAdminStory:vi.fn(),searchAdminStories:vi.fn()};
+  return {...original,getAdminMediaUrl:vi.fn(),getAdminStoryVideoGrant:vi.fn(),getAdminStoryDetail:vi.fn(),moderateAdminStory:vi.fn(),searchAdminStories:vi.fn()};
 });
 
 const storyId="10000000-0000-4000-8000-000000000001";
@@ -38,6 +39,9 @@ const sharedDetail:AdminStoryDetail={
   shared_video_id:sourceId,
   shared_content_type:"reel",
   visibility:"visible",
+  publication_status:"published",
+  moderation_status:"unreviewed",
+  scan_status:"queued",
   source_status:"available",
   media_origin:"shared_stream_asset",
   preview_url:"https://customer.example.cloudflarestream.com/poster.jpg",
@@ -49,6 +53,7 @@ const sharedDetail:AdminStoryDetail={
   ]},
   linked_media_asset_id:null,
   media_asset_id:null,
+  video_asset_id:null,
   media_url:"https://customer.example.cloudflarestream.com/manifest/video.m3u8",
   poster_url:"https://customer.example.cloudflarestream.com/poster.jpg",
   source:{id:sourceId,content_type:"reel",owner:{id:sourceOwnerId,username:"source_owner",display_name:"Source Owner",avatar_url:null},caption:"Video canónico compartido",created_at:createdAt,visibility:"visible",views_count:20,likes_count:4,comments_count:3,shares_count:2},
@@ -68,6 +73,116 @@ beforeEach(()=>{
 });
 
 describe("ADMIN-SUPERUSER-OPT-F1 Story inspection",()=>{
+  it("opens direct private Stream Stories using a temporary canonical Story grant without rendering URLs",async()=>{
+    vi.mocked(getAdminStoryVideoGrant).mockResolvedValue({storyId,hlsUrl:"https://customer.example.cloudflarestream.com/signed-token/manifest/video.m3u8",thumbnailUrl:"https://customer.example.cloudflarestream.com/signed-token/thumbnails/thumbnail.jpg",expiresAt:new Date(Date.now()+300000).toISOString()});
+    renderDetail({...sharedDetail,story_kind:"media",media_origin:"story_stream_asset",video_asset_id:assetId,shared_video_id:null,source:null,preview_url:null,media_url:null,poster_url:null});
+    const video=await screen.findByLabelText("Vista previa administrativa de la Story");
+    await waitFor(()=>expect(video).toHaveAttribute("poster","https://customer.example.cloudflarestream.com/signed-token/thumbnails/thumbnail.jpg"));
+    expect(getAdminStoryVideoGrant).toHaveBeenCalledWith(storyId);
+    expect(getAdminMediaUrl).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain("signed-token");
+    expect(document.body.textContent).not.toContain("https://");
+  });
+
+  it("keeps a failed private Stream grant unavailable and retries through the same authority",async()=>{
+    const user=userEvent.setup();
+    vi.mocked(getAdminStoryVideoGrant).mockRejectedValue(new Error("No pudimos cargar esta vista previa autorizada."));
+    renderDetail({...sharedDetail,story_kind:"media",media_origin:"story_stream_asset",video_asset_id:assetId,shared_video_id:null,source:null,preview_url:null,media_url:null,poster_url:null});
+    expect(await screen.findByText("No pudimos cargar esta vista previa autorizada.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button",{name:"Reintentar URL"}));
+    await waitFor(()=>expect(getAdminStoryVideoGrant).toHaveBeenCalledTimes(2));
+    expect(getAdminMediaUrl).not.toHaveBeenCalled();
+  });
+
+  it("shows publication, human moderation and pending scan independently without approval",async()=>{
+    renderDetail();
+    expect(await screen.findByText("Publicada")).toBeInTheDocument();
+    expect(screen.getByText("Sin revisar")).toBeInTheDocument();
+    expect(screen.getByText("En cola")).toBeInTheDocument();
+    expect(screen.queryByText(/PASS|Aprobada/i)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["Conservar Story","keep"],
+    ["Restringir Story","restrict"],
+    ["Retirar Story","remove"],
+  ])("sends the audited %s decision with reason and refreshes authoritative states",async(label,action)=>{
+    const user=userEvent.setup();
+    renderDetail();
+    const button=await screen.findByRole("button",{name:label});
+    await user.click(button);
+    expect(await screen.findByRole("alert")).toHaveTextContent("motivo");
+    expect(moderateAdminStory).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText("Motivo"),"Revisión humana completa");
+    vi.mocked(getAdminStoryDetail).mockResolvedValue({...sharedDetail,publication_status:"restricted",moderation_status:"reviewed_restrict",scan_status:"completed"});
+    await user.click(button);
+    await waitFor(()=>expect(moderateAdminStory).toHaveBeenCalledWith({id:storyId,action,reason:"Revisión humana completa",idempotencyKey:expect.stringMatching(/^[0-9a-f-]{36}$/)}));
+    expect(await screen.findByText("Restringida")).toBeInTheDocument();
+    expect(screen.getByText("Revisada: restringir")).toBeInTheDocument();
+    expect(screen.getByText("Completado")).toBeInTheDocument();
+  });
+
+  it("preserves legacy restore and does not expose signed URLs or private safety payloads as text",async()=>{
+    renderDetail({...sharedDetail,visibility:"hidden"});
+    expect(await screen.findByRole("button",{name:"Restaurar Story"})).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("https://");
+    expect(document.body.textContent).not.toMatch(/fingerprint|evidence|question_responses|signed/i);
+  });
+
+  it.each(["unpublished","restricted","removed"] as const)("does not offer legacy restore for a safety-%s Story",async(publicationStatus)=>{
+    renderDetail({...sharedDetail,visibility:"hidden",publication_status:publicationStatus,
+      moderation_status:publicationStatus==="restricted"?"reviewed_restrict":publicationStatus==="removed"?"reviewed_remove":"unreviewed"});
+    await screen.findByText(publicationStatus==="restricted"?"Restringida":publicationStatus==="removed"?"Retirada":"Sin publicar");
+    expect(screen.queryByRole("button",{name:"Restaurar Story"})).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Conservar Story"})).toBeInTheDocument();
+  });
+
+  it("fences an in-flight moderation completion when navigation changes the Story",async()=>{
+    let rejectModeration:(reason:Error)=>void=()=>undefined;
+    vi.mocked(moderateAdminStory).mockReturnValue(new Promise((_resolve,reject)=>{rejectModeration=reject}));
+    vi.mocked(getAdminStoryDetail).mockImplementation(async(id)=>id===storyId
+      ?sharedDetail:{...sharedDetail,id:secondStoryId,owner:{...sharedDetail.owner,display_name:"Second Story Author"}});
+    render(<MemoryRouter initialEntries={[`/stories/${storyId}`]}><Link to={`/stories/${secondStoryId}`}>Siguiente Story</Link><Routes><Route path="/stories/:id" element={<AdminStoryDetailPage/>}/></Routes></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText("Motivo"),{target:{value:"Decisión para la primera Story"}});
+    fireEvent.click(screen.getByRole("button",{name:"Retirar Story"}));
+    fireEvent.click(screen.getByRole("link",{name:"Siguiente Story"}));
+    expect(await screen.findByText("Second Story Author")).toBeInTheDocument();
+    const secondReason=screen.getByLabelText("Motivo");
+    fireEvent.change(secondReason,{target:{value:"Motivo independiente de la segunda Story"}});
+    await act(async()=>{rejectModeration(new Error("Fallo tardío de la primera Story"));await Promise.resolve()});
+    await waitFor(()=>expect(screen.getByLabelText("Motivo")).toHaveValue("Motivo independiente de la segunda Story"));
+    expect(screen.queryByText("Fallo tardío de la primera Story")).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Retirar Story"})).not.toBeDisabled();
+  });
+
+  it("fences an old moderation completion across A to B to A navigation",async()=>{
+    let rejectFirst:(reason:Error)=>void=()=>undefined,resolveSecond:(value:{ok:boolean})=>void=()=>undefined,call=0;
+    vi.mocked(moderateAdminStory).mockImplementation(()=>new Promise((resolve,reject)=>{
+      call+=1;
+      if(call===1)rejectFirst=reject;
+      else resolveSecond=resolve as (value:{ok:boolean})=>void;
+    }));
+    vi.mocked(getAdminStoryDetail).mockImplementation(async(id)=>id===storyId
+      ?sharedDetail:{...sharedDetail,id:secondStoryId,owner:{...sharedDetail.owner,display_name:"Second Story Author"}});
+    render(<MemoryRouter initialEntries={[`/stories/${storyId}`]}><Link to={`/stories/${storyId}`}>Story A</Link><Link to={`/stories/${secondStoryId}`}>Story B</Link><Routes><Route path="/stories/:id" element={<AdminStoryDetailPage/>}/></Routes></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText("Motivo"),{target:{value:"Primera decisión A"}});
+    fireEvent.click(screen.getByRole("button",{name:"Retirar Story"}));
+    await waitFor(()=>expect(moderateAdminStory).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("link",{name:"Story B"}));
+    expect(await screen.findByText("Second Story Author")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link",{name:"Story A"}));
+    expect(await screen.findByText("Story Author")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Motivo"),{target:{value:"Segunda decisión A"}});
+    fireEvent.click(screen.getByRole("button",{name:"Restringir Story"}));
+    await waitFor(()=>expect(moderateAdminStory).toHaveBeenCalledTimes(2));
+    await act(async()=>{rejectFirst(new Error("Fallo obsoleto de A"));await Promise.resolve()});
+    expect(screen.queryByText("Fallo obsoleto de A")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Motivo")).toHaveValue("Segunda decisión A");
+    expect(screen.getByRole("button",{name:"Restringir Story"})).toBeDisabled();
+    await act(async()=>{resolveSecond({ok:true});await Promise.resolve()});
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Restringir Story"})).not.toBeDisabled());
+  });
+
   it("renders two shared Stories that reuse one canonical source without duplicating media",async()=>{
     vi.mocked(searchAdminStories).mockResolvedValue({items:[sharedDetail,{...sharedDetail,id:secondStoryId}],next_cursor:null});
     render(<MemoryRouter><AdminStoriesPage/></MemoryRouter>);

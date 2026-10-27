@@ -22,6 +22,10 @@ import {
   type StoryInteractivePayload,
   type StoryAnalyticsEventType,
 } from '@/services/storyInteractiveClient';
+import {
+  isRealtimeRecoveryStatus,
+  nextRealtimeRetry,
+} from '@/components/feature/storyViewerRuntime';
 export type {
   StoryAnalyticsEventType,
   StoryInteractivePayload,
@@ -29,10 +33,6 @@ export type {
   StoryInteractiveResultsPage,
   StoryInteractiveState,
 } from '@/services/storyInteractiveClient';
-import {
-  isRealtimeRecoveryStatus,
-  nextRealtimeRetry,
-} from '@/components/feature/storyViewerRuntime';
 
 export type StorySharedContent =
   | { status: 'unavailable' }
@@ -405,24 +405,27 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
 
     let active = true;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    let fallbackTimer: ReturnType<typeof setInterval> | undefined;
+    let fallbackActive = false;
     let revisionTimer: ReturnType<typeof setTimeout> | undefined;
     const generation = ++realtimeGenerationRef.current;
     const isCurrent = () => active
       && realtimeGenerationRef.current === generation
       && storySessionRef.current === actorId;
     const stopFallback = () => {
-      if (fallbackTimer) clearInterval(fallbackTimer);
-      fallbackTimer = undefined;
+      fallbackActive = false;
     };
     const startFallback = () => {
-      if (fallbackTimer) return;
-      fallbackTimer = setInterval(() => {
-        if (!isCurrent()) return;
-        void loadStories();
-        setRealtimeRevision(value => value + 1);
-      }, 30_000);
+      fallbackActive = true;
     };
+    // A private moderation decision can revoke RLS visibility without sending
+    // a readable Realtime row. One bounded foreground timer also serves the
+    // existing recovery fallback; all invalidations share loadStories' flight.
+    const reconciliationTimer = setInterval(() => {
+      if (!isCurrent() || AppState.currentState !== 'active') return;
+      if (!fallbackActive && storyGroupsRef.current.length === 0) return;
+      void loadStories();
+      if (fallbackActive) setRealtimeRevision(value => value + 1);
+    }, 30_000);
     const invalidateInteractiveState = () => {
       if (revisionTimer) return;
       revisionTimer = setTimeout(() => {
@@ -475,6 +478,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       active = false;
       if (retryTimer) clearTimeout(retryTimer);
       if (revisionTimer) clearTimeout(revisionTimer);
+      clearInterval(reconciliationTimer);
       stopFallback();
       void supabase.removeChannel(channel);
     };

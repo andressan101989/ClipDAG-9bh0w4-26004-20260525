@@ -72,18 +72,46 @@ Deno.serve(async(req)=>{
     return json({error:'invalid_request'},400);
   }
   if(hasAdminReview&&body.admin_review!==true) return json({error:'invalid_request'},400);
-  if(hasAdminReview&&!hasPremiumContent) return json({error:'invalid_request'},400);
+  if(hasAdminReview&&!hasPremiumContent&&!hasStory) return json({error:'invalid_request'},400);
 
   if(hasStory) {
     if(!isUuid(body.story_id)) return premiumJson({error:'invalid_story'},400);
     const storyId=body.story_id;
     const caller=authenticatedClient(req);
     if(!caller) return premiumJson({error:'unauthorized'},401);
-    // This read intentionally uses the caller JWT. The canonical Stories RLS
-    // owns expiry, blocks, moderation and fail-closed safety visibility.
-    const {data:story,error:storyError}=await caller.from('stories')
-      .select('id,user_id,media_type,expires_at').eq('id',storyId).maybeSingle();
-    if(storyError) return premiumJson({error:'story_video_unavailable'},503);
+    let story:{id:string;user_id:string;media_type:string;expires_at:string}|null=null;
+    let adminReviewAssetId:string|null=null;
+    if(body.admin_review===true){
+      const {data:allowed,error:capabilityError}=await caller.rpc('admin_actor_has_capability',{
+        p_capability:'stories.items.read',
+      });
+      if(capabilityError||allowed!==true) return premiumJson({error:'forbidden'},403);
+      const {data:reviewDetail,error:reviewError}=await caller.rpc(
+        'get_admin_story_detail',{p_story_id:storyId},
+      );
+      const detail=reviewDetail&&typeof reviewDetail==='object'
+        ?reviewDetail as Record<string,unknown>:null;
+      const owner=detail?.owner&&typeof detail.owner==='object'
+        ?detail.owner as Record<string,unknown>:null;
+      if(reviewError||!detail||detail.id!==storyId||detail.story_kind!=='media'
+        ||detail.media_type!=='video'||detail.resolved_media_kind!=='video'
+        ||detail.source_status!=='available'||detail.media_origin!=='story_stream_asset'
+        ||!isUuid(detail.video_asset_id)||!isUuid(owner?.id)){
+        return premiumJson({error:'forbidden'},403);
+      }
+      adminReviewAssetId=String(detail.video_asset_id);
+      // Administrative inspection uses the existing capability boundary even
+      // after ordinary visibility expires; the grant itself is capped at 300s.
+      story={id:storyId,user_id:String(owner!.id),media_type:'video',
+        expires_at:new Date(Date.now()+300_000).toISOString()};
+    }else{
+      // This read intentionally uses the caller JWT. The canonical Stories RLS
+      // owns expiry, blocks, moderation and fail-closed safety visibility.
+      const {data:visibleStory,error:storyError}=await caller.from('stories')
+        .select('id,user_id,media_type,expires_at').eq('id',storyId).maybeSingle();
+      if(storyError) return premiumJson({error:'story_video_unavailable'},503);
+      story=visibleStory;
+    }
     if(!story||story.media_type!=='video') return premiumJson({error:'not_found'},404);
     const nowSeconds=Math.floor(Date.now()/1000);
     const storyExpiryMilliseconds=typeof story.expires_at==='string'
@@ -101,16 +129,21 @@ Deno.serve(async(req)=>{
     if(linksError) return premiumJson({error:'story_video_unavailable'},503);
     if(!links?.length) return premiumJson({error:'not_found'},404);
     if(links.length!==1) return premiumJson({error:'story_video_ambiguous'},409);
+    if(adminReviewAssetId&&links[0].asset_id!==adminReviewAssetId){
+      return premiumJson({error:'story_video_forbidden'},403);
+    }
     const {data:asset,error:assetError}=await db.from('video_assets')
       .select('*').eq('id',links[0].asset_id).maybeSingle();
     if(assetError) return premiumJson({error:'story_video_unavailable'},503);
     if(!asset) return premiumJson({error:'not_found'},404);
     if(links[0].owner_id!==story.user_id||asset.owner_id!==story.user_id
+      ||(adminReviewAssetId&&asset.deleted_at!==null)
       ||!hasPrivateProviderProof(asset as Record<string,unknown>,STORY_STREAM_PURPOSE)) {
       return premiumJson({error:'story_video_forbidden'},403);
     }
     if(asset.status!=='ready'||Number(asset.duration_seconds)<=0
-      ||Number(asset.duration_seconds)>15) {
+      ||Number(asset.duration_seconds)>15
+      ||(adminReviewAssetId&&!Number.isFinite(Number(asset.duration_seconds)))) {
       return premiumJson({error:'story_video_unavailable'},409);
     }
     try {

@@ -1,0 +1,33 @@
+{
+  "schema_version": "nelyon.stories_content_safety_policy.v1",
+  "policy_id": "nelyon.stories.general.safety.publish_first.v1",
+  "mode": "PUBLISH_FIRST_ASYNC_REVIEW",
+  "approval": {
+    "status": "owner_approved_operating_model_only",
+    "source": "docs/superpowers/specs/2026-10-27-stories-v2-safety-c2-design.md",
+    "authorized_phase": "STORIES-V2-SAFETY-C2",
+    "numeric_thresholds_approved": false,
+    "automatic_allow_authorized": false,
+    "automatic_block_authorized": false
+  },
+  "publication": {
+    "canonical_authority": "public.stories",
+    "requires_existing_technical_contracts": true,
+    "requires_atomic_current_durable_scan": true,
+    "requires_safety_pass": false,
+    "historical_backfill": false,
+    "scan_failure_unpublishes": false
+  },
+  "review": {
+    "scanner": "content-safety-scan",
+    "existing_deduplicated_alerts": true,
+    "sanction_authority": "stories.items.moderate",
+    "human_decisions": ["keep", "restrict", "remove"],
+    "audited_idempotent_decisions": true,
+    "scanner_overwrites_human_decision": false,
+    "private_question_responses_remain_private": true
+  },
+  "automatic_allow_authorized": false,
+  "automatic_block_authorized": false,
+  "numeric_thresholds": null
+}

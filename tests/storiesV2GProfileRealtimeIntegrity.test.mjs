@@ -116,7 +116,7 @@ test('SUBSCRIBED and foreground transitions trigger controlled reconciliation', 
   assert.match(context, /previousState !== 'active' && nextState === 'active'/);
 });
 
-test('expired Stories use one nearest-deadline timer while realtime failure alone enables bounded polling', () => {
+test('expired Stories use one nearest-deadline timer while moderation and recovery share bounded reconciliation', () => {
   const groups = [{ userId: 'u', hasUnseen: true, stories: [
     { id: 'old', expiresAt: '2026-01-01T00:00:00Z' },
     { id: 'active', expiresAt: '2027-01-01T00:00:00Z' },
@@ -131,7 +131,9 @@ test('expired Stories use one nearest-deadline timer while realtime failure alon
   assert.doesNotMatch(expiry, /setInterval/);
 
   const realtime = context.slice(context.indexOf('// One provider-owned channel'), expiryStart);
-  assert.match(realtime, /const startFallback[\s\S]*setInterval\(\(\) => \{[\s\S]*void loadStories\(\)[\s\S]*30_000/);
+  assert.match(realtime, /const startFallback[\s\S]*fallbackActive = true/);
+  assert.match(realtime, /const reconciliationTimer = setInterval\(\(\) => \{[\s\S]*AppState\.currentState !== 'active'[\s\S]*storyGroupsRef\.current\.length === 0[\s\S]*void loadStories\(\)[\s\S]*30_000/);
+  assert.equal((realtime.match(/setInterval\(/g) || []).length, 1);
   assert.match(realtime, /else if \(isRealtimeRecoveryStatus\(status\)\)[\s\S]*startFallback\(\)/);
   assert.match(realtime, /status === 'SUBSCRIBED'[\s\S]*stopFallback\(\)/);
 });
