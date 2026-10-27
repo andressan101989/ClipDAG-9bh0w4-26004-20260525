@@ -82,9 +82,17 @@ Deno.serve(async(req)=>{
     // This read intentionally uses the caller JWT. The canonical Stories RLS
     // owns expiry, blocks, moderation and fail-closed safety visibility.
     const {data:story,error:storyError}=await caller.from('stories')
-      .select('id,user_id,media_type').eq('id',storyId).maybeSingle();
+      .select('id,user_id,media_type,expires_at').eq('id',storyId).maybeSingle();
     if(storyError) return premiumJson({error:'story_video_unavailable'},503);
     if(!story||story.media_type!=='video') return premiumJson({error:'not_found'},404);
+    const nowSeconds=Math.floor(Date.now()/1000);
+    const storyExpiryMilliseconds=typeof story.expires_at==='string'
+      ?Date.parse(story.expires_at):Number.NaN;
+    const maximumExpiresAtSeconds=Math.floor(storyExpiryMilliseconds/1000);
+    if(!Number.isSafeInteger(maximumExpiresAtSeconds)) {
+      return premiumJson({error:'story_video_unavailable'},503);
+    }
+    if(maximumExpiresAtSeconds<=nowSeconds) return premiumJson({error:'not_found'},404);
 
     const db=admin();
     const {data:links,error:linksError}=await db.from('video_asset_links')
@@ -108,6 +116,7 @@ Deno.serve(async(req)=>{
     try {
       const grant=await createPrivateStreamPlaybackGrant({
         cloudflareUid:String(asset.cloudflare_uid),customerCode:streamCustomerCode(),
+        nowSeconds,maximumExpiresAtSeconds,
       });
       return premiumJson({success:true,data:{storyId,...grant}});
     } catch(error) {

@@ -86,6 +86,7 @@ function mutationResult(result = { data: { id: assetId }, error: null }) {
 const userId = '10000000-0000-4000-8000-000000000001';
 const otherUserId = '10000000-0000-4000-8000-000000000002';
 const contentId = '20000000-0000-4000-8000-000000000001';
+const storyId = '20000000-0000-4000-8000-000000000002';
 const assetId = '30000000-0000-4000-8000-000000000001';
 const secondAssetId = '30000000-0000-4000-8000-000000000002';
 const providerUid = 'abcdef0123456789abcdef0123456789';
@@ -680,6 +681,8 @@ function rowsChain(rows, error = null) {
 function loadPlayback({
   user = { id: userId },
   entitlement = { allowed: true },
+  stories = [],
+  storyError = null,
   links = [{
     asset_id: assetId, entity_type: 'creator_premium_content', entity_id: contentId,
     slot: 'original', position: 0,
@@ -727,6 +730,10 @@ function loadPlayback({
     },
   };
   const caller = {
+    from(table) {
+      assert.equal(table, 'stories');
+      return rowsChain(stories, storyError);
+    },
     async rpc(name, args) {
       rpcCalls.push({ name, args: structuredClone(args) });
       return { data: [entitlement], error: null };
@@ -779,6 +786,102 @@ function loadPlayback({
     get assetSelectCount() { return assetSelectCount; },
   };
 }
+
+test('private Stream signer caps an explicit absolute expiry without changing Premium TTL', async () => {
+  class StreamProviderError extends Error {
+    constructor(code, httpStatus = 502, transient = false) {
+      super(code);
+      this.code = code;
+      this.httpStatus = httpStatus;
+      this.transient = transient;
+    }
+  }
+  const security = executeModule(
+    read('supabase/functions/_shared/premiumStreamSecurity.ts'),
+    'premiumStreamSecurity.ts',
+    {
+      './stream.ts': {
+        STREAM_MAX_DURATION_SECONDS: 60,
+        StreamProviderError,
+        durationOrNull: value => Number.isFinite(Number(value)) ? Number(value) : null,
+        positiveDimensionOrNull: value => Number(value) > 0 ? Number(value) : null,
+        progressOrNull: value => Number.isFinite(Number(value)) ? Number(value) : null,
+      },
+    },
+    { Deno: { env: { get() { return null; } } } },
+  );
+  const pair = await crypto.subtle.generateKey({
+    name: 'RSASSA-PKCS1-v1_5', modulusLength: 1024,
+    publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256',
+  }, true, ['sign', 'verify']);
+  const jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+  const credentials = {
+    cloudflareUid: providerUid,
+    customerCode: 'code',
+    keyId: 'test-key',
+    privateJwkB64: Buffer.from(JSON.stringify(jwk)).toString('base64'),
+    nowSeconds: 1_000,
+  };
+  const claims = grant => JSON.parse(Buffer.from(
+    new URL(grant.hlsUrl).pathname.split('/')[1].split('.')[1], 'base64url',
+  ).toString('utf8'));
+
+  const storyGrant = await security.createPrivateStreamPlaybackGrant({
+    ...credentials, maximumExpiresAtSeconds: 1_075,
+  });
+  assert.equal(claims(storyGrant).exp, 1_075);
+  assert.equal(storyGrant.expiresAt, '1970-01-01T00:17:55.000Z');
+
+  const premiumGrant = await security.createPremiumStreamPlaybackGrant(credentials);
+  assert.equal(claims(premiumGrant).exp, 1_300);
+
+  await assert.rejects(
+    security.createPrivateStreamPlaybackGrant({
+      ...credentials, maximumExpiresAtSeconds: 1_000,
+    }),
+    error => error?.code === 'stream_signing_expiry_invalid',
+  );
+});
+
+test('Story playback grants are capped by canonical expiry and never issued at or after expiry', async () => {
+  const expiresAt = new Date(Date.now() + 120_000).toISOString();
+  const story = { id: storyId, user_id: userId, media_type: 'video', expires_at: expiresAt };
+  const links = [{
+    asset_id: assetId, owner_id: userId, entity_type: 'story', entity_id: storyId,
+    slot: 'media', position: 0,
+  }];
+  const assets = [{
+    id: assetId, owner_id: userId, purpose: 'story_video', provider: 'cloudflare_stream',
+    visibility: 'private', status: 'ready', cloudflare_uid: 'provider-uid',
+    hls_url: null, dash_url: null, thumbnail_url: null,
+    provider_metadata: { require_signed_urls: true }, duration_seconds: 15,
+  }];
+
+  for (const user of [{ id: otherUserId }, { id: userId }]) {
+    const harness = loadPlayback({ user, stories: [story], links, assets });
+    const result = await post(harness.handler, { story_id: storyId });
+    assert.equal(result.response.status, 200);
+    assert.equal(harness.grantCalls.length, 1);
+    assert.equal(
+      harness.grantCalls[0].maximumExpiresAtSeconds,
+      Math.floor(Date.parse(expiresAt) / 1000),
+    );
+    assert.ok(Number.isSafeInteger(harness.grantCalls[0].nowSeconds));
+    assert.ok(harness.grantCalls[0].nowSeconds < harness.grantCalls[0].maximumExpiresAtSeconds);
+  }
+
+  for (const expires_at of [
+    new Date(Date.now() - 1_000).toISOString(),
+    new Date(Math.floor(Date.now() / 1000) * 1000).toISOString(),
+  ]) {
+    const harness = loadPlayback({
+      user: { id: userId }, stories: [{ ...story, expires_at }], links, assets,
+    });
+    const result = await post(harness.handler, { story_id: storyId });
+    assert.equal(result.response.status, 404);
+    assert.equal(harness.grantCalls.length, 0);
+  }
+});
 
 test('Premium playback request is exclusive and entitlement precedes internal media resolution', async () => {
   for (const body of [
