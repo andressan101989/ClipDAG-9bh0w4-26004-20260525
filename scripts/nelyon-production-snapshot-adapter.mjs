@@ -970,6 +970,16 @@ select pg_catalog.jsonb_build_object(
   ) order by schema,name) from relation_rows),'[]'::jsonb)
 ) snapshot;`;
 
+const STORIES_B1_MIGRATION = '20261027042552_stories_v2_interactive_b1';
+const STORIES_B1_RELATION_NAMES = Object.freeze([
+  'story_analytics_events',
+  'story_b1_worker_lane_state',
+  'story_interactive_elements',
+  'story_interactive_responses',
+  'story_operation_policy',
+  'story_safety_state',
+]);
+
 export const STORIES_B1_PRE_STATE_SQL = `select pg_catalog.jsonb_build_object(
   'schema_version',1,
   'complete',true,
@@ -987,7 +997,8 @@ export const STORIES_B1_PRE_STATE_SQL = `select pg_catalog.jsonb_build_object(
   'complete_evidence_non_review_count',0,
   'incomplete_evidence_non_pending_count',0,
   'complete_evidence_pass_count',0,
-  'fabricated_pass_count',0
+  'fabricated_pass_count',0,
+  'relations','[]'::jsonb
 ) snapshot;`;
 
 export const STORIES_B1_POST_STATE_SQL = `with counts as (
@@ -1010,6 +1021,24 @@ export const STORIES_B1_POST_STATE_SQL = `with counts as (
       or not text_complete or evidence_generation is distinct from generation
       or evidence_fingerprint is null or policy_digest is null or decided_at is null))::integer fabricated_pass
   from private.story_safety_state
+), relation_rows as (
+  select n.nspname schema,c.relname name,owner_role.rolname owner,
+    c.relrowsecurity rls_enabled,c.relforcerowsecurity force_rls,
+    coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable
+    ) order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      acl.privilege_type,acl.is_grantable)
+      from pg_catalog.aclexplode(coalesce(c.relacl,pg_catalog.acldefault('r',c.relowner))) acl
+      left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee),'[]'::jsonb) acl
+  from pg_catalog.pg_class c
+  join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=c.relowner
+  where n.nspname='private' and c.relkind in ('r','p')
+    and c.relname=any(array[
+      'story_analytics_events','story_b1_worker_lane_state','story_interactive_elements',
+      'story_interactive_responses','story_operation_policy','story_safety_state'
+    ]::text[])
 )
 select pg_catalog.jsonb_build_object(
   'schema_version',1,
@@ -1036,7 +1065,11 @@ select pg_catalog.jsonb_build_object(
   'complete_evidence_non_review_count',counts.complete_evidence_non_review,
   'incomplete_evidence_non_pending_count',counts.incomplete_evidence_non_pending,
   'complete_evidence_pass_count',counts.complete_evidence_pass,
-  'fabricated_pass_count',counts.fabricated_pass
+  'fabricated_pass_count',counts.fabricated_pass,
+  'relations',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+    'schema',schema,'name',name,'owner',owner,'rls_enabled',rls_enabled,
+    'force_rls',force_rls,'acl',acl
+  ) order by schema,name) from relation_rows),'[]'::jsonb)
 ) snapshot from counts;`;
 
 function normalizeCanonical(value, seen = new Set()) {
@@ -1108,6 +1141,80 @@ function storiesB1Transition(policy, manifest) {
   return expected;
 }
 
+function storiesB1RecoverySource(policy, manifest, phase, { request, migrations } = {}) {
+  if (phase !== 'recovery' || request?.mode !== 'postcheck_recovery'
+    || request?.scopeConfirmation !== 'POSTCHECK_RECOVERY_READ_ONLY'
+    || String(request?.recoverySourceRunId ?? '') !== '40473092474'
+    || manifest?.identity?.mode !== 'postcheck_recovery'
+    || canonicalJson(manifest?.resources ?? null) !== canonicalJson({
+      config_changed: false,
+      function_contracts: [],
+      functions: [],
+      migrations: [],
+    })) return null;
+  const source = policy?.postcheck_recovery?.approved_sources?.find(item => item.run_id === '40473092474');
+  if (!source || source.expected_latest_migration !== STORIES_B1_MIGRATION
+    || source.expected_migration_count !== policy?.baseline?.migration_count + 1) return null;
+  if (migrations && (!hasExactBaselineMigrationAppend(policy, migrations, STORIES_B1_MIGRATION)
+    || !source.expected_migrations.every(expected => migrations.items.filter(item => (
+      `${item?.version}_${item?.name}` === expected.name
+    )).length === 1))) return null;
+  return source;
+}
+
+function storiesB1StateRequirement(policy, manifest, phase, context = {}) {
+  const transition = storiesB1Transition(policy, manifest);
+  const installed = String(policy?.baseline?.latest_migration ?? '') >= STORIES_B1_MIGRATION;
+  const recovery = storiesB1RecoverySource(policy, manifest, phase, context);
+  const required = Boolean(transition) || installed || Boolean(recovery);
+  const usePredecessor = Boolean(transition) && phase === 'pre' && !installed;
+  return {
+    required,
+    transition,
+    installed,
+    recovery,
+    query: usePredecessor ? STORIES_B1_PRE_STATE_SQL : STORIES_B1_POST_STATE_SQL,
+    query_id: `nelyon-stories-b1-${usePredecessor ? 'pre' : 'post'}-state-v1`,
+  };
+}
+
+function normalizeStoriesB1Relations(rows) {
+  if (!Array.isArray(rows)) fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 relation evidence must be an array');
+  const items = rows.map(row => {
+    exactKeys(row, ['acl', 'force_rls', 'name', 'owner', 'rls_enabled', 'schema'],
+      'STORIES_B1_POSTCHECK_FAILED');
+    if (row.schema !== 'private' || !STORIES_B1_RELATION_NAMES.includes(row.name)
+      || typeof row.owner !== 'string' || typeof row.rls_enabled !== 'boolean'
+      || typeof row.force_rls !== 'boolean') {
+      fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 relation authority is incomplete');
+    }
+    return {
+      schema: row.schema,
+      name: row.name,
+      owner: row.owner,
+      rls_enabled: row.rls_enabled,
+      force_rls: row.force_rls,
+      acl: normalizeAcl(row.acl, 'STORIES_B1_POSTCHECK_FAILED'),
+    };
+  }).sort((left, right) => `${left.schema}.${left.name}`.localeCompare(`${right.schema}.${right.name}`));
+  if (new Set(items.map(item => `${item.schema}.${item.name}`)).size !== items.length) {
+    fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 relation identities are duplicate');
+  }
+  return items;
+}
+
+function expectedStoriesB1Relations() {
+  return STORIES_B1_RELATION_NAMES.map(name => ({
+    schema: 'private',
+    name,
+    owner: 'postgres',
+    rls_enabled: true,
+    force_rls: true,
+    acl: ['DELETE', 'INSERT', 'MAINTAIN', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']
+      .map(privilege_type => ({ grantee: 'postgres', privilege_type, is_grantable: false })),
+  })).sort((left, right) => `${left.schema}.${left.name}`.localeCompare(`${right.schema}.${right.name}`));
+}
+
 export function normalizeStoriesB1State(snapshot) {
   const withDigest = Object.hasOwn(snapshot ?? {}, 'sha256');
   exactKeys(snapshot, [
@@ -1115,6 +1222,7 @@ export function normalizeStoriesB1State(snapshot) {
     'activation', 'mode', 'story_count', 'direct_story_count', 'safety_state_counts',
     'complete_evidence_count', 'complete_evidence_non_review_count',
     'incomplete_evidence_non_pending_count', 'complete_evidence_pass_count', 'fabricated_pass_count',
+    'relations',
     ...(withDigest ? ['sha256'] : []),
   ], 'STORIES_B1_POSTCHECK_FAILED');
   exactKeys(snapshot.safety_state_counts, ['blocked', 'passed', 'pending', 'review'],
@@ -1143,7 +1251,9 @@ export function normalizeStoriesB1State(snapshot) {
     || snapshot.fabricated_pass_count > snapshot.safety_state_counts.passed) {
     fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 snapshot has an invalid shape or count');
   }
-  const { sha256: claimed, ...unsigned } = snapshot;
+  const relations = normalizeStoriesB1Relations(snapshot.relations);
+  const { sha256: claimed, ...rawUnsigned } = snapshot;
+  const unsigned = { ...rawUnsigned, relations };
   const digest = sha256(canonicalJson(unsigned));
   if (withDigest && (!HASH_PATTERN.test(claimed ?? '') || claimed !== digest)) {
     fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 snapshot digest differs');
@@ -1169,6 +1279,8 @@ export function validateStoriesB1StateTransition(preSnapshot, postSnapshot, tran
     || pre.infrastructure_installed !== false || post.infrastructure_installed !== true
     || pre.owner_approved_policy !== false || post.owner_approved_policy !== false
     || pre.activation !== false || post.activation !== false
+    || pre.relations.length !== 0
+    || canonicalJson(post.relations) !== canonicalJson(expectedStoriesB1Relations())
     || post.safety_state_counts.blocked !== 0
     || post.safety_state_counts.passed !== 0
     || post.complete_evidence_non_review_count !== 0
@@ -1180,6 +1292,21 @@ export function validateStoriesB1StateTransition(preSnapshot, postSnapshot, tran
     fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 release is not exact fail-closed infrastructure');
   }
   return true;
+}
+
+function validateStoriesB1InstalledState(snapshot) {
+  const stories = normalizeStoriesB1State(snapshot);
+  if (stories.infrastructure_installed !== true || stories.owner_approved_policy !== false
+    || stories.activation !== false
+    || canonicalJson(stories.relations) !== canonicalJson(expectedStoriesB1Relations())
+    || stories.safety_state_counts.blocked !== 0 || stories.safety_state_counts.passed !== 0
+    || stories.complete_evidence_non_review_count !== 0
+    || stories.incomplete_evidence_non_pending_count !== 0
+    || stories.complete_evidence_pass_count !== 0 || stories.fabricated_pass_count !== 0
+    || Object.values(stories.safety_state_counts).reduce((sum, value) => sum + value, 0) !== stories.story_count) {
+    fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 installed state is not exact fail-closed infrastructure');
+  }
+  return stories;
 }
 
 function validateInventory(inventory, label) {
@@ -1569,9 +1696,12 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   const financeQueries = selectFinanceSnapshotQueries(evidence?.migrations);
   const financeTransition = activeFinanceAuthorityTransition(policy, manifest);
   const requireFinanceAuthority = Boolean(financeTransition) || financeQueries.phase !== 'legacy';
-  const storiesTransition = storiesB1Transition(policy, manifest);
-  const requireStoriesB1 = Boolean(storiesTransition);
-  const storiesQuery = phase === 'pre' ? STORIES_B1_PRE_STATE_SQL : STORIES_B1_POST_STATE_SQL;
+  const storiesRequirement = storiesB1StateRequirement(policy, manifest, phase, {
+    request,
+    migrations: evidence?.migrations,
+  });
+  const requireStoriesB1 = storiesRequirement.required;
+  const storiesQuery = storiesRequirement.query;
   exactKeys(evidence, [
     'adapter', 'backup', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
     'health', 'identity', 'migrations', 'observed_at', 'phase', 'premium_state', 'project_ref',
@@ -1602,7 +1732,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       { id: `nelyon-finance-facts-${financeQueries.phase}-v1`, sha256: sha256(financeQueries.facts) },
     ] : []),
     ...(requireStoriesB1 ? [{
-      id: `nelyon-stories-b1-${phase === 'pre' ? 'pre' : 'post'}-state-v1`,
+      id: storiesRequirement.query_id,
       sha256: sha256(storiesQuery),
     }] : []),
   ];
@@ -1893,13 +2023,59 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
     complete: true,
     managed_functions: managed.map(item => ({ name: item.name, verify_jwt: item.verify_jwt })),
   };
+  const storiesB1Installed = (evidence.migrations?.items ?? [])
+    .some(item => baselineMigrationName(item) === STORIES_B1_MIGRATION);
+  const storiesAdvisor = policy?.stories_b1_transition?.security_advisor;
+  if (storiesB1Installed) {
+    const stories = normalizeStoriesB1State(evidence.stories_b1_state);
+    if (stories.infrastructure_installed !== true || stories.owner_approved_policy !== false
+      || stories.activation !== false || canonicalJson(stories.relations) !== canonicalJson(expectedStoriesB1Relations())
+      || stories.safety_state_counts.blocked !== 0 || stories.safety_state_counts.passed !== 0
+      || stories.complete_evidence_non_review_count !== 0
+      || stories.incomplete_evidence_non_pending_count !== 0
+      || stories.complete_evidence_pass_count !== 0 || stories.fabricated_pass_count !== 0
+      || !Array.isArray(storiesAdvisor?.introduced_exceptions)
+      || storiesAdvisor.introduced_exceptions.length !== 15
+      || !Array.isArray(storiesAdvisor?.removed_findings)
+      || storiesAdvisor.removed_findings.length !== 2) {
+      fail('REMOTE_BASELINE_MISMATCH', 'Stories B1 baseline evidence is not exact fail-closed infrastructure');
+    }
+  }
   const attestedRpcIdentities = new Set((evidence.rpc_security?.items ?? []).map(rpcIdentity));
-  const deployedExceptionFingerprints = new Set((policy?.security_advisor?.exceptions ?? [])
+  if (storiesB1Installed) {
+    const expectedStoriesRpcIdentities = storiesAdvisor.introduced_exceptions
+      .filter(exception => Array.isArray(exception?.object?.argument_types))
+      .map(exception => rpcIdentity(exception.object));
+    if (expectedStoriesRpcIdentities.some(identity => !attestedRpcIdentities.has(identity))) {
+      fail('REMOTE_BASELINE_MISMATCH', 'Stories B1 RPC authority evidence is incomplete');
+    }
+  }
+  const effectiveExceptions = [
+    ...(policy?.security_advisor?.exceptions ?? []),
+    ...(storiesB1Installed ? storiesAdvisor.introduced_exceptions : []),
+  ];
+  const deployedExceptionFingerprints = new Set(effectiveExceptions
     .filter(exception => !Array.isArray(exception?.object?.argument_types)
       || attestedRpcIdentities.has(rpcIdentity(exception.object)))
     .map(exception => exception.advisor_fingerprint));
-  const historicalAdvisorItems = evidence.cron_security.advisors.items
+  let historicalAdvisorItems = evidence.cron_security.advisors.items
     .filter(item => !deployedExceptionFingerprints.has(item.fingerprint));
+  if (storiesB1Installed) {
+    const removedFindings = storiesAdvisor.removed_findings.map(item => ({
+      fingerprint: item?.fingerprint,
+      level: item?.level,
+      resource_kind: item?.resource_kind,
+    }));
+    if (removedFindings.some(item => !HASH_PATTERN.test(item.fingerprint ?? '')
+      || typeof item.level !== 'string' || typeof item.resource_kind !== 'string')
+      || new Set(removedFindings.map(item => item.fingerprint)).size !== removedFindings.length
+      || removedFindings.some(item => evidence.cron_security.advisors.items
+        .some(current => current.fingerprint === item.fingerprint))) {
+      fail('REMOTE_BASELINE_MISMATCH', 'Stories B1 removed Advisor evidence is invalid or still present');
+    }
+    historicalAdvisorItems = [...historicalAdvisorItems, ...removedFindings]
+      .sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+  }
   // Production baselines are signed over the exact cron command bytes. Keep
   // the legacy normalized identity only for validating the F5 cron contract.
   const baselineCronItems = projectCronBaselineItems(
@@ -1946,6 +2122,11 @@ export function verifyProductionPreSnapshot({ pre, policy, request, manifest, ad
       || Object.values(stories.safety_state_counts).some(value => value !== 0)) {
       fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 pre-snapshot is not the exact fail-closed predecessor');
     }
+  } else if (storiesB1StateRequirement(policy, manifest, 'pre', {
+    request,
+    migrations: pre.migrations,
+  }).required) {
+    validateStoriesB1InstalledState(pre.stories_b1_state);
   }
   const baseline = policy?.baseline;
   if (baseline?.state !== 'verified'
@@ -2032,6 +2213,11 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
   const storiesTransition = storiesB1Transition(policy, manifest);
   if (storiesTransition) {
     validateStoriesB1StateTransition(pre.stories_b1_state, post.stories_b1_state, storiesTransition);
+  } else if (storiesB1StateRequirement(policy, manifest, 'post', {
+    request,
+    migrations: post.migrations,
+  }).required) {
+    validateStoriesB1InstalledState(post.stories_b1_state);
   }
   validatePremiumStateTransition(pre.premium_state, post.premium_state, manifest, policy);
   if (Date.parse(post.observed_at) < Date.parse(pre.observed_at)
@@ -2127,11 +2313,14 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
     .filter(exception => !preExceptionFingerprints.has(exception.advisor_fingerprint));
   const removedExceptionFingerprints = [...preExceptionFingerprints]
     .filter(fingerprint => !postExceptionFingerprints.has(fingerprint));
+  const allowedRemovedFindings = storiesTransition
+    ? storiesTransition?.security_advisor?.removed_findings
+    : removedExceptionFingerprints;
   validateSecurityAdvisorDelta(
     pre.cron_security.advisors.items,
     post.cron_security.advisors.items,
     introducedExceptions,
-    removedExceptionFingerprints,
+    allowedRemovedFindings,
   );
   const f4Transition = financeTransition?.to_phase === 'f4_general';
   const f5Transition = financeTransition?.to_phase === 'f5_autonomous';
@@ -2209,6 +2398,12 @@ export function verifyProductionRecoverySnapshot({ recovery, policy, request, ma
   });
   validateRpcSecurityAttestations(recovery.rpc_security, phaseExceptions);
   validatePremiumPostcheckState(recovery.premium_state);
+  if (storiesB1StateRequirement(policy, manifest, 'recovery', {
+    request,
+    migrations: recovery.migrations,
+  }).required) {
+    validateStoriesB1InstalledState(recovery.stories_b1_state);
+  }
   return {
     result: 'RECOVERY_SNAPSHOT_VERIFIED',
     evidence_sha256: recovery.evidence_sha256,
@@ -2492,6 +2687,10 @@ function exactRecoveryAuthorityPhase(policy, manifest, phase, { request, migrati
       expectedLatestMigration: '20261026072512_creator_premium_f5_autonomous_subscriptions',
       phase: 'f5_autonomous',
     }],
+    ['40473092474', {
+      expectedLatestMigration: STORIES_B1_MIGRATION,
+      phase: 'f5_autonomous',
+    }],
   ]);
   const requestedRunId = String(request?.recoverySourceRunId ?? '');
   const recovery = recoveryPhases.get(requestedRunId);
@@ -2550,10 +2749,11 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
   const installedF4 = policy?.baseline?.latest_migration >= '20261026030000_creator_premium_f4_general_bdag_activation';
   const installedF5 = policy?.baseline?.latest_migration >= '20261026072512_creator_premium_f5_autonomous_subscriptions';
   const exactRecoveryPhase = exactRecoveryAuthorityPhase(policy, manifest, phase, context);
+  let result = [...exceptions];
   if ((transition && phase !== 'pre') || installedFoundation || exactRecoveryPhase) {
     validateFinancePolicyAuthority(policy);
     const successors = policy.finance_security_advisor.rpc_attestations;
-    let result = [...exceptions.filter(exception => !successors.some(item => item.object.name === exception.object.name)),
+    result = [...result.filter(exception => !successors.some(item => item.object.name === exception.object.name)),
       ...successors, policy.finance_security_advisor.relation_exception];
     if ((transition?.to_phase === 'f3_c2' && phase !== 'pre') || installedC2
       || ['f3_c2', 'f4_general', 'f5_autonomous'].includes(exactRecoveryPhase)) {
@@ -2573,9 +2773,22 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
       const relationAdditions = policy.finance_security_advisor.f5_relation_additions;
       result = [...result, ...rpcAdditions, ...relationAdditions];
     }
-    return phaseBoundRpcExceptions(result, manifest, phase, { policy, migrations: context.migrations });
   }
-  return phaseBoundRpcExceptions(exceptions, manifest, phase, { policy, migrations: context.migrations });
+  const storiesTransition = storiesB1Transition(policy, manifest);
+  const installedStoriesB1 = String(policy?.baseline?.latest_migration ?? '') >= STORIES_B1_MIGRATION;
+  const recoveryStoriesB1 = storiesB1RecoverySource(policy, manifest, phase, context);
+  if ((storiesTransition && phase !== 'pre') || installedStoriesB1 || recoveryStoriesB1) {
+    const additions = policy?.stories_b1_transition?.security_advisor?.introduced_exceptions;
+    if (!Array.isArray(additions) || additions.length !== 15) {
+      fail('RPC_SECURITY_ATTESTATION_FAILED', 'Stories B1 advisor attestations are unavailable');
+    }
+    const additionsByFingerprint = new Map(additions.map(item => [item?.advisor_fingerprint, item]));
+    if (additionsByFingerprint.size !== additions.length) {
+      fail('RPC_SECURITY_ATTESTATION_FAILED', 'Stories B1 advisor attestations are duplicate');
+    }
+    result = [...result.filter(item => !additionsByFingerprint.has(item?.advisor_fingerprint)), ...additions];
+  }
+  return phaseBoundRpcExceptions(result, manifest, phase, { policy, migrations: context.migrations });
 }
 
 function rpcIdentitiesFromExceptions(exceptions) {
@@ -2586,7 +2799,7 @@ function rpcIdentitiesFromExceptions(exceptions) {
   }));
 }
 
-export function validateSecurityAdvisorDelta(preItems, postItems, allowedIntroducedExceptions, allowedRemovedFingerprints = []) {
+export function validateSecurityAdvisorDelta(preItems, postItems, allowedIntroducedExceptions, allowedRemovedFindings = []) {
   const before = new Set((preItems ?? []).map(item => item?.fingerprint));
   const after = new Set((postItems ?? []).map(item => item?.fingerprint));
   if (before.size !== (preItems ?? []).length || after.size !== (postItems ?? []).length) {
@@ -2601,8 +2814,32 @@ export function validateSecurityAdvisorDelta(preItems, postItems, allowedIntrodu
     fail('REMOTE_POSTCHECK_FAILED', 'release Security Advisor delta differs from the exact approved exception set');
   }
   const removed = [...before].filter(fingerprint => !after.has(fingerprint)).sort();
-  const expectedRemoved = allowedRemovedFingerprints.filter(fingerprint => before.has(fingerprint)).sort();
+  const normalizedRemoved = allowedRemovedFindings.map(item => {
+    if (typeof item === 'string') return { fingerprint: item, descriptor: null };
+    const descriptor = {
+      fingerprint: item?.fingerprint,
+      level: item?.level,
+      resource_kind: item?.resource_kind,
+    };
+    if (!HASH_PATTERN.test(descriptor.fingerprint ?? '') || typeof descriptor.level !== 'string'
+      || descriptor.level.length === 0 || typeof descriptor.resource_kind !== 'string'
+      || descriptor.resource_kind.length === 0) {
+      fail('REMOTE_POSTCHECK_FAILED', 'approved removed Advisor finding is malformed');
+    }
+    return { fingerprint: descriptor.fingerprint, descriptor };
+  });
+  if (new Set(normalizedRemoved.map(item => item.fingerprint)).size !== normalizedRemoved.length) {
+    fail('REMOTE_POSTCHECK_FAILED', 'approved removed Advisor findings are duplicate');
+  }
+  const expectedRemoved = normalizedRemoved.map(item => item.fingerprint)
+    .filter(fingerprint => before.has(fingerprint)).sort();
+  const removedDescriptorsValid = normalizedRemoved.every(({ fingerprint, descriptor }) => {
+    if (!before.has(fingerprint) || descriptor === null) return true;
+    const observed = preItems.find(item => item.fingerprint === fingerprint);
+    return canonicalJson(observed ?? null) === canonicalJson(descriptor);
+  });
   if (canonicalJson(removed) !== canonicalJson(expectedRemoved)
+    || !removedDescriptorsValid
     || preItems.some(item => after.has(item.fingerprint)
       && canonicalJson(item) !== canonicalJson(postItems.find(value => value.fingerprint === item.fingerprint)))) {
     fail('REMOTE_POSTCHECK_FAILED', 'pre-existing Advisor findings disappeared or changed');
@@ -2633,6 +2870,12 @@ function rpcIdentity(item) {
   return `${item.schema}.${item.name}(${item.argument_types.join(',')})`;
 }
 
+function permitsLegacyStoriesServiceRole(item) {
+  if (item?.schema !== 'public' || item?.name !== 'create_story_with_media') return false;
+  return canonicalJson(item.argument_types) === canonicalJson(['uuid'])
+    || canonicalJson(item.argument_types) === canonicalJson(['uuid', 'jsonb', 'uuid']);
+}
+
 function validateRpcSecuritySnapshot(snapshot) {
   exactKeys(snapshot, ['complete', 'count', 'items', 'sha256'], 'RPC_SECURITY_ATTESTATION_FAILED');
   if (snapshot.complete !== true || !Number.isInteger(snapshot.count) || snapshot.count < 1
@@ -2653,14 +2896,17 @@ function validateRpcSecuritySnapshot(snapshot) {
       || item.security_definer !== true || item.owner !== 'postgres'
       || !Array.isArray(item.search_path) || item.search_path.some(setting => typeof setting !== 'string')
       || !HASH_PATTERN.test(item.definition_sha256 ?? '')
-      || canonicalJson(item.execute) !== canonicalJson({ public: false, anon: false, authenticated: true, service_role: false })) {
+      || item.execute.public !== false || item.execute.anon !== false
+      || item.execute.authenticated !== true || typeof item.execute.service_role !== 'boolean'
+      || (item.execute.service_role === true && !permitsLegacyStoriesServiceRole(item))) {
       fail('RPC_SECURITY_ATTESTATION_FAILED', 'protected RPC authority is unsafe or incomplete');
     }
     normalizeAcl(item.acl, 'RPC_SECURITY_ATTESTATION_FAILED');
     identities.push(rpcIdentity(item));
   }
   if (new Set(identities).size !== identities.length
-    || canonicalJson(identities) !== canonicalJson([...identities].sort())) {
+    || canonicalJson(identities) !== canonicalJson([...identities]
+      .sort((left, right) => left.localeCompare(right)))) {
     fail('RPC_SECURITY_ATTESTATION_FAILED', 'protected RPC identities are duplicate or unordered');
   }
   return snapshot;
@@ -2704,7 +2950,7 @@ export function normalizeRpcSecurityAttestations(rows) {
 function validateRpcIdentitySet(snapshot, exceptions) {
   const expected = rpcIdentitiesFromExceptions(exceptions)
     .map(item => `${item.schema}.${item.name}(${item.argument_types.join(',')})`)
-    .sort();
+    .sort((left, right) => left.localeCompare(right));
   const actual = snapshot.items.map(rpcIdentity);
   if (canonicalJson(actual) !== canonicalJson(expected)) {
     fail('RPC_SECURITY_ATTESTATION_FAILED', 'RPC catalog does not match the exact phase-approved identity set');
@@ -2914,9 +3160,9 @@ export async function captureProductionSnapshot({
   assertReadOnlySql(CRON_SNAPSHOT_SQL);
   assertReadOnlySql(RPC_SECURITY_ATTESTATION_SQL);
   assertReadOnlySql(PREMIUM_POSTCHECK_STATE_SQL);
-  const storiesTransition = storiesB1Transition(policy, manifest);
-  const storiesQuery = phase === 'pre' ? STORIES_B1_PRE_STATE_SQL : STORIES_B1_POST_STATE_SQL;
-  if (storiesTransition) assertReadOnlySql(storiesQuery);
+  const initialStoriesRequirement = storiesB1StateRequirement(policy, manifest, phase, { request });
+  const storiesQuery = initialStoriesRequirement.query;
+  if (initialStoriesRequirement.required) assertReadOnlySql(storiesQuery);
   const base = `/v1/projects/${PRODUCTION_PROJECT_REF}`;
   const calls = [];
   const get = async (path, label) => {
@@ -2941,6 +3187,11 @@ export async function captureProductionSnapshot({
   const healthBody = await get(`${base}/health?services=${REQUIRED_HEALTH_SERVICES.join(',')}`, 'project health');
   const migrationsBody = await get(`${base}/database/migrations`, 'migration inventory');
   const migrations = normalizeMigrations(migrationsBody);
+  const storiesRequirement = storiesB1StateRequirement(policy, manifest, phase, { request, migrations });
+  if (initialStoriesRequirement.required !== storiesRequirement.required
+    || initialStoriesRequirement.query_id !== storiesRequirement.query_id) {
+    fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 capture scope differs from the observed migration inventory');
+  }
   const financeQueries = selectFinanceSnapshotQueries(migrations);
   const requireFinanceAuthority = Boolean(activeFinanceAuthorityTransition(policy, manifest)) || financeQueries.phase !== 'legacy';
   const functionsBody = await get(`${base}/functions`, 'function inventory');
@@ -2970,7 +3221,7 @@ export async function captureProductionSnapshot({
       value => validateFinanceFacts(value, financeQueries.phase), 'finance fact envelope');
     validateFinanceAuthority(financeAuthority, policy, financeQueries.phase);
   }
-  const storiesB1State = storiesTransition
+  const storiesB1State = storiesRequirement.required
     ? singleSnapshot(
       await sql(storiesQuery, null, 'Stories B1 fail-closed state'),
       normalizeStoriesB1State,
@@ -2996,8 +3247,8 @@ export async function captureProductionSnapshot({
           { id: 'nelyon-finance-authority-v1', sha256: sha256(financeQueries.authority) },
           { id: `nelyon-finance-facts-${financeQueries.phase}-v1`, sha256: sha256(financeQueries.facts) },
         ] : []),
-        ...(storiesTransition ? [{
-          id: `nelyon-stories-b1-${phase === 'pre' ? 'pre' : 'post'}-state-v1`,
+        ...(storiesRequirement.required ? [{
+          id: storiesRequirement.query_id,
           sha256: sha256(storiesQuery),
         }] : []),
       ],
@@ -3016,7 +3267,7 @@ export async function captureProductionSnapshot({
     ...(requireFinanceAuthority ? { finance_authority: financeAuthority, finance_facts: financeFacts } : {}),
     rpc_security: rpcSecurity,
     premium_state: singleSnapshot(premiumStateBody, normalizePremiumPostcheckState, 'Premium postcheck state'),
-    ...(storiesTransition ? { stories_b1_state: storiesB1State } : {}),
+    ...(storiesRequirement.required ? { stories_b1_state: storiesB1State } : {}),
     requests: calls,
   };
   return { ...evidence, evidence_sha256: sha256(canonicalJson(evidence)) };

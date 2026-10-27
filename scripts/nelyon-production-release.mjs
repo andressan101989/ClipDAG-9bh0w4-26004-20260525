@@ -159,6 +159,169 @@ export const F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
   },
   requires_separate_baseline_promotion: true,
 });
+export const STORIES_B1_SECURITY_NEGATIVE_AUTHORIZATION_EVIDENCE = Object.freeze({
+  version: 'stories-v2-interactive-b1-security-negative-authorization-v1',
+  migration_path: 'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql',
+  test_paths: [
+    'tests/nelyonProductionSnapshotAdapter.test.mjs',
+    'tests/storiesV2InteractiveB1Database.test.mjs',
+  ],
+  cases: [
+    { actor: 'anon', expected: 'rpc_and_relation_acl_denied' },
+    { actor: 'authenticated_non_owner', expected: 'domain_authority_denied' },
+    { actor: 'authenticated_owner', expected: 'bounded_operation_only' },
+    { actor: 'service_role', expected: 'legacy_wrapper_or_server_pipeline_only' },
+    { actor: 'authenticated_replay', expected: 'idempotent_single_effect' },
+    { actor: 'authenticated_after_expiry', expected: 'story_expired' },
+  ],
+});
+export const STORIES_B1_SECURITY_NEGATIVE_AUTHORIZATION_EVIDENCE_SHA256 = sha256Hex(
+  canonicalJson(STORIES_B1_SECURITY_NEGATIVE_AUTHORIZATION_EVIDENCE),
+);
+
+const STORIES_B1_ORIGIN = Object.freeze({
+  migration: '20261027042552_stories_v2_interactive_b1',
+  migration_blob: '9b7d8ce8b1e375d1f4b4a1dfde8c1ec032d23ae4',
+  source_sha: 'c4e75f63e67433f032212852349626f755e9d2de',
+});
+const STORIES_B1_OWNER_ACL = Object.freeze(
+  ['DELETE', 'INSERT', 'MAINTAIN', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']
+    .map(privilege_type => ({ grantee: 'postgres', privilege_type, is_grantable: false })),
+);
+const storyB1TableException = (advisor_fingerprint, name) => ({
+  advisor_fingerprint,
+  advisor_type: 'table',
+  advisor_severity: 'INFO',
+  object: { schema: 'private', name },
+  attestation: {
+    owner: 'postgres',
+    rls_enabled: true,
+    force_rls: true,
+    acl: STORIES_B1_OWNER_ACL.map(item => ({ ...item })),
+  },
+  authorization: {
+    functional_reason: 'Stores private Stories B1 authority state behind owner-only ACL and FORCE RLS; access is mediated by bounded server RPCs.',
+    controls: ['force_rls', 'negative_authorization_tests', 'owner_only_acl', 'private_schema', 'server_rpc_only'],
+    negative_test_evidence_sha256: STORIES_B1_SECURITY_NEGATIVE_AUTHORIZATION_EVIDENCE_SHA256,
+  },
+  origin: { ...STORIES_B1_ORIGIN },
+  technical_approval: 'verified',
+});
+const storyB1RpcException = ({
+  advisor_fingerprint,
+  name,
+  argument_types,
+  identity_arguments,
+  definition_sha256,
+  service_role = false,
+}) => ({
+  advisor_fingerprint,
+  advisor_type: 'authenticated_security_definer_function_executable',
+  advisor_severity: 'WARN',
+  object: { schema: 'public', name, argument_types, identity_arguments },
+  attestation: {
+    security_definer: true,
+    owner: 'postgres',
+    search_path: ['search_path=""'],
+    acl: [
+      { grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false },
+      { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+      ...(service_role
+        ? [{ grantee: 'service_role', privilege_type: 'EXECUTE', is_grantable: false }]
+        : []),
+    ],
+    execute: { anon: false, authenticated: true, public: false, service_role },
+    definition_sha256,
+  },
+  authorization: {
+    functional_reason: 'Exposes a bounded authenticated Stories operation while retaining ownership, visibility, expiry, idempotency, moderation, and rate-limit checks server-side.',
+    controls: ['authenticated_session', 'domain_authority_checks', 'negative_authorization_tests', 'server_side_validation'],
+    negative_test_evidence_sha256: STORIES_B1_SECURITY_NEGATIVE_AUTHORIZATION_EVIDENCE_SHA256,
+  },
+  origin: { ...STORIES_B1_ORIGIN },
+  technical_approval: 'verified',
+});
+const STORIES_B1_SECURITY_ADVISOR_TRANSITION = Object.freeze({
+  introduced_exceptions: [
+    storyB1TableException('186ff09e7098d14e92b174eab02d28581cdb3fa96c827aaae5d68b4dd5851358', 'story_analytics_events'),
+    storyB1TableException('c082a5b2e8e3d61079830d093086f13bffb9aa2db7b995ff6d1f760a627621fb', 'story_b1_worker_lane_state'),
+    storyB1TableException('fbc12c0778e1f330784e5218fe36cd8ddfea0d9a631e4dee6ce11267ece5565d', 'story_interactive_elements'),
+    storyB1TableException('2eda0da977ce4d7c878e2c9b7b4ce4d35956aaaac366c555f030f1f504f32fb5', 'story_interactive_responses'),
+    storyB1TableException('02f70259c8630d617662e0f414f90c8911232232732206c89ce5ac05505c80e3', 'story_operation_policy'),
+    storyB1TableException('cc5a7b318440e0c5f395434404b5cc422a35aa5b03b2b972c57d75a514a9a961', 'story_safety_state'),
+    storyB1RpcException({
+      advisor_fingerprint: 'e023793e926627cbbbeabe0e5e23b22d1db7c60fdb4a4cf9922be2b35c28e43e',
+      name: 'create_story_from_content',
+      argument_types: ['uuid', 'jsonb', 'uuid', 'jsonb'],
+      identity_arguments: 'p_video_id uuid, p_composition jsonb, p_client_story_id uuid, p_interactive_definitions jsonb',
+      definition_sha256: '5b6c6cd3d6a1f86dd5e2b0b888cc67798dbfeb30bef12ab7cc699f0f15497e01',
+    }),
+    storyB1RpcException({
+      advisor_fingerprint: 'd7e531c4fba0d02da9a666b26ea960d27837a699415c5ac1c3c89eb41766d510',
+      name: 'create_story_with_media', argument_types: ['uuid'], identity_arguments: 'p_asset_id uuid',
+      definition_sha256: '136f73f1b9f3e376cf4cf3022d1572912678bf05f9d9c2ee1c04fdbaca8a778d', service_role: true,
+    }),
+    storyB1RpcException({
+      advisor_fingerprint: '4372ff9ba19d85901be4b83b6fff6b6d5668b5fc90dcaeec39c7b592c99fc8ff',
+      name: 'create_story_with_media', argument_types: ['uuid', 'jsonb', 'uuid'],
+      identity_arguments: 'p_asset_id uuid, p_composition jsonb, p_client_story_id uuid',
+      definition_sha256: '27d0de28edff7afc83b02390421f7a3663187644a534228080ad50a9acc594b3', service_role: true,
+    }),
+    storyB1RpcException({
+      advisor_fingerprint: 'e2ccf267fa8e3420ee8c9070607243f35523e0e1cb9a0d66e05ff7596a18c747',
+      name: 'create_story_with_media', argument_types: ['uuid', 'jsonb', 'uuid', 'jsonb'],
+      identity_arguments: 'p_asset_id uuid, p_composition jsonb, p_client_story_id uuid, p_interactive_definitions jsonb',
+      definition_sha256: 'f584e1899eb14709546e50d0c90a82f1be7112c2b1501a72757e983e1834b497',
+    }),
+    storyB1RpcException({
+      advisor_fingerprint: '3a12c5201d6f193ab09a1d9dd0fcc7edd8d2de6833ffaa9a7b3442096b21c302',
+      name: 'get_story_interactive_results',
+      argument_types: ['uuid', 'uuid', 'integer', 'timestamp with time zone', 'uuid'],
+      identity_arguments: 'p_story_id uuid, p_element_id uuid, p_limit integer, p_before_created_at timestamp with time zone, p_before_respondent_id uuid',
+      definition_sha256: '60bfb01e8254a016a428a5a7d9ed8e7a4fc392bd5b67a97a84e6e270fdd8be22',
+    }),
+    storyB1RpcException({
+      advisor_fingerprint: '30f89b13ad41bd7db1630ee0d452f5546ff901e0c3986e35549a8adb3fe5cc46',
+      name: 'get_story_interactive_state', argument_types: ['uuid'], identity_arguments: 'p_story_id uuid',
+      definition_sha256: 'a460242424186b2229e9e2c24c3472c31ae23d05a7ba9442408a70ea280abe15',
+    }),
+    storyB1RpcException({
+      advisor_fingerprint: 'fcea83f01492a208ea21a68e14fcd4d8f28027e2bbeecb6a9a5bd1fc295acdc1',
+      name: 'moderate_story_question', argument_types: ['uuid', 'uuid', 'uuid', 'text'],
+      identity_arguments: 'p_story_id uuid, p_element_id uuid, p_respondent_id uuid, p_action text',
+      definition_sha256: 'd9a0157bedc9e4f0529ad8c7f1981af1606e7fd05c1a3f0cade603b4f14fc7ee',
+    }),
+    storyB1RpcException({
+      advisor_fingerprint: 'c7ef8314fc6979b4d081375881a37c64f7e7241082a6125ae07e75ee81fb2007',
+      name: 'record_story_event', argument_types: ['uuid', 'text', 'uuid'],
+      identity_arguments: 'p_story_id uuid, p_event_type text, p_event_id uuid',
+      definition_sha256: '348b79e75614e7fd42bc136c7e3eac93cd3cbe7475f983428ff75326d24886f8',
+    }),
+    storyB1RpcException({
+      advisor_fingerprint: 'f41e771230d466749fae7ce825436a3fd93878ceb68a7dfc43b4392e976ac26d',
+      name: 'respond_to_story_element', argument_types: ['uuid', 'uuid', 'uuid', 'jsonb'],
+      identity_arguments: 'p_story_id uuid, p_element_id uuid, p_idempotency_key uuid, p_payload jsonb',
+      definition_sha256: '634d5c415eef8147a43780dd81b4d75f8fcb77645c74dbfe2c1460c23cf1df70',
+    }),
+  ],
+  removed_findings: [
+    {
+      fingerprint: '9b4cde0225530c588b9832739ad2b8a131ef6f4b408cdd760da9301deda6c000',
+      level: 'WARN', resource_kind: 'authenticated_security_definer_function_executable',
+      object: { schema: 'public', name: 'create_story_with_media', argument_types: ['uuid'], identity_arguments: 'p_asset_id uuid', old_language: 'sql' },
+      replacement: { fingerprint: 'd7e531c4fba0d02da9a666b26ea960d27837a699415c5ac1c3c89eb41766d510', language: 'plpgsql', definition_sha256: '136f73f1b9f3e376cf4cf3022d1572912678bf05f9d9c2ee1c04fdbaca8a778d' },
+      origin: { ...STORIES_B1_ORIGIN },
+    },
+    {
+      fingerprint: 'bd8275738ba7f668dc16573d7454a0f722d3507bbc196c3aa0a6f30dcaf87f01',
+      level: 'WARN', resource_kind: 'authenticated_security_definer_function_executable',
+      object: { schema: 'public', name: 'create_story_with_media', argument_types: ['uuid', 'jsonb', 'uuid'], identity_arguments: 'p_asset_id uuid, p_composition jsonb, p_client_story_id uuid', old_language: 'sql' },
+      replacement: { fingerprint: '4372ff9ba19d85901be4b83b6fff6b6d5668b5fc90dcaeec39c7b592c99fc8ff', language: 'plpgsql', definition_sha256: '27d0de28edff7afc83b02390421f7a3663187644a534228080ad50a9acc594b3' },
+      origin: { ...STORIES_B1_ORIGIN },
+    },
+  ],
+});
+
 export const STORIES_B1_RELEASE_TRANSITION = Object.freeze({
   id: 'stories-v2-interactive-b1-infrastructure-v1',
   from_phase: 'stories_v2_legacy',
@@ -201,6 +364,7 @@ export const STORIES_B1_RELEASE_TRANSITION = Object.freeze({
     { name: 'get-stream-playback', source_sha256: '491ba432a35e930b9908f240b61ee80545fc0b07841fecc116ee4d38e12f4762', verify_jwt: true },
     { name: 'stream-webhook', source_sha256: '3333e33d58c4682ab49b52207cd5993bb79005dd068d367c29f696c2b87a1525', verify_jwt: false },
   ],
+  security_advisor: STORIES_B1_SECURITY_ADVISOR_TRANSITION,
   safety: {
     activation: false,
     complete_evidence_state: 'review',
@@ -590,6 +754,53 @@ const EXPECTED_RECOVERY_SOURCES = [{
   ],
   premium_relation_security_sha256: 'a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0',
   premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
+}, {
+  run_id: '40473092474',
+  run_attempt: 1,
+  release_id: 'nelyon-stories-b1-recovery-release-20261027T082425Z',
+  source_sha: '8e2fc6b896e3f409e11087d4f9f423581126b617',
+  repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+  mutation_status: 'completed',
+  post_snapshot_status: 'success',
+  postcheck_status: 'failure',
+  gate_artifact: { id: '12718644745', name: 'nelyon-gate-evidence-40473092474-1', digest: 'sha256:3c7424e6e3460802bb7ce82685e0d64ff143f905191ecac0e54255582892f14d' },
+  release_artifact: { id: '12719247669', name: 'nelyon-release-40473092474-1', digest: 'sha256:47277ff7ea10644227b2e6a983ff5b0d3bd3b1cddf720587defbb9c8afb65e57' },
+  manifest_sha256: '4c3435b1cd87ffd416c02b9f720cf4d3e3dd193fa8982e613dafa48fd036bcdf',
+  pre_snapshot_evidence_sha256: 'e4afa5e63dd90a12f0a36705c2cb95d5bf4bb1d9301803e47f5647aa932e9dfb',
+  post_snapshot_evidence_sha256: '02b5cac2604b282293367a6d2f224c2e4316b0f6d371a9bd92bb9c89e62025ee',
+  expected_migrations: [{
+    blob: '9b7d8ce8b1e375d1f4b4a1dfde8c1ec032d23ae4',
+    name: '20261027042552_stories_v2_interactive_b1',
+  }],
+  expected_migration_count: 358,
+  expected_latest_migration: '20261027042552_stories_v2_interactive_b1',
+  edge_functions: [
+    { name: 'cleanup-stale-media-uploads', source_sha256: '62558bb99e36094e33a431d84ee1edb48ea8d22d07dce0c00f9c8cb6ad4eee80', status: 'ACTIVE', verify_jwt: false, version: 53 },
+    { name: 'content-safety-scan', source_sha256: '3c8a861fbfa37b2d9ee0f8452938a072498645929ae22175ac5f319bbc54ef43', status: 'ACTIVE', verify_jwt: true, version: 48 },
+    { name: 'create-media-upload', source_sha256: '189b25cfc8172ea1561a3e5ac1e3b03c654943cd7ee4147a7017ed17d966e297', status: 'ACTIVE', verify_jwt: true, version: 71 },
+    { name: 'create-stream-upload', source_sha256: '67c78125ad77c07d942cc91e5dc757f0461aee6ab7e68f3f9af87ce6623794b3', status: 'ACTIVE', verify_jwt: true, version: 40 },
+    { name: 'get-stream-playback', source_sha256: 'a47954442c6c90effb3d1e0bb53f18687bfdb8e1c7557d63a2fddc379034ca65', status: 'ACTIVE', verify_jwt: true, version: 34 },
+    { name: 'stream-webhook', source_sha256: '2b16c3e5a7fff1795fa324d6dcbf0648ca5432b9e53b65597cd8d53ec154ee58', status: 'ACTIVE', verify_jwt: false, version: 35 },
+  ],
+  edge_transitions: [
+    { name: 'cleanup-stale-media-uploads', from: { source_sha256: '49534a2cdc109302045430ced2d93c6b93672320b06b422a0cece0b1064f782a', status: 'ACTIVE', verify_jwt: false, version: 52 }, to: { source_sha256: '62558bb99e36094e33a431d84ee1edb48ea8d22d07dce0c00f9c8cb6ad4eee80', status: 'ACTIVE', verify_jwt: false, version: 53 } },
+    { name: 'content-safety-scan', from: { source_sha256: 'ffc17f3c8f753e1bebc3adca0f75acba840342657594a0b344a52c96ff8610a2', status: 'ACTIVE', verify_jwt: true, version: 47 }, to: { source_sha256: '3c8a861fbfa37b2d9ee0f8452938a072498645929ae22175ac5f319bbc54ef43', status: 'ACTIVE', verify_jwt: true, version: 48 } },
+    { name: 'create-media-upload', from: { source_sha256: '6fffd4b5d83704194f8e6440063d0d9a2c08aa98c56f6c65387c35f0d7ae06a4', status: 'ACTIVE', verify_jwt: true, version: 70 }, to: { source_sha256: '189b25cfc8172ea1561a3e5ac1e3b03c654943cd7ee4147a7017ed17d966e297', status: 'ACTIVE', verify_jwt: true, version: 71 } },
+    { name: 'create-stream-upload', from: { source_sha256: '72518a020d99282d4ec3b9e0f3535d6a09ed74f3ab350cbf42efc93b7bf2bf2e', status: 'ACTIVE', verify_jwt: true, version: 39 }, to: { source_sha256: '67c78125ad77c07d942cc91e5dc757f0461aee6ab7e68f3f9af87ce6623794b3', status: 'ACTIVE', verify_jwt: true, version: 40 } },
+    { name: 'get-stream-playback', from: { source_sha256: '10098f5c77d0e5d9458e8f6a807d376e36bcf4d2f75583c149084c7b10a39565', status: 'ACTIVE', verify_jwt: true, version: 33 }, to: { source_sha256: 'a47954442c6c90effb3d1e0bb53f18687bfdb8e1c7557d63a2fddc379034ca65', status: 'ACTIVE', verify_jwt: true, version: 34 } },
+    { name: 'stream-webhook', from: { source_sha256: 'd587007d84e967d3cfa17d34d44087afd9fe51950fb76ad057ecfd3ffa206799', status: 'ACTIVE', verify_jwt: false, version: 34 }, to: { source_sha256: '2b16c3e5a7fff1795fa324d6dcbf0648ca5432b9e53b65597cd8d53ec154ee58', status: 'ACTIVE', verify_jwt: false, version: 35 } },
+  ],
+  productive_resources: [
+    'migration:20261027042552_stories_v2_interactive_b1',
+    'function:cleanup-stale-media-uploads',
+    'function:content-safety-scan',
+    'function:create-media-upload',
+    'function:create-stream-upload',
+    'function:get-stream-playback',
+    'function:stream-webhook',
+  ],
+  premium_relation_security_sha256: 'a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0',
+  premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
 }];
 const REQUIRED_FINANCE_RECONCILIATIONS = [
   'account_balance_ledger_mismatch',
@@ -730,13 +941,15 @@ export function validateSecurityAdvisorPolicy(securityAdvisor) {
 
 export function validateRecoverySource(source) {
   const code = 'INVALID_RECOVERY_SOURCE';
-  assertExactKeys(source, [
+  const expectedKeys = [
     'run_id', 'run_attempt', 'release_id', 'source_sha', 'repository', 'mutation_status',
     'post_snapshot_status', 'postcheck_status', 'gate_artifact', 'release_artifact',
     'manifest_sha256', 'pre_snapshot_evidence_sha256', 'post_snapshot_evidence_sha256',
     'expected_migrations', 'expected_migration_count', 'expected_latest_migration',
     'edge_functions', 'productive_resources', 'premium_relation_security_sha256', 'premium_legacy',
-  ], code, 'recovery source');
+    ...(source?.run_id === '40473092474' ? ['edge_transitions'] : []),
+  ];
+  assertExactKeys(source, expectedKeys, code, 'recovery source');
   const expected = EXPECTED_RECOVERY_SOURCES.find(item => item.run_id === source.run_id);
   if (!expected || canonicalJson(source) !== canonicalJson(expected)) {
     deny(code, 'recovery source differs from the exact approved immutable authority');
@@ -2926,13 +3139,18 @@ export function verifyPostcheckRecovery({
       version: actual.version,
     };
   });
-  if (['40166468648', '40268500711', '40324910390'].includes(source.run_id)) {
+  if (['40166468648', '40268500711', '40324910390', '40473092474'].includes(source.run_id)) {
     const transitionBaselineRunId = source.run_id === '40166468648'
       ? '40139736749'
       : source.run_id === '40324910390'
         ? '40166468648'
         : null;
-    const functionTransitions = transitionBaselineRunId
+    const functionTransitions = source.run_id === '40473092474'
+      ? source.edge_transitions.map(transition => ({
+        current: { name: transition.name, ...transition.to },
+        baseline: { name: transition.name, ...transition.from },
+      }))
+      : transitionBaselineRunId
       ? source.edge_functions.map(current => ({
         current,
         baseline: policy?.postcheck_recovery?.approved_sources
@@ -2962,8 +3180,28 @@ export function verifyPostcheckRecovery({
   const exceptionByFingerprint = new Map(recoveryExceptions.map(item => [item.advisor_fingerprint, item]));
   const presentExceptions = advisorItems.filter(item => exceptionFingerprints.has(item.fingerprint));
   const baselineItems = advisorItems.filter(item => !exceptionFingerprints.has(item.fingerprint));
+  const storiesB1Recovery = source.run_id === '40473092474';
+  const storiesAdvisorTransition = storiesB1Recovery
+    ? policy?.stories_b1_transition?.security_advisor
+    : null;
+  const removedStoriesFindings = storiesB1Recovery
+    ? storiesAdvisorTransition?.removed_findings?.map(item => ({
+      fingerprint: item.fingerprint,
+      level: item.level,
+      resource_kind: item.resource_kind,
+    }))
+    : [];
+  if (storiesB1Recovery && (!Array.isArray(storiesAdvisorTransition?.introduced_exceptions)
+    || storiesAdvisorTransition.introduced_exceptions.length !== 15
+    || !Array.isArray(removedStoriesFindings) || removedStoriesFindings.length !== 2
+    || removedStoriesFindings.some(item => advisorItems.some(current => current.fingerprint === item.fingerprint)))) {
+    deny(code, 'Stories B1 Advisor transition is incomplete or a replaced finding is still present');
+  }
+  const reconstructedBaselineItems = [...baselineItems, ...removedStoriesFindings]
+    .sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
   let baselineCronItems = currentEvidence.cron_security.cron.items;
-  if (source.run_id === '40324910390') {
+  const postF5Recovery = ['40324910390', '40473092474'].includes(source.run_id);
+  if (postF5Recovery) {
     const currentCron = currentEvidence.cron_security.cron;
     const expectedJob = policy?.finance_authority_f5_transition?.cron_job;
     const matchingJobs = currentCron.items.filter(item => item.jobname === expectedJob?.jobname);
@@ -2980,10 +3218,10 @@ export function verifyPostcheckRecovery({
   }
   const reconstructedBaseline = {
     complete: true,
-    cron: source.run_id === '40324910390'
+    cron: postF5Recovery
       ? projectCronBaselineItems(baselineCronItems, true)
       : baselineCronItems,
-    security_findings: baselineItems,
+    security_findings: reconstructedBaselineItems,
   };
   if (presentExceptions.length !== exceptionFingerprints.size
     || new Set(presentExceptions.map(item => item.fingerprint)).size !== exceptionFingerprints.size
@@ -2991,7 +3229,7 @@ export function verifyPostcheckRecovery({
       const expected = exceptionByFingerprint.get(item.fingerprint);
       return item.level !== expected?.advisor_severity || item.resource_kind !== expected?.advisor_type;
     })
-    || baselineItems.length !== policy.security_advisor.baseline.count
+    || reconstructedBaselineItems.length !== policy.security_advisor.baseline.count
     || sha256Hex(canonicalJson(reconstructedBaseline)) !== policy.security_advisor.baseline.cron_security_sha256) {
     deny(code, 'current Security Advisor set is not the historical baseline plus the exact approved exceptions');
   }
@@ -3002,7 +3240,7 @@ export function verifyPostcheckRecovery({
   }
 
   const finance = currentEvidence.finance;
-  const f5Recovery = source.run_id === '40324910390';
+  const f5Recovery = postF5Recovery;
   if (finance.transactions.count < 928 || finance.ledger_entries.count < 1918
     || finance.ledger_accounts.count < 131
     || (!f5Recovery && finance.premium_transaction_count !== 0)
@@ -3017,7 +3255,7 @@ export function verifyPostcheckRecovery({
     after: finance,
     windowRows: { complete: true, transactions: [], ledger_entries: [] },
     reconciliationResults: finance.reconciliation,
-    expectedPolicy: ['40268500711', '40324910390'].includes(source.run_id)
+    expectedPolicy: ['40268500711', '40324910390', '40473092474'].includes(source.run_id)
       ? financePolicyShape(F4_GENERAL_FINANCE_AUTHORITY_TRANSITION.to_policy)
       : policy.supabase.finance_policy,
     releaseIdentity: { releaseId: source.release_id, runId: source.run_id, runAttempt: source.run_attempt },
@@ -3037,7 +3275,7 @@ export function verifyPostcheckRecovery({
     },
     current_evidence_sha256: currentEvidence.evidence_sha256,
     security_advisor: {
-      baseline_count: baselineItems.length,
+      baseline_count: reconstructedBaselineItems.length,
       baseline_sha256: policy.security_advisor.baseline.cron_security_sha256,
       exception_count: presentExceptions.length,
       exception_fingerprints: [...exceptionFingerprints].sort(),
@@ -3065,6 +3303,7 @@ export function verifyPostcheckRecovery({
       premium_transaction_count: finance.premium_transaction_count,
     },
     premium_state: currentEvidence.premium_state,
+    ...(storiesB1Recovery ? { stories_b1_state: currentEvidence.stories_b1_state } : {}),
   };
 }
 

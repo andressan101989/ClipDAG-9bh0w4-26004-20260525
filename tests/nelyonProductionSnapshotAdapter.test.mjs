@@ -44,6 +44,23 @@ walletTransitionPolicy.baseline.sha = '05cdd2ecbeda6132fffb7edc0cf4e7ab2848625a'
 walletTransitionPolicy.baseline.migration_count = 353;
 walletTransitionPolicy.baseline.latest_migration = '20261025160452_creator_premium_f3_c2_isolated_canary_governance';
 walletTransitionPolicy.supabase.finance_policy = { ...FINANCE_OFF_POLICY };
+const STORY_B1_RELATION_NAMES = [
+  'story_analytics_events',
+  'story_b1_worker_lane_state',
+  'story_interactive_elements',
+  'story_interactive_responses',
+  'story_operation_policy',
+  'story_safety_state',
+];
+const STORY_B1_RELATIONS = STORY_B1_RELATION_NAMES.map(name => ({
+  schema: 'private',
+  name,
+  owner: 'postgres',
+  rls_enabled: true,
+  force_rls: true,
+  acl: ['DELETE', 'INSERT', 'MAINTAIN', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']
+    .map(privilege_type => ({ grantee: 'postgres', privilege_type, is_grantable: false })),
+}));
 // Authority hashes bind the canonical Git LF bytes, independent of Windows checkout conversion.
 const gitSql = path => execFileSync('git', ['show', `HEAD:${path}`], {
   cwd: new URL('../', import.meta.url), encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
@@ -165,6 +182,7 @@ test('Stories B1 snapshot contract is fail-closed and rejects policy activation 
     incomplete_evidence_non_pending_count: 0,
     complete_evidence_pass_count: 0,
     fabricated_pass_count: 0,
+    relations: [],
   });
   const post = adapter.normalizeStoriesB1State({
     schema_version: 1,
@@ -181,6 +199,7 @@ test('Stories B1 snapshot contract is fail-closed and rejects policy activation 
     incomplete_evidence_non_pending_count: 0,
     complete_evidence_pass_count: 0,
     fabricated_pass_count: 0,
+    relations: STORY_B1_RELATIONS,
   });
   assert.equal(adapter.validateStoriesB1StateTransition(pre, post, installedPolicy.stories_b1_transition), true);
 
@@ -189,6 +208,8 @@ test('Stories B1 snapshot contract is fail-closed and rejects policy activation 
     state => { state.activation = true; },
     state => { state.safety_state_counts.passed = 1; state.fabricated_pass_count = 1; },
     state => { state.complete_evidence_count = 1; state.complete_evidence_pass_count = 1; },
+    state => { state.relations[0].force_rls = false; },
+    state => { state.relations[0].acl.push({ grantee: 'authenticated', privilege_type: 'SELECT', is_grantable: false }); },
   ]) {
     const hostile = structuredClone(post);
     delete hostile.sha256;
@@ -227,6 +248,193 @@ test('Stories B1 snapshot contract is fail-closed and rejects policy activation 
       installedPolicy.stories_b1_transition,
     ), /STORIES_B1_POSTCHECK_FAILED/);
   }
+});
+
+test('Stories B1 advisor transition is phase-bound to exact introduced and replaced findings', async () => {
+  const adapter = await loadAdapter();
+  const transition = installedPolicy.stories_b1_transition;
+  const storiesManifest = manifest();
+  storiesManifest.identity.approved_sha = 'b'.repeat(40);
+  storiesManifest.resources.stories_b1_transition = {
+    ...structuredClone(transition),
+    approved_sha: storiesManifest.identity.approved_sha,
+    baseline_descendant_verified: true,
+    integration_base_descendant_verified: true,
+    reviewed_source_descendant_verified: true,
+  };
+  storiesManifest.resources.migrations = [{
+    path: transition.migration_path,
+    version: '20261027042552',
+    blob: transition.migration_blob,
+    sha256: transition.migration_sha256,
+  }];
+  storiesManifest.resources.functions = transition.functions.map(item => item.name);
+  storiesManifest.resources.function_contracts = transition.functions.map(item => ({
+    name: item.name,
+    entrypoint: `supabase/functions/${item.name}/index.ts`,
+    import_map: null,
+    verify_jwt: item.verify_jwt,
+    source_changed: true,
+    source_files: [],
+    source_sha256: item.source_sha256,
+  }));
+  const pre = adapter.advisorExceptionsForPhase(installedPolicy, storiesManifest, 'pre');
+  const post = adapter.advisorExceptionsForPhase(installedPolicy, storiesManifest, 'post');
+  const preFingerprints = new Set(pre.map(item => item.advisor_fingerprint));
+  const introduced = post.filter(item => !preFingerprints.has(item.advisor_fingerprint));
+  assert.deepEqual(introduced, transition.security_advisor.introduced_exceptions);
+  assert.equal(introduced.length, 15);
+
+  const retained = [{ fingerprint: '1'.repeat(64), level: 'WARN', resource_kind: 'existing' }];
+  const removed = transition.security_advisor.removed_findings.map(item => ({
+    fingerprint: item.fingerprint,
+    level: item.level,
+    resource_kind: item.resource_kind,
+  }));
+  const added = introduced.map(item => ({
+    fingerprint: item.advisor_fingerprint,
+    level: item.advisor_severity,
+    resource_kind: item.advisor_type,
+  }));
+  assert.equal(adapter.validateSecurityAdvisorDelta(
+    [...retained, ...removed],
+    [...retained, ...added],
+    introduced,
+    transition.security_advisor.removed_findings,
+  ), true);
+  const wrongRemoved = structuredClone(transition.security_advisor.removed_findings);
+  wrongRemoved[0].level = 'INFO';
+  assert.throws(() => adapter.validateSecurityAdvisorDelta(
+    [...retained, ...removed], [...retained, ...added], introduced, wrongRemoved,
+  ), /REMOTE_POSTCHECK_FAILED/);
+});
+
+test('Stories B1 baseline projection restores replaced findings and requires complete fail-closed authority', async () => {
+  const adapter = await loadAdapter();
+  const controlled = structuredClone(installedPolicy);
+  controlled.baseline.latest_migration = '20261027042552_stories_v2_interactive_b1';
+  controlled.baseline.migration_count = 1;
+  controlled.baseline.blocked_resources = [];
+  controlled.supabase.managed_functions = [];
+  controlled.security_advisor.exceptions = [];
+  const transition = controlled.stories_b1_transition;
+  const migrationItems = [{
+    version: '20261027042552',
+    name: 'stories_v2_interactive_b1',
+  }];
+  const retained = {
+    fingerprint: '1'.repeat(64),
+    level: 'WARN',
+    resource_kind: 'existing',
+  };
+  const introduced = transition.security_advisor.introduced_exceptions.map(exception => ({
+    fingerprint: exception.advisor_fingerprint,
+    level: exception.advisor_severity,
+    resource_kind: exception.advisor_type,
+  }));
+  const advisorItems = [retained, ...introduced]
+    .sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+  const storiesState = adapter.normalizeStoriesB1State({
+    schema_version: 1,
+    complete: true,
+    infrastructure_installed: true,
+    owner_approved_policy: false,
+    activation: false,
+    mode: 'fail_closed_review',
+    story_count: 0,
+    direct_story_count: 0,
+    safety_state_counts: { blocked: 0, passed: 0, pending: 0, review: 0 },
+    complete_evidence_count: 0,
+    complete_evidence_non_review_count: 0,
+    incomplete_evidence_non_pending_count: 0,
+    complete_evidence_pass_count: 0,
+    fabricated_pass_count: 0,
+    relations: STORY_B1_RELATIONS,
+  });
+  const rpcItems = transition.security_advisor.introduced_exceptions
+    .filter(exception => Array.isArray(exception.object.argument_types))
+    .map(exception => ({
+      schema: exception.object.schema,
+      name: exception.object.name,
+      argument_types: exception.object.argument_types,
+    }));
+  const evidence = {
+    migrations: {
+      complete: true,
+      count: migrationItems.length,
+      items: migrationItems,
+      latest: migrationItems[0],
+      sha256: sha256(canonicalJson(migrationItems)),
+    },
+    functions: { complete: true, count: 0, items: [], sha256: sha256(canonicalJson([])) },
+    cron_security: {
+      cron: cronSnapshot(),
+      advisors: {
+        complete: true,
+        count: advisorItems.length,
+        items: advisorItems,
+        sha256: sha256(canonicalJson(advisorItems)),
+      },
+    },
+    finance: financeSnapshot({
+      policy: {
+        ...controlled.supabase.finance_policy,
+        policy_version: 'creator-premium-f4-general-v1',
+      },
+    }),
+    rpc_security: { complete: true, count: rpcItems.length, items: rpcItems,
+      sha256: sha256(canonicalJson(rpcItems)) },
+    stories_b1_state: storiesState,
+  };
+  const expectedHistoricalAdvisors = [
+    retained,
+    ...transition.security_advisor.removed_findings.map(item => ({
+      fingerprint: item.fingerprint,
+      level: item.level,
+      resource_kind: item.resource_kind,
+    })),
+  ].sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+  const digests = adapter.buildProductionBaselineDigests({ evidence, policy: controlled });
+  assert.equal(digests.cron_security, sha256(canonicalJson({
+    complete: true,
+    cron: [],
+    security_findings: expectedHistoricalAdvisors,
+  })));
+
+  const returnedRemovedFinding = structuredClone(evidence);
+  const removedFinding = transition.security_advisor.removed_findings[0];
+  returnedRemovedFinding.cron_security.advisors.items.push({
+    fingerprint: removedFinding.fingerprint,
+    level: removedFinding.level,
+    resource_kind: removedFinding.resource_kind,
+  });
+  returnedRemovedFinding.cron_security.advisors.items.sort((left, right) => (
+    left.fingerprint.localeCompare(right.fingerprint)
+  ));
+  returnedRemovedFinding.cron_security.advisors.count =
+    returnedRemovedFinding.cron_security.advisors.items.length;
+  returnedRemovedFinding.cron_security.advisors.sha256 = sha256(canonicalJson(
+    returnedRemovedFinding.cron_security.advisors.items,
+  ));
+  assert.throws(() => adapter.buildProductionBaselineDigests({
+    evidence: returnedRemovedFinding,
+    policy: controlled,
+  }), /REMOTE_BASELINE_MISMATCH/);
+
+  const missingRpc = structuredClone(evidence);
+  missingRpc.rpc_security.items.pop();
+  assert.throws(() => adapter.buildProductionBaselineDigests({ evidence: missingRpc, policy: controlled }),
+    /REMOTE_BASELINE_MISMATCH/);
+
+  const unsafeRelation = structuredClone(evidence);
+  unsafeRelation.stories_b1_state.relations[0].force_rls = false;
+  assert.throws(() => adapter.buildProductionBaselineDigests({ evidence: unsafeRelation, policy: controlled }),
+    /STORIES_B1_POSTCHECK_FAILED|REMOTE_BASELINE_MISMATCH/);
+
+  const missingState = structuredClone(evidence);
+  delete missingState.stories_b1_state;
+  assert.throws(() => adapter.buildProductionBaselineDigests({ evidence: missingState, policy: controlled }),
+    /STORIES_B1_POSTCHECK_FAILED|REMOTE_BASELINE_MISMATCH/);
 });
 
 test('F3 disposable catalog verifies exact authority and detects real PostgreSQL security drift', {

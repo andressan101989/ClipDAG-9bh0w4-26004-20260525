@@ -103,6 +103,32 @@ test('Stories B1 policy binds one migration, six Edge contracts, and fail-closed
   assert.deepEqual(policy.stories_b1_transition, gate.STORIES_B1_RELEASE_TRANSITION);
   assert.deepEqual(policy.stories_b1_transition.functions.map(item => item.name), STORIES_B1_FUNCTIONS);
   assert.equal(policy.stories_b1_transition.migration_path, STORIES_B1_MIGRATION_PATH);
+  assert.equal(policy.stories_b1_transition.security_advisor.introduced_exceptions.length, 15);
+  assert.equal(policy.stories_b1_transition.security_advisor.removed_findings.length, 2);
+  assert.equal(new Set(policy.stories_b1_transition.security_advisor.introduced_exceptions
+    .map(item => item.advisor_fingerprint)).size, 15);
+  assert.deepEqual(policy.stories_b1_transition.security_advisor.removed_findings.map(item => ({
+    fingerprint: item.fingerprint,
+    level: item.level,
+    resource_kind: item.resource_kind,
+    old_language: item.object.old_language,
+    replacement_language: item.replacement.language,
+  })), [
+    {
+      fingerprint: '9b4cde0225530c588b9832739ad2b8a131ef6f4b408cdd760da9301deda6c000',
+      level: 'WARN',
+      resource_kind: 'authenticated_security_definer_function_executable',
+      old_language: 'sql',
+      replacement_language: 'plpgsql',
+    },
+    {
+      fingerprint: 'bd8275738ba7f668dc16573d7454a0f722d3507bbc196c3aa0a6f30dcaf87f01',
+      level: 'WARN',
+      resource_kind: 'authenticated_security_definer_function_executable',
+      old_language: 'sql',
+      replacement_language: 'plpgsql',
+    },
+  ]);
   assert.deepEqual(policy.stories_b1_transition.safety, {
     activation: false,
     complete_evidence_state: 'review',
@@ -120,6 +146,9 @@ test('Stories B1 policy binds one migration, six Edge contracts, and fail-closed
     candidate => { candidate.safety.complete_evidence_state = 'passed'; },
     candidate => { candidate.functions.pop(); },
     candidate => { candidate.migration_sha256 = '0'.repeat(64); },
+    candidate => { candidate.security_advisor.introduced_exceptions.pop(); },
+    candidate => { candidate.security_advisor.introduced_exceptions[0].attestation.owner = 'authenticated'; },
+    candidate => { candidate.security_advisor.removed_findings[0].replacement.fingerprint = '0'.repeat(64); },
   ]) {
     const candidate = structuredClone(policy);
     mutate(candidate.stories_b1_transition);
@@ -1042,7 +1071,11 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
   const requestedSource = policy.postcheck_recovery.approved_sources[sourceIndex];
   const isF4Recovery = requestedSource.run_id === '40268500711';
   const isF5Recovery = requestedSource.run_id === '40324910390';
-  const controlledPolicy = isF5Recovery
+  const isStoriesRecovery = requestedSource.run_id === '40473092474';
+  const isPostF5Recovery = isF5Recovery || isStoriesRecovery;
+  const controlledPolicy = isStoriesRecovery
+    ? structuredClone(policy)
+    : isF5Recovery
     ? asF5TransitionPolicy(policy)
     : isF4Recovery
       ? asF4TransitionPolicy(policy)
@@ -1077,8 +1110,8 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     })),
     { version: latestMigration.slice(0, 14), name: latestMigration.slice(15) },
   ];
-  if (isF4Recovery || isF5Recovery) {
-    const phaseOffset = isF5Recovery ? 5 : 4;
+  if (isF4Recovery || isPostF5Recovery) {
+    const phaseOffset = isStoriesRecovery ? 7 : isF5Recovery ? 5 : 4;
     migrationRows[migrationRows.length - phaseOffset] = {
       version: '20261025011000',
       name: 'creator_premium_f3_bounded_financial_activation',
@@ -1091,11 +1124,21 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       version: '20261025231500',
       name: 'creator_premium_f3_final_wallet_integration',
     };
-    if (isF5Recovery) {
-      migrationRows[migrationRows.length - 2] = {
+    if (isPostF5Recovery) {
+      migrationRows[migrationRows.length - phaseOffset + 3] = {
         version: '20261026030000',
         name: 'creator_premium_f4_general_bdag_activation',
       };
+      if (isStoriesRecovery) {
+        migrationRows[migrationRows.length - phaseOffset + 4] = {
+          version: '20261026072512',
+          name: 'creator_premium_f5_autonomous_subscriptions',
+        };
+        migrationRows[migrationRows.length - phaseOffset + 5] = {
+          version: '20261026120000',
+          name: 'live_battles_final_c1',
+        };
+      }
     }
   }
   const sourceFunctionNames = new Set(source.edge_functions.map(item => item.name));
@@ -1125,7 +1168,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       ezbr_sha256: String(index + 1).padStart(64, '0'),
     })),
   ];
-  if (['40166468648', '40268500711', '40324910390'].includes(source.run_id)) {
+  if (['40166468648', '40268500711', '40324910390', '40473092474'].includes(source.run_id)) {
     const baselineRunId = source.run_id === '40166468648'
       ? '40139736749'
       : source.run_id === '40324910390'
@@ -1136,7 +1179,19 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
         .find(item => item.run_id === baselineRunId)
         .edge_functions.find(item => item.name === 'bdag-ledger')
       : null;
-    const baselineFunctionRows = baselineFunction
+    const storiesBaselineByName = new Map((source.edge_transitions ?? []).map(item => [item.name, item.from]));
+    const baselineFunctionRows = isStoriesRecovery
+      ? functionRows.map(item => {
+        const baseline = storiesBaselineByName.get(item.slug);
+        return baseline ? {
+          slug: item.slug,
+          status: baseline.status,
+          version: baseline.version,
+          verify_jwt: baseline.verify_jwt,
+          ezbr_sha256: baseline.source_sha256,
+        } : item;
+      })
+      : baselineFunction
       ? functionRows.map(item => item.slug === baselineFunction.name ? {
         slug: baselineFunction.name,
         status: baselineFunction.status,
@@ -1187,7 +1242,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     orphan_ledger_entries: 0,
     premium_finance_policy_row_count_mismatch: 0,
   };
-  const financeTransactions = Array.from({ length: isF5Recovery ? 929 : 928 }, (_, index) => ({
+  const financeTransactions = Array.from({ length: isPostF5Recovery ? 929 : 928 }, (_, index) => ({
     id: `transaction-${String(index).padStart(4, '0')}`,
     status: 'pending',
     currency: 'BDAG',
@@ -1201,18 +1256,18 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     database_time: '2026-10-17T22:00:00.000000Z',
     schema_sha256: '1'.repeat(64),
     watermark: { created_at: financeTransactions.at(-1).created_at, id: financeTransactions.at(-1).id },
-    policy: (isF4Recovery || isF5Recovery)
+    policy: (isF4Recovery || isPostF5Recovery)
       ? { purchase_enabled: true, subscription_enabled: true, refunds_enabled: true,
         platform_fee_bps: 2000, policy_version: 'creator-premium-f4-general-v1' }
       : { purchase_enabled: false, subscription_enabled: false, refunds_enabled: false,
         platform_fee_bps: 0, policy_version: 'creator-premium-b4-v1' },
     transactions: { complete: true, count: financeTransactions.length, items: financeTransactions },
-    ledger_entries: { complete: true, count: isF5Recovery ? 1921 : 1918,
-      items: Array.from({ length: isF5Recovery ? 1921 : 1918 }, (_, index) => ({ id: `entry-${index}` })) },
+    ledger_entries: { complete: true, count: isPostF5Recovery ? 1921 : 1918,
+      items: Array.from({ length: isPostF5Recovery ? 1921 : 1918 }, (_, index) => ({ id: `entry-${index}` })) },
     ledger_accounts: {
       complete: true,
-      count: isF5Recovery ? 132 : 131,
-      items: Array.from({ length: isF5Recovery ? 132 : 131 }, (_, index) => ({
+      count: isPostF5Recovery ? 132 : 131,
+      items: Array.from({ length: isPostF5Recovery ? 132 : 131 }, (_, index) => ({
         id: `11111111-1111-4111-8111-${String(index + 1).padStart(12, '0')}`,
         owner_id_sha256: '2'.repeat(64),
         account_type: 'user',
@@ -1220,10 +1275,10 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
         created_at: '2026-10-01T12:00:00.000000Z',
       })),
     },
-    premium_transaction_count: isF5Recovery ? 1 : 0,
+    premium_transaction_count: isPostF5Recovery ? 1 : 0,
     premium_bindings: {
       purchase_receipts: { count: 0, sha256: '3'.repeat(64) },
-      subscription_periods: { count: isF5Recovery ? 1 : 0, sha256: '4'.repeat(64) },
+      subscription_periods: { count: isPostF5Recovery ? 1 : 0, sha256: '4'.repeat(64) },
     },
     reconciliation: zeroReconciliations,
   };
@@ -1232,30 +1287,48 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     'creator_premium_plan_contents', 'creator_premium_plans', 'creator_premium_purchase_receipts',
     'creator_premium_subscription_periods', 'creator_premium_subscriptions',
   ];
-  if (['39157300357', '39195966131', '40139736749', '40166468648', '40268500711', '40324910390'].includes(source.run_id)) {
+  if (['39157300357', '39195966131', '40139736749', '40166468648', '40268500711', '40324910390', '40473092474'].includes(source.run_id)) {
     relationNames.unshift('creator_premium_content_safety_context_evaluations');
   }
-  if (['40166468648', '40268500711', '40324910390'].includes(source.run_id)) {
+  if (['40166468648', '40268500711', '40324910390', '40473092474'].includes(source.run_id)) {
     relationNames.push('creator_premium_finance_authorizations');
   }
-  if (isF4Recovery || isF5Recovery) relationNames.push('creator_premium_finance_owner_attestations_f3_c2');
-  if (isF5Recovery) relationNames.push(
+  if (isF4Recovery || isPostF5Recovery) relationNames.push('creator_premium_finance_owner_attestations_f3_c2');
+  if (isPostF5Recovery) relationNames.push(
     'creator_premium_auto_renewal_attempts',
     'creator_premium_auto_renewal_mandates',
   );
-  const captureMigrationRows = isF5Recovery
+  const captureMigrationRows = isStoriesRecovery
+    ? migrationRows.filter(item => ![
+      '20261025011000',
+      '20261025160452',
+      '20261026030000',
+      '20261026072512',
+    ].includes(item.version))
+    : isF5Recovery
     ? migrationRows.slice(0, -5)
     : isF4Recovery
       ? migrationRows.slice(0, -4)
     : source.run_id === '40166468648'
       ? migrationRows.slice(0, -1)
       : migrationRows;
+  const capturePolicy = isStoriesRecovery ? structuredClone(controlledPolicy) : controlledPolicy;
+  if (isStoriesRecovery) {
+    capturePolicy.baseline.latest_migration = source.expected_latest_migration;
+    capturePolicy.baseline.migration_count = source.expected_migration_count;
+  }
   const captureRecoveryExceptions = adapter.advisorExceptionsForPhase(
-    controlledPolicy,
+    capturePolicy,
     recoveryManifest,
     'recovery',
     { request: recoveryRequest, migrations: { items: captureMigrationRows } },
   );
+  const storyB1RelationNames = isStoriesRecovery
+    ? controlledPolicy.stories_b1_transition.security_advisor.introduced_exceptions
+      .filter(exception => exception.advisor_type === 'table')
+      .map(exception => exception.object.name)
+      .sort()
+    : [];
   const fetchImpl = async (url, options = {}) => {
     const pathname = new URL(url).pathname;
     const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -1272,7 +1345,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       const body = JSON.parse(options.body);
       if (body.query.includes('nelyon-finance-snapshot-v1')) return json([{ snapshot: finance }], 201);
       if (body.query.includes('nelyon-cron-snapshot-v1')) {
-        const cronItems = isF5Recovery ? [{
+        const cronItems = isPostF5Recovery ? [{
           active: true,
           command_sha256: gate.sha256Hex(controlledPolicy.finance_authority_f5_transition.cron_job.command),
           database: 'postgres',
@@ -1322,12 +1395,35 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
           })),
         } }], 201);
       }
+      if (body.query.includes("'story_b1_worker_lane_state'")) {
+        return json([{ snapshot: {
+          schema_version: 1,
+          complete: true,
+          infrastructure_installed: true,
+          owner_approved_policy: false,
+          activation: false,
+          mode: 'fail_closed_review',
+          story_count: 0,
+          direct_story_count: 0,
+          safety_state_counts: { blocked: 0, passed: 0, pending: 0, review: 0 },
+          complete_evidence_count: 0,
+          complete_evidence_non_review_count: 0,
+          incomplete_evidence_non_pending_count: 0,
+          complete_evidence_pass_count: 0,
+          fabricated_pass_count: 0,
+          relations: storyB1RelationNames.map(name => ({
+            schema: 'private', name, owner: 'postgres', rls_enabled: true, force_rls: true,
+            acl: ['DELETE', 'INSERT', 'MAINTAIN', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']
+              .map(privilege_type => ({ grantee: 'postgres', privilege_type, is_grantable: false })),
+          })),
+        } }], 201);
+      }
     }
     throw new Error(`unexpected recovery fixture request ${url}`);
   };
   const currentEvidence = await adapter.captureProductionSnapshot({
     phase: 'recovery',
-    policy: controlledPolicy,
+    policy: capturePolicy,
     request: recoveryRequest,
     manifest: recoveryManifest,
     token: 'fixture-token',
@@ -1335,7 +1431,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     observedAt: '2026-10-17T22:00:01.000Z',
     adapterSourceSha256,
   });
-  if (['40166468648', '40268500711', '40324910390'].includes(source.run_id)) {
+  if (['40166468648', '40268500711', '40324910390', '40473092474'].includes(source.run_id)) {
     currentEvidence.migrations = {
       complete: true,
       count: migrationRows.length,
@@ -1344,12 +1440,12 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       sha256: gate.sha256Hex(gate.canonicalJson(migrationRows)),
     };
     const financeQueries = adapter.selectFinanceSnapshotQueries(currentEvidence.migrations);
-    const authorityPhase = isF5Recovery ? 'f5_autonomous' : isF4Recovery ? 'f4_general' : 'f3_foundation';
+    const authorityPhase = isPostF5Recovery ? 'f5_autonomous' : isF4Recovery ? 'f4_general' : 'f3_foundation';
     const expectedAuthority = controlledPolicy.finance_authority[authorityPhase];
     const effectiveFunctions = new Map(controlledPolicy.finance_authority.f3_foundation.functions
       .map(item => [item.identity, item]));
-    if (isF4Recovery || isF5Recovery) {
-      const phases = isF5Recovery ? ['f3_c2', 'f4_general', 'f5_autonomous'] : ['f3_c2', 'f4_general'];
+    if (isF4Recovery || isPostF5Recovery) {
+      const phases = isPostF5Recovery ? ['f3_c2', 'f4_general', 'f5_autonomous'] : ['f3_c2', 'f4_general'];
       for (const phase of phases) {
         for (const item of controlledPolicy.finance_authority[phase].function_overrides) {
           effectiveFunctions.set(item.identity, item);
@@ -1365,7 +1461,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       phase: authorityPhase,
       relations: [...expectedAuthority.relations]
         .sort((left, right) => left.identity.localeCompare(right.identity)),
-      functions: (isF4Recovery || isF5Recovery)
+      functions: (isF4Recovery || isPostF5Recovery)
         ? [...effectiveFunctions.values()].sort((left, right) => left.identity.localeCompare(right.identity))
         : expectedAuthority.functions,
       legacy_relations: ['public.financial_transactions', 'public.ledger_accounts', 'public.ledger_entries']
@@ -1383,7 +1479,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       schema_version: 1,
       complete: true,
       phase: authorityPhase,
-      policy: (isF4Recovery || isF5Recovery) ? {
+      policy: (isF4Recovery || isPostF5Recovery) ? {
         activation_mode: 'general',
         active_authorization_id: 'f4000000-0000-4000-8000-000000000001',
         purchase_enabled: true,
@@ -1395,13 +1491,13 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
         purchase_enabled: false, subscription_enabled: false,
         refunds_enabled: false, platform_fee_bps: 0,
       },
-      ...((isF4Recovery || isF5Recovery) ? { attestations: [{
+      ...((isF4Recovery || isPostF5Recovery) ? { attestations: [{
         id: gate.sha256Hex('f4-general-attestation'),
         configuration_digest: configurationDigest,
         approval_digest: approvalDigest,
         fact_sha256: gate.sha256Hex('f4-general-attestation-fact'),
       }] } : {}),
-      authorizations: (isF4Recovery || isF5Recovery) ? [{
+      authorizations: (isF4Recovery || isPostF5Recovery) ? [{
         id: gate.sha256Hex('f4000000-0000-4000-8000-000000000001'),
         authorization_scope: 'GENERAL',
         client_contract: 'creator-premium-f3-v2',
@@ -1426,23 +1522,23 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
         refund_expires_at: null,
         fact_sha256: gate.sha256Hex('f4-general-authorization-fact'),
       }] : [],
-      ...(isF5Recovery ? { mandates: [], attempts: [] } : {}),
+      ...(isPostF5Recovery ? { mandates: [], attempts: [] } : {}),
       receipts: [],
-      periods: isF5Recovery ? [{
+      periods: isPostF5Recovery ? [{
         id: gate.sha256Hex('historical-period'),
         fact_sha256: gate.sha256Hex('historical-period-fact'),
       }] : [],
-      subscriptions: isF5Recovery ? [{
+      subscriptions: isPostF5Recovery ? [{
         id: gate.sha256Hex('historical-subscription'),
         fact_sha256: gate.sha256Hex('historical-subscription-fact'),
       }] : [],
-      transactions: isF5Recovery ? [{
+      transactions: isPostF5Recovery ? [{
         id: gate.sha256Hex('historical-premium-transaction'),
         fact_sha256: gate.sha256Hex('historical-premium-transaction-fact'),
       }] : [],
-      acquisition_exposure_bdag: isF5Recovery ? '100.00000000' : '0.00000000',
+      acquisition_exposure_bdag: isPostF5Recovery ? '100.00000000' : '0.00000000',
       release_movement_bdag: '0.00000000',
-      reconciliation: (isF4Recovery || isF5Recovery) ? {
+      reconciliation: (isF4Recovery || isPostF5Recovery) ? {
         purchase_binding_mismatches: 0,
         period_binding_mismatches: 0,
         orphan_premium_transactions: 0,
@@ -1453,14 +1549,24 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       } : { purchase_binding_mismatches: 0, period_binding_mismatches: 0 },
     };
     currentEvidence.finance.schema_sha256 = expectedAuthority.schema_sha256;
-    currentEvidence.adapter.queries.push(
+    const financeQueryReceipts = [
       { id: 'nelyon-finance-authority-v1', sha256: gate.sha256Hex(financeQueries.authority) },
       { id: `nelyon-finance-facts-${authorityPhase}-v1`, sha256: gate.sha256Hex(financeQueries.facts) },
-    );
-    currentEvidence.requests.push(
+    ];
+    const financeRequestReceipts = [
       { method: 'POST', path: `/v1/projects/${PROJECT_REF}/database/query/read-only`, status: 201, response_sha256: 'a'.repeat(64) },
       { method: 'POST', path: `/v1/projects/${PROJECT_REF}/database/query/read-only`, status: 201, response_sha256: 'b'.repeat(64) },
-    );
+    ];
+    if (isStoriesRecovery) {
+      const storiesQueryIndex = currentEvidence.adapter.queries.findIndex(item => (
+        item.id.startsWith('nelyon-stories-b1-')
+      ));
+      currentEvidence.adapter.queries.splice(storiesQueryIndex, 0, ...financeQueryReceipts);
+      currentEvidence.requests.splice(currentEvidence.requests.length - 1, 0, ...financeRequestReceipts);
+    } else {
+      currentEvidence.adapter.queries.push(...financeQueryReceipts);
+      currentEvidence.requests.push(...financeRequestReceipts);
+    }
   }
   const recoveryExceptions = adapter.advisorExceptionsForPhase(
     controlledPolicy,
@@ -1483,12 +1589,12 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     definition_sha256: exception.attestation.definition_sha256,
     })).sort((left, right) => `${left.schema}.${left.name}(${left.argument_types.join(',')})`.localeCompare(`${right.schema}.${right.name}(${right.argument_types.join(',')})`));
   currentEvidence.rpc_security = { complete: true, count: rpcItems.length, items: rpcItems, sha256: gate.sha256Hex(gate.canonicalJson(rpcItems)) };
-  const baselineAdvisorItems = Array.from({ length: 554 }, (_, index) => ({
+  const baselineAdvisorItems = Array.from({ length: isStoriesRecovery ? 552 : 554 }, (_, index) => ({
     fingerprint: String(index + 1).padStart(64, '0'),
     level: 'WARN',
     resource_kind: 'table',
   }));
-  const expectedF5RelationFindings = isF5Recovery ? [
+  const expectedF5RelationFindings = isPostF5Recovery ? [
     {
       fingerprint: '70d2706125a8861824f9c876848c472a28bde6db0813543ba97ec3409516967f',
       level: 'INFO',
@@ -1513,13 +1619,20 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     items: advisorItems,
     sha256: gate.sha256Hex(gate.canonicalJson(advisorItems)),
   };
-  const reviewedCronItems = isF5Recovery
+  const reviewedCronItems = isPostF5Recovery
     ? currentEvidence.cron_security.cron.items.filter(item => item.jobname !== 'creator-premium-auto-renewals-f5')
     : currentEvidence.cron_security.cron.items;
+  const reconstructedAdvisorItems = isStoriesRecovery
+    ? [...baselineAdvisorItems, ...controlledPolicy.stories_b1_transition.security_advisor.removed_findings.map(item => ({
+      fingerprint: item.fingerprint,
+      level: item.level,
+      resource_kind: item.resource_kind,
+    }))].sort((left, right) => left.fingerprint.localeCompare(right.fingerprint))
+    : baselineAdvisorItems;
   controlledPolicy.security_advisor.baseline.cron_security_sha256 = gate.sha256Hex(gate.canonicalJson({
     complete: true,
     cron: adapter.projectCronBaselineItems(reviewedCronItems, true),
-    security_findings: baselineAdvisorItems,
+    security_findings: reconstructedAdvisorItems,
   }));
   const { evidence_sha256: ignored, ...unsignedEvidence } = currentEvidence;
   currentEvidence.evidence_sha256 = gate.sha256Hex(gate.canonicalJson(unsignedEvidence));
@@ -1924,7 +2037,7 @@ test('phase-bound migration omission is bound to the exact reviewed blob and sou
 
 test('recovery source is exact immutable failed-postcheck authority', async () => {
   const { gate, policy } = await loadGateAndPolicy();
-  assert.equal(policy.postcheck_recovery.approved_sources.length, 7);
+  assert.equal(policy.postcheck_recovery.approved_sources.length, 8);
   for (const source of policy.postcheck_recovery.approved_sources) {
     assert.equal(gate.validateRecoverySource(source), true);
     assert.ok(source.expected_migrations.length >= 1);
@@ -1995,6 +2108,41 @@ test('recovery source is exact immutable failed-postcheck authority', async () =
   assert.equal(f5Source.expected_migration_count, 356);
   assert.equal(f5Source.expected_latest_migration, F5_AUTONOMOUS_MIGRATION);
   assert.deepEqual(f5Source.edge_functions.map(item => [item.name, item.version]), [['bdag-ledger', 47]]);
+  const storiesSource = policy.postcheck_recovery.approved_sources.find(item => item.run_id === '40473092474');
+  assert.ok(storiesSource);
+  assert.equal(storiesSource.release_id, 'nelyon-stories-b1-recovery-release-20261027T082425Z');
+  assert.equal(storiesSource.source_sha, '8e2fc6b896e3f409e11087d4f9f423581126b617');
+  assert.equal(storiesSource.manifest_sha256, '4c3435b1cd87ffd416c02b9f720cf4d3e3dd193fa8982e613dafa48fd036bcdf');
+  assert.equal(storiesSource.pre_snapshot_evidence_sha256,
+    'e4afa5e63dd90a12f0a36705c2cb95d5bf4bb1d9301803e47f5647aa932e9dfb');
+  assert.equal(storiesSource.post_snapshot_evidence_sha256,
+    '02b5cac2604b282293367a6d2f224c2e4316b0f6d371a9bd92bb9c89e62025ee');
+  assert.equal(storiesSource.expected_migration_count, 358);
+  assert.equal(storiesSource.expected_latest_migration, '20261027042552_stories_v2_interactive_b1');
+  assert.deepEqual(storiesSource.edge_functions.map(item => [item.name, item.version]), [
+    ['cleanup-stale-media-uploads', 53],
+    ['content-safety-scan', 48],
+    ['create-media-upload', 71],
+    ['create-stream-upload', 40],
+    ['get-stream-playback', 34],
+    ['stream-webhook', 35],
+  ]);
+  assert.deepEqual(storiesSource.edge_transitions.map(item => [
+    item.name,
+    item.from.version,
+    item.to.version,
+    item.from.verify_jwt,
+    item.to.verify_jwt,
+  ]), [
+    ['cleanup-stale-media-uploads', 52, 53, false, false],
+    ['content-safety-scan', 47, 48, true, true],
+    ['create-media-upload', 70, 71, true, true],
+    ['create-stream-upload', 39, 40, true, true],
+    ['get-stream-playback', 33, 34, true, true],
+    ['stream-webhook', 34, 35, false, false],
+  ]);
+  assert.deepEqual(storiesSource.edge_transitions.map(item => item.to.source_sha256),
+    storiesSource.edge_functions.map(item => item.source_sha256));
   for (const mutate of [
     candidate => { candidate.run_id = '39066492486'; },
     candidate => { candidate.postcheck_status = 'success'; },
@@ -3088,6 +3236,31 @@ test('F3 post-snapshot failure is an exact recoverable read-only source', async 
   assert.equal(verified.source_observation.post_evidence_sha256, null);
 });
 
+test('Stories B1 failed postcheck is bound to exact immutable artifacts and six productive Edge transitions', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = recoveryArtifactFixture(t, gate, policy, 7);
+  const verified = gate.verifyRecoveryArtifactProvenance(fixture);
+  assert.equal(verified.source_run_id, '40473092474');
+  assert.equal(verified.source_sha, '8e2fc6b896e3f409e11087d4f9f423581126b617');
+  assert.equal(verified.source_observation.steps.migrations, 'success');
+  assert.equal(verified.source_observation.steps.functions, 'success');
+  assert.equal(verified.source_observation.steps.post_snapshot, 'success');
+  assert.equal(verified.source_observation.steps.postcheck, 'failure');
+  assert.equal(fixture.source.edge_transitions.length, 6);
+
+  for (const mutate of [
+    candidate => { candidate.source.edge_transitions[0].from.version += 1; },
+    candidate => { candidate.source.edge_transitions[0].to.source_sha256 = 'f'.repeat(64); },
+    candidate => { candidate.source.edge_transitions[0].to.verify_jwt = true; },
+  ]) {
+    const hostile = structuredClone(fixture);
+    hostile.releaseBundle = fixture.releaseBundle;
+    hostile.gateEvidence = fixture.gateEvidence;
+    mutate(hostile);
+    assertDenied(() => gate.validateRecoverySource(hostile.source), 'INVALID_RECOVERY_SOURCE');
+  }
+});
+
 test('source artifact recovery rejects unsafe entries missing files and non-postcheck failures', async t => {
   const { gate, policy } = await loadGateAndPolicy();
   const unsafe = recoveryArtifactFixture(t, gate, policy);
@@ -3350,6 +3523,137 @@ test('postcheck recovery verifies exact F5 authority, Edge, cron and zero releas
   const attributed = structuredClone(fixture);
   attributed.currentEvidence.finance.transactions.items.at(-1).metadata = {
     release_id: attributed.controlledPolicy.postcheck_recovery.approved_sources[6].release_id,
+  };
+  resign(attributed);
+  assertDenied(() => verify(attributed), 'RELEASE_ATTRIBUTED_FINANCE');
+});
+
+test('Stories B1 recovery verifies exact deployed state, 552 plus two Advisor reconstruction, and post-F5 finance', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = await recoveryStateFixture(t, gate, policy, 7);
+  const verify = candidate => gate.verifyPostcheckRecovery({
+    policy: candidate.controlledPolicy,
+    recoveryRequest: candidate.recoveryRequest,
+    recoveryManifest: candidate.recoveryManifest,
+    sourceManifest: candidate.sourceManifest,
+    sourceObservation: candidate.sourceObservation,
+    currentEvidence: candidate.currentEvidence,
+    adapterSourceSha256: candidate.adapterSourceSha256,
+  });
+  const resign = candidate => {
+    const { evidence_sha256: ignored, ...unsigned } = candidate.currentEvidence;
+    candidate.currentEvidence.evidence_sha256 = gate.sha256Hex(gate.canonicalJson(unsigned));
+  };
+  const resignAdvisors = candidate => {
+    const advisors = candidate.currentEvidence.cron_security.advisors;
+    advisors.items.sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+    advisors.count = advisors.items.length;
+    advisors.sha256 = gate.sha256Hex(gate.canonicalJson(advisors.items));
+    resign(candidate);
+  };
+  const result = verify(fixture);
+  assert.equal(result.result, 'POSTCHECK_RECOVERY_SUCCESS');
+  assert.equal(result.source_run_id, '40473092474');
+  assert.equal(result.migrations.count, 358);
+  assert.equal(`${result.migrations.latest.version}_${result.migrations.latest.name}`,
+    '20261027042552_stories_v2_interactive_b1');
+  assert.deepEqual(result.functions.items.map(item => [item.name, item.version, item.source_sha256]), [
+    ['cleanup-stale-media-uploads', 53, '62558bb99e36094e33a431d84ee1edb48ea8d22d07dce0c00f9c8cb6ad4eee80'],
+    ['content-safety-scan', 48, '3c8a861fbfa37b2d9ee0f8452938a072498645929ae22175ac5f319bbc54ef43'],
+    ['create-media-upload', 71, '189b25cfc8172ea1561a3e5ac1e3b03c654943cd7ee4147a7017ed17d966e297'],
+    ['create-stream-upload', 40, '67c78125ad77c07d942cc91e5dc757f0461aee6ab7e68f3f9af87ce6623794b3'],
+    ['get-stream-playback', 34, 'a47954442c6c90effb3d1e0bb53f18687bfdb8e1c7557d63a2fddc379034ca65'],
+    ['stream-webhook', 35, '2b16c3e5a7fff1795fa324d6dcbf0648ca5432b9e53b65597cd8d53ec154ee58'],
+  ]);
+  assert.deepEqual(result.security_advisor, {
+    baseline_count: 554,
+    baseline_sha256: fixture.controlledPolicy.security_advisor.baseline.cron_security_sha256,
+    exception_count: 42,
+    exception_fingerprints: result.security_advisor.exception_fingerprints,
+    current_count: 594,
+  });
+  assert.equal(result.security_advisor.exception_fingerprints.length, 42);
+  assert.equal(result.stories_b1_state.infrastructure_installed, true);
+  assert.equal(result.stories_b1_state.activation, false);
+  assert.equal(result.stories_b1_state.owner_approved_policy, false);
+  assert.equal(result.stories_b1_state.relations.length, 6);
+  assert.ok(result.stories_b1_state.relations.every(item => (
+    item.owner === 'postgres' && item.rls_enabled === true && item.force_rls === true
+  )));
+  assert.deepEqual(result.finance.policy, {
+    purchase_enabled: true,
+    subscription_enabled: true,
+    refunds_enabled: true,
+    platform_fee_bps: 2000,
+  });
+  assert.equal(result.finance.premium_transaction_count, 1);
+  assert.equal(fixture.currentEvidence.finance_facts.phase, 'f5_autonomous');
+  assert.equal(fixture.currentEvidence.finance_facts.release_movement_bdag, '0.00000000');
+  assert.equal(result.premium_state.relation_security.sha256,
+    'a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0');
+
+  const missingException = structuredClone(fixture);
+  const introduced = missingException.controlledPolicy.stories_b1_transition.security_advisor
+    .introduced_exceptions[0].advisor_fingerprint;
+  missingException.currentEvidence.cron_security.advisors.items =
+    missingException.currentEvidence.cron_security.advisors.items
+      .filter(item => item.fingerprint !== introduced);
+  resignAdvisors(missingException);
+  assertDenied(() => verify(missingException), 'RECOVERY_POSTCHECK_FAILED');
+
+  const extraFinding = structuredClone(fixture);
+  extraFinding.currentEvidence.cron_security.advisors.items.push({
+    fingerprint: 'f'.repeat(64), level: 'WARN', resource_kind: 'unexpected',
+  });
+  resignAdvisors(extraFinding);
+  assertDenied(() => verify(extraFinding), 'RECOVERY_POSTCHECK_FAILED');
+
+  const changedType = structuredClone(fixture);
+  const changedAdvisor = changedType.currentEvidence.cron_security.advisors.items
+    .find(item => item.fingerprint === introduced);
+  changedAdvisor.level = changedAdvisor.level === 'INFO' ? 'WARN' : 'INFO';
+  resignAdvisors(changedType);
+  assertDenied(() => verify(changedType), 'RECOVERY_POSTCHECK_FAILED');
+
+  const replacedFindingReturned = structuredClone(fixture);
+  const oldFinding = replacedFindingReturned.controlledPolicy.stories_b1_transition.security_advisor
+    .removed_findings[0];
+  replacedFindingReturned.currentEvidence.cron_security.advisors.items.push({
+    fingerprint: oldFinding.fingerprint,
+    level: oldFinding.level,
+    resource_kind: oldFinding.resource_kind,
+  });
+  resignAdvisors(replacedFindingReturned);
+  assertDenied(() => verify(replacedFindingReturned), 'RECOVERY_POSTCHECK_FAILED');
+
+  const unsafeRelation = structuredClone(fixture);
+  unsafeRelation.currentEvidence.stories_b1_state.relations[0].force_rls = false;
+  const { sha256: ignoredStoriesSha, ...unsignedStories } = unsafeRelation.currentEvidence.stories_b1_state;
+  unsafeRelation.currentEvidence.stories_b1_state.sha256 = gate.sha256Hex(gate.canonicalJson(unsignedStories));
+  resign(unsafeRelation);
+  assert.throws(() => verify(unsafeRelation), /STORIES_B1_POSTCHECK_FAILED/);
+
+  const rpcDrift = structuredClone(fixture);
+  rpcDrift.currentEvidence.rpc_security.items
+    .find(item => item.name === 'respond_to_story_element').definition_sha256 = 'f'.repeat(64);
+  rpcDrift.currentEvidence.rpc_security.sha256 = gate.sha256Hex(
+    gate.canonicalJson(rpcDrift.currentEvidence.rpc_security.items),
+  );
+  resign(rpcDrift);
+  assert.throws(() => verify(rpcDrift), /RPC_SECURITY_ATTESTATION_FAILED/);
+
+  const edgeDrift = structuredClone(fixture);
+  edgeDrift.currentEvidence.functions.items
+    .find(item => item.slug === 'content-safety-scan').version += 1;
+  edgeDrift.currentEvidence.functions.sha256 = gate.sha256Hex(
+    gate.canonicalJson(edgeDrift.currentEvidence.functions.items),
+  );
+  resign(edgeDrift);
+  assertDenied(() => verify(edgeDrift), 'RECOVERY_POSTCHECK_FAILED');
+
+  const attributed = structuredClone(fixture);
+  attributed.currentEvidence.finance.transactions.items.at(-1).metadata = {
+    release_id: attributed.controlledPolicy.postcheck_recovery.approved_sources[7].release_id,
   };
   resign(attributed);
   assertDenied(() => verify(attributed), 'RELEASE_ATTRIBUTED_FINANCE');
