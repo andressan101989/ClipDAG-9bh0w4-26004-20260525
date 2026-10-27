@@ -1,0 +1,275 @@
+{
+  "scope": "Reduced-schema SQL-real; NOT full-schema E2E",
+  "database": "stories_b1_baseline",
+  "host": "127.0.0.1",
+  "port": 55437,
+  "sources": [
+    {
+      "file": "20260703212533_migration_to_supabase.sql",
+      "sha256": "C578CF1C12641DEA0FE92AE52F514593C68479148665521D12D6D83EC8DB8854",
+      "start": "",
+      "end_exclusive": "",
+      "characters": 24399
+    },
+    {
+      "file": "20260703215405_functions_export_schema.sql",
+      "sha256": "E3DE3F42390BA6884683A26B7642A5D29286BEEBBA0B87A0CA52022B3A5FEE32",
+      "start": "",
+      "end_exclusive": "",
+      "characters": 4117
+    },
+    {
+      "file": "20260726090000_media_asset_foundation.sql",
+      "sha256": "4F3652F6A8D897512828AFA4179A35D605A878904C3E61D476E49C97F8D0F006",
+      "start": "create table if not exists public.media_assets",
+      "end_exclusive": "create or replace function public.link_media_asset",
+      "characters": 3207
+    },
+    {
+      "file": "20260726105000_media_public_urls_and_safe_links.sql",
+      "sha256": "3C9D11FFA12F11A4481D58E681B20C1CF44A7A0D11CAA5E8A011BF22157C669C",
+      "start": "alter table public.media_assets",
+      "end_exclusive": "create or replace function public.media_asset_has_valid_links",
+      "characters": 696
+    },
+    {
+      "file": "20260726100000_create_stories_schema.sql",
+      "sha256": "AD614BA13CD910DBEE2EEDDFD8D74B617E099A720EAE15BDAF4BF3CB7BA537CC",
+      "start": "",
+      "end_exclusive": "",
+      "characters": 2596
+    },
+    {
+      "file": "20260908225020_stories_v2_b_canonical_contract_security_hardening.sql",
+      "sha256": "40744A8B826AF3F5D149D31FDA2F05C282D27E6E1943A06B557F05D87F57F3AD",
+      "start": "",
+      "end_exclusive": "",
+      "characters": 7112
+    },
+    {
+      "file": "20260909003332_stories_v2_c_private_media_lifecycle.sql",
+      "sha256": "E6870CA7AB98FC1FD3810A3361C784D784BA768261FABE60E6BA96A9F02808BA",
+      "start": "",
+      "end_exclusive": "",
+      "characters": 6010
+    },
+    {
+      "file": "20260909045509_stories_v2_d_viewer_integrity.sql",
+      "sha256": "04F8DB97A8E85B7E85DCDCC63E820EA8111452799A2E6AC50C562430CB20AECA",
+      "start": "",
+      "end_exclusive": "",
+      "characters": 5496
+    },
+    {
+      "file": "20260909144214_stories_v2_e_delete_own_lifecycle_closure.sql",
+      "sha256": "D745053CAD1A740FC91146286E77C187A638B2DFCD8D80CFB2C0D902E6655A6D",
+      "start": "",
+      "end_exclusive": "",
+      "characters": 4023
+    },
+    {
+      "file": "20260910002320_stories_v2_g_enable_stories_realtime.sql",
+      "sha256": "E60D2331EE397AC0B4DE1920559D0B0D9814D692C2103E1A06BF45B05AB542F4",
+      "start": "",
+      "end_exclusive": "",
+      "characters": 519
+    },
+    {
+      "file": "20260910140101_stories_v2_i_share_editor_integrity.sql",
+      "sha256": "DE4436704F07C864A25EFF4B0A81A9EDF2C3C1CD8A1744B666A70ADAD96E8F94",
+      "start": "",
+      "end_exclusive": "",
+      "characters": 15613
+    },
+    {
+      "file": "20260910012140_stories_v2_h_replies_reactions_integrity.sql",
+      "sha256": "44C2D36957D1493EB178221CBA0E3CEBE6D187699E281BB5DCA1B2FB30422A65",
+      "start": "create table if not exists public.story_reactions",
+      "end_exclusive": "create or replace function public.reply_to_story",
+      "characters": 5801
+    },
+    {
+      "file": "20260910012140_stories_v2_h_replies_reactions_integrity.sql",
+      "sha256": "44C2D36957D1493EB178221CBA0E3CEBE6D187699E281BB5DCA1B2FB30422A65",
+      "start": "revoke all on function public.set_story_reaction",
+      "end_exclusive": "revoke all on function public.reply_to_story",
+      "characters": 442
+    },
+    {
+      "file": "20260911162054_superuser_a3_canonical_authority_foundation.sql",
+      "sha256": "8FF7F18B18982C5713F80266704022BC4BDCC1175AD7B0919F062C36508448DC",
+      "start": "create table private.admin_capabilities",
+      "end_exclusive": "create table private.admin_role_capabilities",
+      "characters": 551
+    },
+    {
+      "file": "20260911200240_superuser_a5_content_stories_chat_moderation.sql",
+      "sha256": "8DA1804010C9C5994EAFA8D5D4279DB74589C04FDAF3440ECDFB38FD761AC346",
+      "start": "create table private.admin_content_moderation_actions",
+      "end_exclusive": "create function private.admin_execute_content_moderation",
+      "characters": 6424
+    },
+    {
+      "file": "20261023141630_creator_premium_media_lifecycle_c1.sql",
+      "sha256": "F62BDA8FFFDFD896151AF5DA88BEB00A504724CFABAE8EC78688C17930DA7AB8",
+      "start": "alter table public.media_assets",
+      "end_exclusive": "alter table public.video_assets",
+      "characters": 866
+    },
+    {
+      "file": "20261023141630_creator_premium_media_lifecycle_c1.sql",
+      "sha256": "F62BDA8FFFDFD896151AF5DA88BEB00A504724CFABAE8EC78688C17930DA7AB8",
+      "function": "public.schedule_media_asset_deletion",
+      "characters": 1570
+    },
+    {
+      "file": "20261024173500_creator_premium_f2_complete_monetization.sql",
+      "sha256": "496D3E55A7D6C18B47C60A2295ACC6EFF666174BC6D1C5CAABC1990FED740778",
+      "start": "create or replace function public.check_velocity_limit",
+      "end_exclusive": "alter table private.creator_premium_subscriptions",
+      "characters": 2892
+    },
+    {
+      "file": "20260911200240_superuser_a5_content_stories_chat_moderation.sql",
+      "sha256": "8DA1804010C9C5994EAFA8D5D4279DB74589C04FDAF3440ECDFB38FD761AC346",
+      "function": "public.mark_story_viewed",
+      "characters": 1404
+    },
+    {
+      "file": "20260911200240_superuser_a5_content_stories_chat_moderation.sql",
+      "sha256": "8DA1804010C9C5994EAFA8D5D4279DB74589C04FDAF3440ECDFB38FD761AC346",
+      "function": "public.set_story_reaction",
+      "characters": 2084
+    },
+    {
+      "file": "20260911200240_superuser_a5_content_stories_chat_moderation.sql",
+      "sha256": "8DA1804010C9C5994EAFA8D5D4279DB74589C04FDAF3440ECDFB38FD761AC346",
+      "function": "public.get_story_reactions",
+      "characters": 1757
+    },
+    {
+      "file": "20260911200240_superuser_a5_content_stories_chat_moderation.sql",
+      "sha256": "8DA1804010C9C5994EAFA8D5D4279DB74589C04FDAF3440ECDFB38FD761AC346",
+      "function": "public.get_story_viewers",
+      "characters": 1822
+    },
+    {
+      "file": "20260911200240_superuser_a5_content_stories_chat_moderation.sql",
+      "sha256": "8DA1804010C9C5994EAFA8D5D4279DB74589C04FDAF3440ECDFB38FD761AC346",
+      "function": "public.get_story_shared_content",
+      "characters": 1868
+    },
+    {
+      "file": "20260704010000_live_db_audit_fixes.sql",
+      "sha256": "118FA69BD95CEF2F50D6C14861BFC271861A1F7AFF92191FC2C0B0BCFAB77698",
+      "start": "create table if not exists public.messages",
+      "end_exclusive": "create table if not exists public.likes"
+    },
+    {
+      "file": "20260906222020_chat_v2_a_canonical_foundation.sql",
+      "sha256": "476449140601262B172CB7370CDED6BE29F2C0BE28892E2DD8C7001902486087",
+      "start": "",
+      "end_exclusive": ""
+    },
+    {
+      "file": "20260907012906_chat_v2_c_private_media_one_time.sql",
+      "sha256": "E9BF5046E3F4D0959EE97887592A9D1C68C2AEA51246273D063B9C670ABD7BE4",
+      "start": "alter table public.chat_message_receipts",
+      "end_exclusive": "-- Preserve every existing media link authority"
+    },
+    {
+      "file": "20260907030000_chat_v2_d_voice_notes.sql",
+      "sha256": "529E83E8A65961989EAD5F72897916E3FA378167609AC6819BFF6A36355E3154",
+      "start": "alter table public.messages",
+      "end_exclusive": "create or replace function public.chat_prepare_legacy_message"
+    },
+    {
+      "file": "20260907043715_chat_v2_e_groups.sql",
+      "sha256": "6EDD6174CB12C845E3DC794F2159D7E761379568FB246FD2BB65F577947A1E93",
+      "start": "alter table public.messages alter column recipient_id",
+      "end_exclusive": "create or replace function public.chat_prepare_legacy_message"
+    },
+    {
+      "file": "20260907043715_chat_v2_e_groups.sql",
+      "sha256": "6EDD6174CB12C845E3DC794F2159D7E761379568FB246FD2BB65F577947A1E93",
+      "function": "public.chat_after_message_insert"
+    },
+    {
+      "file": "20260907043715_chat_v2_e_groups.sql",
+      "sha256": "6EDD6174CB12C845E3DC794F2159D7E761379568FB246FD2BB65F577947A1E93",
+      "function": "public.chat_sync_legacy_read"
+    },
+    {
+      "file": "20260908061603_chat_v2_h_f1_legacy_video_trigger_alignment.sql",
+      "sha256": "505CD5C9CA5EB3347D696D38A97B8347C0189DDE7FD44E489459A5AF0217F453",
+      "function": "public.chat_prepare_legacy_message"
+    },
+    {
+      "file": "20260907030000_chat_v2_d_voice_notes.sql",
+      "sha256": "529E83E8A65961989EAD5F72897916E3FA378167609AC6819BFF6A36355E3154",
+      "start": "drop function public.chat_send_message",
+      "end_exclusive": "create function public.chat_send_message"
+    },
+    {
+      "file": "20260908040726_chat_v2_h_video_inbox_truth.sql",
+      "sha256": "F92B0044B4B53F013952424F61DBFE1395F517BB00D7818FD18E494042BC1AB5",
+      "function": "public.chat_send_message"
+    },
+    {
+      "file": "20260907043715_chat_v2_e_groups.sql",
+      "sha256": "6EDD6174CB12C845E3DC794F2159D7E761379568FB246FD2BB65F577947A1E93",
+      "start": "drop policy if exists messages_select_participant",
+      "end_exclusive": "revoke all on function public.chat_create_group"
+    },
+    {
+      "file": "20260911200240_superuser_a5_content_stories_chat_moderation.sql",
+      "sha256": "8DA1804010C9C5994EAFA8D5D4279DB74589C04FDAF3440ECDFB38FD761AC346",
+      "function": "public.reply_to_story"
+    },
+    {
+      "file": "20260911200240_superuser_a5_content_stories_chat_moderation.sql",
+      "sha256": "8DA1804010C9C5994EAFA8D5D4279DB74589C04FDAF3440ECDFB38FD761AC346",
+      "start": "alter table public.reports drop constraint reports_reported_content_type_check",
+      "end_exclusive": "create function public.report_chat_message"
+    },
+    {
+      "file": "20260911162054_superuser_a3_canonical_authority_foundation.sql",
+      "sha256": "8FF7F18B18982C5713F80266704022BC4BDCC1175AD7B0919F062C36508448DC",
+      "start": "create table private.admin_roles",
+      "end_exclusive": "create table private.admin_capabilities"
+    },
+    {
+      "file": "20260911162054_superuser_a3_canonical_authority_foundation.sql",
+      "sha256": "8FF7F18B18982C5713F80266704022BC4BDCC1175AD7B0919F062C36508448DC",
+      "start": "create table private.admin_role_capabilities",
+      "end_exclusive": "create function private.admin_active_role_codes"
+    },
+    {
+      "file": "20260911162054_superuser_a3_canonical_authority_foundation.sql",
+      "sha256": "8FF7F18B18982C5713F80266704022BC4BDCC1175AD7B0919F062C36508448DC",
+      "start": "create function private.admin_active_role_codes",
+      "end_exclusive": "-- Evolve the existing physical audit table"
+    },
+    {
+      "file": "20260911162054_superuser_a3_canonical_authority_foundation.sql",
+      "sha256": "8FF7F18B18982C5713F80266704022BC4BDCC1175AD7B0919F062C36508448DC",
+      "function": "public.admin_actor_has_capability"
+    },
+    {
+      "file": "20260911162054_superuser_a3_canonical_authority_foundation.sql",
+      "sha256": "8FF7F18B18982C5713F80266704022BC4BDCC1175AD7B0919F062C36508448DC",
+      "function": "public.admin_require_capability"
+    }
+  ],
+  "scaffold": "auth schema/users/uid/jwt/role and local NOLOGIN roles plus empty realtime publication; based on repository local proof pattern",
+  "omitted": [
+    "Full Supabase GoTrue/PostgREST/Storage and websocket runtime",
+    "Admin audit history, admin mutation/workflow RPCs, Chat abuse/report administration; canonical role/capability catalog and guard ARE included",
+    "External message push dispatcher/outbox/delivery transport; single Chat A ACL statement for absent message_push_delivery_wake omitted explicitly",
+    "Full Marketplace/shared-content visibility and video content-type authorities",
+    "Full media upload/provider cleanup/finalization workers and video_assets lifecycle",
+    "Creator premium/ledger commerce extensions beyond latest velocity helper",
+    "Application user/content seed data; no auth/users/messages/Stories/admin assignments remain"
+  ],
+  "canonical_dependency_probe": "PASS: non-admin capability denied; MODERATOR stories.items.moderate allowed; report_story creates canonical report; reply_to_story creates canonical Chat message; all rolled back; baseline clone succeeds"
+}
