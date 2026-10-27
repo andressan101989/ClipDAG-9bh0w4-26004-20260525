@@ -164,7 +164,7 @@ export const STORIES_B1_RELEASE_TRANSITION = Object.freeze({
   from_phase: 'stories_v2_legacy',
   to_phase: 'stories_v2_interactive_b1_fail_closed',
   baseline_sha: 'd8c3847b14486f249d9d8fa83aa74c8cff37bf6b',
-  reviewed_source_sha: '914227259b3b890073daea59b1056f09dc30f76e',
+  reviewed_source_sha: 'bc79eb69bc75c37b5fb7020ffa3ae0bd6ca250a4',
   integration_base_sha: '9a436857664c1862c6f16807d45834f107076380',
   approved_sha_ancestry: 'verified_integration_base',
   migration_path: 'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql',
