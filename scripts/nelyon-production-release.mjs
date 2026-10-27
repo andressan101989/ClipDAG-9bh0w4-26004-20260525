@@ -164,12 +164,12 @@ export const STORIES_B1_RELEASE_TRANSITION = Object.freeze({
   from_phase: 'stories_v2_legacy',
   to_phase: 'stories_v2_interactive_b1_fail_closed',
   baseline_sha: 'd8c3847b14486f249d9d8fa83aa74c8cff37bf6b',
-  reviewed_source_sha: 'c1e8c563d9e3f5105769a546d9b206285da5b2be',
+  reviewed_source_sha: '914227259b3b890073daea59b1056f09dc30f76e',
   integration_base_sha: '9a436857664c1862c6f16807d45834f107076380',
   approved_sha_ancestry: 'verified_integration_base',
   migration_path: 'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql',
-  migration_blob: '30ee300ae1fde3ecb9a4b2375c9a6566de6ab367',
-  migration_sha256: '1296c0470d2b42f160f12574475c2f94c1474f067384bd423323a5a13a837555',
+  migration_blob: '5dc9d5691988c562a903463d3e7966616c1945b3',
+  migration_sha256: '695467ee770d50a7aa3247d2ec4a9d216d7c93ddb5b4889ef9313ed7887436e1',
   config_blob: '7c3ff52db72f9983aa4128f5c2e7e686bba31d5d',
   productive_paths: [
     'supabase/functions/_shared/premiumStreamSecurity.ts',
@@ -191,7 +191,7 @@ export const STORIES_B1_RELEASE_TRANSITION = Object.freeze({
     { path: 'supabase/functions/create-stream-upload/index.ts', blob: 'ba3bc8237169a150b8d6fbfd6f9196316aa2d657', sha256: '48f8533ebd6de53e590414c6ec6585622170f2befc0d8082d346c518521f4a90' },
     { path: 'supabase/functions/get-stream-playback/index.ts', blob: '16a252edb5b30e2d5d62fef14189ebfe797cce60', sha256: '89a6b98cc34f35f3def712dc30772b2a4c672d42eaa6e35e38ca6149019b8632' },
     { path: 'supabase/functions/stream-webhook/index.ts', blob: '10b51e63ebab9e88b88ab4b534e2dc2c0e3b3df9', sha256: '6a1595bdc06a0cc864074b09b9756b0410cc2e7f91ba5bbbe14da27b30fbe90a' },
-    { path: 'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql', blob: '30ee300ae1fde3ecb9a4b2375c9a6566de6ab367', sha256: '1296c0470d2b42f160f12574475c2f94c1474f067384bd423323a5a13a837555' },
+    { path: 'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql', blob: '5dc9d5691988c562a903463d3e7966616c1945b3', sha256: '695467ee770d50a7aa3247d2ec4a9d216d7c93ddb5b4889ef9313ed7887436e1' },
   ],
   functions: [
     { name: 'cleanup-stale-media-uploads', source_sha256: '991f0654142513bb434169dc58487dedaccb52d75f049e6644edaf838ebfec2c', verify_jwt: false },
@@ -1399,11 +1399,21 @@ export function attestStoriesB1Transition({
 }) {
   if (mode === 'postcheck_recovery') return { migrations, attestation: null };
   const transition = STORIES_B1_RELEASE_TRANSITION;
-  const candidate = migrations?.some(item => item?.path === transition.migration_path)
-    || affectedFunctions?.some(name => transition.functions.some(item => item.name === name));
+  const expectedFunctions = transition.functions.map(item => item.name).sort();
+  const supabaseChanges = (changes ?? [])
+    .filter(item => item?.path?.startsWith('supabase/'))
+    .map(item => ({ path: item.path, status: item.status }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const expectedChanges = transition.productive_paths
+    .map(path => ({ path, status: path === transition.migration_path ? 'A' : 'M' }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const hasExactMigration = migrations?.some(item => item?.path === transition.migration_path);
+  const hasCompletePredecessorScope = policy?.baseline?.sha === transition.baseline_sha
+    && canonicalJson([...(affectedFunctions ?? [])].sort()) === canonicalJson(expectedFunctions)
+    && canonicalJson(supabaseChanges) === canonicalJson(expectedChanges);
+  const candidate = hasExactMigration || hasCompletePredecessorScope;
   if (!candidate) return { migrations, attestation: null };
   const code = 'INVALID_STORIES_B1_TRANSITION';
-  const expectedFunctions = transition.functions.map(item => item.name).sort();
   if (canonicalJson(policy?.stories_b1_transition ?? null) !== canonicalJson(transition)
     || policy?.baseline?.sha !== transition.baseline_sha
     || canonicalJson(policy?.supabase?.finance_policy ?? null) !== canonicalJson(transition.finance_policy)
@@ -1413,13 +1423,6 @@ export function attestStoriesB1Transition({
     || canonicalJson([...(affectedFunctions ?? [])].sort()) !== canonicalJson(expectedFunctions)) {
     deny(code, 'Stories B1 release scope, baseline, Finance, or Edge closure differs');
   }
-  const supabaseChanges = (changes ?? [])
-    .filter(item => item?.path?.startsWith('supabase/'))
-    .map(item => ({ path: item.path, status: item.status }))
-    .sort((left, right) => left.path.localeCompare(right.path));
-  const expectedChanges = transition.productive_paths
-    .map(path => ({ path, status: path === transition.migration_path ? 'A' : 'M' }))
-    .sort((left, right) => left.path.localeCompare(right.path));
   if (canonicalJson(supabaseChanges) !== canonicalJson(expectedChanges)) {
     deny(code, 'Stories B1 permits exactly one migration and the six graph-derived Edge changes');
   }

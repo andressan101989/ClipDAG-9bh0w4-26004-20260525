@@ -229,6 +229,40 @@ test('Stories B1 Git attestation rejects altered migration, Edge, config, or Sup
   }), 'INVALID_STORIES_B1_TRANSITION');
 });
 
+test('Stories B1 phase gate does not reactivate after baseline promotion for an isolated shared Edge change', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.stories_b1_transition;
+  const futurePolicy = structuredClone(policy);
+  futurePolicy.baseline.sha = 'f'.repeat(40);
+  const sharedEdge = transition.functions[0];
+  const result = gate.attestStoriesB1Transition({
+    cwd: new URL('..', import.meta.url),
+    policy: futurePolicy,
+    mode: 'plan_only',
+    approvedSha: MAIN_SHA,
+    changes: [{ path: `supabase/functions/${sharedEdge.name}/index.ts`, status: 'M' }],
+    migrations: [],
+    affectedFunctions: [sharedEdge.name],
+    runGit: () => { throw new Error('historical Stories B1 attestation must not run'); },
+  });
+  assert.deepEqual(result, { migrations: [], attestation: null });
+
+  const fullScopeWithoutParsedMigration = transition.productive_paths.map(path => ({
+    path,
+    status: path === transition.migration_path ? 'A' : 'M',
+  }));
+  assertDenied(() => gate.attestStoriesB1Transition({
+    cwd: new URL('..', import.meta.url),
+    policy,
+    mode: 'plan_only',
+    approvedSha: MAIN_SHA,
+    changes: fullScopeWithoutParsedMigration,
+    migrations: [],
+    affectedFunctions: [...STORIES_B1_FUNCTIONS],
+    runGit: () => { throw new Error('scope validation must fail before Git attestation'); },
+  }), 'INVALID_STORIES_B1_TRANSITION');
+});
+
 async function loadGateAndPolicy() {
   assert.ok(existsSync(policyUrl), 'release policy must exist');
   assert.ok(existsSync(gateUrl), 'release gate helper must exist');
