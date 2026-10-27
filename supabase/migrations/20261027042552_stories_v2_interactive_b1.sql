@@ -704,6 +704,1390 @@ revoke all on function public.report_story(uuid,text,text) from public, anon, au
 grant execute on function public.report_story(uuid,text,text) to authenticated;
 create index story_report_replay on public.reports(reporter_user_id,reported_content_id,created_at,id) where reported_content_type='story';
 
+-- B1 media safety: photos remain on canonical private R2. New Story videos
+-- use the existing private Cloudflare Stream authority and are never accepted
+-- from the legacy R2 story_video lane. Historical R2 rows remain readable and
+-- cleanable, but this migration creates no new R2 video allocation authority.
+alter table public.video_assets
+  drop constraint video_assets_purpose_check,
+  drop constraint video_assets_duration_limit_check,
+  drop constraint video_assets_creator_premium_contract_check,
+  drop constraint video_assets_ready_invariants_check;
+
+alter table public.video_assets
+  add constraint video_assets_purpose_check check (
+    purpose in ('feed_video','business_library','creator_premium_video','story_video')
+  ),
+  add constraint video_assets_duration_limit_check check (
+    (purpose='creator_premium_video' and max_duration_seconds between 1 and 180)
+    or (purpose='story_video' and max_duration_seconds=15)
+    or (purpose not in ('creator_premium_video','story_video') and max_duration_seconds between 1 and 60)
+  ),
+  add constraint video_assets_creator_premium_contract_check check (
+    purpose not in ('creator_premium_video','story_video')
+    or (
+      provider='cloudflare_stream' and visibility='private'
+      and mime_type in ('video/mp4','video/quicktime','video/webm')
+      and size_bytes between 1 and 200000000
+      and max_duration_seconds=case when purpose='story_video' then 15 else 180 end
+    )
+  ),
+  add constraint video_assets_ready_invariants_check check (
+    (
+      status='ready' and nullif(pg_catalog.btrim(cloudflare_uid),'') is not null
+      and ready_at is not null and duration_seconds is not null
+      and duration_seconds>0 and duration_seconds<=max_duration_seconds
+      and (
+        (purpose in ('creator_premium_video','story_video')
+          and visibility='private' and hls_url is null and dash_url is null
+          and thumbnail_url is null
+          and (provider_metadata->'require_signed_urls'='true'::jsonb) is true)
+        or
+        (purpose not in ('creator_premium_video','story_video')
+          and hls_url is not null and hls_url~'^https://'
+          and (dash_url is null or dash_url~'^https://')
+          and (thumbnail_url is null or thumbnail_url~'^https://'))
+      )
+    )
+    or (status<>'ready' and hls_url is null and dash_url is null and thumbnail_url is null)
+  );
+
+alter table public.video_asset_links
+  add constraint video_asset_links_story_shape_check check (
+    entity_type<>'story' or (slot='media' and "position"=0)
+  );
+create unique index story_stream_video_story_uidx on public.video_asset_links(entity_id)
+  where entity_type='story' and slot='media' and "position"=0;
+create unique index story_stream_video_asset_uidx on public.video_asset_links(asset_id)
+  where entity_type='story';
+
+create or replace function public.reserve_stream_upload_asset(
+  p_asset_id uuid,p_owner_id uuid,p_mime_type text,p_size_bytes bigint,
+  p_original_filename text,p_purpose text
+) returns text language plpgsql security definer set search_path='' as $$
+declare v_recent_count integer;v_active_count integer;
+begin
+  if p_asset_id is null or p_owner_id is null
+     or p_purpose not in('feed_video','business_library','creator_premium_video','story_video')
+     or p_mime_type not in('video/mp4','video/quicktime','video/webm')
+     or p_size_bytes not between 1 and 200000000 then
+    raise exception using errcode='22023',message='invalid_stream_reservation';
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_owner_id::text,0));
+  select count(*) into v_recent_count from public.video_assets asset
+    where asset.owner_id=p_owner_id and asset.created_at>=pg_catalog.now()-interval '60 seconds';
+  if v_recent_count>=5 then return 'rate_limited';end if;
+  select count(*) into v_active_count from public.video_assets asset
+    where asset.owner_id=p_owner_id and asset.status in('pending','uploading','processing');
+  if v_active_count>=3 then return 'active_limit_reached';end if;
+  insert into public.video_assets(
+    id,owner_id,provider,purpose,visibility,status,mime_type,size_bytes,
+    original_filename,max_duration_seconds,upload_expires_at,lifecycle_contract_version
+  ) values(
+    p_asset_id,p_owner_id,'cloudflare_stream',p_purpose,
+    case when p_purpose in('creator_premium_video','story_video') then 'private' else 'public' end,
+    'pending',p_mime_type,p_size_bytes,p_original_filename,
+    case when p_purpose='creator_premium_video' then 180 when p_purpose='story_video' then 15 else 60 end,
+    pg_catalog.clock_timestamp()+interval '15 minutes',1
+  );
+  return 'created';
+end;
+$$;
+revoke all on function public.reserve_stream_upload_asset(uuid,uuid,text,bigint,text,text)
+  from public,anon,authenticated,service_role;
+grant execute on function public.reserve_stream_upload_asset(uuid,uuid,text,bigint,text,text)
+  to service_role;
+
+create function private.guard_story_video_link_v1()
+returns trigger language plpgsql security definer set search_path='' as $$
+declare v_asset public.video_assets;v_story public.stories;
+begin
+  select * into v_asset from public.video_assets where id=new.asset_id for update;
+  if not found then
+    if new.entity_type='story' then raise exception using errcode='23503',message='story_video_asset_not_found';end if;
+    return new;
+  end if;
+  if v_asset.purpose='story_video' and new.entity_type<>'story' then
+    raise exception using errcode='23514',message='story_video_entity_required';
+  end if;
+  if new.entity_type<>'story' then return new;end if;
+  select * into v_story from public.stories where id=new.entity_id for update;
+  if not found then raise exception using errcode='23503',message='story_not_found';end if;
+  if new.slot<>'media' or new."position"<>0 or new.owner_id is distinct from v_asset.owner_id
+     or v_story.user_id is distinct from v_asset.owner_id or v_story.media_type<>'video'
+     or v_story.story_kind<>'media' or v_asset.provider<>'cloudflare_stream'
+     or v_asset.purpose<>'story_video' or v_asset.visibility<>'private'
+     or v_asset.status<>'ready' or v_asset.deleted_at is not null
+     or nullif(pg_catalog.btrim(v_asset.cloudflare_uid),'') is null
+     or v_asset.ready_at is null or v_asset.duration_seconds is null
+     or v_asset.duration_seconds<=0 or v_asset.duration_seconds>15
+     or v_asset.max_duration_seconds<>15 or v_asset.hls_url is not null
+     or v_asset.dash_url is not null or v_asset.thumbnail_url is not null
+     or v_asset.provider_metadata->'require_signed_urls' is distinct from 'true'::jsonb then
+    raise exception using errcode='23514',message='story_video_asset_invalid';
+  end if;
+  return new;
+end;
+$$;
+revoke all on function private.guard_story_video_link_v1() from public,anon,authenticated,service_role;
+create trigger video_asset_links_guard_story_video
+before insert or update on public.video_asset_links for each row
+execute function private.guard_story_video_link_v1();
+
+-- One create authority accepts either a READY private R2 Story image or a
+-- READY private Stream Story video. Ambiguous UUIDs and R2 video are rejected.
+create or replace function private.create_story_with_media_core(
+  p_asset_id uuid,p_composition jsonb,p_client_story_id uuid
+) returns uuid language plpgsql security definer set search_path='' as $$
+declare
+  v_actor uuid:=auth.uid();v_story_id uuid;v_media public.media_assets;
+  v_video public.video_assets;v_composition jsonb;v_media_matches integer;v_video_matches integer;
+begin
+  if v_actor is null then raise exception using errcode='42501',message='not_authenticated';end if;
+  if p_asset_id is null then raise exception using errcode='22023',message='invalid_asset_id';end if;
+  v_composition:=private.story_validate_composition(p_composition);
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('story-media:'||p_asset_id::text,0));
+  select count(*) into v_media_matches from public.media_assets where id=p_asset_id;
+  select count(*) into v_video_matches from public.video_assets where id=p_asset_id;
+  if v_media_matches+v_video_matches<>1 then
+    raise exception using errcode='23514',message='story_asset_identity_ambiguous';
+  end if;
+  if p_client_story_id is not null then
+    select s.id into v_story_id from public.stories s
+    where s.user_id=v_actor and s.client_story_id=p_client_story_id
+      and s.story_kind='media' and s.story_composition=v_composition
+      and (exists(select 1 from public.media_asset_links l where l.entity_type='story'
+        and l.entity_id=s.id and l.slot='media' and l.position=0 and l.asset_id=p_asset_id)
+        or exists(select 1 from public.video_asset_links l where l.entity_type='story'
+        and l.entity_id=s.id and l.slot='media' and l.position=0 and l.asset_id=p_asset_id));
+    if v_story_id is not null then return v_story_id;end if;
+    if exists(select 1 from public.stories s where s.user_id=v_actor and s.client_story_id=p_client_story_id) then
+      raise exception using errcode='23505',message='story_idempotency_conflict';end if;
+  end if;
+  if v_media_matches=1 then
+    select * into v_media from public.media_assets where id=p_asset_id for update;
+    if v_media.owner_id<>v_actor or v_media.provider<>'r2' or v_media.media_kind<>'image'
+       or v_media.purpose<>'story_image' or v_media.visibility<>'private'
+       or v_media.public_url is not null or v_media.status<>'ready' or v_media.deleted_at is not null
+       or nullif(pg_catalog.btrim(v_media.bucket_name),'') is null
+       or nullif(pg_catalog.btrim(v_media.object_key),'') is null
+       or v_media.mime_type not in('image/jpeg','image/png','image/webp')
+       or v_media.size_bytes not between 1 and 25000000 then
+      raise exception using errcode='42501',message='story_asset_not_ready_or_owned';end if;
+    if exists(select 1 from public.media_asset_links where asset_id=p_asset_id) then
+      raise exception using errcode='23505',message='story_asset_already_linked';end if;
+    insert into public.stories(user_id,media_url,media_type,story_kind,story_composition,client_story_id)
+      values(v_actor,null,'photo','media',v_composition,p_client_story_id) returning id into v_story_id;
+    insert into public.media_asset_links(asset_id,entity_type,entity_id,slot,position)
+      values(p_asset_id,'story',v_story_id,'media',0);
+  else
+    select * into v_video from public.video_assets where id=p_asset_id for update;
+    if v_video.owner_id<>v_actor or v_video.provider<>'cloudflare_stream'
+       or v_video.purpose<>'story_video' or v_video.visibility<>'private'
+       or v_video.status<>'ready' or v_video.deleted_at is not null
+       or nullif(pg_catalog.btrim(v_video.cloudflare_uid),'') is null
+       or v_video.duration_seconds is null or v_video.duration_seconds<=0 or v_video.duration_seconds>15
+       or v_video.max_duration_seconds<>15 or v_video.hls_url is not null
+       or v_video.dash_url is not null or v_video.thumbnail_url is not null
+       or v_video.provider_metadata->'require_signed_urls' is distinct from 'true'::jsonb then
+      raise exception using errcode='42501',message='story_asset_not_ready_or_owned';end if;
+    if exists(select 1 from public.video_asset_links where asset_id=p_asset_id) then
+      raise exception using errcode='23505',message='story_asset_already_linked';end if;
+    insert into public.stories(user_id,media_url,media_type,story_kind,story_composition,client_story_id)
+      values(v_actor,null,'video','media',v_composition,p_client_story_id) returning id into v_story_id;
+    insert into public.video_asset_links(asset_id,owner_id,entity_type,entity_id,slot,position)
+      values(p_asset_id,v_actor,'story',v_story_id,'media',0);
+  end if;
+  return v_story_id;
+end;
+$$;
+revoke all on function private.create_story_with_media_core(uuid,jsonb,uuid)
+  from public,anon,authenticated,service_role;
+
+create or replace function public.delete_story(p_story_id uuid)
+returns table(deleted_story_id uuid,media_asset_id uuid,media_cleanup_status text)
+language plpgsql security definer set search_path='' as $$
+declare
+  v_actor uuid:=auth.uid();v_story public.stories;v_r2 uuid;v_stream uuid;
+  v_owner uuid;v_cleanup text:='none';v_affected integer;
+begin
+  if v_actor is null then raise exception using errcode='42501',message='not_authenticated';end if;
+  if p_story_id is null then raise exception using errcode='22023',message='invalid_story_id';end if;
+  select * into v_story from public.stories where id=p_story_id and user_id=v_actor for update;
+  if not found then raise exception using errcode='42501',message='story_not_found_or_not_owned';end if;
+  select asset_id into v_r2 from public.media_asset_links where entity_type='story'
+    and entity_id=v_story.id and slot='media' and position=0;
+  select asset_id into v_stream from public.video_asset_links where entity_type='story'
+    and entity_id=v_story.id and slot='media' and position=0;
+  if v_r2 is not null and v_stream is not null then
+    raise exception using errcode='55000',message='story_media_contract_invalid';end if;
+  if v_r2 is not null then
+    select owner_id into v_owner from public.media_assets where id=v_r2 for update;
+    if v_owner is distinct from v_actor then raise exception using errcode='55000',message='story_media_contract_invalid';end if;
+    delete from public.media_asset_links where asset_id=v_r2 and entity_type='story'
+      and entity_id=v_story.id and slot='media' and position=0;
+  elsif v_stream is not null then
+    select owner_id into v_owner from public.video_assets where id=v_stream for update;
+    if v_owner is distinct from v_actor then raise exception using errcode='55000',message='story_media_contract_invalid';end if;
+    delete from public.video_asset_links where asset_id=v_stream and entity_type='story'
+      and entity_id=v_story.id and slot='media' and position=0;
+  end if;
+  delete from public.stories where id=v_story.id and user_id=v_actor;
+  get diagnostics v_affected=row_count;
+  if v_affected<>1 then raise exception using errcode='55000',message='story_delete_failed';end if;
+  if v_r2 is not null then v_cleanup:=public.schedule_media_asset_deletion(v_r2,v_actor);
+  elsif v_stream is not null then v_cleanup:=public.schedule_video_asset_deletion_v1(v_stream,v_actor);
+  end if;
+  if v_cleanup not in('none','scheduled','deleted','asset_in_use') then
+    raise exception using errcode='55000',message='story_media_schedule_failed';end if;
+  return query select v_story.id,coalesce(v_r2,v_stream),v_cleanup;
+end;
+$$;
+revoke all on function public.delete_story(uuid) from public,anon,authenticated,service_role;
+grant execute on function public.delete_story(uuid) to authenticated;
+
+create or replace function private.story_current_fingerprint(p_story_id uuid)
+returns text language sql stable security definer set search_path='' as $$
+  select pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.jsonb_build_object(
+    'story',s.id,'owner',s.user_id,'kind',s.story_kind,'source',s.shared_video_id,
+    'legacy',s.media_url,'type',s.media_type,'composition',s.story_composition,
+    'definitions',(select pg_catalog.jsonb_agg(e.definition_digest order by e.element_id)
+      from private.story_interactive_elements e where e.story_id=s.id),
+    'r2',(select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'link',l.id,'id',a.id,'owner',a.owner_id,'status',a.status,'provider',a.provider,
+        'purpose',a.purpose,'visibility',a.visibility,'bucket',a.bucket_name,'key',a.object_key,
+        'mime',a.mime_type,'size',a.size_bytes,
+        'contract',a.lifecycle_contract_version) order by l.id)
+      from public.media_asset_links l join public.media_assets a on a.id=l.asset_id
+      where l.entity_type='story' and l.entity_id=s.id and l.slot='media' and l.position=0),
+    'stream',(select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'link',l.id,'id',a.id,'owner',a.owner_id,'status',a.status,'provider',a.provider,
+        'purpose',a.purpose,'visibility',a.visibility,'uid',a.cloudflare_uid,
+        'mime',a.mime_type,'size',a.size_bytes,'duration',a.duration_seconds,
+        'max_duration',a.max_duration_seconds,
+        'signed',a.provider_metadata->'require_signed_urls',
+        'contract',a.lifecycle_contract_version) order by l.id)
+      from public.video_asset_links l join public.video_assets a on a.id=l.asset_id
+      where l.entity_type='story' and l.entity_id=s.id and l.slot='media' and l.position=0)
+  )::text,'UTF8')),'hex') from public.stories s where s.id=p_story_id;
+$$;
+revoke all on function private.story_current_fingerprint(uuid) from public,anon,authenticated,service_role;
+
+-- Preserve every non-Story snapshot branch verbatim. The wrapper replaces only
+-- Story content_version with the final media/definition fingerprint.
+alter function private.content_safety_target_snapshot(text,uuid)
+  rename to content_safety_target_snapshot_b1_core;
+create function private.content_safety_target_snapshot(p_target_type text,p_target_id uuid)
+returns jsonb language plpgsql stable security definer set search_path='' as $$
+declare v_snapshot jsonb;v_r2 uuid;v_stream uuid;
+begin
+  v_snapshot:=private.content_safety_target_snapshot_b1_core(p_target_type,p_target_id);
+  if p_target_type<>'story' or v_snapshot is null then return v_snapshot;end if;
+  select l.asset_id into v_r2 from public.media_asset_links l where l.entity_type='story'
+    and l.entity_id=p_target_id and l.slot='media' and l.position=0;
+  select l.asset_id into v_stream from public.video_asset_links l where l.entity_type='story'
+    and l.entity_id=p_target_id and l.slot='media' and l.position=0;
+  return v_snapshot||pg_catalog.jsonb_build_object(
+    'content_version',private.story_current_fingerprint(p_target_id),
+    'media_asset_id',v_r2,'video_asset_id',v_stream
+  );
+end;
+$$;
+revoke all on function private.content_safety_target_snapshot(text,uuid)
+  from public,anon,authenticated,service_role;
+revoke all on function private.content_safety_target_snapshot_b1_core(text,uuid)
+  from public,anon,authenticated,service_role;
+
+-- Extend only the Story direct-media branch. Shared Stories continue through
+-- the historical source scan; every other target delegates to the prior core.
+alter function private.content_safety_audio_source(text,uuid)
+  rename to content_safety_audio_source_b1_core;
+create function private.content_safety_audio_source(p_target_type text,p_target_id uuid)
+returns jsonb language plpgsql stable security definer set search_path='' as $$
+declare v_story public.stories;v_asset public.video_assets;v_image public.media_assets;
+  v_r2_count integer;v_stream_count integer;
+begin
+  if p_target_type<>'story' then
+    return private.content_safety_audio_source_b1_core(p_target_type,p_target_id);end if;
+  select * into v_story from public.stories where id=p_target_id;
+  if not found or v_story.shared_video_id is not null then
+    return private.content_safety_audio_source_b1_core(p_target_type,p_target_id);end if;
+  select count(*)::integer into v_r2_count from public.media_asset_links l
+    where l.entity_type='story' and l.entity_id=v_story.id and l.slot='media' and l.position=0;
+  select count(*)::integer into v_stream_count from public.video_asset_links l
+    where l.entity_type='story' and l.entity_id=v_story.id and l.slot='media' and l.position=0;
+  if v_r2_count+v_stream_count<>1 then
+    return pg_catalog.jsonb_build_object('kind','not_configured','reason',
+      case when v_r2_count+v_stream_count=0 then 'story_media_source_incomplete'
+        else 'story_media_source_ambiguous' end);
+  end if;
+  select a.* into v_asset from public.video_asset_links l
+    join public.video_assets a on a.id=l.asset_id
+    where l.entity_type='story' and l.entity_id=v_story.id and l.slot='media'
+      and l.position=0 and l.owner_id=v_story.user_id and a.owner_id=v_story.user_id
+      and a.purpose='story_video' limit 1;
+  if found and v_asset.provider='cloudflare_stream' and v_asset.visibility='private'
+     and v_asset.status='ready' and v_asset.deleted_at is null
+     and nullif(pg_catalog.btrim(v_asset.cloudflare_uid),'') is not null
+     and v_asset.mime_type in('video/mp4','video/quicktime','video/webm')
+     and v_asset.duration_seconds>0 and v_asset.duration_seconds<=15
+     and v_asset.max_duration_seconds=15
+     and v_asset.provider_metadata->'require_signed_urls'='true'::jsonb
+     and v_asset.hls_url is null and v_asset.dash_url is null and v_asset.thumbnail_url is null then
+    return pg_catalog.jsonb_build_object('kind','eligible','source_asset_id',v_asset.id,
+      'cloudflare_uid',v_asset.cloudflare_uid,'duration_seconds',v_asset.duration_seconds,
+      'provider',v_asset.provider,'purpose','story_video',
+      'model','@cf/openai/whisper-large-v3-turbo');
+  end if;
+  select a.* into v_image from public.media_asset_links l join public.media_assets a on a.id=l.asset_id
+    where l.entity_type='story' and l.entity_id=v_story.id and l.slot='media' and l.position=0
+      and a.owner_id=v_story.user_id and a.purpose='story_image' limit 1;
+  if found and v_image.provider='r2' and v_image.visibility='private'
+     and v_image.status='ready' and v_image.deleted_at is null
+     and v_image.media_kind='image' and v_image.mime_type in('image/jpeg','image/png','image/webp') then
+    return pg_catalog.jsonb_build_object('kind','not_applicable','reason','canonical_image');end if;
+  return pg_catalog.jsonb_build_object('kind','not_configured','reason','story_audio_source_incomplete');
+end;
+$$;
+revoke all on function private.content_safety_audio_source(text,uuid) from public,anon,authenticated,service_role;
+revoke all on function private.content_safety_audio_source_b1_core(text,uuid) from public,anon,authenticated,service_role;
+
+alter function private.content_safety_visual_source(text,uuid)
+  rename to content_safety_visual_source_b1_core;
+create function private.content_safety_visual_source(p_target_type text,p_target_id uuid)
+returns jsonb language plpgsql stable security definer set search_path='' as $$
+declare v_story public.stories;v_video public.video_assets;v_image public.media_assets;
+  v_r2_count integer;v_stream_count integer;
+begin
+  if p_target_type<>'story' then
+    return private.content_safety_visual_source_b1_core(p_target_type,p_target_id);end if;
+  select * into v_story from public.stories where id=p_target_id;
+  if not found or v_story.shared_video_id is not null then
+    return private.content_safety_visual_source_b1_core(p_target_type,p_target_id);end if;
+  select count(*)::integer into v_r2_count from public.media_asset_links l
+    where l.entity_type='story' and l.entity_id=v_story.id and l.slot='media' and l.position=0;
+  select count(*)::integer into v_stream_count from public.video_asset_links l
+    where l.entity_type='story' and l.entity_id=v_story.id and l.slot='media' and l.position=0;
+  if v_r2_count+v_stream_count<>1 then
+    return pg_catalog.jsonb_build_object('kind','not_configured','reason',
+      case when v_r2_count+v_stream_count=0 then 'story_media_source_incomplete'
+        else 'story_media_source_ambiguous' end);
+  end if;
+  select a.* into v_image from public.media_asset_links l join public.media_assets a on a.id=l.asset_id
+    where l.entity_type='story' and l.entity_id=v_story.id and l.slot='media' and l.position=0
+      and a.owner_id=v_story.user_id and a.purpose='story_image' limit 1;
+  if found and v_image.provider='r2' and v_image.status='ready' and v_image.deleted_at is null
+     and v_image.visibility='private' and v_image.public_url is null and v_image.media_kind='image'
+     and v_image.mime_type in('image/jpeg','image/png','image/webp')
+     and nullif(pg_catalog.btrim(v_image.bucket_name),'') is not null
+     and nullif(pg_catalog.btrim(v_image.object_key),'') is not null
+     and v_image.size_bytes between 1 and 25000000 then
+    return pg_catalog.jsonb_build_object('kind','eligible_image','media_asset_id',v_image.id,
+      'bucket_name',v_image.bucket_name,'object_key',v_image.object_key,
+      'mime_type',v_image.mime_type,'size_bytes',v_image.size_bytes,'purpose','story_image');
+  end if;
+  select a.* into v_video from public.video_asset_links l join public.video_assets a on a.id=l.asset_id
+    where l.entity_type='story' and l.entity_id=v_story.id and l.slot='media' and l.position=0
+      and l.owner_id=v_story.user_id and a.owner_id=v_story.user_id and a.purpose='story_video' limit 1;
+  if found and v_video.provider='cloudflare_stream' and v_video.status='ready'
+     and v_video.deleted_at is null and v_video.visibility='private'
+     and v_video.provider_metadata->'require_signed_urls'='true'::jsonb
+     and nullif(pg_catalog.btrim(v_video.cloudflare_uid),'') is not null
+     and v_video.mime_type in('video/mp4','video/quicktime','video/webm')
+     and v_video.duration_seconds>0 and v_video.duration_seconds<=15
+     and v_video.max_duration_seconds=15 and v_video.hls_url is null
+     and v_video.dash_url is null and v_video.thumbnail_url is null then
+    return pg_catalog.jsonb_build_object('kind','eligible_stream_video','video_asset_id',v_video.id,
+      'cloudflare_uid',v_video.cloudflare_uid,'duration_seconds',v_video.duration_seconds,
+      'mime_type',v_video.mime_type,'purpose','story_video');
+  end if;
+  return pg_catalog.jsonb_build_object('kind','not_configured','reason','story_visual_source_incomplete');
+end;
+$$;
+revoke all on function private.content_safety_visual_source(text,uuid) from public,anon,authenticated,service_role;
+revoke all on function private.content_safety_visual_source_b1_core(text,uuid) from public,anon,authenticated,service_role;
+
+alter function private.enqueue_content_safety_scan(text,uuid,text)
+  rename to enqueue_content_safety_scan_b1_core;
+create function private.enqueue_content_safety_scan(
+  p_target_type text,p_target_id uuid,p_requested_reason text
+) returns uuid language plpgsql security definer set search_path='' as $$
+declare v_scan_id uuid;v_audio jsonb;v_visual jsonb;
+begin
+  v_scan_id:=private.enqueue_content_safety_scan_b1_core(
+    p_target_type,p_target_id,p_requested_reason
+  );
+  if p_target_type<>'story' or v_scan_id is null then return v_scan_id;end if;
+  v_audio:=private.content_safety_audio_source('story',p_target_id);
+  v_visual:=private.content_safety_visual_source('story',p_target_id);
+  update private.content_safety_scans scan set
+    audio_status=case v_audio->>'kind'
+      when 'eligible' then 'pending' when 'not_applicable' then 'not_applicable'
+      when 'shared_video' then scan.audio_status else 'not_configured' end,
+    audio_provider=case when v_audio->>'kind'='eligible' then 'cloudflare_workers_ai' else scan.audio_provider end,
+    audio_model=case when v_audio->>'kind'='eligible' then '@cf/openai/whisper-large-v3-turbo' else scan.audio_model end,
+    audio_source_asset_id=case when v_audio->>'source_asset_id' is null then scan.audio_source_asset_id
+      else (v_audio->>'source_asset_id')::uuid end,
+    audio_available_at=case when v_audio->>'kind'='eligible' then pg_catalog.clock_timestamp() else scan.audio_available_at end,
+    audio_last_error_code=case when v_audio->>'kind' in('eligible','not_applicable','shared_video') then null
+      else coalesce(v_audio->>'reason','story_audio_source_incomplete') end,
+    visual_status=case when v_visual->>'kind' in('eligible_image','eligible_stream_video') then 'pending'
+      when v_visual->>'kind' in('shared_image','shared_stream_video') then scan.visual_status else 'not_configured' end,
+    visual_provider=case when v_visual->>'kind' in('eligible_image','eligible_stream_video')
+      then 'cloudflare_workers_ai' else scan.visual_provider end,
+    visual_model=case when v_visual->>'kind' in('eligible_image','eligible_stream_video')
+      then '@cf/google/gemma-4-26b-a4b-it' else scan.visual_model end,
+    visual_prompt_version=case when v_visual->>'kind' in('eligible_image','eligible_stream_video')
+      then 'visual-safety-v1' else scan.visual_prompt_version end,
+    visual_source_kind=case when v_visual->>'kind' in('eligible_image','eligible_stream_video')
+      then v_visual->>'kind' else scan.visual_source_kind end,
+    visual_video_asset_id=case when v_visual->>'video_asset_id' is null then scan.visual_video_asset_id
+      else (v_visual->>'video_asset_id')::uuid end,
+    visual_media_asset_id=case when v_visual->>'media_asset_id' is null then scan.visual_media_asset_id
+      else (v_visual->>'media_asset_id')::uuid end,
+    visual_analysis_id=case when v_visual->>'kind' in('eligible_image','eligible_stream_video') then null
+      else scan.visual_analysis_id end,
+    visual_frame_cursor=case when v_visual->>'kind' in('eligible_image','eligible_stream_video') then 0
+      else scan.visual_frame_cursor end,
+    visual_partial_result=case when v_visual->>'kind' in('eligible_image','eligible_stream_video') then null
+      else scan.visual_partial_result end,
+    visual_provider_call_count=case when v_visual->>'kind' in('eligible_image','eligible_stream_video') then 0
+      else scan.visual_provider_call_count end,
+    visual_attempt_count=case when v_visual->>'kind' in('eligible_image','eligible_stream_video') then 0
+      else scan.visual_attempt_count end,
+    visual_available_at=case when v_visual->>'kind' in('eligible_image','eligible_stream_video')
+      then pg_catalog.clock_timestamp() else scan.visual_available_at end,
+    visual_last_error_code=case when v_visual->>'kind' in('eligible_image','eligible_stream_video','shared_image','shared_stream_video') then null
+      else coalesce(v_visual->>'reason','story_visual_source_incomplete') end,
+    updated_at=pg_catalog.clock_timestamp()
+  where scan.id=v_scan_id;
+  return v_scan_id;
+end;
+$$;
+revoke all on function private.enqueue_content_safety_scan(text,uuid,text)
+  from public,anon,authenticated,service_role;
+revoke all on function private.enqueue_content_safety_scan_b1_core(text,uuid,text)
+  from public,anon,authenticated,service_role;
+
+create function private.story_enqueue_media_safety_v1(p_story_id uuid)
+returns uuid language plpgsql security definer set search_path='' as $$
+declare v_scan uuid;v_fingerprint text;v_analysis uuid;
+begin
+  v_fingerprint:=private.story_current_fingerprint(p_story_id);
+  if v_fingerprint is null then raise exception using errcode='P0002',message='story_not_found';end if;
+  v_scan:=private.enqueue_content_safety_scan('story',p_story_id,'content_updated');
+  if v_scan is null then raise exception using errcode='55000',message='story_safety_enqueue_failed';end if;
+  update private.story_safety_state state set
+    generation=case
+      when state.scan_id is distinct from v_scan
+        or state.evidence_fingerprint is distinct from v_fingerprint
+      then state.generation+1 else state.generation end,
+    state='pending',scan_id=v_scan,evidence_generation=null,
+    evidence_fingerprint=v_fingerprint,policy_digest=null,
+    visual_complete=false,audio_complete=false,text_complete=false,
+    decided_at=null,updated_at=pg_catalog.clock_timestamp()
+  where state.story_id=p_story_id;
+  -- Reuse immutable visual evidence only after the final Story link and
+  -- fingerprint have been hydrated. The attachment authority revalidates the
+  -- current Story/asset fence before changing scan state.
+  select private.content_safety_visual_analysis_id_for_asset(
+    scan.visual_video_asset_id,scan.visual_media_asset_id,'visual-safety-v1'
+  ) into v_analysis
+  from private.content_safety_scans scan where scan.id=v_scan;
+  if v_analysis is not null then
+    perform private.content_safety_attach_visual_analysis(v_analysis);
+  end if;
+  return v_scan;
+end;
+$$;
+revoke all on function private.story_enqueue_media_safety_v1(uuid)
+  from public,anon,authenticated,service_role;
+comment on function private.story_enqueue_media_safety_v1(uuid) is
+  'Hydrates final Story media/definition evidence. missing_owner_approved_story_policy remains fail-closed and never converts completed scans to passed.';
+
+create function private.story_content_safety_scan_fence_v1()
+returns trigger language plpgsql security definer set search_path='' as $$
+declare v_snapshot jsonb;v_expected text;
+begin
+  if new.target_type<>'story' then return new;end if;
+  if (new.audio_status='analyzed' and old.audio_status is distinct from 'analyzed')
+     or (new.visual_status='analyzed' and old.visual_status is distinct from 'analyzed')
+     or (new.text_status='analyzed' and old.text_status is distinct from 'analyzed') then
+    v_snapshot:=private.content_safety_target_snapshot('story',new.target_id);
+    if v_snapshot is null then raise exception using errcode='55000',message='story_safety_target_missing';end if;
+    v_expected:=private.content_safety_sha256(
+      'story|'||new.target_id::text||'|'||coalesce(v_snapshot->>'content_version','')
+    );
+    if new.content_fingerprint is distinct from v_expected then
+      raise exception using errcode='55000',message='story_safety_stale_evidence';
+    end if;
+    if not exists(select 1 from private.story_safety_state state
+      where state.story_id=new.target_id and state.scan_id=new.id
+        and state.evidence_fingerprint=private.story_current_fingerprint(new.target_id)) then
+      raise exception using errcode='55000',message='story_safety_stale_generation';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+revoke all on function private.story_content_safety_scan_fence_v1()
+  from public,anon,authenticated,service_role;
+create trigger content_safety_story_scan_fence_b1
+before update on private.content_safety_scans for each row
+execute function private.story_content_safety_scan_fence_v1();
+
+create function private.story_sync_safety_from_scan_v1()
+returns trigger language plpgsql security definer set search_path='' as $$
+declare v_current text;v_visual boolean;v_audio boolean;v_text boolean;
+begin
+  if new.target_type<>'story' then return new;end if;
+  v_current:=private.story_current_fingerprint(new.target_id);
+  if v_current is null then return new;end if;
+  v_visual:=new.visual_status in('analyzed','not_applicable');
+  v_audio:=new.audio_status in('analyzed','not_applicable');
+  v_text:=new.text_status='analyzed';
+  update private.story_safety_state state set
+    scan_id=new.id,
+    evidence_fingerprint=v_current,
+    visual_complete=v_visual,audio_complete=v_audio,text_complete=v_text,
+    evidence_generation=case when v_visual and v_audio and v_text then state.generation else null end,
+    -- Evidence completion is triage only. No owner-approved Story policy is
+    -- installed in B1, so even complete evidence remains human review.
+    state=case when v_visual and v_audio and v_text then 'review' else 'pending' end,
+    policy_digest=null,decided_at=null,updated_at=pg_catalog.clock_timestamp()
+  where state.story_id=new.target_id
+    and state.scan_id=new.id
+    and new.content_fingerprint=private.content_safety_sha256(
+      'story|'||new.target_id::text||'|'||v_current
+    );
+  return new;
+end;
+$$;
+revoke all on function private.story_sync_safety_from_scan_v1()
+  from public,anon,authenticated,service_role;
+create trigger content_safety_story_sync_b1
+after insert or update on private.content_safety_scans for each row
+execute function private.story_sync_safety_from_scan_v1();
+
+-- Re-run the final enqueue after both the physical link and interactive
+-- definitions exist. The earlier global trigger remains for shared/update
+-- paths, but its pre-link fingerprint can never make a Story visible.
+create or replace function public.create_story_with_media(
+  p_asset_id uuid,p_composition jsonb,p_client_story_id uuid,p_interactive_definitions jsonb
+) returns uuid language plpgsql security definer set search_path='' as $$
+declare v_story uuid;
+begin
+  if auth.uid() is null or p_client_story_id is null then
+    raise exception using errcode='22023',message='invalid_story_identity';end if;
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('story-create:'||auth.uid()::text||':'||p_client_story_id::text,0)
+  );
+  v_story:=private.create_story_with_media_core(p_asset_id,p_composition,p_client_story_id);
+  perform private.story_install_definitions(v_story,p_interactive_definitions);
+  perform private.story_enqueue_media_safety_v1(v_story);
+  return v_story;
+end;
+$$;
+
+create or replace function public.create_story_with_media(
+  p_asset_id uuid,p_composition jsonb,p_client_story_id uuid
+) returns uuid language plpgsql security definer set search_path='' as $$
+declare v_story uuid;
+begin
+  v_story:=private.create_story_with_media_core(p_asset_id,p_composition,p_client_story_id);
+  perform private.story_enqueue_media_safety_v1(v_story);
+  return v_story;
+end;
+$$;
+
+create or replace function public.create_story_with_media(p_asset_id uuid)
+returns uuid language plpgsql security definer set search_path='' as $$
+declare v_story uuid;
+begin
+  v_story:=private.create_story_with_media_core(
+    p_asset_id,'{"version":1,"elements":[]}'::jsonb,null
+  );
+  perform private.story_enqueue_media_safety_v1(v_story);
+  return v_story;
+end;
+$$;
+
+create or replace function public.create_story_from_content(
+  p_video_id uuid,p_composition jsonb,p_client_story_id uuid,p_interactive_definitions jsonb
+) returns uuid language plpgsql security definer set search_path='' as $$
+declare v_story uuid;
+begin
+  if auth.uid() is null or p_client_story_id is null then
+    raise exception using errcode='22023',message='invalid_story_identity';end if;
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('story-create:'||auth.uid()::text||':'||p_client_story_id::text,0)
+  );
+  v_story:=public.create_story_from_content(p_video_id,p_composition,p_client_story_id);
+  perform private.story_install_definitions(v_story,p_interactive_definitions);
+  perform private.story_enqueue_media_safety_v1(v_story);
+  return v_story;
+end;
+$$;
+
+-- Audio claims use the same public RPC. Story direct video is claimed from the
+-- private signed Stream lane; all historical targets delegate to the prior
+-- implementation unchanged.
+alter function public.claim_content_safety_audio_scans(integer) set schema private;
+alter function private.claim_content_safety_audio_scans(integer)
+  rename to claim_content_safety_audio_scans_b1_core;
+create function public.claim_content_safety_audio_scans(p_limit integer default 1)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_row record;v_core jsonb;v_story_first boolean;
+begin
+  if auth.role()<>'service_role' then
+    raise exception using errcode='42501',message='content_safety_service_role_required';end if;
+  if p_limit<1 or p_limit>1 then raise exception using errcode='22023',message='invalid_audio_claim_limit';end if;
+  -- Alternate claim lanes by transaction so a sustained Story backlog cannot
+  -- starve the established Video/Premium workers (or vice versa).
+  v_story_first:=pg_catalog.mod(pg_catalog.txid_current(),2)=0;
+  if not v_story_first then
+    v_core:=private.claim_content_safety_audio_scans_b1_core(p_limit);
+    if pg_catalog.jsonb_array_length(v_core)>0 then return v_core;end if;
+  end if;
+  select scan.id,scan.target_type,scan.target_id,scan.content_fingerprint,
+    scan.audio_source_asset_id,scan.audio_attempt_count,asset.cloudflare_uid,asset.duration_seconds
+  into v_row from private.content_safety_scans scan
+  join public.video_assets asset on asset.id=scan.audio_source_asset_id
+  where scan.target_type='story' and scan.audio_status='pending'
+    and scan.content_fingerprint=private.content_safety_sha256(
+      'story|'||scan.target_id::text||'|'||coalesce(private.story_current_fingerprint(scan.target_id),'')
+    )
+    and scan.audio_attempt_count<5 and scan.audio_available_at<=pg_catalog.clock_timestamp()
+    and (scan.audio_started_at is null or scan.audio_started_at<pg_catalog.clock_timestamp()-interval '10 minutes')
+    and asset.provider='cloudflare_stream' and asset.purpose='story_video'
+    and asset.visibility='private' and asset.status='ready' and asset.deleted_at is null
+    and asset.provider_metadata->'require_signed_urls'='true'::jsonb
+    and asset.hls_url is null and asset.dash_url is null and asset.thumbnail_url is null
+    and asset.duration_seconds>0 and asset.duration_seconds<=15
+  order by scan.audio_available_at,scan.created_at,scan.id
+  for update of scan skip locked limit 1;
+  if found then
+    update private.content_safety_scans set audio_attempt_count=audio_attempt_count+1,
+      audio_started_at=pg_catalog.clock_timestamp(),audio_last_error_code=null,
+      updated_at=pg_catalog.clock_timestamp() where id=v_row.id;
+    return pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+      'scan_id',v_row.id,'target_type',v_row.target_type,'target_id',v_row.target_id,
+      'content_fingerprint',v_row.content_fingerprint,'source_asset_id',v_row.audio_source_asset_id,
+      'cloudflare_uid',v_row.cloudflare_uid,'duration_seconds',v_row.duration_seconds,
+      'purpose','story_video','attempt_count',v_row.audio_attempt_count+1));
+  end if;
+  if v_story_first then
+    return private.claim_content_safety_audio_scans_b1_core(p_limit);
+  end if;
+  return coalesce(v_core,'[]'::jsonb);
+end;
+$$;
+revoke all on function public.claim_content_safety_audio_scans(integer)
+  from public,anon,authenticated,service_role;
+grant execute on function public.claim_content_safety_audio_scans(integer) to service_role;
+revoke all on function private.claim_content_safety_audio_scans_b1_core(integer)
+  from public,anon,authenticated,service_role;
+
+alter function public.complete_content_safety_audio_transcription(
+  uuid,uuid,text,text,text,integer,jsonb,boolean,text,boolean
+) set schema private;
+alter function private.complete_content_safety_audio_transcription(
+  uuid,uuid,text,text,text,integer,jsonb,boolean,text,boolean
+) rename to complete_content_safety_audio_transcription_b1_core;
+create function public.complete_content_safety_audio_transcription(
+  p_scan_id uuid,p_source_asset_id uuid,p_content_fingerprint text,
+  p_detected_language text,p_transcript_text text,p_word_count integer,
+  p_segments jsonb,p_no_speech boolean,p_transcript_fingerprint text,
+  p_cleanup_pending boolean
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_scan private.content_safety_scans;v_transcript_id uuid;v_snapshot jsonb;v_expected text;
+begin
+  select * into v_scan from private.content_safety_scans where id=p_scan_id for update;
+  if not found then raise exception using errcode='P0002',message='content_safety_audio_scan_not_found';end if;
+  if v_scan.target_type<>'story' then
+    return private.complete_content_safety_audio_transcription_b1_core(
+      p_scan_id,p_source_asset_id,p_content_fingerprint,p_detected_language,
+      p_transcript_text,p_word_count,p_segments,p_no_speech,
+      p_transcript_fingerprint,p_cleanup_pending);end if;
+  v_snapshot:=private.content_safety_target_snapshot('story',v_scan.target_id);
+  v_expected:=private.content_safety_sha256(
+    'story|'||v_scan.target_id::text||'|'||coalesce(v_snapshot->>'content_version','')
+  );
+  if v_scan.audio_status<>'pending' or v_scan.audio_source_asset_id is distinct from p_source_asset_id
+     or v_scan.content_fingerprint is distinct from p_content_fingerprint
+     or v_scan.content_fingerprint is distinct from v_expected
+     or p_transcript_fingerprint!~'^[0-9a-f]{64}$' or p_word_count<0
+     or pg_catalog.jsonb_typeof(p_segments)<>'array' or pg_catalog.pg_column_size(p_segments)>65536
+     or pg_catalog.char_length(coalesce(p_transcript_text,''))>100000 then
+    raise exception using errcode='22023',message='invalid_content_safety_audio_completion';end if;
+  insert into private.content_safety_audio_transcripts(
+    source_scan_id,source_asset_id,source_content_fingerprint,provider,model,
+    detected_language,transcript_text,word_count,segments,no_speech,
+    transcript_fingerprint,rule_eval_status,rule_eval_available_at
+  ) values(
+    v_scan.id,p_source_asset_id,p_content_fingerprint,'cloudflare_workers_ai',
+    '@cf/openai/whisper-large-v3-turbo',nullif(pg_catalog.btrim(coalesce(p_detected_language,'')),''),
+    coalesce(p_transcript_text,''),p_word_count,p_segments,coalesce(p_no_speech,false),
+    p_transcript_fingerprint,'pending',pg_catalog.clock_timestamp()
+  ) on conflict(source_scan_id,source_content_fingerprint,provider,model)
+    do update set updated_at=pg_catalog.clock_timestamp()
+  returning id into v_transcript_id;
+  update private.content_safety_scans set audio_status='analyzed',
+    audio_provider='cloudflare_workers_ai',audio_model='@cf/openai/whisper-large-v3-turbo',
+    audio_completed_at=pg_catalog.clock_timestamp(),audio_started_at=null,audio_last_error_code=null,
+    audio_cleanup_pending=coalesce(p_cleanup_pending,false),
+    audio_cleanup_attempt_count=case when coalesce(p_cleanup_pending,false) then 0 else audio_cleanup_attempt_count end,
+    audio_cleanup_available_at=case when coalesce(p_cleanup_pending,false)
+      then pg_catalog.clock_timestamp()+interval '1 minute' else null end,
+    audio_provider_call_count=audio_provider_call_count+1,updated_at=pg_catalog.clock_timestamp()
+  where id=v_scan.id;
+  return pg_catalog.jsonb_build_object('scan_id',v_scan.id,'transcript_id',v_transcript_id,
+    'audio_status','analyzed','cleanup_pending',coalesce(p_cleanup_pending,false));
+end;
+$$;
+revoke all on function public.complete_content_safety_audio_transcription(
+  uuid,uuid,text,text,text,integer,jsonb,boolean,text,boolean
+) from public,anon,authenticated,service_role;
+grant execute on function public.complete_content_safety_audio_transcription(
+  uuid,uuid,text,text,text,integer,jsonb,boolean,text,boolean
+) to service_role;
+revoke all on function private.complete_content_safety_audio_transcription_b1_core(
+  uuid,uuid,text,text,text,integer,jsonb,boolean,text,boolean
+) from public,anon,authenticated,service_role;
+
+alter function private.claim_content_safety_visual_scans_for_prompts(integer,text[])
+  rename to claim_content_safety_visual_scans_for_prompts_b1_core;
+create function private.claim_content_safety_visual_scans_for_prompts(
+  p_limit integer,p_prompt_versions text[]
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_row record;v_core jsonb;v_story_first boolean;
+begin
+  if p_limit<1 or p_limit>1 then raise exception using errcode='22023',message='invalid_visual_claim_limit';end if;
+  if not ('visual-safety-v1'=any(p_prompt_versions)) then
+    return private.claim_content_safety_visual_scans_for_prompts_b1_core(p_limit,p_prompt_versions);end if;
+  v_story_first:=pg_catalog.mod(pg_catalog.txid_current(),2)=0;
+  if not v_story_first then
+    v_core:=private.claim_content_safety_visual_scans_for_prompts_b1_core(p_limit,p_prompt_versions);
+    if pg_catalog.jsonb_array_length(v_core)>0 then return v_core;end if;
+  end if;
+  select scan.id,scan.target_type,scan.target_id,scan.content_fingerprint,
+    scan.visual_source_kind,scan.visual_video_asset_id,scan.visual_media_asset_id,
+    scan.visual_prompt_version,scan.visual_attempt_count,scan.visual_provider_call_count,
+    scan.visual_frame_cursor,scan.visual_partial_result,video.cloudflare_uid,
+    video.duration_seconds,media.bucket_name,media.object_key,media.mime_type,media.size_bytes
+  into v_row from private.content_safety_scans scan
+  left join public.video_assets video on video.id=scan.visual_video_asset_id
+  left join public.media_assets media on media.id=scan.visual_media_asset_id
+  where scan.target_type='story' and scan.visual_prompt_version='visual-safety-v1'
+    and scan.content_fingerprint=private.content_safety_sha256(
+      'story|'||scan.target_id::text||'|'||coalesce(private.story_current_fingerprint(scan.target_id),'')
+    )
+    and scan.visual_status='pending' and scan.visual_analysis_id is null
+    and scan.visual_attempt_count<5 and scan.visual_provider_call_count<5
+    and scan.visual_available_at<=pg_catalog.clock_timestamp()
+    and (scan.visual_started_at is null or scan.visual_started_at<pg_catalog.clock_timestamp()-interval '10 minutes')
+    and scan.id=private.content_safety_visual_producer_scan_id(
+      scan.visual_video_asset_id,scan.visual_media_asset_id,scan.visual_prompt_version
+    )
+    and private.content_safety_visual_analysis_id_for_asset(
+      scan.visual_video_asset_id,scan.visual_media_asset_id,scan.visual_prompt_version
+    ) is null
+    and (
+      (scan.visual_source_kind='eligible_stream_video' and video.provider='cloudflare_stream'
+        and video.purpose='story_video' and video.visibility='private' and video.status='ready'
+        and video.deleted_at is null and video.duration_seconds>0 and video.duration_seconds<=15
+        and video.provider_metadata->'require_signed_urls'='true'::jsonb
+        and video.hls_url is null and video.dash_url is null and video.thumbnail_url is null)
+      or
+      (scan.visual_source_kind='eligible_image' and media.provider='r2'
+        and media.purpose='story_image' and media.visibility='private' and media.public_url is null
+        and media.status='ready' and media.deleted_at is null and media.media_kind='image'
+        and media.mime_type in('image/jpeg','image/png','image/webp')
+        and media.size_bytes between 1 and 25000000)
+    )
+  order by scan.visual_available_at,scan.created_at,scan.id
+  for update of scan skip locked limit 1;
+  if not found then
+    if v_story_first then
+      return private.claim_content_safety_visual_scans_for_prompts_b1_core(p_limit,p_prompt_versions);
+    end if;
+    return coalesce(v_core,'[]'::jsonb);
+  end if;
+  update private.content_safety_scans set visual_attempt_count=visual_attempt_count+1,
+    visual_started_at=pg_catalog.clock_timestamp(),visual_last_error_code=null,
+    updated_at=pg_catalog.clock_timestamp() where id=v_row.id;
+  return pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+    'scan_id',v_row.id,'target_type',v_row.target_type,'target_id',v_row.target_id,
+    'content_fingerprint',v_row.content_fingerprint,'source_kind',v_row.visual_source_kind,
+    'visual_prompt_version',v_row.visual_prompt_version,'video_asset_id',v_row.visual_video_asset_id,
+    'media_asset_id',v_row.visual_media_asset_id,'cloudflare_uid',v_row.cloudflare_uid,
+    'duration_seconds',v_row.duration_seconds,'bucket_name',v_row.bucket_name,
+    'object_key',v_row.object_key,'mime_type',v_row.mime_type,'size_bytes',v_row.size_bytes,
+    'frame_cursor',v_row.visual_frame_cursor,'partial_result',v_row.visual_partial_result,
+    'attempt_count',v_row.visual_attempt_count+1,'provider_call_count',v_row.visual_provider_call_count));
+end;
+$$;
+revoke all on function private.claim_content_safety_visual_scans_for_prompts(integer,text[])
+  from public,anon,authenticated,service_role;
+grant execute on function private.claim_content_safety_visual_scans_for_prompts(integer,text[])
+  to postgres,supabase_admin;
+revoke all on function private.claim_content_safety_visual_scans_for_prompts_b1_core(integer,text[])
+  from public,anon,authenticated,service_role;
+
+-- A direct Story asset is its own canonical producer. Shared Stories retain
+-- media_source_scan_id and therefore continue to reuse the source producer.
+create or replace function private.content_safety_visual_producer_scan_id(
+  p_video_asset_id uuid,p_media_asset_id uuid,p_prompt_version text
+) returns uuid language sql stable security definer set search_path='' as $$
+  select scan.id
+  from private.content_safety_scans scan
+  where p_prompt_version in('visual-safety-v1','creator-premium-visual-safety-p3-v1')
+    and scan.target_type in('video','creator_premium','story')
+    and (scan.target_type<>'story' or (
+      scan.media_source_scan_id is null and p_prompt_version='visual-safety-v1'
+      and scan.content_fingerprint=private.content_safety_sha256(
+        'story|'||scan.target_id::text||'|'||coalesce(private.story_current_fingerprint(scan.target_id),'')
+      )
+    ))
+    and scan.visual_provider='cloudflare_workers_ai'
+    and scan.visual_model='@cf/google/gemma-4-26b-a4b-it'
+    and scan.visual_prompt_version=p_prompt_version
+    and (
+      (p_media_asset_id is not null and scan.visual_media_asset_id=p_media_asset_id
+        and scan.visual_source_kind='eligible_image')
+      or
+      (p_video_asset_id is not null and scan.visual_video_asset_id=p_video_asset_id
+        and scan.visual_source_kind='eligible_stream_video')
+    )
+  order by case when scan.visual_status='pending' and scan.visual_analysis_id is null then 0 else 1 end,
+    scan.created_at,scan.id
+  limit 1;
+$$;
+revoke all on function private.content_safety_visual_producer_scan_id(uuid,uuid,text)
+  from public,anon,authenticated,service_role;
+grant execute on function private.content_safety_visual_producer_scan_id(uuid,uuid,text)
+  to postgres,supabase_admin;
+
+-- Keep the public RPC stable while adding the direct Story producer lane.
+alter function public.advance_content_safety_visual_scan(uuid,integer,integer,jsonb)
+  set schema private;
+alter function private.advance_content_safety_visual_scan(uuid,integer,integer,jsonb)
+  rename to advance_content_safety_visual_scan_b1_core;
+create function public.advance_content_safety_visual_scan(
+  p_scan_id uuid,p_expected_cursor integer,p_frame_timestamp_ms integer,p_frame_result jsonb
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_scan private.content_safety_scans;v_frames jsonb;v_current text;v_expected text;
+begin
+  select * into v_scan from private.content_safety_scans where id=p_scan_id for update;
+  if not found then raise exception using errcode='P0002',message='content_safety_visual_scan_not_found';end if;
+  if v_scan.target_type<>'story' then
+    return private.advance_content_safety_visual_scan_b1_core(
+      p_scan_id,p_expected_cursor,p_frame_timestamp_ms,p_frame_result);end if;
+  v_current:=private.story_current_fingerprint(v_scan.target_id);
+  v_expected:=private.content_safety_sha256(
+    'story|'||v_scan.target_id::text||'|'||coalesce(v_current,''));
+  if v_current is null or v_scan.media_source_scan_id is not null
+     or v_scan.content_fingerprint is distinct from v_expected
+     or v_scan.visual_prompt_version<>'visual-safety-v1'
+     or v_scan.visual_status<>'pending'
+     or v_scan.visual_source_kind<>'eligible_stream_video'
+     or v_scan.visual_frame_cursor<>p_expected_cursor
+     or p_expected_cursor not between 0 and 3 or p_frame_timestamp_ms<0
+     or v_scan.visual_provider_call_count>=5
+     or not private.content_safety_visual_result_valid_for_prompt(
+       p_frame_result,'visual-safety-v1','eligible_stream_video',p_expected_cursor,5)
+     or exists(select 1 from pg_catalog.jsonb_array_elements(
+       coalesce(v_scan.visual_partial_result->'frames','[]'::jsonb)) frame
+       where frame->'result'->>'schema_version' is distinct from 'visual-safety-v1') then
+    raise exception using errcode='22023',message='invalid_content_safety_visual_advance';end if;
+  v_frames:=coalesce(v_scan.visual_partial_result->'frames','[]'::jsonb)
+    ||pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+      'frame_index',p_expected_cursor,'timestamp_ms',p_frame_timestamp_ms,'result',p_frame_result));
+  if pg_catalog.pg_column_size(pg_catalog.jsonb_build_object('frames',v_frames))>32768 then
+    raise exception using errcode='22023',message='content_safety_visual_partial_too_large';end if;
+  update private.content_safety_scans set
+    visual_frame_cursor=visual_frame_cursor+1,
+    visual_partial_result=pg_catalog.jsonb_build_object('frames',v_frames),
+    visual_provider_call_count=visual_provider_call_count+1,visual_attempt_count=0,
+    visual_started_at=null,visual_available_at=pg_catalog.clock_timestamp(),
+    updated_at=pg_catalog.clock_timestamp() where id=v_scan.id;
+  return pg_catalog.jsonb_build_object('scan_id',v_scan.id,'visual_status','pending',
+    'visual_prompt_version','visual-safety-v1','frame_cursor',v_scan.visual_frame_cursor+1,
+    'provider_call_count',v_scan.visual_provider_call_count+1);
+end;
+$$;
+revoke all on function public.advance_content_safety_visual_scan(uuid,integer,integer,jsonb)
+  from public,anon,authenticated,service_role;
+grant execute on function public.advance_content_safety_visual_scan(uuid,integer,integer,jsonb)
+  to service_role;
+revoke all on function private.advance_content_safety_visual_scan_b1_core(uuid,integer,integer,jsonb)
+  from public,anon,authenticated,service_role;
+
+alter function private.content_safety_create_visual_alerts_for_scan(uuid,uuid)
+  rename to content_safety_create_visual_alerts_for_scan_b1_core;
+create function private.content_safety_create_visual_alerts_for_scan(
+  p_scan_id uuid,p_analysis_id uuid
+) returns integer language plpgsql security definer set search_path='' as $$
+declare
+  v_scan private.content_safety_scans;v_analysis private.content_safety_visual_analyses;
+  v_category text;v_severity text;v_description text;v_frame_indexes integer[];
+  v_frame_times integer[];v_snapshot jsonb;v_total integer;v_pending integer;
+  v_recent integer;v_latest timestamptz;v_warnings integer;v_reach bigint;
+  v_priority integer;v_count integer:=0;v_current text;v_expected text;
+begin
+  select * into v_scan from private.content_safety_scans where id=p_scan_id;
+  if not found or v_scan.target_type<>'story' or v_scan.media_source_scan_id is not null then
+    return private.content_safety_create_visual_alerts_for_scan_b1_core(p_scan_id,p_analysis_id);end if;
+  select * into v_analysis from private.content_safety_visual_analyses where id=p_analysis_id;
+  if not found or v_analysis.prompt_version<>'visual-safety-v1' then return 0;end if;
+  v_current:=private.story_current_fingerprint(v_scan.target_id);
+  v_expected:=private.content_safety_sha256(
+    'story|'||v_scan.target_id::text||'|'||coalesce(v_current,''));
+  if v_current is null or v_scan.content_fingerprint is distinct from v_expected
+     or not coalesce((v_analysis.analysis_result->>'review_required')::boolean,false) then
+    return 0;end if;
+  v_snapshot:=private.content_safety_target_snapshot('story',v_scan.target_id);
+  select count(*)::integer,count(*) filter(where report.status='pending')::integer,
+    count(*) filter(where report.status='pending' and report.created_at>=pg_catalog.clock_timestamp()-interval '15 minutes')::integer,
+    max(report.created_at) into v_total,v_pending,v_recent,v_latest
+  from public.reports report
+  where report.reported_content_type='story' and report.reported_content_id=v_scan.target_id;
+  select count(*)::integer into v_warnings from private.admin_user_warnings warning
+  where warning.target_user_id=v_scan.owner_user_id and warning.status='active'
+    and warning.issued_at>coalesce((select max(action.completed_at)
+      from private.admin_user_moderation_actions action
+      where action.target_user_id=v_scan.owner_user_id and action.action='restore'
+        and action.status='succeeded'),'-infinity'::timestamptz);
+  v_warnings:=least(coalesce(v_warnings,0),3);
+  v_reach:=greatest(coalesce((v_snapshot->>'reach')::bigint,0),0);
+  for v_category in select distinct finding.value->>'category'
+    from pg_catalog.jsonb_array_elements(v_analysis.analysis_result->'findings') finding(value)
+  loop
+    select finding.value->>'triage_level' into v_severity
+    from pg_catalog.jsonb_array_elements(v_analysis.analysis_result->'findings') finding(value)
+    where finding.value->>'category'=v_category
+    order by case finding.value->>'triage_level'
+      when 'critical' then 4 when 'high' then 3 when 'medium' then 2 else 1 end desc limit 1;
+    select left(pg_catalog.string_agg(finding.value->>'description',' · ' order by finding.ordinality),240),
+      coalesce(pg_catalog.array_agg(distinct (finding.value->>'frame_index')::integer
+        order by (finding.value->>'frame_index')::integer)
+        filter(where pg_catalog.jsonb_typeof(finding.value->'frame_index')='number'),'{}'::integer[])
+    into v_description,v_frame_indexes
+    from pg_catalog.jsonb_array_elements(v_analysis.analysis_result->'findings')
+      with ordinality finding(value,ordinality)
+    where finding.value->>'category'=v_category;
+    if v_analysis.video_asset_id is not null then
+      select coalesce(pg_catalog.array_agg(v_analysis.frame_timestamps_ms[index+1] order by index),'{}'::integer[])
+      into v_frame_times from pg_catalog.unnest(v_frame_indexes) index
+      where index>=0 and index<pg_catalog.cardinality(v_analysis.frame_timestamps_ms);
+    else v_frame_times:='{}'::integer[];end if;
+    v_priority:=private.content_safety_priority(v_severity,v_pending,v_recent,v_warnings,v_reach);
+    insert into private.content_safety_alerts(
+      scan_id,target_type,target_id,owner_user_id,source_type,rule_id,category,severity,
+      confidence,priority_score,alert_fingerprint,reach,related_report_count,
+      pending_report_count,reports_last_15m,latest_report_at,active_warning_count,evidence
+    ) values(
+      v_scan.id,'story',v_scan.target_id,v_scan.owner_user_id,'visual_classifier',null,
+      v_category,v_severity,null,v_priority,
+      private.content_safety_sha256(v_scan.id::text||'|'||v_analysis.id::text||
+        '|visual_classifier|'||v_category||'|visual-safety-v1'),
+      v_reach,v_total,v_pending,v_recent,v_latest,v_warnings,
+      pg_catalog.jsonb_build_object('visual_analysis_id',v_analysis.id,
+        'provider',v_analysis.provider,'model',v_analysis.model,
+        'prompt_version',v_analysis.prompt_version,'sample_strategy',v_analysis.sample_strategy,
+        'category',v_category,'model_triage_level',v_severity,'description',v_description,
+        'frame_indexes',pg_catalog.to_jsonb(v_frame_indexes),
+        'frame_timestamps_ms',pg_catalog.to_jsonb(v_frame_times),
+        'analysis_fingerprint',v_analysis.analysis_fingerprint)
+    ) on conflict(alert_fingerprint) do update set
+      priority_score=excluded.priority_score,reach=excluded.reach,
+      related_report_count=excluded.related_report_count,
+      pending_report_count=excluded.pending_report_count,
+      reports_last_15m=excluded.reports_last_15m,latest_report_at=excluded.latest_report_at,
+      active_warning_count=excluded.active_warning_count,evidence=excluded.evidence,
+      updated_at=pg_catalog.clock_timestamp();
+    v_count:=v_count+1;
+  end loop;
+  return v_count;
+end;
+$$;
+revoke all on function private.content_safety_create_visual_alerts_for_scan(uuid,uuid)
+  from public,anon,authenticated,service_role;
+revoke all on function private.content_safety_create_visual_alerts_for_scan_b1_core(uuid,uuid)
+  from public,anon,authenticated,service_role;
+
+alter function private.content_safety_attach_visual_analysis(uuid)
+  rename to content_safety_attach_visual_analysis_b1_core;
+create function private.content_safety_attach_visual_analysis(p_analysis_id uuid)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_analysis private.content_safety_visual_analyses;v_core jsonb;v_story_count integer:=0;
+  v_alert_count integer:=0;v_scan_id uuid;
+begin
+  select * into v_analysis from private.content_safety_visual_analyses where id=p_analysis_id;
+  if not found then raise exception using errcode='P0002',message='content_safety_visual_analysis_not_found';end if;
+  v_core:=private.content_safety_attach_visual_analysis_b1_core(p_analysis_id);
+  if v_analysis.prompt_version='visual-safety-v1' then
+    update private.content_safety_scans scan set
+      visual_analysis_id=v_analysis.id,visual_status='analyzed',
+      visual_provider=v_analysis.provider,visual_model=v_analysis.model,
+      visual_prompt_version=v_analysis.prompt_version,
+      visual_completed_at=coalesce(scan.visual_completed_at,pg_catalog.clock_timestamp()),
+      visual_started_at=null,visual_last_error_code=null,visual_attempt_count=0,
+      visual_partial_result=null,updated_at=pg_catalog.clock_timestamp()
+    where scan.target_type='story' and scan.media_source_scan_id is null
+      and scan.visual_prompt_version='visual-safety-v1'
+      and scan.visual_provider=v_analysis.provider and scan.visual_model=v_analysis.model
+      and scan.content_fingerprint=private.content_safety_sha256(
+        'story|'||scan.target_id::text||'|'||coalesce(private.story_current_fingerprint(scan.target_id),''))
+      and (
+        (v_analysis.media_asset_id is not null
+          and scan.visual_media_asset_id=v_analysis.media_asset_id
+          and scan.visual_source_kind='eligible_image')
+        or
+        (v_analysis.video_asset_id is not null
+          and scan.visual_video_asset_id=v_analysis.video_asset_id
+          and scan.visual_source_kind='eligible_stream_video')
+      );
+    get diagnostics v_story_count=row_count;
+    for v_scan_id in select scan.id from private.content_safety_scans scan
+      where scan.target_type='story' and scan.media_source_scan_id is null
+        and scan.visual_analysis_id=v_analysis.id
+    loop
+      v_alert_count:=v_alert_count+
+        private.content_safety_create_visual_alerts_for_scan(v_scan_id,v_analysis.id);
+    end loop;
+  end if;
+  return pg_catalog.jsonb_build_object(
+    'analysis_id',v_analysis.id,
+    'scans_attached',coalesce((v_core->>'scans_attached')::integer,0)+v_story_count,
+    'stories_attached',coalesce((v_core->>'stories_attached')::integer,0)+v_story_count,
+    'alerts_processed',coalesce((v_core->>'alerts_processed')::integer,0)+v_alert_count
+  );
+end;
+$$;
+revoke all on function private.content_safety_attach_visual_analysis(uuid)
+  from public,anon,authenticated,service_role;
+revoke all on function private.content_safety_attach_visual_analysis_b1_core(uuid)
+  from public,anon,authenticated,service_role;
+
+alter function public.complete_content_safety_visual_analysis(uuid,text,jsonb,text,integer[])
+  set schema private;
+alter function private.complete_content_safety_visual_analysis(uuid,text,jsonb,text,integer[])
+  rename to complete_content_safety_visual_analysis_b1_core;
+create function public.complete_content_safety_visual_analysis(
+  p_scan_id uuid,p_content_fingerprint text,p_analysis_result jsonb,
+  p_analysis_fingerprint text,p_frame_timestamps_ms integer[]
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare
+  v_scan private.content_safety_scans;v_analysis private.content_safety_visual_analyses;
+  v_provider_calls integer;v_frame_count integer;v_strategy text;v_existing_id uuid;
+  v_producer_id uuid;v_attach jsonb;v_inserted boolean:=false;
+  v_current text;v_expected text;
+begin
+  select * into v_scan from private.content_safety_scans where id=p_scan_id for update;
+  if not found then raise exception using errcode='P0002',message='content_safety_visual_scan_not_found';end if;
+  if v_scan.target_type<>'story' then
+    return private.complete_content_safety_visual_analysis_b1_core(
+      p_scan_id,p_content_fingerprint,p_analysis_result,p_analysis_fingerprint,p_frame_timestamps_ms);end if;
+  v_current:=private.story_current_fingerprint(v_scan.target_id);
+  v_expected:=private.content_safety_sha256(
+    'story|'||v_scan.target_id::text||'|'||coalesce(v_current,''));
+  v_strategy:=case when v_scan.visual_source_kind='eligible_image'
+    then 'single_image_v1' else 'percentile_5_v1' end;
+  -- Validate the current Story fence before reusing immutable analysis for the
+  -- exact linked asset. A stale worker must not attach evidence or consume a
+  -- provider-call budget merely because that asset was analyzed previously.
+  if v_current is null or v_scan.media_source_scan_id is not null
+     or v_scan.visual_status<>'pending'
+     or v_scan.content_fingerprint is distinct from p_content_fingerprint
+     or v_scan.content_fingerprint is distinct from v_expected
+     or v_scan.visual_prompt_version<>'visual-safety-v1'
+     or v_scan.visual_source_kind not in('eligible_image','eligible_stream_video') then
+    raise exception using errcode='22023',message='invalid_content_safety_visual_completion';
+  end if;
+  v_existing_id:=private.content_safety_visual_analysis_id_for_asset(
+    v_scan.visual_video_asset_id,v_scan.visual_media_asset_id,'visual-safety-v1');
+  v_provider_calls:=v_scan.visual_provider_call_count+1;
+  if v_existing_id is not null then
+    update private.content_safety_scans set visual_provider_call_count=v_provider_calls,
+      visual_started_at=null,updated_at=pg_catalog.clock_timestamp() where id=v_scan.id;
+    v_attach:=private.content_safety_attach_visual_analysis(v_existing_id);
+    return pg_catalog.jsonb_build_object('scan_id',v_scan.id,'analysis_id',v_existing_id,
+      'visual_status','analyzed','visual_prompt_version','visual-safety-v1',
+      'alerts_processed',coalesce((v_attach->>'alerts_processed')::integer,0),
+      'provider_call_count',v_provider_calls,'race_reused',true);
+  end if;
+  v_producer_id:=private.content_safety_visual_producer_scan_id(
+    v_scan.visual_video_asset_id,v_scan.visual_media_asset_id,'visual-safety-v1');
+  v_frame_count:=case when v_scan.visual_source_kind='eligible_image'
+    then 1 else pg_catalog.cardinality(p_frame_timestamps_ms) end;
+  if v_current is null or v_scan.media_source_scan_id is not null
+     or v_scan.id is distinct from v_producer_id or v_scan.visual_status<>'pending'
+     or v_scan.content_fingerprint is distinct from p_content_fingerprint
+     or v_scan.content_fingerprint is distinct from v_expected
+     or v_scan.visual_prompt_version<>'visual-safety-v1'
+     or v_scan.visual_source_kind not in('eligible_image','eligible_stream_video')
+     or v_provider_calls not between 1 and 5
+     or p_analysis_fingerprint!~'^[0-9a-f]{64}$'
+     or (v_scan.visual_source_kind='eligible_image'
+       and pg_catalog.cardinality(p_frame_timestamps_ms)<>0)
+     or (v_scan.visual_source_kind='eligible_stream_video' and (
+       v_frame_count<1 or v_frame_count>5
+       or v_scan.visual_frame_cursor<>v_frame_count-1))
+     or not private.content_safety_visual_result_valid_for_prompt(
+       p_analysis_result,'visual-safety-v1',v_scan.visual_source_kind,null,v_frame_count) then
+    raise exception using errcode='22023',message='invalid_content_safety_visual_completion';end if;
+  if exists(select 1 from pg_catalog.unnest(p_frame_timestamps_ms) with ordinality a(value,pos)
+      join pg_catalog.unnest(p_frame_timestamps_ms) with ordinality b(value,pos)
+        on b.pos=a.pos+1 where b.value<=a.value)
+     or exists(select 1 from pg_catalog.unnest(p_frame_timestamps_ms) value where value<0) then
+    raise exception using errcode='22023',message='invalid_visual_frame_timestamps';end if;
+  insert into private.content_safety_visual_analyses(
+    source_scan_id,video_asset_id,media_asset_id,source_content_fingerprint,
+    provider,model,prompt_version,sample_strategy,frame_count,frame_timestamps_ms,
+    analysis_result,analysis_fingerprint,provider_call_count
+  ) values(
+    v_scan.id,v_scan.visual_video_asset_id,v_scan.visual_media_asset_id,
+    v_scan.content_fingerprint,'cloudflare_workers_ai','@cf/google/gemma-4-26b-a4b-it',
+    'visual-safety-v1',v_strategy,v_frame_count,p_frame_timestamps_ms,
+    p_analysis_result,p_analysis_fingerprint,v_provider_calls
+  ) on conflict do nothing returning * into v_analysis;
+  if v_analysis.id is null then
+    v_existing_id:=private.content_safety_visual_analysis_id_for_asset(
+      v_scan.visual_video_asset_id,v_scan.visual_media_asset_id,'visual-safety-v1');
+    if v_existing_id is null then raise exception using errcode='23505',
+      message='content_safety_visual_analysis_race_unresolved';end if;
+    select * into v_analysis from private.content_safety_visual_analyses where id=v_existing_id;
+  else v_inserted:=true;end if;
+  update private.content_safety_scans set visual_provider_call_count=v_provider_calls,
+    visual_frame_cursor=v_frame_count,visual_started_at=null,
+    updated_at=pg_catalog.clock_timestamp() where id=v_scan.id;
+  v_attach:=private.content_safety_attach_visual_analysis(v_analysis.id);
+  return pg_catalog.jsonb_build_object('scan_id',v_scan.id,'analysis_id',v_analysis.id,
+    'visual_status','analyzed','visual_prompt_version','visual-safety-v1',
+    'alerts_processed',coalesce((v_attach->>'alerts_processed')::integer,0),
+    'provider_call_count',v_provider_calls,'frame_count',v_frame_count,
+    'race_reused',not v_inserted);
+end;
+$$;
+revoke all on function public.complete_content_safety_visual_analysis(uuid,text,jsonb,text,integer[])
+  from public,anon,authenticated,service_role;
+grant execute on function public.complete_content_safety_visual_analysis(uuid,text,jsonb,text,integer[])
+  to service_role;
+revoke all on function private.complete_content_safety_visual_analysis_b1_core(uuid,text,jsonb,text,integer[])
+  from public,anon,authenticated,service_role;
+
+alter function public.fail_content_safety_visual_scan(uuid,text,boolean,boolean)
+  set schema private;
+alter function private.fail_content_safety_visual_scan(uuid,text,boolean,boolean)
+  rename to fail_content_safety_visual_scan_b1_core;
+create function public.fail_content_safety_visual_scan(
+  p_scan_id uuid,p_error_code text,p_retryable boolean default true,
+  p_provider_called boolean default false
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_scan private.content_safety_scans;v_producer uuid;v_calls integer;
+  v_retry boolean;v_error text;v_frames_remaining integer;v_next timestamptz;
+begin
+  if auth.role()<>'service_role' then raise exception using errcode='42501',
+    message='content_safety_service_role_required';end if;
+  select * into v_scan from private.content_safety_scans where id=p_scan_id for update;
+  if not found then raise exception using errcode='P0002',message='content_safety_visual_scan_not_found';end if;
+  if v_scan.target_type<>'story' or v_scan.media_source_scan_id is not null then
+    return private.fail_content_safety_visual_scan_b1_core(
+      p_scan_id,p_error_code,p_retryable,p_provider_called);end if;
+  if v_scan.visual_analysis_id is not null then
+    perform private.content_safety_attach_visual_analysis(v_scan.visual_analysis_id);
+    return pg_catalog.jsonb_build_object('scan_id',v_scan.id,'visual_status','analyzed',
+      'reused',true,'provider_call_count',v_scan.visual_provider_call_count);end if;
+  v_producer:=private.content_safety_visual_producer_scan_id(
+    v_scan.visual_video_asset_id,v_scan.visual_media_asset_id,v_scan.visual_prompt_version);
+  if v_scan.id is distinct from v_producer then raise exception using errcode='55000',
+    message='content_safety_visual_not_canonical_producer';end if;
+  v_calls:=v_scan.visual_provider_call_count+
+    case when coalesce(p_provider_called,false) then 1 else 0 end;
+  v_frames_remaining:=case when v_scan.visual_source_kind='eligible_stream_video'
+    then 5-v_scan.visual_frame_cursor else 1 end;
+  v_retry:=coalesce(p_retryable,false) and v_scan.visual_attempt_count<5 and v_calls<5
+    and (v_scan.visual_source_kind='eligible_image' or v_calls+v_frames_remaining<=5);
+  v_error:=left(pg_catalog.lower(pg_catalog.regexp_replace(
+    coalesce(nullif(pg_catalog.btrim(p_error_code),''),'visual_processing_error'),
+    '[^a-z0-9_]+','_','g')),100);
+  v_next:=case when v_retry then pg_catalog.clock_timestamp()
+    +least(30,pg_catalog.power(2,greatest(v_scan.visual_attempt_count,1)))::integer*
+      interval '1 minute' else v_scan.visual_available_at end;
+  update private.content_safety_scans set
+    visual_status=case when v_retry then 'pending' else 'failed' end,
+    visual_provider_call_count=v_calls,visual_available_at=v_next,visual_started_at=null,
+    visual_completed_at=case when v_retry then null else pg_catalog.clock_timestamp() end,
+    visual_last_error_code=v_error,updated_at=pg_catalog.clock_timestamp()
+  where id=v_scan.id;
+  return pg_catalog.jsonb_build_object('scan_id',v_scan.id,
+    'visual_status',case when v_retry then 'pending' else 'failed' end,
+    'retryable',v_retry,'provider_call_count',v_calls,'canonical_producer',true,
+    'visual_prompt_version',v_scan.visual_prompt_version);
+end;
+$$;
+revoke all on function public.fail_content_safety_visual_scan(uuid,text,boolean,boolean)
+  from public,anon,authenticated,service_role;
+grant execute on function public.fail_content_safety_visual_scan(uuid,text,boolean,boolean)
+  to service_role;
+revoke all on function private.fail_content_safety_visual_scan_b1_core(uuid,text,boolean,boolean)
+  from public,anon,authenticated,service_role;
+
+-- Expiry cleanup deletes Story rows directly. Route that path through the
+-- same fenced Stream tombstone scheduler used by explicit owner deletion.
+create function private.story_schedule_stream_on_delete_v1()
+returns trigger language plpgsql security definer set search_path='' as $$
+declare v_asset uuid;
+begin
+  select link.asset_id into v_asset
+  from public.video_asset_links link join public.video_assets asset on asset.id=link.asset_id
+  where link.entity_type='story' and link.entity_id=old.id
+    and link.slot='media' and link.position=0 and link.owner_id=old.user_id
+    and asset.owner_id=old.user_id and asset.purpose='story_video'
+  for update of asset;
+  if v_asset is not null then
+    delete from public.video_asset_links where asset_id=v_asset and entity_type='story'
+      and entity_id=old.id and slot='media' and position=0;
+    perform private.schedule_video_asset_deletion_v1(v_asset,old.user_id,'story_video');
+  end if;
+  return old;
+end;
+$$;
+revoke all on function private.story_schedule_stream_on_delete_v1()
+  from public,anon,authenticated,service_role;
+create trigger stories_schedule_stream_on_delete_b1
+before delete on public.stories for each row
+execute function private.story_schedule_stream_on_delete_v1();
+
+-- Preserve the single Stream reconciler RPC. The prior core continues to
+-- process Feed/Business/Premium, while this wrapper adds only Story assets.
+alter function public.cleanup_stale_creator_premium_video_records(integer)
+  set schema private;
+alter function private.cleanup_stale_creator_premium_video_records(integer)
+  rename to cleanup_stale_stream_video_records_b1_core;
+create function public.cleanup_stale_creator_premium_video_records(p_limit integer default 50)
+returns table(id uuid,cloudflare_uid text,purpose text,delete_attempts integer,
+  operation text,failure_exhausts boolean)
+language plpgsql security definer set search_path='' as $$
+declare v_limit integer:=greatest(1,least(coalesce(p_limit,50),100));
+  v_used integer:=0;v_claim record;v_reaper record;
+begin
+  return query select * from private.cleanup_stale_stream_video_records_b1_core(v_limit);
+  get diagnostics v_used=row_count;
+  v_limit:=v_limit-v_used;
+  if v_limit<=0 then return;end if;
+
+  with abandoned as(
+    select asset.id from public.video_assets asset
+    where asset.lifecycle_contract_version=1 and asset.provider='cloudflare_stream'
+      and asset.purpose='story_video'
+      and asset.status in('pending','uploading','processing','ready','failed')
+      and asset.created_at<pg_catalog.clock_timestamp()-interval '24 hours'
+      and not exists(select 1 from public.video_asset_links link where link.asset_id=asset.id)
+    order by asset.created_at,asset.id for update of asset skip locked limit v_limit
+  ) update public.video_assets asset set status='delete_pending',hls_url=null,dash_url=null,
+    thumbnail_url=null,error_code='story_video_abandoned',error_message=null,
+    delete_attempts=0,post_delete_verification_attempts=0,
+    next_cleanup_attempt_at=coalesce(asset.next_cleanup_attempt_at,pg_catalog.clock_timestamp()),
+    updated_at=pg_catalog.clock_timestamp()
+  from abandoned where asset.id=abandoned.id;
+
+  for v_reaper in
+    with expired_final_claim as(
+      select asset.id,asset.status,asset.delete_attempts from public.video_assets asset
+      where asset.lifecycle_contract_version=1 and asset.provider='cloudflare_stream'
+        and asset.purpose='story_video'
+        and ((asset.status='delete_pending' and asset.provider_absence_verified_at is null
+              and asset.delete_attempts>=12 and asset.next_cleanup_attempt_at is not null
+              and asset.next_cleanup_attempt_at<=pg_catalog.clock_timestamp())
+          or (asset.status='delete_pending' and asset.provider_absence_verified_at is not null
+              and asset.delete_attempts>=13 and asset.provider_absence_recheck_after is not null
+              and asset.provider_absence_recheck_after<=pg_catalog.clock_timestamp())
+          or (asset.status='deleted' and asset.post_delete_verification_attempts>=3
+              and asset.provider_absence_recheck_after is not null
+              and asset.provider_absence_recheck_after<=pg_catalog.clock_timestamp()))
+        and not exists(select 1 from public.video_asset_links link where link.asset_id=asset.id)
+      order by coalesce(asset.provider_absence_recheck_after,asset.next_cleanup_attempt_at,asset.updated_at),asset.id
+      for update of asset skip locked limit v_limit
+    ) update public.video_assets asset set
+      error_code=case when expired_final_claim.status='deleted'
+        then 'stream_post_delete_verification_exhausted' else 'stream_cleanup_attempts_exhausted' end,
+      error_message=null,next_cleanup_attempt_at=null,provider_absence_recheck_after=null,
+      updated_at=pg_catalog.clock_timestamp()
+    from expired_final_claim where asset.id=expired_final_claim.id
+    returning asset.id as reaped_id,asset.delete_attempts as reaped_attempt,
+      expired_final_claim.status as reaped_status
+  loop
+    perform private.record_media_lifecycle_audit_v1(v_reaper.reaped_id,'video_asset',
+      'cloudflare_stream',case when v_reaper.reaped_status='deleted'
+        then 'post_delete_verification_exhausted' else 'cleanup_exhausted' end,
+      v_reaper.reaped_attempt,'claim_lease_expired',null,'failed');
+  end loop;
+
+  for v_claim in
+    with claimed as(
+      select asset.id,asset.status,asset.provider_absence_verified_at
+      from public.video_assets asset
+      where asset.lifecycle_contract_version=1 and asset.provider='cloudflare_stream'
+        and asset.purpose='story_video'
+        and ((asset.status='delete_pending' and (
+              (asset.provider_absence_verified_at is null and asset.delete_attempts<12
+                and coalesce(asset.next_cleanup_attempt_at,pg_catalog.clock_timestamp())<=pg_catalog.clock_timestamp()
+                and coalesce(asset.upload_expires_at,'-infinity'::timestamptz)<=pg_catalog.clock_timestamp())
+              or (asset.provider_absence_verified_at is not null and asset.delete_attempts<13
+                and asset.provider_absence_recheck_after is not null
+                and asset.provider_absence_recheck_after<=pg_catalog.clock_timestamp())))
+          or (asset.status='deleted' and asset.post_delete_verification_attempts<3
+              and asset.provider_absence_verified_at is not null
+              and asset.provider_absence_recheck_after is not null
+              and asset.provider_absence_recheck_after<=pg_catalog.clock_timestamp()))
+        and not exists(select 1 from public.video_asset_links link where link.asset_id=asset.id)
+      order by coalesce(asset.provider_absence_recheck_after,asset.next_cleanup_attempt_at,asset.created_at),asset.id
+      for update of asset skip locked limit v_limit
+    ) update public.video_assets asset set
+      delete_attempts=asset.delete_attempts+1,
+      post_delete_verification_attempts=case when claimed.status='deleted'
+        then asset.post_delete_verification_attempts+1 else asset.post_delete_verification_attempts end,
+      next_cleanup_attempt_at=case when claimed.status='delete_pending'
+        then pg_catalog.clock_timestamp()+pg_catalog.make_interval(
+          secs=>least(21600,30*pg_catalog.power(2,least(asset.delete_attempts,9))::integer))
+        else asset.next_cleanup_attempt_at end,
+      provider_absence_recheck_after=case when claimed.status='deleted'
+        then pg_catalog.clock_timestamp()+interval '15 minutes'
+        when claimed.status='delete_pending' and claimed.provider_absence_verified_at is not null
+        then pg_catalog.clock_timestamp()+pg_catalog.make_interval(
+          secs=>least(21600,30*pg_catalog.power(2,least(asset.delete_attempts,9))::integer))
+        else asset.provider_absence_recheck_after end,
+      updated_at=pg_catalog.clock_timestamp()
+    from claimed where asset.id=claimed.id
+      and not exists(select 1 from public.video_asset_links link where link.asset_id=asset.id)
+    returning asset.id as claimed_id,asset.cloudflare_uid as claimed_provider_identity,
+      asset.purpose as claimed_purpose,asset.delete_attempts as claimed_attempt,
+      case when claimed.status='deleted' or claimed.provider_absence_verified_at is not null
+        then 'verify_absence' else 'delete' end as claimed_operation,
+      ((claimed.status='delete_pending' and asset.delete_attempts>=12)
+        or (claimed.status='deleted' and asset.post_delete_verification_attempts>=3))
+        as claimed_failure_exhausts
+  loop
+    perform private.record_media_lifecycle_audit_v1(v_claim.claimed_id,'video_asset',
+      'cloudflare_stream',case when v_claim.claimed_operation='delete'
+        then 'delete_requested' else 'absence_check_requested' end,
+      v_claim.claimed_attempt,'claim_acquired',null,'succeeded');
+    id:=v_claim.claimed_id;cloudflare_uid:=v_claim.claimed_provider_identity;
+    purpose:=v_claim.claimed_purpose;delete_attempts:=v_claim.claimed_attempt;
+    operation:=v_claim.claimed_operation;failure_exhausts:=v_claim.claimed_failure_exhausts;
+    return next;
+  end loop;
+end;
+$$;
+revoke all on function public.cleanup_stale_creator_premium_video_records(integer)
+  from public,anon,authenticated,service_role;
+grant execute on function public.cleanup_stale_creator_premium_video_records(integer)
+  to service_role;
+revoke all on function private.cleanup_stale_stream_video_records_b1_core(integer)
+  from public,anon,authenticated,service_role;
+
 alter function private.create_story_with_media_core(uuid,jsonb,uuid) set search_path = '';
 alter function public.create_story_with_media(uuid,jsonb,uuid) set search_path = '';
 alter function public.create_story_with_media(uuid) set search_path = '';

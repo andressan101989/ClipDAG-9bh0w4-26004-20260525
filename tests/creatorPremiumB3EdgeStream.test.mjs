@@ -160,6 +160,9 @@ function loadCreateStreamUpload({
     },
     '../_shared/premiumStreamSecurity.ts': {
       CREATOR_PREMIUM_STREAM_PURPOSE: 'creator_premium_video',
+      STORY_STREAM_PURPOSE: 'story_video',
+      isPrivateStreamPurpose: value => ['creator_premium_video', 'story_video'].includes(value),
+      privateStreamMaxDurationSeconds: value => value === 'story_video' ? 15 : 180,
     },
     './premiumTusContract.mjs': {
       canonicalCloudflareTusLocation,
@@ -528,7 +531,12 @@ function loadWebhook({ asset, premiumUpdates, publicUpdates, updateStale = false
     '../_shared/mediaAuth.ts': { admin: () => db, json },
     '../_shared/premiumStreamSecurity.ts': {
       CREATOR_PREMIUM_STREAM_PURPOSE: 'creator_premium_video',
-      reconcilePremiumStreamVideo: () => premiumUpdates ?? {
+      STORY_STREAM_PURPOSE: 'story_video',
+      isPrivateStreamPurpose: value => ['creator_premium_video', 'story_video'].includes(value),
+      privateStreamSignedUrlsErrorCode: value => value === 'story_video'
+        ? 'story_video_signed_urls_required'
+        : 'creator_premium_stream_signed_urls_required',
+      reconcilePrivateStreamVideo: () => premiumUpdates ?? {
         status: 'ready', provider_status: 'ready', provider_progress: 100,
         duration_seconds: 12, width: 1920, height: 1080,
         hls_url: null, dash_url: null, thumbnail_url: null,
@@ -733,6 +741,17 @@ function loadPlayback({
     },
     '../_shared/premiumStreamSecurity.ts': {
       CREATOR_PREMIUM_STREAM_PURPOSE: 'creator_premium_video',
+      STORY_STREAM_PURPOSE: 'story_video',
+      isPrivateStreamPurpose: value => ['creator_premium_video', 'story_video'].includes(value),
+      async createPrivateStreamPlaybackGrant(input) {
+        grantCalls.push(structuredClone(input));
+        return {
+          hlsUrl: 'https://customer-code.cloudflarestream.com/signed-token/manifest/video.m3u8',
+          dashUrl: 'https://customer-code.cloudflarestream.com/signed-token/manifest/video.mpd',
+          thumbnailUrl: 'https://customer-code.cloudflarestream.com/signed-token/thumbnails/thumbnail.jpg',
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        };
+      },
       async createPremiumStreamPlaybackGrant(input) {
         grantCalls.push(structuredClone(input));
         return {
@@ -742,7 +761,7 @@ function loadPlayback({
           expiresAt: new Date(Date.now() + 300_000).toISOString(),
         };
       },
-      reconcilePremiumStreamVideo: () => premiumUpdates ?? {},
+      reconcilePrivateStreamVideo: () => premiumUpdates ?? {},
     },
     '../_shared/stream.ts': {
       isUuid: value => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value),

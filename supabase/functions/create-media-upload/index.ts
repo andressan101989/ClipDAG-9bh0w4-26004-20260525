@@ -15,6 +15,9 @@ Deno.serve(async(req)=>{
   const user=await authenticatedUser(req); if(!user) return json({error:'unauthorized'},401);
   const body=await req.json().catch(()=>({}));
   const purpose=String(body.purpose??''),mime=String(body.mime_type??''),visibility=String(body.visibility??'');
+  // Existing R2 story_video rows remain readable/finalizable for lifecycle
+  // compatibility, but every new Story video is provisioned by private Stream.
+  if(purpose==='story_video') return json({error:'story_video_requires_stream'},400);
   const premiumContentId=body.premium_content_id;
   const isPremiumPurpose=purpose==='creator_premium_teaser_image'||purpose==='creator_premium_original_image';
   const isPremiumOriginal=purpose==='creator_premium_original_image';

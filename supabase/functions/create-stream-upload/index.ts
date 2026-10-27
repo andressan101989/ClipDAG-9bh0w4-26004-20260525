@@ -1,6 +1,12 @@
 import { businessActorHasAdvertiserOwnerMediaAccess,businessActorHasAnyCapability,isUuid } from '../_shared/businessMediaAuth.ts';
 import { authenticatedClient,authenticatedUser,admin,corsHeaders,json } from '../_shared/mediaAuth.ts';
-import { CREATOR_PREMIUM_STREAM_PURPOSE } from '../_shared/premiumStreamSecurity.ts';
+import {
+  CREATOR_PREMIUM_STREAM_PURPOSE,
+  STORY_STREAM_PURPOSE,
+  isPrivateStreamPurpose,
+  privateStreamMaxDurationSeconds,
+  type PrivateStreamPurpose,
+} from '../_shared/premiumStreamSecurity.ts';
 import {
   canonicalCloudflareTusLocation,
   cloudflareTusProvisionRetryDelayMs,
@@ -50,25 +56,27 @@ function safeLocationHost(value:string):string|null {
   }
 }
 
-async function createPremiumTusUpload(input:{
+async function createPrivateTusUpload(input:{
   assetId:string;
   ownerId:string;
-  premiumContentId:string;
+  purpose:PrivateStreamPurpose;
+  premiumContentId?:string;
+  maxDurationSeconds:number;
   fileName:string;
   sizeBytes:number;
   expiresAt:string;
   environment:string;
 }):Promise<{uid:string;uploadUrl:string|null}> {
-  const metadata={
+  const metadata:Record<string,string|null>={
     name:input.fileName,
     requiresignedurls:null,
-    maxDurationSeconds:String(CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS),
+    maxDurationSeconds:String(input.maxDurationSeconds),
     expiry:input.expiresAt,
     asset_id:input.assetId,
-    purpose:CREATOR_PREMIUM_STREAM_PURPOSE,
-    premium_content_id:input.premiumContentId,
+    purpose:input.purpose,
     environment:input.environment,
   };
+  if(input.premiumContentId) metadata.premium_content_id=input.premiumContentId;
   let response:Response|null=null;
   for(let attempt=1;attempt<=4;attempt+=1) {
     try {
@@ -84,7 +92,7 @@ async function createPremiumTusUpload(input:{
         signal:AbortSignal.timeout(15_000),
       });
     } catch {
-      console.error('[create-stream-upload] premium_stream_tus_provision_failed',{
+      console.error('[create-stream-upload] private_stream_tus_provision_failed',{
         code:'stream_provider_temporarily_unavailable',
         provider_status:null,
         provider_error_code:null,
@@ -100,7 +108,7 @@ async function createPremiumTusUpload(input:{
       response.headers.get('retry-after'),
       attempt,
     );
-    console.error('[create-stream-upload] premium_stream_tus_provision_failed',{
+    console.error('[create-stream-upload] private_stream_tus_provision_failed',{
       code:failure.code,
       provider_status:response.status,
       provider_error_code:await safeProviderErrorCode(response),
@@ -121,7 +129,7 @@ async function createPremiumTusUpload(input:{
   const uploadUrl=uid?canonicalCloudflareTusLocation(rawUploadUrl,uid):null;
   if(!uid||!uploadUrl) {
     const mediaIdentifierPresent=Boolean(uid);
-    console.error('[create-stream-upload] premium_stream_tus_provision_failed',{
+    console.error('[create-stream-upload] private_stream_tus_provision_failed',{
       code:'stream_provider_invalid_response',
       provider_status:response.status,
       provider_error_code:null,
@@ -144,6 +152,8 @@ Deno.serve(async(req)=>{
   const requestedBusinessOwner=body.business_owner_id;
   const premiumContentId=body.premium_content_id;
   const isPremium=purpose===CREATOR_PREMIUM_STREAM_PURPOSE;
+  const isStory=purpose===STORY_STREAM_PURPOSE;
+  const isPrivate=isPrivateStreamPurpose(purpose);
   if(isPremium) {
     if(requestedBusinessOwner!==undefined&&requestedBusinessOwner!==null) {
       return json({error:'invalid_premium_stream_contract'},400);
@@ -159,6 +169,9 @@ Deno.serve(async(req)=>{
   } else if(premiumContentId!==undefined&&premiumContentId!==null) {
     return json({error:'unexpected_premium_context'},400);
   }
+  if(isStory&&requestedBusinessOwner!==undefined&&requestedBusinessOwner!==null) {
+    return json({error:'story_video_business_scope_not_allowed'},400);
+  }
   let ownerId=user.id;
   if(requestedBusinessOwner!==undefined&&requestedBusinessOwner!==null) {
     if(!isUuid(requestedBusinessOwner)) return json({error:'invalid_business_scope'},400);
@@ -168,7 +181,7 @@ Deno.serve(async(req)=>{
     const allowed=legacyAllowed||advertiserOwnerAllowed;
     if(!allowed) return json({error:'business_media_manage_required'},403);
     ownerId=requestedBusinessOwner;
-  } else if(purpose!=='feed_video'&&!isPremium) return json({error:'invalid_purpose'},400);
+  } else if(purpose!=='feed_video'&&!isPrivate) return json({error:'invalid_purpose'},400);
   const mime=validateStreamMime(body.mime_type); if(!mime) return json({error:'invalid_mime_type'},400);
   const size=validateStreamSize(body.size_bytes); if(!size) return json({error:'invalid_size'},400);
   const db=admin();
@@ -229,7 +242,7 @@ Deno.serve(async(req)=>{
     return absent;
   };
   const compensateUid=async(uidToDelete:string,failureCode:string):Promise<boolean>=>{
-    if(!isPremium) {
+    if(!isPrivate) {
       const absent=await deleteUnpublishedUid(uidToDelete);
       if(absent) {
         // Physical absence is authoritative for this newly provisioned,
@@ -276,11 +289,14 @@ Deno.serve(async(req)=>{
     const metadata:Record<string,string>={asset_id:id,purpose,environment};
     if(isPremium) metadata.premium_content_id=String(premiumContentId);
     let uploadUrl:string|null=null;
-    if(isPremium) {
-      const provider=await createPremiumTusUpload({
+    if(isPrivate) {
+      const privatePurpose=purpose as PrivateStreamPurpose;
+      const provider=await createPrivateTusUpload({
         assetId:id,
         ownerId,
-        premiumContentId:String(premiumContentId),
+        purpose:privatePurpose,
+        premiumContentId:isPremium?String(premiumContentId):undefined,
+        maxDurationSeconds:privateStreamMaxDurationSeconds(privatePurpose),
         fileName:safeFilename(body.file_name),
         sizeBytes:size,
         expiresAt,
@@ -314,7 +330,11 @@ Deno.serve(async(req)=>{
       if(!persisted) return json({error:'asset_state_failed'},503);
       return json({error:'stream_allocation_stale'},409);
     }
-    return json({success:true,data:isPremium?{
+    return json({success:true,data:isStory?{
+      assetId:id,uploadUrl,protocol:'tus',method:'PATCH',expiresAt,
+      maxDurationSeconds:15,
+      maxSizeBytes:STREAM_MAX_SIZE_BYTES,ownerId,
+    }:isPremium?{
       assetId:id,uploadUrl,protocol:'tus',method:'PATCH',expiresAt,
       maxDurationSeconds:CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS,
       maxSizeBytes:STREAM_MAX_SIZE_BYTES,ownerId,

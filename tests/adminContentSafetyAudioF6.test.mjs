@@ -231,10 +231,25 @@ test("audio downloader rejects non-canonical raw Location values before a second
   }
 });
 
+test("Story audio claims use the same bounded private signer without Premium fallback",async()=>{
+  const uid="0123456789abcdef0123456789abcdef",customerCode="example-code";
+  const providerUrl=`https://customer-${customerCode}.cloudflarestream.com/${uid}/downloads/audio.m4a`;
+  const token="eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJzdG9yeSIsImRvd25sb2FkYWJsZSI6dHJ1ZX0.signature";
+  const signedUrl=`https://customer-${customerCode}.cloudflarestream.com/${token}/downloads/audio.m4a`;
+  let signerCalls=0;
+  const route=await selectStreamAudioDownloadRoute({
+    targetType:"story",uid,customerCode,providerUrl,
+    createPrivateGrant:async input=>{signerCalls+=1;assert.deepEqual(input,{cloudflareUid:uid,customerCode});return {audioUrl:signedUrl};},
+  });
+  assert.equal(route.url,signedUrl);
+  assert.equal(route.access,"story_private");
+  assert.equal(signerCalls,1);
+});
+
 test("unknown or absent server claim target types fail closed before signing",async()=>{
   const uid="0123456789abcdef0123456789abcdef",customerCode="example-code";
   const providerUrl=`https://customer-${customerCode}.cloudflarestream.com/${uid}/downloads/audio.m4a`;
-  for(const targetType of [undefined,null,"story","VIDEO"]){
+  for(const targetType of [undefined,null,"story_video","VIDEO"]){
     let signerCalls=0;
     await assert.rejects(
       selectStreamAudioDownloadRoute({targetType,uid,customerCode,providerUrl,createPrivateGrant:async()=>{signerCalls+=1;return {audioUrl:providerUrl};}}),
@@ -312,6 +327,6 @@ test("provider failure cannot block the existing text completion loop",()=>{
   assert.match(worker,/p_retryable: issue\.retryable/);
   assert.match(worker,/claim_content_safety_transcript_evaluations/);
   assert.match(worker,/scope: 'transcript'/);
-  assert.match(worker,/createPremiumStreamAudioDownloadGrant/);
+  assert.match(worker,/createPrivateStreamAudioDownloadGrant/);
   assert.match(worker,/selectStreamAudioDownloadRoute/);
 });

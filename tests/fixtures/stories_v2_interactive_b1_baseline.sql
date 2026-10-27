@@ -9,6 +9,7 @@ DO $$ BEGIN
  IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN NOSUPERUSER NOBYPASSRLS; END IF;
  IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN NOSUPERUSER NOBYPASSRLS; END IF;
  IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role NOLOGIN NOSUPERUSER BYPASSRLS; END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='supabase_admin') THEN CREATE ROLE supabase_admin NOLOGIN NOSUPERUSER BYPASSRLS; END IF;
 END $$;
 CREATE TABLE auth.users(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),email text,is_anonymous boolean NOT NULL DEFAULT false,raw_app_meta_data jsonb NOT NULL DEFAULT '{}');
 CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE SET search_path='' AS $$ SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
@@ -4339,3 +4340,254 @@ GRANT EXECUTE ON FUNCTION public.chat_send_message(uuid,uuid,text,text,text,uuid
 REVOKE ALL ON FUNCTION public.chat_prepare_legacy_message(),public.chat_after_message_insert(),public.chat_sync_legacy_read() FROM public,anon,authenticated;
 -- The canonical A3 schema revoke precedes A5's later private helper grants.
 GRANT USAGE ON SCHEMA private TO anon,authenticated;
+
+-- Task 3 reduced-schema authorities. These are structural test doubles for
+-- the already-deployed Stream, MEDIA-C1 and Content Safety contracts; the B1
+-- migration itself is still applied byte-for-byte by the SQL-real suite.
+create table public.video_assets(
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  provider text not null default 'cloudflare_stream',
+  purpose text not null,
+  visibility text not null default 'public' check(visibility in('public','private')),
+  status text not null default 'pending' check(status in('pending','uploading','processing','ready','failed','delete_pending','deleted')),
+  cloudflare_uid text unique,mime_type text not null,size_bytes bigint not null,
+  original_filename text,max_duration_seconds integer not null default 60,
+  duration_seconds numeric,width integer,height integer,hls_url text,dash_url text,
+  thumbnail_url text,upload_expires_at timestamptz,provider_status text,
+  provider_progress numeric,provider_metadata jsonb not null default '{}'::jsonb,
+  error_code text,error_message text,last_provider_check_at timestamptz,ready_at timestamptz,
+  delete_attempts integer not null default 0,next_cleanup_attempt_at timestamptz,
+  deleted_at timestamptz,created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),lifecycle_contract_version smallint,
+  provider_absence_verified_at timestamptz,provider_absence_recheck_after timestamptz,
+  post_delete_verification_attempts integer not null default 0,
+  constraint video_assets_purpose_check check(purpose in('feed_video','business_library','creator_premium_video')),
+  constraint video_assets_duration_limit_check check(
+    (purpose='creator_premium_video' and max_duration_seconds between 1 and 180)
+    or (purpose<>'creator_premium_video' and max_duration_seconds between 1 and 60)),
+  constraint video_assets_creator_premium_contract_check check(
+    purpose<>'creator_premium_video' or(provider='cloudflare_stream' and visibility='private'
+      and mime_type in('video/mp4','video/quicktime','video/webm')
+      and size_bytes between 1 and 200000000 and max_duration_seconds=180)),
+  constraint video_assets_ready_invariants_check check(
+    (status='ready' and cloudflare_uid is not null and ready_at is not null
+      and duration_seconds is not null and duration_seconds>0
+      and duration_seconds<=max_duration_seconds
+      and ((purpose='creator_premium_video' and visibility='private' and hls_url is null
+        and dash_url is null and thumbnail_url is null
+        and provider_metadata->'require_signed_urls'='true'::jsonb)
+        or(purpose<>'creator_premium_video' and hls_url is not null)))
+    or(status<>'ready' and hls_url is null and dash_url is null and thumbnail_url is null))
+);
+create table public.video_asset_links(
+  id uuid primary key default gen_random_uuid(),
+  asset_id uuid not null references public.video_assets(id) on delete cascade,
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  entity_type text not null check(entity_type in('video_post','story','exclusive_content','ai_avatar')),
+  entity_id uuid not null,slot text not null default 'video',
+  position integer not null default 0 check(position>=0),created_at timestamptz not null default now(),
+  unique(entity_type,entity_id,slot,position),unique(asset_id,entity_type,entity_id,slot,position)
+);
+alter table public.video_assets enable row level security;
+alter table public.video_asset_links enable row level security;
+revoke all on public.video_assets,public.video_asset_links from public,anon,authenticated;
+grant select on public.video_assets,public.video_asset_links to authenticated;
+grant all on public.video_assets,public.video_asset_links to service_role;
+
+create function private.record_media_lifecycle_audit_v1(
+  p_asset_id uuid,p_target_type text,p_provider text,p_operation text,p_attempt integer,
+  p_provider_outcome text,p_provider_request_id text,p_audit_outcome text
+) returns void language plpgsql security definer set search_path='' as $$ begin return; end $$;
+create function private.schedule_video_asset_deletion_v1(
+  p_asset_id uuid,p_owner_id uuid,p_required_purpose text default null
+) returns text language plpgsql security definer set search_path='' as $$
+declare v_asset public.video_assets;
+begin
+  select * into v_asset from public.video_assets where id=p_asset_id and owner_id=p_owner_id for update;
+  if not found then return 'not_found';end if;
+  if p_required_purpose is not null and v_asset.purpose<>p_required_purpose then return 'not_found';end if;
+  if exists(select 1 from public.video_asset_links where asset_id=p_asset_id) then return 'asset_in_use';end if;
+  if v_asset.status='deleted' then return 'deleted';end if;
+  update public.video_assets set status='delete_pending',hls_url=null,dash_url=null,
+    thumbnail_url=null,lifecycle_contract_version=1,delete_attempts=0,
+    post_delete_verification_attempts=0,next_cleanup_attempt_at=pg_catalog.clock_timestamp(),
+    updated_at=pg_catalog.clock_timestamp() where id=p_asset_id;
+  return 'scheduled';
+end $$;
+create function public.schedule_video_asset_deletion_v1(p_asset_id uuid,p_owner_id uuid)
+returns text language sql security definer set search_path='' as $$
+  select private.schedule_video_asset_deletion_v1(p_asset_id,p_owner_id,null)
+$$;
+create function public.reserve_stream_upload_asset(
+  p_asset_id uuid,p_owner_id uuid,p_mime_type text,p_size_bytes bigint,
+  p_original_filename text,p_purpose text
+) returns text language plpgsql security definer set search_path='' as $$ begin return 'legacy'; end $$;
+create function public.cleanup_stale_creator_premium_video_records(p_limit integer default 50)
+returns table(id uuid,cloudflare_uid text,purpose text,delete_attempts integer,
+  operation text,failure_exhausts boolean)
+language sql security definer set search_path='' as $$
+  select null::uuid,null::text,null::text,null::integer,null::text,null::boolean where false
+$$;
+
+create table private.admin_user_warnings(
+  id uuid primary key default gen_random_uuid(),target_user_id uuid not null,
+  status text not null default 'active',issued_at timestamptz not null default now()
+);
+create table private.admin_user_moderation_actions(
+  id uuid primary key default gen_random_uuid(),target_user_id uuid not null,
+  action text not null,status text not null default 'succeeded',completed_at timestamptz
+);
+create table private.content_safety_scans(
+  id uuid primary key default gen_random_uuid(),target_type text not null,target_id uuid not null,
+  owner_user_id uuid not null,content_fingerprint text not null,media_source_scan_id uuid,
+  status text not null default 'queued',requested_reason text not null,text_status text not null default 'analyzed',
+  audio_status text not null default 'not_configured',visual_status text not null default 'not_configured',
+  reports_status text not null default 'analyzed',attempt_count integer not null default 0,
+  available_at timestamptz not null default now(),started_at timestamptz,completed_at timestamptz,
+  last_error_code text,audio_provider text,audio_model text,audio_source_asset_id uuid,
+  audio_available_at timestamptz not null default now(),audio_last_error_code text,
+  audio_attempt_count integer not null default 0,audio_started_at timestamptz,audio_completed_at timestamptz,
+  audio_cleanup_pending boolean not null default false,audio_cleanup_attempt_count integer not null default 0,
+  audio_cleanup_available_at timestamptz,audio_provider_call_count integer not null default 0,
+  visual_provider text,visual_model text,visual_prompt_version text,visual_source_kind text,
+  visual_video_asset_id uuid,visual_media_asset_id uuid,visual_analysis_id uuid,
+  visual_frame_cursor integer not null default 0,visual_partial_result jsonb,
+  visual_provider_call_count integer not null default 0,visual_attempt_count integer not null default 0,
+  visual_available_at timestamptz not null default now(),visual_started_at timestamptz,
+  visual_completed_at timestamptz,visual_last_error_code text,
+  created_at timestamptz not null default now(),updated_at timestamptz not null default now(),
+  unique(target_type,target_id,content_fingerprint)
+);
+create table private.content_safety_audio_transcripts(
+  id uuid primary key default gen_random_uuid(),source_scan_id uuid not null,
+  source_asset_id uuid not null,source_content_fingerprint text not null,
+  provider text not null,model text not null,detected_language text,transcript_text text not null,
+  word_count integer not null,segments jsonb not null,no_speech boolean not null,
+  transcript_fingerprint text not null,rule_eval_status text not null,
+  rule_eval_available_at timestamptz,created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(source_scan_id,source_content_fingerprint,provider,model)
+);
+create table private.content_safety_visual_analyses(
+  id uuid primary key default gen_random_uuid(),source_scan_id uuid not null,
+  video_asset_id uuid,media_asset_id uuid,source_content_fingerprint text not null,
+  provider text not null,model text not null,prompt_version text not null,
+  sample_strategy text not null,frame_count integer not null,frame_timestamps_ms integer[] not null,
+  analysis_result jsonb not null,analysis_fingerprint text not null,
+  provider_call_count integer not null,created_at timestamptz not null default now(),
+  unique(video_asset_id,media_asset_id,provider,model,prompt_version)
+);
+create table private.content_safety_alerts(
+  id uuid primary key default gen_random_uuid(),scan_id uuid,target_type text not null,
+  target_id uuid not null,owner_user_id uuid not null,source_type text not null,
+  rule_id uuid,category text,severity text,confidence numeric,priority_score integer,
+  alert_fingerprint text not null unique,reach bigint,related_report_count integer,
+  pending_report_count integer,reports_last_15m integer,latest_report_at timestamptz,
+  active_warning_count integer,evidence jsonb,updated_at timestamptz not null default now()
+);
+
+create function private.content_safety_sha256(p_value text)
+returns text language sql immutable set search_path='' as $$
+  select pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(p_value,''),'UTF8')),'hex')
+$$;
+create function private.content_safety_priority(
+  p_severity text,p_pending integer,p_recent integer,p_warnings integer,p_reach bigint
+) returns integer language sql immutable set search_path='' as $$ select 1 $$;
+create function private.content_safety_target_snapshot(p_target_type text,p_target_id uuid)
+returns jsonb language sql stable security definer set search_path='' as $$
+  select case when p_target_type='story' then pg_catalog.jsonb_build_object(
+    'owner_user_id',s.user_id,'content_version',s.id::text,'shared_video_id',s.shared_video_id,'reach',0)
+    else null end from public.stories s where s.id=p_target_id
+$$;
+create function private.content_safety_audio_source(p_target_type text,p_target_id uuid)
+returns jsonb language sql stable security definer set search_path='' as $$
+  select pg_catalog.jsonb_build_object('kind','not_configured','reason','fixture_core')
+$$;
+create function private.content_safety_visual_source(p_target_type text,p_target_id uuid)
+returns jsonb language sql stable security definer set search_path='' as $$
+  select pg_catalog.jsonb_build_object('kind','not_configured','reason','fixture_core')
+$$;
+create function private.enqueue_content_safety_scan(
+  p_target_type text,p_target_id uuid,p_requested_reason text
+) returns uuid language plpgsql security definer set search_path='' as $$
+declare v_snapshot jsonb;v_fingerprint text;v_id uuid;
+begin
+  v_snapshot:=private.content_safety_target_snapshot(p_target_type,p_target_id);
+  if v_snapshot is null then return null;end if;
+  v_fingerprint:=private.content_safety_sha256(p_target_type||'|'||p_target_id::text||'|'||coalesce(v_snapshot->>'content_version',''));
+  insert into private.content_safety_scans(target_type,target_id,owner_user_id,content_fingerprint,
+    requested_reason,text_status,audio_status,visual_status,reports_status)
+  values(p_target_type,p_target_id,(v_snapshot->>'owner_user_id')::uuid,v_fingerprint,
+    p_requested_reason,'analyzed','not_configured','not_configured','analyzed')
+  on conflict(target_type,target_id,content_fingerprint) do update
+    set requested_reason=excluded.requested_reason,updated_at=pg_catalog.clock_timestamp()
+  returning id into v_id;
+  return v_id;
+end $$;
+create function public.claim_content_safety_audio_scans(p_limit integer default 1)
+returns jsonb language sql security definer set search_path='' as $$ select '[]'::jsonb $$;
+create function public.complete_content_safety_audio_transcription(
+  p_scan_id uuid,p_source_asset_id uuid,p_content_fingerprint text,p_detected_language text,
+  p_transcript_text text,p_word_count integer,p_segments jsonb,p_no_speech boolean,
+  p_transcript_fingerprint text,p_cleanup_pending boolean
+) returns jsonb language sql security definer set search_path='' as $$ select '{}'::jsonb $$;
+create function private.claim_content_safety_visual_scans_for_prompts(p_limit integer,p_prompt_versions text[])
+returns jsonb language sql security definer set search_path='' as $$ select '[]'::jsonb $$;
+create function public.claim_content_safety_visual_scans(p_limit integer default 1)
+returns jsonb language plpgsql security definer set search_path='' as $$
+begin
+  if auth.role()<>'service_role' then raise exception using errcode='42501',
+    message='content_safety_service_role_required';end if;
+  return private.claim_content_safety_visual_scans_for_prompts(
+    p_limit,array['visual-safety-v1']::text[]);
+end $$;
+create function public.claim_content_safety_visual_scans(
+  p_limit integer,p_worker_contract text
+) returns jsonb language plpgsql security definer set search_path='' as $$
+begin
+  if auth.role()<>'service_role' then raise exception using errcode='42501',
+    message='content_safety_service_role_required';end if;
+  if p_worker_contract<>'content-safety-scan-p3-v1' then raise exception using errcode='22023',
+    message='unsupported_content_safety_worker_contract';end if;
+  return private.claim_content_safety_visual_scans_for_prompts(
+    p_limit,array['visual-safety-v1','creator-premium-visual-safety-p3-v1']::text[]);
+end $$;
+create function private.content_safety_visual_analysis_id_for_asset(
+  p_video_asset_id uuid,p_media_asset_id uuid,p_prompt_version text
+) returns uuid language sql stable security definer set search_path='' as $$
+  select id from private.content_safety_visual_analyses where prompt_version=p_prompt_version
+    and video_asset_id is not distinct from p_video_asset_id
+    and media_asset_id is not distinct from p_media_asset_id order by created_at,id limit 1
+$$;
+create function private.content_safety_visual_producer_scan_id(
+  p_video_asset_id uuid,p_media_asset_id uuid,p_prompt_version text
+) returns uuid language sql stable security definer set search_path='' as $$ select null::uuid $$;
+create function private.content_safety_visual_result_valid_for_prompt(
+  p_result jsonb,p_prompt_version text,p_source_kind text,
+  p_expected_frame_index integer,p_frame_count integer
+) returns boolean language sql immutable set search_path='' as $$
+  select p_prompt_version in('visual-safety-v1','creator-premium-visual-safety-p3-v1')
+    and p_source_kind in('eligible_image','eligible_stream_video')
+    and pg_catalog.jsonb_typeof(p_result)='object'
+    and p_result->>'schema_version'=p_prompt_version
+    and pg_catalog.jsonb_typeof(p_result->'review_required')='boolean'
+    and pg_catalog.jsonb_typeof(p_result->'findings')='array'
+    and pg_catalog.jsonb_typeof(p_result->'summary')='string'
+$$;
+create function public.advance_content_safety_visual_scan(
+  p_scan_id uuid,p_expected_cursor integer,p_frame_timestamp_ms integer,p_frame_result jsonb
+) returns jsonb language sql security definer set search_path='' as $$ select '{}'::jsonb $$;
+create function private.content_safety_create_visual_alerts_for_scan(p_scan_id uuid,p_analysis_id uuid)
+returns integer language sql security definer set search_path='' as $$ select 0 $$;
+create function private.content_safety_attach_visual_analysis(p_analysis_id uuid)
+returns jsonb language sql security definer set search_path='' as $$
+  select pg_catalog.jsonb_build_object('scans_attached',0,'stories_attached',0,'alerts_processed',0)
+$$;
+create function public.complete_content_safety_visual_analysis(
+  p_scan_id uuid,p_content_fingerprint text,p_analysis_result jsonb,
+  p_analysis_fingerprint text,p_frame_timestamps_ms integer[]
+) returns jsonb language sql security definer set search_path='' as $$ select '{}'::jsonb $$;
+create function public.fail_content_safety_visual_scan(
+  p_scan_id uuid,p_error_code text,p_retryable boolean default true,p_provider_called boolean default false
+) returns jsonb language sql security definer set search_path='' as $$ select '{}'::jsonb $$;

@@ -26,6 +26,12 @@ import type { StoryGroup, StoryItem } from '@/components/feature/StoriesBar';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
 import type { FinalizedVideoView } from '@/services/videoPlaybackSession';
 import { deleteMediaAsset, uploadMediaFromUri } from '@/services/mediaService';
+import {
+  createStoryStreamUpload,
+  deleteStreamVideo,
+  uploadStoryVideoWithTus,
+  waitForStoryStreamReady,
+} from '@/services/streamService';
 import { CreatorContentProductSheet } from '@/components/marketplace/CreatorContentProductSheet';
 import {
   fetchMarketplaceContentProductTagSummaries,
@@ -108,7 +114,10 @@ export default function FeedScreen() {
   const [storyEditorSource, setStoryEditorSource] = useState<StoryEditorSource | null>(null);
   const [sponsoredProducts, setSponsoredProducts] = useState<SponsoredProduct[]>([]);
   const [advertisingV2Opportunities, setAdvertisingV2Opportunities] = useState<{ viewerUserId: string; placement: "social_feed" | "clips" | "stories"; ad: AdvertisingDeliveryAdV2; eventKey: string }[]>([]);
-  const storyUploadAttemptsRef = useRef(new Map<string, string>());
+  const storyUploadAttemptsRef = useRef(new Map<string, {
+    assetId: string;
+    provider: 'r2' | 'stream';
+  }>());
   const sponsoredImpressionsRef = useRef(new Set<string>());
 
   const loadSponsoredProducts = useCallback(async () => {
@@ -386,23 +395,53 @@ export default function FeedScreen() {
     const asset = source.asset as ImagePicker.ImagePickerAsset;
     const isVideo = source.mediaType === 'video';
     const mimeType = asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg');
-    let uploadedAssetId = storyUploadAttemptsRef.current.get(clientStoryId);
+    const uploadedAttempt = storyUploadAttemptsRef.current.get(clientStoryId);
+    let uploadedAssetId = uploadedAttempt?.assetId;
     let failureStage = 'STORY_UPLOAD';
 
     try {
       if (!uploadedAssetId) {
-        const uploaded = await uploadMediaFromUri({
-          uri: asset.uri,
-          purpose: isVideo ? 'story_video' : 'story_image',
-          mimeType,
-          fileName: asset.fileName || undefined,
-          sizeBytes: asset.fileSize,
-          durationMs: isVideo && typeof asset.duration === 'number' ? asset.duration : undefined,
-          visibility: 'private',
-        });
-        uploadedAssetId = uploaded.assetId;
-        storyUploadAttemptsRef.current.set(clientStoryId, uploaded.assetId);
-        if (uploaded.url) throw new Error('Private Story upload returned a persistent URL');
+        if (isVideo) {
+          const contract = await createStoryStreamUpload({
+            uri: asset.uri,
+            mimeType,
+            fileName: asset.fileName || 'story-video',
+          });
+          uploadedAssetId = contract.assetId;
+          storyUploadAttemptsRef.current.set(clientStoryId, {
+            assetId: contract.assetId,
+            provider: 'stream',
+          });
+          try {
+            await uploadStoryVideoWithTus({
+              uri: asset.uri,
+              fileName: asset.fileName || 'story-video',
+              mimeType,
+              sizeBytes: contract.uploadSizeBytes,
+              uploadUrl: contract.uploadUrl,
+            });
+            await waitForStoryStreamReady(contract.assetId);
+          } catch (error) {
+            storyUploadAttemptsRef.current.delete(clientStoryId);
+            await deleteStreamVideo(contract.assetId).catch(() => {});
+            throw error;
+          }
+        } else {
+          const uploaded = await uploadMediaFromUri({
+            uri: asset.uri,
+            purpose: 'story_image',
+            mimeType,
+            fileName: asset.fileName || undefined,
+            sizeBytes: asset.fileSize,
+            visibility: 'private',
+          });
+          uploadedAssetId = uploaded.assetId;
+          storyUploadAttemptsRef.current.set(clientStoryId, {
+            assetId: uploaded.assetId,
+            provider: 'r2',
+          });
+          if (uploaded.url) throw new Error('Private Story upload returned a persistent URL');
+        }
       }
       failureStage = 'STORY_CREATE_RPC';
       const persistedStoryId = await addStory(uploadedAssetId, composition, clientStoryId);
@@ -423,9 +462,13 @@ export default function FeedScreen() {
   const cancelStoryEditor = useCallback((clientStoryId?: string) => {
     setStoryEditorSource(null);
     if (!clientStoryId) return;
-    const uploadedAssetId = storyUploadAttemptsRef.current.get(clientStoryId);
+    const uploadedAttempt = storyUploadAttemptsRef.current.get(clientStoryId);
     storyUploadAttemptsRef.current.delete(clientStoryId);
-    if (uploadedAssetId) void deleteMediaAsset(uploadedAssetId).catch(() => {});
+    if (uploadedAttempt?.provider === 'stream') {
+      void deleteStreamVideo(uploadedAttempt.assetId).catch(() => {});
+    } else if (uploadedAttempt) {
+      void deleteMediaAsset(uploadedAttempt.assetId).catch(() => {});
+    }
   }, []);
 
   const handleAddStory = useCallback(() => {
