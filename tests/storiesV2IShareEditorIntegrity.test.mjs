@@ -164,8 +164,13 @@ test('editor uses normalized composition and safe text cleanup', () => {
   assert.match(editor, /maxLength=\{200\}/);
   assert.match(editor, /multiline/);
   assert.match(editor, /text\.replace\(\/\[<>\]\/g, ''\)/);
-  assert.match(composition, /element\.x \* width/);
-  assert.match(composition, /element\.y \* height/);
+  assert.match(composition, /fitStoryElementTransform/);
+  assert.match(composition, /projectStoryElementTransform/);
+  assert.match(composition, /onLayout=\{onLayout\}/);
+  assert.match(composition, /safeInsets: StoryStageInsets/);
+  assert.doesNotMatch(composition, /left:\s*element\.x\s*\*\s*width/);
+  assert.doesNotMatch(composition, /top:\s*element\.y\s*\*\s*height/);
+  assert.match(composition, /top:\s*projected\.y - measuredFrame\.height \/ 2/);
 });
 
 test('editor and published Story share a usable responsive overlay frame', () => {
@@ -230,7 +235,7 @@ test('Viewer renders shared content and overlays in both platform authorities', 
   for (const viewer of [nativeViewer, webViewer]) {
     assert.match(viewer, /StorySharedContentCard/);
     assert.match(viewer, /currentStory\.storyKind === 'shared'/);
-    assert.match(viewer, /StoryCompositionOverlay composition=\{currentStory\.composition\}/);
+    assert.match(viewer, /<StoryCompositionOverlay[\s\S]{0,300}composition=\{currentStory\.composition\}[\s\S]{0,300}safeInsets=\{interactiveStageInsets\}/);
     assert.match(viewer, /onGetSharedContent/);
   }
   assert.match(storiesBar, /storyKind: 'media' \| 'shared'/);
