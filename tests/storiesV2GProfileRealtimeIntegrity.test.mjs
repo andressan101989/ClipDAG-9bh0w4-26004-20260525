@@ -54,9 +54,10 @@ test('both Profile routes reuse the canonical StoryViewer rather than creating a
   for (const profile of [ownProfile, foreignProfile]) {
     assert.match(profile, /from '@\/components\/feature\/StoryViewer'/);
     assert.match(profile, /<StoryViewer/);
-    assert.match(profile, /onMarkViewed=\{markStoryViewed\}/);
     assert.match(profile, /onGetViewers=\{getStoryViewers\}/);
     assert.match(profile, /onDeleteStory=\{deleteStory\}/);
+    assert.match(profile, /onRecordStoryEvent=\{recordStoryAnalyticsEvent\}/);
+    assert.doesNotMatch(profile, /onMarkViewed=/);
   }
   assert.doesNotMatch(ownProfile + foreignProfile, /ProfileStoryViewer|ProfileStoriesContext/);
 });
@@ -115,15 +116,24 @@ test('SUBSCRIBED and foreground transitions trigger controlled reconciliation', 
   assert.match(context, /previousState !== 'active' && nextState === 'active'/);
 });
 
-test('expired Stories are pruned deterministically without polling', () => {
+test('expired Stories use one nearest-deadline timer while realtime failure alone enables bounded polling', () => {
   const groups = [{ userId: 'u', hasUnseen: true, stories: [
     { id: 'old', expiresAt: '2026-01-01T00:00:00Z' },
     { id: 'active', expiresAt: '2027-01-01T00:00:00Z' },
   ] }];
   assert.deepEqual(prune(groups, new Set(['active']), Date.parse('2026-06-01T00:00:00Z'))[0].stories.map(s => s.id), ['active']);
-  assert.match(context, /const nextExpiry = Math\.min/);
-  assert.match(context, /setTimeout\(\(\) => \{[\s\S]*pruneExpiredStoryGroups[\s\S]*void loadStories\(\)/);
-  assert.doesNotMatch(context, /setInterval/);
+  const expiryStart = context.indexOf('// Reconcile at the nearest expiry');
+  const expiryEnd = context.indexOf('const addStory = useCallback', expiryStart);
+  const expiry = context.slice(expiryStart, expiryEnd);
+  assert.match(expiry, /const nextExpiry = Math\.min/);
+  assert.match(expiry, /const timer = setTimeout\(\(\) => \{[\s\S]*pruneExpiredStoryGroups[\s\S]*void loadStories\(\)/);
+  assert.match(expiry, /return \(\) => clearTimeout\(timer\)/);
+  assert.doesNotMatch(expiry, /setInterval/);
+
+  const realtime = context.slice(context.indexOf('// One provider-owned channel'), expiryStart);
+  assert.match(realtime, /const startFallback[\s\S]*setInterval\(\(\) => \{[\s\S]*void loadStories\(\)[\s\S]*30_000/);
+  assert.match(realtime, /else if \(isRealtimeRecoveryStatus\(status\)\)[\s\S]*startFallback\(\)/);
+  assert.match(realtime, /status === 'SUBSCRIBED'[\s\S]*stopFallback\(\)/);
 });
 
 test('Story deletion and expiration remove stale Profile and Home viewer state', () => {
@@ -131,7 +141,10 @@ test('Story deletion and expiration remove stale Profile and Home viewer state',
   assert.match(foreignProfile, /storyViewerVisible && !creatorStoryGroup/);
   assert.match(feed, /storyViewerVisible && viewingStoryUserId && !viewingStoryGroup/);
   for (const viewer of [nativeViewer, webViewer]) {
-    assert.match(viewer, /currentIndex >= stories\.length\) onClose\(\)/);
+    assert.match(viewer, /resolveStoryAnchor\(stories, currentStoryId, currentIndexHint\)/);
+    assert.match(viewer, /if \(!anchoredStoryId\) \{[\s\S]*onClose\(\)[\s\S]*return;[\s\S]*\}/);
+    assert.match(viewer, /if \(currentStoryId !== anchoredStoryId\) setCurrentStoryId\(anchoredStoryId\)/);
+    assert.doesNotMatch(viewer, /currentIndex >= stories\.length/);
   }
 });
 

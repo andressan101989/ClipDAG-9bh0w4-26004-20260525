@@ -168,8 +168,13 @@ test('client validates the complete server result and logs no Story identity', (
 });
 
 test('Feed wires the canonical delete callback into the existing StoryViewer', () => {
-  assert.match(feed, /deleteStory[\s\S]{0,180}\}\s*=\s*useStories\(\)/i);
-  assert.match(feed, /<StoryViewer[\s\S]*onDeleteStory=\{deleteStory\}/i);
+  const hookEnd = feed.indexOf('} = useStories();');
+  const hookBindings = feed.slice(feed.lastIndexOf('const {', hookEnd), hookEnd);
+  const viewerStart = feed.indexOf('<StoryViewer');
+  const viewer = feed.slice(viewerStart, feed.indexOf('/>', viewerStart));
+
+  assert.match(hookBindings, /deleteStory/);
+  assert.match(viewer, /onDeleteStory=\{deleteStory\}/i);
 });
 
 for (const [platform, viewer] of [['native', nativeViewer], ['web', webViewer]]) {

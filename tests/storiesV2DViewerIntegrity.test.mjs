@@ -171,9 +171,18 @@ test('viewer list caller maps only approved fields and returns a keyset cursor',
   assert.doesNotMatch(context, /row\.(email|phone|device|ip_address)/i);
 });
 
-test('feed wires current identity and both canonical viewer callbacks into the existing viewer', () => {
-  assert.match(feed, /getStoryViewers[\s\S]{0,180}\}\s*=\s*useStories\(\)/i);
-  assert.match(feed, /<StoryViewer[\s\S]*currentUserId=\{user\?\.id\}[\s\S]*onMarkViewed=\{markStoryViewed\}[\s\S]*onGetViewers=\{getStoryViewers\}/i);
+test('feed wires current identity, canonical viewer reads and media-ready analytics into the existing viewer', () => {
+  const hookEnd = feed.indexOf('} = useStories();');
+  const hookBindings = feed.slice(feed.lastIndexOf('const {', hookEnd), hookEnd);
+  const viewerStart = feed.indexOf('<StoryViewer');
+  const viewer = feed.slice(viewerStart, feed.indexOf('/>', viewerStart));
+
+  assert.match(hookBindings, /getStoryViewers/);
+  assert.match(hookBindings, /recordStoryAnalyticsEvent/);
+  assert.match(viewer, /currentUserId=\{user\?\.id\}/i);
+  assert.match(viewer, /onGetViewers=\{getStoryViewers\}/i);
+  assert.match(viewer, /onRecordStoryEvent=\{recordStoryAnalyticsEvent\}/i);
+  assert.doesNotMatch(viewer, /onMarkViewed/);
 });
 
 for (const [platform, viewer] of [['native', nativeViewer], ['web', webViewer]]) {
