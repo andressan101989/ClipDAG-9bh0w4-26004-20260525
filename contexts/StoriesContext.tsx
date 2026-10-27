@@ -31,7 +31,7 @@ export type {
 } from '@/services/storyInteractiveClient';
 import {
   isRealtimeRecoveryStatus,
-  realtimeRetryDelay,
+  nextRealtimeRetry,
 } from '@/components/feature/storyViewerRuntime';
 
 export type StorySharedContent =
@@ -217,6 +217,8 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
   const refreshFlightRef = useRef<Promise<void> | null>(null);
   const refreshPendingRef = useRef(false);
   const realtimeGenerationRef = useRef(0);
+  const realtimeRetryAttemptRef = useRef(0);
+  const realtimeRetryActorRef = useRef<string | undefined>(user?.id);
   const storySessionRef = useRef<string | undefined>(user?.id);
   storySessionRef.current = user?.id;
 
@@ -394,11 +396,14 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
   // generation prevents late callbacks from a replaced channel.
   useEffect(() => {
     const actorId = user?.id;
+    if (realtimeRetryActorRef.current !== actorId) {
+      realtimeRetryActorRef.current = actorId;
+      realtimeRetryAttemptRef.current = 0;
+    }
     const supabase = supabaseRef.current;
     if (!actorId || !supabase || !supabaseOk.current) return;
 
     let active = true;
-    let retryAttempt = 0;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let fallbackTimer: ReturnType<typeof setInterval> | undefined;
     let revisionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -447,7 +452,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       .subscribe(status => {
         if (!isCurrent()) return;
         if (status === 'SUBSCRIBED') {
-          retryAttempt = 0;
+          realtimeRetryAttemptRef.current = 0;
           stopFallback();
           void loadStories();
           invalidateInteractiveState();
@@ -455,7 +460,9 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
         } else if (isRealtimeRecoveryStatus(status)) {
           startFallback();
           if (!retryTimer) {
-            const delay = realtimeRetryDelay(retryAttempt++);
+            const retry = nextRealtimeRetry(realtimeRetryAttemptRef.current);
+            realtimeRetryAttemptRef.current = retry.attempt;
+            const delay = retry.delay;
             retryTimer = setTimeout(() => {
               retryTimer = undefined;
               if (isCurrent()) setRealtimeEpoch(value => value + 1);

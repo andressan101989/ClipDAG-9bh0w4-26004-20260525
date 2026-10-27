@@ -48,6 +48,14 @@ export function realtimeRetryDelay(attempt: number, jitterUnit = Math.random()):
   return Math.min(30_000, Math.round(base * jitter));
 }
 
+export function nextRealtimeRetry(
+  attempt: number,
+  jitterUnit = Math.random(),
+): { attempt: number; delay: number } {
+  const current = Math.max(0, Math.floor(Number.isFinite(attempt) ? attempt : 0));
+  return { attempt: current + 1, delay: realtimeRetryDelay(current, jitterUnit) };
+}
+
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
   if (!value || typeof value !== 'object') return value;

@@ -14,6 +14,12 @@ export interface StoryStageFrame {
   safeInsets?: StoryStageInsets;
 }
 
+export interface StoryStageChrome {
+  top?: number;
+  bottom?: number;
+  padding?: number;
+}
+
 export interface StoryStagePoint { x: number; y: number }
 export interface StoryElementTransform extends StoryStagePoint { scale: number; rotation: number }
 export interface StoryMeasuredElementFrame { width: number; height: number }
@@ -69,8 +75,24 @@ export function projectStoryElementTransform(
 ): StoryElementTransform {
   return {
     ...projectStoryStagePoint(transform, stage),
-    scale: clampStoryScale(transform.scale),
+    // Projection also serves read-time fitted transforms. Persisted editor
+    // values are clamped separately, while a very compact viewer may need a
+    // smaller effective scale to avoid cropping without mutating composition.
+    scale: clamp(finite(transform.scale, 1), 0, STORY_ELEMENT_MAX_SCALE),
     rotation: normalizeStoryRotation(transform.rotation),
+  };
+}
+
+export function createStoryStageSafeInsets(
+  systemInsets: StoryStageInsets,
+  chrome: StoryStageChrome = {},
+): Required<StoryStageInsets> {
+  const padding = Math.max(0, finite(chrome.padding ?? 8, 8));
+  return {
+    top: Math.max(0, finite(systemInsets.top ?? 0, 0), finite(chrome.top ?? 0, 0)) + padding,
+    right: Math.max(padding, finite(systemInsets.right ?? 0, 0)),
+    bottom: Math.max(0, finite(systemInsets.bottom ?? 0, 0), finite(chrome.bottom ?? 0, 0)) + padding,
+    left: Math.max(padding, finite(systemInsets.left ?? 0, 0)),
   };
 }
 
@@ -93,6 +115,38 @@ export function clampStoryElementTransform(
   const extents = storyRotatedHalfExtents(measuredFrame, scale, rotation);
   const projected = projectStoryStagePoint(transform, { ...stage, width, height });
   const insets = stage.safeInsets ?? {};
+  return {
+    x: width > 0 ? safeAxis(projected.x, width, insets.left ?? 0, insets.right ?? 0, extents.x) / width : 0.5,
+    y: height > 0 ? safeAxis(projected.y, height, insets.top ?? 0, insets.bottom ?? 0, extents.y) / height : 0.5,
+    scale,
+    rotation,
+  };
+}
+
+/**
+ * Viewer-only projection guard. A transform authored on a roomy stage may be
+ * too large for a phone or split view. Reduce only the effective render scale,
+ * then clamp the center against the real rotated measured bounds. The stored
+ * transform remains untouched.
+ */
+export function fitStoryElementTransform(
+  transform: StoryElementTransform,
+  measuredFrame: StoryMeasuredElementFrame,
+  stage: StoryStageFrame,
+): StoryElementTransform {
+  const width = Math.max(0, finite(stage.width, 0));
+  const height = Math.max(0, finite(stage.height, 0));
+  const rotation = normalizeStoryRotation(transform.rotation);
+  const requestedScale = clampStoryScale(transform.scale);
+  const insets = stage.safeInsets ?? {};
+  const availableWidth = Math.max(0, width - Math.max(0, insets.left ?? 0) - Math.max(0, insets.right ?? 0));
+  const availableHeight = Math.max(0, height - Math.max(0, insets.top ?? 0) - Math.max(0, insets.bottom ?? 0));
+  const unitExtents = storyRotatedHalfExtents(measuredFrame, 1, rotation);
+  const fitX = unitExtents.x > 0 ? availableWidth / (unitExtents.x * 2) : requestedScale;
+  const fitY = unitExtents.y > 0 ? availableHeight / (unitExtents.y * 2) : requestedScale;
+  const scale = Math.max(0, Math.min(requestedScale, fitX, fitY));
+  const extents = { x: unitExtents.x * scale, y: unitExtents.y * scale };
+  const projected = projectStoryStagePoint(transform, stage);
   return {
     x: width > 0 ? safeAxis(projected.x, width, insets.left ?? 0, insets.right ?? 0, extents.x) / width : 0.5,
     y: height > 0 ? safeAxis(projected.y, height, insets.top ?? 0, insets.bottom ?? 0, extents.y) / height : 0.5,

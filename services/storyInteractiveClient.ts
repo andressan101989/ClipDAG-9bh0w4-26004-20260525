@@ -288,5 +288,6 @@ export async function recordStoryEvent(
   });
   if (error) requestFailure();
   if (!record(data) || !exactKeys(data, ['status', 'event_id'])
-    || data.status !== 'recorded' || data.event_id !== eventId) invalidResponse();
+    || (data.status !== 'recorded' && data.status !== 'owner_ignored')
+    || data.event_id !== eventId) invalidResponse();
 }

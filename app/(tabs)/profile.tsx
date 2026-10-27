@@ -111,7 +111,7 @@ export default function ProfileScreen() {
   const { unreadTotal: unreadDMs } = useMessages();
   const walletData = useWallet();
   const {
-    getStoryGroupForUser, markStoryViewed, getStoryViewers,
+    getStoryGroupForUser, getStoryViewers,
     deleteStory, refreshStories, setStoryReaction, getStoryReactions, replyToStory,
     getStorySharedContent,
     getInteractiveState, respondToInteractiveElement, getInteractiveResults,
@@ -778,7 +778,6 @@ export default function ProfileScreen() {
         storyGroup={ownStoryGroup}
         currentUserId={user.id}
         onClose={() => setStoryViewerVisible(false)}
-        onMarkViewed={markStoryViewed}
         onGetViewers={getStoryViewers}
         onDeleteStory={deleteStory}
         onSetReaction={setStoryReaction}

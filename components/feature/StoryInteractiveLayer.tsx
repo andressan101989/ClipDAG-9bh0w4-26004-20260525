@@ -16,6 +16,13 @@ import {
   storyInteractionPayloadKey,
 } from './storyViewerRuntime';
 import { StoryInteractiveResultsSheet } from './StoryInteractiveResultsSheet';
+import {
+  fitStoryElementTransform,
+  projectStoryElementTransform,
+  type StoryMeasuredElementFrame,
+  type StoryStageFrame,
+  type StoryStageInsets,
+} from './storyStageGeometry';
 import type {
   StoryInteractiveElementState,
   StoryInteractivePayload,
@@ -29,6 +36,7 @@ interface StoryInteractiveLayerProps {
   composition: StoryComposition;
   width: number;
   height: number;
+  safeInsets: StoryStageInsets;
   isOwner: boolean;
   revision: number;
   onInteractionFocus: (focused: boolean) => void;
@@ -52,6 +60,8 @@ interface StoryInteractiveLayerProps {
     action: 'hide',
   ) => Promise<'hidden' | 'blocked'>;
 }
+
+const INTERACTIVE_CARD_FALLBACK: StoryMeasuredElementFrame = { width: 260, height: 104 };
 
 interface InteractiveCardProps {
   storyId: string;
@@ -220,11 +230,72 @@ function InteractiveCard({
   );
 }
 
+function PositionedInteractiveCard({
+  placement,
+  stage,
+  elementState,
+  storyId,
+  isOwner,
+  onInteractionFocus,
+  onSubmit,
+  onOpenResults,
+}: {
+  placement: StoryInteractivePlacement;
+  stage: StoryStageFrame;
+  elementState: StoryInteractiveElementState;
+  storyId: string;
+  isOwner: boolean;
+  onInteractionFocus: (focused: boolean) => void;
+  onSubmit: (elementId: string, payload: StoryInteractivePayload) => Promise<void>;
+  onOpenResults: (element: StoryInteractiveElementState) => void;
+}) {
+  const [measuredFrame, setMeasuredFrame] = useState(INTERACTIVE_CARD_FALLBACK);
+  const fitted = useMemo(
+    () => fitStoryElementTransform(placement, measuredFrame, stage),
+    [measuredFrame, placement, stage],
+  );
+  const projected = useMemo(
+    () => projectStoryElementTransform(fitted, stage),
+    [fitted, stage],
+  );
+  const onLayout = useCallback((event: LayoutChangeEvent) => {
+    const next = event.nativeEvent.layout;
+    if (!(next.width > 0) || !(next.height > 0)) return;
+    setMeasuredFrame(current => current.width === next.width && current.height === next.height
+      ? current
+      : { width: next.width, height: next.height });
+  }, []);
+  return (
+    <View
+      pointerEvents="box-none"
+      onLayout={onLayout}
+      style={[
+        styles.positioned,
+        {
+          left: projected.x - measuredFrame.width / 2,
+          top: projected.y - measuredFrame.height / 2,
+          transform: [{ scale: projected.scale }, { rotate: `${projected.rotation}deg` }],
+        },
+      ]}
+    >
+      <InteractiveCard
+        storyId={storyId}
+        elementState={elementState}
+        isOwner={isOwner}
+        onInteractionFocus={onInteractionFocus}
+        onSubmit={onSubmit}
+        onOpenResults={onOpenResults}
+      />
+    </View>
+  );
+}
+
 export function StoryInteractiveLayer({
   storyId,
   composition,
   width,
   height,
+  safeInsets,
   isOwner,
   revision,
   onInteractionFocus,
@@ -239,6 +310,7 @@ export function StoryInteractiveLayer({
       (element): element is StoryInteractivePlacement => element.type === 'interactive',
     );
   }, [composition]);
+  const stage = useMemo<StoryStageFrame>(() => ({ width, height, safeInsets }), [height, safeInsets, width]);
   const [state, setState] = useState<StoryInteractiveState | null>(null);
   const [resultsElement, setResultsElement] = useState<StoryInteractiveElementState | null>(null);
   const generationRef = useRef(0);
@@ -296,23 +368,17 @@ export function StoryInteractiveLayer({
         const elementState = stateById.get(placement.element_id);
         if (!elementState) return null;
         return (
-          <View key={placement.id} pointerEvents="box-none" style={[
-            styles.positioned,
-            {
-              left: placement.x * width - 130,
-              top: placement.y * height - 52,
-              transform: [{ scale: placement.scale }, { rotate: `${placement.rotation}deg` }],
-            },
-          ]}>
-            <InteractiveCard
-              storyId={storyId}
-              elementState={elementState}
-              isOwner={isOwner}
-              onInteractionFocus={onInteractionFocus}
-              onSubmit={respond}
-              onOpenResults={openResults}
-            />
-          </View>
+          <PositionedInteractiveCard
+            key={placement.id}
+            placement={placement}
+            stage={stage}
+            storyId={storyId}
+            elementState={elementState}
+            isOwner={isOwner}
+            onInteractionFocus={onInteractionFocus}
+            onSubmit={respond}
+            onOpenResults={openResults}
+          />
         );
       })}
       <StoryInteractiveResultsSheet

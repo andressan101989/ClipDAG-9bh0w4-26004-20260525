@@ -93,7 +93,7 @@ export default function FeedScreen() {
   } = useFeed();
   const {
     storyGroups, addStory, addSharedStory, getStorySharedContent,
-    markStoryViewed, getStoryViewers, deleteStory,
+    getStoryViewers, deleteStory,
     setStoryReaction, getStoryReactions, replyToStory,
     getInteractiveState, respondToInteractiveElement, getInteractiveResults,
     moderateInteractiveQuestion, recordStoryAnalyticsEvent, realtimeRevision,
@@ -704,7 +704,6 @@ export default function FeedScreen() {
         storyGroup={viewingStoryGroupWithAdvertising}
         currentUserId={user?.id}
         onClose={() => { setStoryViewerVisible(false); setViewingStoryUserId(null); }}
-        onMarkViewed={markStoryViewed}
         onGetViewers={getStoryViewers}
         onDeleteStory={deleteStory}
         onSetReaction={setStoryReaction}

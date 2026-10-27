@@ -402,17 +402,20 @@ grant execute on function public.moderate_story_question(uuid,uuid,uuid,text) to
 
 create function public.record_story_event(p_story_id uuid,p_event_type text,p_event_id uuid)
 returns jsonb language plpgsql security definer set search_path = '' as $$
-declare v_actor uuid:=auth.uid(); v_hash text; v_saved public.idempotency_keys; v_response jsonb;
+declare v_actor uuid:=auth.uid(); v_owner uuid; v_hash text; v_saved public.idempotency_keys; v_response jsonb;
 begin
   if v_actor is null then raise exception using errcode='42501',message='not_authenticated'; end if;
   if p_event_id is null or p_story_id is null or p_event_type is null or p_event_type not in ('impression','completion','forward','back','exit','replay') then
     raise exception using errcode='22023',message='invalid_story_event'; end if;
   v_hash:=pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.jsonb_build_array(p_story_id,p_event_type)::text,'UTF8')),'hex');
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('story-event:'||v_actor::text||':'||p_event_id::text,0));
+  select user_id into v_owner from public.stories where id=p_story_id for share;
+  if v_owner is null or not private.story_can_access(p_story_id,false) then raise exception using errcode='42501',message='story_not_visible'; end if;
+  if v_owner=v_actor then
+    return pg_catalog.jsonb_build_object('status','owner_ignored','event_id',p_event_id);
+  end if;
   select * into v_saved from public.idempotency_keys where user_id=v_actor and operation_type='story_analytics' and idempotency_key=p_event_id::text;
   if found and v_saved.request_hash is distinct from v_hash then raise exception using errcode='23505',message='story_idempotency_conflict'; end if;
-  perform 1 from public.stories where id=p_story_id for share;
-  if not private.story_can_access(p_story_id,false) then raise exception using errcode='42501',message='story_not_visible'; end if;
   if v_saved.status='completed' then return v_saved.response_body; end if;
   -- Durable event identity also survives routine idempotency receipt expiry.
   if exists(select 1 from private.story_analytics_events where actor_id=v_actor and event_id=p_event_id and (story_id<>p_story_id or event_type<>p_event_type)) then

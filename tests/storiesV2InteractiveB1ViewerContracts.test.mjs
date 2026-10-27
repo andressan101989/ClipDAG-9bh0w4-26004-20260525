@@ -9,6 +9,12 @@ const nativeViewer = () => read('components/feature/StoryViewer.native.tsx');
 const webViewer = () => read('components/feature/StoryViewer.tsx');
 const layer = () => read('components/feature/StoryInteractiveLayer.tsx');
 const results = () => read('components/feature/StoryInteractiveResultsSheet.tsx');
+const migration = () => read('supabase/migrations/20261027042552_stories_v2_interactive_b1.sql');
+const callers = () => [
+  read('app/(tabs)/index.tsx'),
+  read('app/(tabs)/profile.tsx'),
+  read('app/creator/[id].tsx'),
+];
 
 test('one typed client owns all five interactive and analytics RPC calls', () => {
   const source = client();
@@ -33,6 +39,11 @@ test('provider orders deterministically and uses one fenced realtime channel for
   assert.match(source, /CHANNEL_ERROR|TIMED_OUT|CLOSED/);
   assert.match(source, /realtimeGenerationRef/);
   assert.match(source, /realtimeRevision/);
+  assert.match(source, /realtimeRetryAttemptRef\s*=\s*useRef\(0\)/);
+  assert.match(source, /realtimeRetryActorRef/);
+  assert.doesNotMatch(source, /let retryAttempt\s*=\s*0/);
+  const subscribed = source.slice(source.indexOf("status === 'SUBSCRIBED'"), source.indexOf("status === 'SUBSCRIBED'") + 300);
+  assert.match(subscribed, /realtimeRetryAttemptRef\.current\s*=\s*0/);
 });
 
 test('both viewers anchor by story id and record organic impressions only after media readiness', () => {
@@ -43,7 +54,32 @@ test('both viewers anchor by story id and record organic impressions only after 
     assert.doesNotMatch(source, /visible\s*&&\s*currentStoryId\s*&&\s*!isAdvertisingStory\s*&&\s*onMarkViewed/);
     assert.match(source, /StoryInteractiveLayer/);
     assert.match(source, /interactionFocused/);
+    assert.match(source, /!storyId\s*\|\|\s*!onRecordStoryEvent\s*\|\|\s*isAdvertisingStory\s*\|\|\s*isOwnStory/);
+    assert.doesNotMatch(source, /onMarkViewed/);
   }
+  for (const source of callers()) assert.doesNotMatch(source, /onMarkViewed=|markStoryViewed,/);
+});
+
+test('analytics retries are owned by cancellable timer refs and stop on close or unmount', () => {
+  for (const source of [nativeViewer(), webViewer()]) {
+    assert.match(source, /analyticsRetryTimersRef\s*=\s*useRef\(new Map/);
+    assert.match(source, /clearAnalyticsRetryTimers/);
+    assert.match(source, /analyticsActiveRef\.current\s*=\s*false/);
+    assert.match(source, /return \(\) => \{[\s\S]{0,250}clearAnalyticsRetryTimers\(\)/);
+    assert.doesNotMatch(source, /if \(!retry\) setTimeout\(/);
+  }
+});
+
+test('owner analytics is a locked stable no-op before rate limits, receipts, views, or events', () => {
+  const source = migration();
+  const fn = source.slice(source.indexOf('create function public.record_story_event'), source.indexOf('revoke all on function public.record_story_event'));
+  const owner = fn.indexOf("'owner_ignored'");
+  assert.ok(owner > fn.indexOf('pg_advisory_xact_lock'));
+  assert.ok(owner > fn.indexOf('for share'));
+  for (const mutation of ['story_consume_velocity', 'insert into private.story_analytics_events', 'mark_story_viewed', 'insert into public.idempotency_keys']) {
+    assert.ok(owner < fn.indexOf(mutation), `${mutation} must occur after the owner no-op`);
+  }
+  assert.match(client(), /data\.status !== 'recorded'\s*&&\s*data\.status !== 'owner_ignored'/);
 });
 
 test('positioned reactions use the canonical element response RPC and never the legacy reaction rail authority', () => {

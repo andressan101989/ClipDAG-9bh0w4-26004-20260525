@@ -28,6 +28,7 @@ import {
 } from './storyInteractiveTypes';
 import {
   clampStoryElementTransform,
+  createStoryStageSafeInsets,
   deriveStoryGestureTransform,
   projectStoryElementTransform,
   reorderStoryLayer,
@@ -192,13 +193,11 @@ export function StoryEditor({
   const [stageFrame, setStageFrame] = useState({ width: 0, height: 0 });
   const stage = useMemo<StoryStageFrame>(() => ({
     ...stageFrame,
-    safeInsets: {
-      top: headerHeight + 8,
-      right: Math.max(insets.right, 8),
-      bottom: toolbarHeight + 8,
-      left: Math.max(insets.left, 8),
-    },
-  }), [headerHeight, insets.left, insets.right, stageFrame, toolbarHeight]);
+    safeInsets: createStoryStageSafeInsets(insets, {
+      top: headerHeight,
+      bottom: toolbarHeight,
+    }),
+  }), [headerHeight, insets, stageFrame, toolbarHeight]);
   const [composition, setComposition] = useState<StoryComposition>(EMPTY_STORY_COMPOSITION);
   const [interactiveDrafts, setInteractiveDrafts] = useState<StoryInteractiveDraft[]>([]);
   const [interactiveSheetDraft, setInteractiveSheetDraft] = useState<StoryInteractiveDraft | null>(null);

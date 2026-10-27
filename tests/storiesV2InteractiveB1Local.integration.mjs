@@ -127,6 +127,16 @@ test('B1 disposable PostgreSQL behavior and isolation', {skip:!enabled}, async t
       assert.equal(run(`select count(*) from private.story_analytics_events where story_id='${story}'`),'1');
       assert.equal(run(`select count(*) from public.story_views where story_id='${story}'`),'1');
     });
+    await t.test('owner analytics is ignored before rate limits, receipts, views, or event rows',()=>{
+      const key=randomUUID();
+      assert.deepEqual(json(owner,`select public.record_story_event('${story}','impression','${key}')`),{
+        status:'owner_ignored',event_id:key,
+      });
+      assert.equal(run(`select count(*) from private.story_analytics_events where story_id='${story}' and actor_id='${owner}'`),'0');
+      assert.equal(run(`select count(*) from public.story_views where story_id='${story}' and viewer_id='${owner}'`),'0');
+      assert.equal(run(`select count(*) from public.idempotency_keys where user_id='${owner}' and operation_type='story_analytics' and idempotency_key='${key}'`),'0');
+      assert.equal(run(`select coalesce(sum(count),0) from public.velocity_counters where user_id='${owner}' and operation_type='story_analytics'`),'0');
+    });
     await t.test('report retry reuses its canonical identity and consumes one velocity unit',()=>{
       const first=run(as(viewer,`select public.report_story('${story}','fixture reason','fixture details')`));
       const again=run(as(viewer,`select public.report_story('${story}','fixture reason','fixture details')`));

@@ -73,7 +73,7 @@ export default function CreatorProfileScreen() {
   const { user, toggleFollow, isFollowing: isFollowingCtx } = useAuth();
   const walletData = useWallet();
   const {
-    getStoryGroupForUser, markStoryViewed, getStoryViewers,
+    getStoryGroupForUser, getStoryViewers,
     deleteStory, refreshStories, setStoryReaction, getStoryReactions, replyToStory,
     getStorySharedContent,
     getInteractiveState, respondToInteractiveElement, getInteractiveResults,
@@ -586,7 +586,6 @@ export default function CreatorProfileScreen() {
         storyGroup={creatorStoryGroup}
         currentUserId={user?.id}
         onClose={() => setStoryViewerVisible(false)}
-        onMarkViewed={markStoryViewed}
         onGetViewers={getStoryViewers}
         onDeleteStory={deleteStory}
         onSetReaction={setStoryReaction}
