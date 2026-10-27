@@ -79,6 +79,21 @@ export function normalizeStorySliderValue(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
+export function storySliderValueAt(locationX: number, width: number): number {
+  const boundedWidth = Number.isFinite(width) && width > 0 ? width : 1;
+  return normalizeStorySliderValue(locationX / boundedWidth);
+}
+
+export function stepStorySliderValue(
+  value: number,
+  direction: 'increment' | 'decrement',
+  step = 0.05,
+): number {
+  const boundedStep = Number.isFinite(step) && step > 0 ? step : 0.05;
+  const signedStep = direction === 'increment' ? boundedStep : -boundedStep;
+  return normalizeStorySliderValue(Math.round((normalizeStorySliderValue(value) + signedStep) * 1_000_000) / 1_000_000);
+}
+
 export function shouldNavigateStory(input: {
   interactionFocused: boolean;
   holdTriggered: boolean;

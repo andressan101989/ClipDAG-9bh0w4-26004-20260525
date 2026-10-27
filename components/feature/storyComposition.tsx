@@ -1,7 +1,12 @@
-import React from 'react';
-import { Text, View, StyleSheet } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import { LayoutChangeEvent, Text, View, StyleSheet } from 'react-native';
 import {
   clampStoryElementTransform,
+  fitStoryElementTransform,
+  projectStoryElementTransform,
+  type StoryMeasuredElementFrame,
+  type StoryStageFrame,
+  type StoryStageInsets,
 } from './storyStageGeometry';
 import type {
   StoryComposition,
@@ -82,26 +87,69 @@ export function StoryCompositionOverlay({
   composition,
   width,
   height,
+  safeInsets,
 }: {
   composition: StoryComposition;
   width: number;
   height: number;
+  safeInsets: StoryStageInsets;
 }) {
   const elements: StoryCompositionElement[] = composition.elements;
+  const stage = useMemo<StoryStageFrame>(() => ({ width, height, safeInsets }), [height, safeInsets, width]);
   return (
     <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.overlay]}>
       {elements.filter((element): element is StoryStaticElement => element.type !== 'interactive').map(element => (
-        <View key={element.id} style={[
-          styles.element,
-          {
-            left: element.x * width - storyElementFrame(element, width).width / 2,
-            top: element.y * height - storyElementFrame(element, width).minHeight / 2,
-            transform: [{ scale: element.scale }, { rotate: `${element.rotation}deg` }],
-          },
-        ]}>
-          <StoryCompositionElementContent element={element} canvasWidth={width} />
-        </View>
+        <PositionedStoryCompositionElement
+          key={element.id}
+          element={element}
+          stage={stage}
+        />
       ))}
+    </View>
+  );
+}
+
+function PositionedStoryCompositionElement({
+  element,
+  stage,
+}: {
+  element: StoryStaticElement;
+  stage: StoryStageFrame;
+}) {
+  const fallback = storyElementFrame(element, stage.width);
+  const [measuredFrame, setMeasuredFrame] = useState<StoryMeasuredElementFrame>({
+    width: fallback.width,
+    height: fallback.minHeight,
+  });
+  const fitted = useMemo(
+    () => fitStoryElementTransform(element, measuredFrame, stage),
+    [element, measuredFrame, stage],
+  );
+  const projected = useMemo(
+    () => projectStoryElementTransform(fitted, stage),
+    [fitted, stage],
+  );
+  const onLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    if (!(width > 0) || !(height > 0)) return;
+    setMeasuredFrame(current => current.width === width && current.height === height
+      ? current
+      : { width, height });
+  }, []);
+
+  return (
+    <View
+      onLayout={onLayout}
+      style={[
+        styles.element,
+        {
+          left: projected.x - measuredFrame.width / 2,
+          top: projected.y - measuredFrame.height / 2,
+          transform: [{ scale: projected.scale }, { rotate: `${projected.rotation}deg` }],
+        },
+      ]}
+    >
+      <StoryCompositionElementContent element={element} canvasWidth={stage.width} />
     </View>
   );
 }
