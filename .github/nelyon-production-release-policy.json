@@ -3053,7 +3053,7 @@
     "from_phase": "stories_v2_interactive_b1_fail_closed",
     "to_phase": "stories_v2_safety_c1_technical_prep_fail_closed",
     "baseline_sha": "01dd6467484d11ad11aeb611374437e212fb7401",
-    "reviewed_source_sha": "12fda00e0e5f90dd2cae7a4eef5350f13aac076b",
+    "reviewed_source_sha": "65802c2f59e106eb5566e9911032acd5d87e328d",
     "integration_base_sha": "69ba61b04a1329231dcc9f22363f1c273e5b524c",
     "approved_sha_ancestry": "verified_integration_base",
     "migration_path": "supabase/migrations/20261027120000_stories_v2_safety_c1_technical_policy_prep.sql",
