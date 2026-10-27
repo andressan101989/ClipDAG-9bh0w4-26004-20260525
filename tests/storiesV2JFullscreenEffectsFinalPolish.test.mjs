@@ -18,6 +18,7 @@ const STORIES_B1_SUPABASE_SCOPE = [
   'supabase/functions/get-stream-playback/index.ts',
   'supabase/functions/stream-webhook/index.ts',
   'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql',
+  'supabase/migrations/20261027120000_stories_v2_safety_c1_technical_policy_prep.sql',
 ];
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 const effect = read('components/feature/StoryReactionEffect.tsx');
@@ -58,7 +59,7 @@ function nativeAuthorityChanges() {
     .filter(path => !/android\/app\/src\/main\/res\/|ios\/onspaceapp\/Images\.xcassets\/|ios\/onspaceapp\/Info\.plist$|ios\/onspaceapp\.xcodeproj\/project\.pbxproj$/.test(path));
 }
 
-test('J keeps its approved I1 base while B1 owns the exact authorized Supabase scope', () => {
+test('J keeps its approved I1 base while B1 plus Safety C1 own the exact authorized Supabase scope', () => {
   assert.equal(execFileSync('git', ['merge-base', 'HEAD', BASE], gitOptions).trim(), BASE);
   assertPackageAuthoritiesUnchanged();
   const supabaseChanges = execFileSync(
