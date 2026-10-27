@@ -299,6 +299,110 @@ test('Stories B1 phase gate does not reactivate after baseline promotion for an 
   }), 'INVALID_STORIES_B1_TRANSITION');
 });
 
+test('Stories Safety C2 policy requires its separate exact publish-first authority', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  assert.ok(policy.stories_safety_c2_transition, 'C2 authority must be present');
+  assert.deepEqual(policy.stories_safety_c2_transition, gate.STORIES_SAFETY_C2_RELEASE_TRANSITION);
+  assert.equal(policy.stories_safety_c2_transition.from_phase, 'stories_v2_safety_c1_technical_prep_fail_closed');
+  assert.equal(policy.stories_safety_c2_transition.to_phase, 'stories_v2_safety_c2_publish_first_async_review');
+  assert.equal(policy.stories_safety_c2_transition.baseline_sha, 'e4c7199da157446f455822ea96e812784354b1db');
+  assert.deepEqual(policy.stories_safety_c2_transition.functions.map(item => [item.name, item.verify_jwt]),
+    [['get-stream-playback', true]]);
+  assert.equal(policy.stories_safety_c2_transition.productive_paths.length, 2);
+  assert.equal(gate.validatePolicy(policy), true);
+  for (const mutate of [
+    value => { value.safety.automatic_allow_authorized = true; },
+    value => { value.safety.automatic_block_authorized = true; },
+    value => { value.safety.mode = 'fail_closed_review'; },
+    value => { value.functions.push('content-safety-scan'); },
+    value => { value.migration_sha256 = '0'.repeat(64); },
+    value => { value.policy_artifact.sha256 = '0'.repeat(64); },
+    value => { value.helper_attestations[0].owner = 'authenticated'; },
+  ]) {
+    const hostile = structuredClone(policy);
+    mutate(hostile.stories_safety_c2_transition);
+    assertDenied(() => gate.validatePolicy(hostile), 'INVALID_STORIES_SAFETY_C2_TRANSITION');
+  }
+});
+
+test('Stories Safety C2 manifest binds one migration and the sole admin Stream Edge closure', async () => {
+  const { gate, policy: installedPolicy } = await loadGateAndPolicy();
+  const policy = asStoriesSafetyC2TransitionPolicy(installedPolicy);
+  const transition = policy.stories_safety_c2_transition;
+  assert.ok(transition, 'C2 authority must be present');
+  const approvedSha = 'b'.repeat(40);
+  const changes = [
+    { status: 'M', path: 'supabase/functions/get-stream-playback/index.ts', fileType: 'file' },
+    { status: 'A', path: transition.migration_path, fileType: 'file' },
+  ];
+  const attestation = { ...structuredClone(transition), approved_sha: approvedSha,
+    baseline_descendant_verified: true, integration_base_descendant_verified: true,
+    reviewed_source_descendant_verified: true };
+  const input = manifestInput(policy, {
+    request: request({ approvedSha, mainSha: approvedSha }),
+    gitState: { baselineSha: transition.baseline_sha, approvedSha, originMainSha: approvedSha, changes },
+    classified: gate.classifyChangedPaths(changes),
+    migrations: [{ version: '20261027191918', path: transition.migration_path,
+      blob: transition.migration_blob, sha256: transition.migration_sha256 }],
+    affectedFunctions: ['get-stream-playback'],
+    functionContracts: [{ name: 'get-stream-playback',
+      entrypoint: 'supabase/functions/get-stream-playback/index.ts', import_map: null,
+      verify_jwt: true, source_changed: true, source_files: [{
+        path: 'supabase/functions/get-stream-playback/index.ts', sha256: 'a'.repeat(64),
+      }], source_sha256: transition.functions[0].source_sha256 }],
+    storiesSafetyC2Transition: attestation,
+  });
+  const manifest = gate.buildManifest(input);
+  assert.equal(manifest.result, 'PLAN READY');
+  assert.deepEqual(manifest.resources.stories_safety_c2_transition, attestation);
+  assert.deepEqual(manifest.resources.functions, ['get-stream-playback']);
+  assert.equal(manifest.risk.level, 'HIGH');
+  for (const mutate of [
+    value => { value.storiesSafetyC2Transition = null; },
+    value => { value.migrations[0].sha256 = '0'.repeat(64); },
+    value => { value.migrations[0].version = '20261027191919'; },
+    value => { value.affectedFunctions = []; value.functionContracts = []; },
+    value => { value.functionContracts[0].source_sha256 = '0'.repeat(64); },
+    value => { value.functionContracts[0].verify_jwt = false; },
+    value => { value.migrations.push({ version: '20261027191919', path: 'supabase/migrations/20261027191919_extra.sql' }); },
+    value => { value.classified.config.push({ path: 'supabase/config.toml' }); },
+    value => { value.classified.productive.push({ path: 'supabase/functions/content-safety-scan/index.ts' }); },
+  ]) {
+    const hostile = structuredClone(input);
+    mutate(hostile);
+    assertDenied(() => gate.buildManifest(hostile), 'INVALID_STORIES_SAFETY_C2_TRANSITION');
+  }
+});
+
+test('Stories Safety C2 Git attestation binds reviewed policy migration and unchanged scanner bytes', async () => {
+  const { gate, policy: installedPolicy } = await loadGateAndPolicy();
+  const policy = asStoriesSafetyC2TransitionPolicy(installedPolicy);
+  const transition = policy.stories_safety_c2_transition;
+  assert.ok(transition, 'C2 authority must be present');
+  const root = new URL('..', import.meta.url);
+  const runGit = args => execFileSync('git', args, { cwd: root,
+    encoding: args.includes('-z') ? 'buffer' : 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  const input = { cwd: root, policy, mode: 'plan_only', approvedSha: transition.reviewed_source_sha,
+    changes: [{ path: transition.migration_path, status: 'A' },
+      { path: 'supabase/functions/get-stream-playback/index.ts', status: 'M' }],
+    migrations: [{ path: transition.migration_path, version: '20261027191918' }], affectedFunctions: ['get-stream-playback'], runGit };
+  const result = gate.attestStoriesSafetyC2Transition(input);
+  assert.equal(result.attestation.reviewed_source_descendant_verified, true);
+  assert.equal(result.migrations[0].sha256, transition.migration_sha256);
+  for (const path of [...transition.path_attestations.map(item => item.path), transition.policy_artifact.path,
+    ...transition.preserved_paths.map(item => item.path)]) {
+    const altered = args => args[0] === 'rev-parse' && args[1] === `${input.approvedSha}:${path}`
+      ? `${'0'.repeat(40)}\n` : runGit(args);
+    assertDenied(() => gate.attestStoriesSafetyC2Transition({ ...input, runGit: altered }), 'INVALID_STORIES_SAFETY_C2_TRANSITION');
+  }
+  const promoted = structuredClone(policy);
+  promoted.baseline.sha = 'c'.repeat(40);
+  promoted.baseline.latest_migration = '20261027191918_stories_v2_safety_c2_publish_first_async_review';
+  assert.deepEqual(gate.attestStoriesSafetyC2Transition({ ...input, policy: promoted, migrations: [] }),
+    { migrations: [], attestation: null });
+  assertDenied(() => gate.attestStoriesSafetyC2Transition({ ...input, policy: promoted }), 'INVALID_STORIES_SAFETY_C2_TRANSITION');
+});
+
 test('Stories Safety C1 policy adds an exact inactive one-migration zero-Edge transition', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const transition = policy.stories_safety_c1_transition;
@@ -473,6 +577,14 @@ test('Stories Safety C1 transition retires after baseline promotion and cannot r
     runGit: () => { throw new Error('retired Stories Safety C1 transition must reject replay before Git'); },
   }), 'INVALID_STORIES_SAFETY_C1_TRANSITION');
 });
+
+function asStoriesSafetyC2TransitionPolicy(policy) {
+  const result = structuredClone(policy);
+  result.baseline.sha = 'e4c7199da157446f455822ea96e812784354b1db';
+  result.baseline.migration_count = 359;
+  result.baseline.latest_migration = '20261027120000_stories_v2_safety_c1_technical_policy_prep';
+  return result;
+}
 
 async function loadGateAndPolicy() {
   assert.ok(existsSync(policyUrl), 'release policy must exist');

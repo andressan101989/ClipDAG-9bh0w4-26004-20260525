@@ -250,6 +250,173 @@ test('Stories B1 snapshot contract is fail-closed and rejects policy activation 
   }
 });
 
+test('Stories Safety C2 snapshot exposes distinct publication moderation and scan facts', async () => {
+  const adapter = await loadAdapter();
+  assert.equal(typeof adapter.normalizeStoriesSafetyC2State, 'function');
+  assert.equal(typeof adapter.validateStoriesSafetyC2StateTransition, 'function');
+  assert.equal(adapter.assertReadOnlySql(adapter.STORIES_SAFETY_C2_STATE_SQL), true);
+  assert.equal(adapter.assertReadOnlySql(adapter.STORIES_SAFETY_C2_PRE_STATE_SQL), true);
+  assert.match(adapter.STORIES_SAFETY_C2_PRE_STATE_SQL, /pg_catalog\.to_jsonb\(safety\)::text/);
+  assert.match(adapter.STORIES_SAFETY_C2_STATE_SQL, /publication_status/);
+  assert.match(adapter.STORIES_SAFETY_C2_STATE_SQL, /moderation_status/);
+  assert.match(adapter.STORIES_SAFETY_C2_STATE_SQL, /scan_status/);
+  const executableSql = adapter.STORIES_SAFETY_C2_STATE_SQL.replace(/'(?:''|[^'])*'/g, "''");
+  assert.doesNotMatch(executableSql, /\bprivate\.[a-z_0-9]+\s*\(/i,
+    'Management read-only snapshots must not execute owner-only helpers');
+});
+
+test('Stories Safety C2 phase selection keeps C1 pre and supports promoted baseline and exact recovery', async () => {
+  const adapter = await loadAdapter();
+  const predecessorPolicy = structuredClone(installedPolicy);
+  predecessorPolicy.baseline.sha = 'e4c7199da157446f455822ea96e812784354b1db';
+  predecessorPolicy.baseline.migration_count = 359;
+  predecessorPolicy.baseline.latest_migration = '20261027120000_stories_v2_safety_c1_technical_policy_prep';
+  const transition = predecessorPolicy.stories_safety_c2_transition;
+  assert.ok(transition, 'C2 authority must be present');
+  const attestedManifest = { identity: { approved_sha: 'a'.repeat(40) }, resources: {
+    stories_safety_c2_transition: { ...transition, approved_sha: 'a'.repeat(40),
+      baseline_descendant_verified: true, integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true },
+  } };
+  assert.equal(adapter.storiesSafetyC2StateRequirement(predecessorPolicy, attestedManifest, 'pre').required, false);
+  assert.equal(adapter.storiesSafetyC2StateRequirement(predecessorPolicy, attestedManifest, 'post').required, true);
+  assert.equal(adapter.storiesSafetyC2StateRequirement(predecessorPolicy, { resources: {} }, 'post').required, false);
+  const promoted = structuredClone(predecessorPolicy);
+  promoted.baseline.latest_migration = '20261027191918_stories_v2_safety_c2_publish_first_async_review';
+  for (const phase of ['pre', 'post', 'recovery']) {
+    assert.equal(adapter.storiesSafetyC2StateRequirement(promoted, { resources: {} }, phase).required, true);
+  }
+  const recovering = structuredClone(predecessorPolicy);
+  recovering.postcheck_recovery.approved_sources.push({ run_id: '123456789',
+    expected_latest_migration: '20261027191918_stories_v2_safety_c2_publish_first_async_review',
+    expected_migration_count: 360,
+    expected_migrations: [{ name: '20261027191918_stories_v2_safety_c2_publish_first_async_review', blob: transition.migration_blob }],
+    edge_functions: [{ name: 'get-stream-playback', verify_jwt: true, status: 'ACTIVE', version: 50,
+      source_sha256: 'b'.repeat(64) }],
+  });
+  const recoveryManifest = { identity: { mode: 'postcheck_recovery' }, resources: {
+    config_changed: false, function_contracts: [], functions: [], migrations: [],
+  } };
+  const recoveryRequest = { mode: 'postcheck_recovery', scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY', recoverySourceRunId: '123456789' };
+  assert.equal(adapter.storiesSafetyC2StateRequirement(recovering, recoveryManifest, 'recovery', { request: recoveryRequest }).required, true);
+  for (const mutate of [
+    value => { value.edge_functions = []; },
+    value => { value.edge_functions[0].verify_jwt = false; },
+    value => { value.edge_functions.push({ ...value.edge_functions[0], name: 'content-safety-scan' }); },
+  ]) {
+    const hostileRecovery = structuredClone(recovering);
+    mutate(hostileRecovery.postcheck_recovery.approved_sources.at(-1));
+    assert.equal(adapter.storiesSafetyC2StateRequirement(hostileRecovery, recoveryManifest, 'recovery', { request: recoveryRequest }).required, false);
+  }
+  recovering.postcheck_recovery.approved_sources.at(-1).expected_migrations[0].blob = '0'.repeat(40);
+  assert.equal(adapter.storiesSafetyC2StateRequirement(recovering, recoveryManifest, 'recovery', { request: recoveryRequest }).required, false);
+  const hostile = structuredClone(attestedManifest);
+  hostile.resources.stories_safety_c2_transition.policy_artifact.sha256 = '0'.repeat(64);
+  assert.throws(() => adapter.storiesSafetyC2StateRequirement(predecessorPolicy, hostile, 'post'), /INVALID_STORIES_SAFETY_C2_TRANSITION/);
+});
+
+test('Stories Safety C2 RPC attestations replace only C2 post authority and preserve C1 history', async () => {
+  const adapter = await loadAdapter();
+  const predecessorPolicy = structuredClone(installedPolicy);
+  predecessorPolicy.baseline.sha = 'e4c7199da157446f455822ea96e812784354b1db';
+  predecessorPolicy.baseline.migration_count = 359;
+  predecessorPolicy.baseline.latest_migration = '20261027120000_stories_v2_safety_c1_technical_policy_prep';
+  const transition = predecessorPolicy.stories_safety_c2_transition;
+  assert.ok(transition, 'C2 authority must be present');
+  const manifest = { identity: { approved_sha: 'a'.repeat(40) }, resources: {
+    stories_safety_c2_transition: { ...transition, approved_sha: 'a'.repeat(40),
+      baseline_descendant_verified: true, integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true },
+  } };
+  const identity = 'public.create_story_with_media(uuid,jsonb,uuid,jsonb)';
+  const helper = transition.helper_attestations.find(item => item.identity === identity);
+  assert.ok(helper);
+  const find = values => values.find(item => item.object?.name === 'create_story_with_media' && item.object.argument_types.length === 4);
+  const pre = find(adapter.advisorExceptionsForPhase(predecessorPolicy, manifest, 'pre'));
+  const post = find(adapter.advisorExceptionsForPhase(predecessorPolicy, manifest, 'post'));
+  assert.notEqual(pre.attestation.definition_sha256, helper.definition_sha256);
+  assert.equal(post.attestation.definition_sha256, helper.definition_sha256);
+  assert.equal(post.origin.migration, '20261027191918_stories_v2_safety_c2_publish_first_async_review');
+  assert.equal(post.attestation.execute.service_role, false);
+  assert.equal(post.attestation.execute.authenticated, true);
+  assert.equal(find(predecessorPolicy.stories_b1_transition.security_advisor.introduced_exceptions).attestation.definition_sha256,
+    pre.attestation.definition_sha256);
+});
+
+test('Stories Safety C2 transition rejects sanctions, fabricated PASS, stale grants and historical publication', async () => {
+  const adapter = await loadAdapter();
+  const c1 = installedPolicy.stories_safety_c1_transition;
+  const transition = installedPolicy.stories_safety_c2_transition;
+  assert.ok(transition, 'C2 authority must be present');
+  const aclHelpers = items => items.map(item => ({ ...item, acl: [
+    ...(item.execute.authenticated ? [{ grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false }] : []),
+    { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+    ...(item.execute.service_role ? [{ grantee: 'service_role', privilege_type: 'EXECUTE', is_grantable: false }] : []),
+  ] }));
+  const pre = {
+    schema_version: 1, complete: true, installed: true,
+    policy_id: c1.policy_artifact.policy_id, policy_artifact_sha256: c1.policy_artifact.sha256,
+    control: { policy_artifact_sha256: c1.policy_artifact.sha256,
+      activation: false, owner_approved_policy: false, auto_publish_enabled: false,
+      mode: 'fail_closed_review', automatic_allow_authorized: false, automatic_block_authorized: false },
+    approved_story_rule_count: 0, passed_count: 0, policy_digest_count: 0,
+    story_count: 2, safety_state_count: 2,
+    story_inventory_sha256: '1'.repeat(64), safety_inventory_sha256: '2'.repeat(64),
+    transcript_refresh_trigger_installed: true, trigger: c1.trigger_attestation,
+    helpers: aclHelpers(c1.helper_attestations),
+  };
+  const post = {
+    ...pre, policy_id: transition.policy_artifact.policy_id,
+    policy_artifact_sha256: transition.policy_artifact.sha256,
+    control: { policy_artifact_sha256: transition.policy_artifact.sha256,
+      policy_id: transition.policy_artifact.policy_id,
+      activation: true, owner_approved_policy: false, owner_approved_operating_model: true,
+      mode: 'PUBLISH_FIRST_ASYNC_REVIEW', automatic_allow_authorized: false, automatic_block_authorized: false,
+      numeric_thresholds: null, historical_backfill: false },
+    helpers: aclHelpers(transition.helper_attestations),
+    publication_status: { unpublished: 2, published: 0, restricted: 0, removed: 0 },
+    moderation_status: { unreviewed: 2, alerted: 0, reviewed_keep: 0, reviewed_restrict: 0, reviewed_remove: 0 },
+    scan_status: { queued: 2, processing: 0, completed: 0, failed: 0 },
+    enabled_numeric_story_rule_count: 0, published_without_current_scan_count: 0,
+    no_current_scan_count: 0, publication_metadata_count: 0,
+    alert_trigger: transition.alert_trigger_attestation,
+    initialization_trigger: transition.initialization_trigger_attestation,
+    columns: transition.column_attestations,
+  };
+  assert.equal(adapter.validateStoriesSafetyC2StateTransition(pre, post, transition, c1), true);
+  assert.equal(adapter.validateStoriesSafetyC2InstalledState(post, transition).installed, true);
+  for (const mutate of [
+    value => { value.control.automatic_allow_authorized = true; },
+    value => { value.control.automatic_block_authorized = true; },
+    value => { value.control.owner_approved_operating_model = false; },
+    value => { value.control.owner_approved_policy = true; },
+    value => { value.control.numeric_thresholds = { unsafe: 0.9 }; },
+    value => { value.approved_story_rule_count = 1; },
+    value => { value.enabled_numeric_story_rule_count = 1; },
+    value => { value.passed_count = 1; },
+    value => { value.published_without_current_scan_count = 1; },
+    value => { value.publication_metadata_count = 1; },
+    value => { value.alert_trigger.enabled = 'D'; },
+    value => { value.initialization_trigger.enabled = 'D'; },
+    value => { value.columns[0].not_null = !value.columns[0].not_null; },
+    value => { value.columns[0].default = "'published'::text"; },
+    value => { value.publication_status = { unpublished: 1, published: 1, restricted: 0, removed: 0 }; },
+    value => { value.moderation_status.reviewed_keep = 1; value.moderation_status.unreviewed = 1; },
+    value => { value.scan_status.unknown = 1; },
+    value => { value.story_inventory_sha256 = '3'.repeat(64); },
+    value => { value.safety_inventory_sha256 = '3'.repeat(64); },
+    value => { value.helpers[0].owner = 'authenticated'; },
+    value => { value.helpers[0].search_path = ['search_path=public']; },
+    value => { value.helpers[0].acl.push({ grantee: 'PUBLIC', privilege_type: 'EXECUTE', is_grantable: false }); },
+    value => { value.helpers[0].definition_sha256 = '0'.repeat(64); },
+  ]) {
+    const hostile = structuredClone(post);
+    mutate(hostile);
+    assert.throws(() => adapter.validateStoriesSafetyC2StateTransition(pre, hostile, transition, c1),
+      /STORIES_SAFETY_C2_POSTCHECK_FAILED/);
+  }
+});
+
 test('Stories Safety C1 snapshot attests inactive controls, private helpers, and unchanged inventories', async () => {
   const adapter = await loadAdapter();
   assert.equal(adapter.assertReadOnlySql(adapter.STORIES_SAFETY_C1_STATE_SQL), true);
