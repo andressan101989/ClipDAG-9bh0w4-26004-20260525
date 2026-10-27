@@ -76,6 +76,8 @@ export default function CreatorProfileScreen() {
     getStoryGroupForUser, markStoryViewed, getStoryViewers,
     deleteStory, refreshStories, setStoryReaction, getStoryReactions, replyToStory,
     getStorySharedContent,
+    getInteractiveState, respondToInteractiveElement, getInteractiveResults,
+    moderateInteractiveQuestion, recordStoryAnalyticsEvent, realtimeRevision,
   } = useStories();
   const balance = walletData?.balance ?? 0;
   const { showAlert } = useAlert();
@@ -590,6 +592,12 @@ export default function CreatorProfileScreen() {
         onSetReaction={setStoryReaction}
         onGetReactions={getStoryReactions}
         onReplyToStory={replyToStory}
+        onGetInteractiveState={getInteractiveState}
+        onRespondToInteractiveElement={respondToInteractiveElement}
+        onGetInteractiveResults={getInteractiveResults}
+        onModerateInteractiveQuestion={moderateInteractiveQuestion}
+        onRecordStoryEvent={recordStoryAnalyticsEvent}
+        interactiveRevision={realtimeRevision}
         onGetSharedContent={getStorySharedContent}
       />
 

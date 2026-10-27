@@ -95,6 +95,8 @@ export default function FeedScreen() {
     storyGroups, addStory, addSharedStory, getStorySharedContent,
     markStoryViewed, getStoryViewers, deleteStory,
     setStoryReaction, getStoryReactions, replyToStory,
+    getInteractiveState, respondToInteractiveElement, getInteractiveResults,
+    moderateInteractiveQuestion, recordStoryAnalyticsEvent, realtimeRevision,
   } = useStories();
   useNotifications();
   const { showAlert } = useAlert();
@@ -708,6 +710,12 @@ export default function FeedScreen() {
         onSetReaction={setStoryReaction}
         onGetReactions={getStoryReactions}
         onReplyToStory={replyToStory}
+        onGetInteractiveState={getInteractiveState}
+        onRespondToInteractiveElement={respondToInteractiveElement}
+        onGetInteractiveResults={getInteractiveResults}
+        onModerateInteractiveQuestion={moderateInteractiveQuestion}
+        onRecordStoryEvent={recordStoryAnalyticsEvent}
+        interactiveRevision={realtimeRevision}
         onGetSharedContent={getStorySharedContent}
         onAdvertisingActiveChange={handleAdvertisingStoryActiveChange}
         onAdvertisingMediaReady={handleAdvertisingStoryMediaReady}

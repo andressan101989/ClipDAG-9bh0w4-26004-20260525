@@ -114,6 +114,8 @@ export default function ProfileScreen() {
     getStoryGroupForUser, markStoryViewed, getStoryViewers,
     deleteStory, refreshStories, setStoryReaction, getStoryReactions, replyToStory,
     getStorySharedContent,
+    getInteractiveState, respondToInteractiveElement, getInteractiveResults,
+    moderateInteractiveQuestion, recordStoryAnalyticsEvent, realtimeRevision,
   } = useStories();
   const dagBalance = walletData?.balance ?? 0;
   const { t } = useI18n();
@@ -782,6 +784,12 @@ export default function ProfileScreen() {
         onSetReaction={setStoryReaction}
         onGetReactions={getStoryReactions}
         onReplyToStory={replyToStory}
+        onGetInteractiveState={getInteractiveState}
+        onRespondToInteractiveElement={respondToInteractiveElement}
+        onGetInteractiveResults={getInteractiveResults}
+        onModerateInteractiveQuestion={moderateInteractiveQuestion}
+        onRecordStoryEvent={recordStoryAnalyticsEvent}
+        interactiveRevision={realtimeRevision}
         onGetSharedContent={getStorySharedContent}
       />
 
