@@ -6,12 +6,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import { STORY_STICKERS } from './storyComposition';
-import type {
-  StoryInteractiveDefinition,
-  StoryInteractiveDraft,
-  StoryInteractiveKind,
-  StoryInteractiveOption,
+import {
+  parseStoryInteractiveDefinition,
+  type StoryInteractiveDefinition,
+  type StoryInteractiveDraft,
+  type StoryInteractiveKind,
+  type StoryInteractiveOption,
 } from './storyInteractiveTypes';
+/*
+ * The public parser is the only validation authority for save/publish. Keeping
+ * quiz correctness separate prevents the private answer from entering config.
+ */
 
 const KINDS: readonly { type: StoryInteractiveKind; label: string }[] = [
   { type: 'poll', label: 'Encuesta' },
@@ -59,11 +64,10 @@ export function StoryInteractiveEditorSheet({
   if (!working) return null;
   const definition = working.definition;
   const setDefinition = (next: StoryInteractiveDefinition) => setWorking(current => current ? { ...current, definition: next } : current);
-  const valid = definition.prompt.trim().length > 0
-    && definition.prompt.trim().length <= 200
-    && (definition.type !== 'poll' && definition.type !== 'quiz'
-      || (definition.options.length >= 2 && definition.options.length <= 6
-        && definition.options.every(option => option.label.trim().length > 0 && option.label.trim().length <= 80)));
+  const validQuizAnswer = definition.type === 'quiz'
+    ? working.correctOptionId === null || definition.options.some(option => option.id === working.correctOptionId)
+    : working.correctOptionId === null;
+  const valid = parseStoryInteractiveDefinition(definition) !== null && validQuizAnswer;
 
   return (
     <Modal transparent visible={visible} animationType="slide" onRequestClose={onCancel}>

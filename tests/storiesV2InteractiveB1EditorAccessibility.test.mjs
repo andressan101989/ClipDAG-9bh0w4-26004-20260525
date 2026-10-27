@@ -27,6 +27,12 @@ test('interactive authoring is an internal accessible sheet, never a second edit
   assert.equal((editor.match(/export function StoryEditor/g) ?? []).length, 1);
 });
 
+test('the Save action reuses the public definition parser instead of a weaker duplicate validator', () => {
+  assert.match(sheet, /parseStoryInteractiveDefinition/);
+  assert.match(sheet, /const valid = parseStoryInteractiveDefinition\(definition\) !== null/);
+  assert.doesNotMatch(sheet, /definition\.prompt\.trim\(\)\.length/);
+});
+
 test('element has touch-transparent preview and accessible transform/layer alternatives', () => {
   assert.match(element, /pointerEvents="none"/);
   assert.match(editor, /accessibilityActions/);
