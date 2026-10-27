@@ -159,6 +159,65 @@ export const F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
   },
   requires_separate_baseline_promotion: true,
 });
+export const STORIES_B1_RELEASE_TRANSITION = Object.freeze({
+  id: 'stories-v2-interactive-b1-infrastructure-v1',
+  from_phase: 'stories_v2_legacy',
+  to_phase: 'stories_v2_interactive_b1_fail_closed',
+  baseline_sha: 'd8c3847b14486f249d9d8fa83aa74c8cff37bf6b',
+  reviewed_source_sha: 'c1e8c563d9e3f5105769a546d9b206285da5b2be',
+  integration_base_sha: '9a436857664c1862c6f16807d45834f107076380',
+  approved_sha_ancestry: 'verified_integration_base',
+  migration_path: 'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql',
+  migration_blob: '30ee300ae1fde3ecb9a4b2375c9a6566de6ab367',
+  migration_sha256: '1296c0470d2b42f160f12574475c2f94c1474f067384bd423323a5a13a837555',
+  config_blob: '7c3ff52db72f9983aa4128f5c2e7e686bba31d5d',
+  productive_paths: [
+    'supabase/functions/_shared/premiumStreamSecurity.ts',
+    'supabase/functions/cleanup-stale-media-uploads/index.ts',
+    'supabase/functions/content-safety-scan/audioPipeline.mjs',
+    'supabase/functions/content-safety-scan/index.ts',
+    'supabase/functions/create-media-upload/index.ts',
+    'supabase/functions/create-stream-upload/index.ts',
+    'supabase/functions/get-stream-playback/index.ts',
+    'supabase/functions/stream-webhook/index.ts',
+    'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql',
+  ],
+  path_attestations: [
+    { path: 'supabase/functions/_shared/premiumStreamSecurity.ts', blob: 'fa0da71f350a7f43a19a8ebb42d6e62afa09e757', sha256: '884216642a3e82528f9db6842fa786f1fa932c4a125a56f98de4701582c0baf4' },
+    { path: 'supabase/functions/cleanup-stale-media-uploads/index.ts', blob: '5012a083b0729a3362422f2e951371b849462406', sha256: '33f6ef335c29dd7369b174ac10b657e230c431c2aaaeb58922b1517233b6eb2f' },
+    { path: 'supabase/functions/content-safety-scan/audioPipeline.mjs', blob: '70ac9bf3a1f0db98b616acd2556003de29995ca7', sha256: '568e3f21a9af69e6e5c6b5d3e04a03e4fe77bcb76df1b7f9a6161339000b8322' },
+    { path: 'supabase/functions/content-safety-scan/index.ts', blob: '80a32f5b51d1eb037cf23cb6f96243bce40ad6d3', sha256: '5d044c389d86581bdcaf5e705371485dc405e660b8ea2637063ec12dfd5001f9' },
+    { path: 'supabase/functions/create-media-upload/index.ts', blob: '99c62f2e424bc9a0522dfa3a6ea96a538012c165', sha256: 'b7426b7866cc6ce4ceecbf92641c142c3bc6645778b41a202c8d5ec27048c3b5' },
+    { path: 'supabase/functions/create-stream-upload/index.ts', blob: 'ba3bc8237169a150b8d6fbfd6f9196316aa2d657', sha256: '48f8533ebd6de53e590414c6ec6585622170f2befc0d8082d346c518521f4a90' },
+    { path: 'supabase/functions/get-stream-playback/index.ts', blob: '16a252edb5b30e2d5d62fef14189ebfe797cce60', sha256: '89a6b98cc34f35f3def712dc30772b2a4c672d42eaa6e35e38ca6149019b8632' },
+    { path: 'supabase/functions/stream-webhook/index.ts', blob: '10b51e63ebab9e88b88ab4b534e2dc2c0e3b3df9', sha256: '6a1595bdc06a0cc864074b09b9756b0410cc2e7f91ba5bbbe14da27b30fbe90a' },
+    { path: 'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql', blob: '30ee300ae1fde3ecb9a4b2375c9a6566de6ab367', sha256: '1296c0470d2b42f160f12574475c2f94c1474f067384bd423323a5a13a837555' },
+  ],
+  functions: [
+    { name: 'cleanup-stale-media-uploads', source_sha256: '991f0654142513bb434169dc58487dedaccb52d75f049e6644edaf838ebfec2c', verify_jwt: false },
+    { name: 'content-safety-scan', source_sha256: '88cd6b7dc2acc1eae981e97b6a7d6abaf5683a66d41092359d6647281fc784d3', verify_jwt: true },
+    { name: 'create-media-upload', source_sha256: '00bb7b3de834baa5b9d5b1b8ce89bb8e5a0a327fff6a2a14393f3a36f68188d9', verify_jwt: true },
+    { name: 'create-stream-upload', source_sha256: '437106a0b2f1dabb72fd6c6a497049f7fbb200818057bb13ff19d970954299cf', verify_jwt: true },
+    { name: 'get-stream-playback', source_sha256: '491ba432a35e930b9908f240b61ee80545fc0b07841fecc116ee4d38e12f4762', verify_jwt: true },
+    { name: 'stream-webhook', source_sha256: '3333e33d58c4682ab49b52207cd5993bb79005dd068d367c29f696c2b87a1525', verify_jwt: false },
+  ],
+  safety: {
+    activation: false,
+    complete_evidence_state: 'review',
+    fabricated_pass_allowed: false,
+    incomplete_evidence_state: 'pending',
+    mode: 'fail_closed_review',
+    owner_approved_policy: false,
+    physical_readiness_claim_allowed: false,
+  },
+  finance_policy: {
+    platform_fee_bps: 2000,
+    purchase_enabled: true,
+    refunds_enabled: true,
+    subscription_enabled: true,
+  },
+  requires_separate_baseline_promotion: true,
+});
 export const F3_C2_ADMIN_FINANCE_NEGATIVE_AUTHORIZATION_EVIDENCE = Object.freeze({
   version: 'creator-premium-f3-c2-admin-finance-negative-authorization-v1',
   migration_path: F3_C2_FINANCE_AUTHORITY_TRANSITION.migration_path,
@@ -722,6 +781,13 @@ export function validatePolicy(policy) {
     deny('INVALID_POLICY', 'policy must be an object');
   }
   if (policy.schema_version !== 2) deny('INVALID_POLICY_SCHEMA', 'unsupported policy schema');
+  if (canonicalJson(policy.stories_b1_transition ?? null)
+    !== canonicalJson(STORIES_B1_RELEASE_TRANSITION)) {
+    deny(
+      'INVALID_STORIES_B1_TRANSITION',
+      'Stories B1 release authority must match the exact reviewed fail-closed contract',
+    );
+  }
   const c2AdminFinanceRpc = policy.finance_security_advisor?.c2_rpc_replacements?.find(exception =>
     exception?.object?.schema === 'public'
       && exception?.object?.name === 'search_admin_creator_premium_finance_v1');
@@ -1317,6 +1383,87 @@ export function attestManagedScopeTransition({
       approved_sha: approvedSha,
       descendant_verified: true,
       migration_blob: migrationBlob,
+    },
+  };
+}
+
+export function attestStoriesB1Transition({
+  cwd,
+  policy,
+  mode,
+  approvedSha,
+  changes,
+  migrations,
+  affectedFunctions,
+  runGit,
+}) {
+  if (mode === 'postcheck_recovery') return { migrations, attestation: null };
+  const transition = STORIES_B1_RELEASE_TRANSITION;
+  const candidate = migrations?.some(item => item?.path === transition.migration_path)
+    || affectedFunctions?.some(name => transition.functions.some(item => item.name === name));
+  if (!candidate) return { migrations, attestation: null };
+  const code = 'INVALID_STORIES_B1_TRANSITION';
+  const expectedFunctions = transition.functions.map(item => item.name).sort();
+  if (canonicalJson(policy?.stories_b1_transition ?? null) !== canonicalJson(transition)
+    || policy?.baseline?.sha !== transition.baseline_sha
+    || canonicalJson(policy?.supabase?.finance_policy ?? null) !== canonicalJson(transition.finance_policy)
+    || !SHA_PATTERN.test(approvedSha ?? '') || typeof runGit !== 'function'
+    || migrations?.length !== 1 || migrations[0]?.path !== transition.migration_path
+    || migrations[0]?.version !== '20261027042552'
+    || canonicalJson([...(affectedFunctions ?? [])].sort()) !== canonicalJson(expectedFunctions)) {
+    deny(code, 'Stories B1 release scope, baseline, Finance, or Edge closure differs');
+  }
+  const supabaseChanges = (changes ?? [])
+    .filter(item => item?.path?.startsWith('supabase/'))
+    .map(item => ({ path: item.path, status: item.status }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const expectedChanges = transition.productive_paths
+    .map(path => ({ path, status: path === transition.migration_path ? 'A' : 'M' }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  if (canonicalJson(supabaseChanges) !== canonicalJson(expectedChanges)) {
+    deny(code, 'Stories B1 permits exactly one migration and the six graph-derived Edge changes');
+  }
+  try {
+    runGit(['cat-file', '-e', `${approvedSha}^{commit}`], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.baseline_sha, transition.integration_base_sha], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.integration_base_sha, approvedSha], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.reviewed_source_sha, approvedSha], { cwd });
+    for (const source of transition.path_attestations) {
+      for (const ref of [transition.reviewed_source_sha, approvedSha]) {
+        if (gitText(runGit, ['rev-parse', `${ref}:${source.path}`], cwd) !== source.blob
+          || fileTypeAtCommit(runGit, cwd, ref, source.path) !== 'file'
+          || sha256Hex(runGit(['show', `${ref}:${source.path}`], { cwd })) !== source.sha256) {
+          deny(code, `Stories B1 Git blob differs from reviewed bytes: ${source.path}`);
+        }
+      }
+    }
+    if (gitText(runGit, ['rev-parse', `${approvedSha}:supabase/config.toml`], cwd)
+      !== transition.config_blob) {
+      deny(code, 'Stories B1 function configuration blob drifted');
+    }
+    const actualChanges = parseNameStatusZ(runGit([
+      'diff', '--name-status', '-z', transition.integration_base_sha, approvedSha, '--', 'supabase/',
+    ], { cwd })).map(item => ({ path: item.path, status: item.status }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    if (canonicalJson(actualChanges) !== canonicalJson(expectedChanges)) {
+      deny(code, 'Stories B1 committed Supabase closure differs from reviewed scope');
+    }
+  } catch (error) {
+    if (error?.code === code) throw error;
+    deny(code, 'approved commit does not attest the exact Stories B1 ancestry and bytes');
+  }
+  return {
+    migrations: migrations.map(item => ({
+      ...item,
+      blob: transition.migration_blob,
+      sha256: transition.migration_sha256,
+    })),
+    attestation: {
+      ...stableCopy(transition),
+      approved_sha: approvedSha,
+      baseline_descendant_verified: true,
+      integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true,
     },
   };
 }
@@ -2112,6 +2259,16 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     migrations: financeTransition.migrations,
     runGit,
   });
+  const storiesB1Transition = attestStoriesB1Transition({
+    cwd,
+    policy,
+    mode: request.mode,
+    approvedSha: request.approvedSha,
+    changes: gitState.changes,
+    migrations: phaseBoundMigrations,
+    affectedFunctions,
+    runGit,
+  });
   const risk = classifyRisk({
     affectedFunctions,
     changedPaths: gitState.changes.map(change => change.path),
@@ -2123,9 +2280,10 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   return {
     gitState,
     classified,
-    migrations: phaseBoundMigrations,
+    migrations: storiesB1Transition.migrations,
     managedScopeTransition: transitionEvidence.attestation,
     financeAuthorityTransition: financeTransition.attestation,
+    storiesB1Transition: storiesB1Transition.attestation,
     affectedFunctions,
     functionContracts,
     reproducibility,
@@ -2152,6 +2310,7 @@ export function buildManifest({
   migrations,
   managedScopeTransition,
   financeAuthorityTransition,
+  storiesB1Transition,
   affectedFunctions,
   functionContracts,
   reproducibility,
@@ -2219,6 +2378,39 @@ export function buildManifest({
     }
   } else if (managedScopeTransition !== undefined && managedScopeTransition !== null) {
     deny('INVALID_MANAGED_SCOPE_TRANSITION', 'managed scope transition attestation is not applicable');
+  }
+  const stories = STORIES_B1_RELEASE_TRANSITION;
+  const storiesCandidate = !recoveryMode && migrations?.some(item => item?.path === stories.migration_path);
+  if (storiesCandidate) {
+    const expectedAttestation = {
+      ...stableCopy(stories),
+      approved_sha: request.approvedSha,
+      baseline_descendant_verified: true,
+      integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true,
+    };
+    const expectedFunctions = stories.functions.map(item => item.name).sort();
+    const expectedByName = new Map(stories.functions.map(item => [item.name, item]));
+    if (canonicalJson(policy?.stories_b1_transition ?? null) !== canonicalJson(stories)
+      || policy.baseline.sha !== stories.baseline_sha
+      || gitState.approvedSha !== request.approvedSha || gitState.originMainSha !== request.approvedSha
+      || gitState.baselineSha !== stories.baseline_sha || risk.level !== 'HIGH'
+      || migrations.length !== 1 || migrations[0].path !== stories.migration_path
+      || migrations[0].blob !== stories.migration_blob || migrations[0].sha256 !== stories.migration_sha256
+      || canonicalJson(functionNames) !== canonicalJson(expectedFunctions)
+      || canonicalJson(storiesB1Transition ?? null) !== canonicalJson(expectedAttestation)
+      || classified.config.length !== 0
+      || canonicalJson(policy.supabase.finance_policy) !== canonicalJson(stories.finance_policy)
+      || contracts.some(contract => {
+        const expected = expectedByName.get(contract.name);
+        return !expected || contract.source_changed !== true
+          || contract.source_sha256 !== expected.source_sha256
+          || contract.verify_jwt !== expected.verify_jwt;
+      })) {
+      deny('INVALID_STORIES_B1_TRANSITION', 'manifest lacks the exact Stories B1 fail-closed release attestation');
+    }
+  } else if (storiesB1Transition !== undefined && storiesB1Transition !== null) {
+    deny('INVALID_STORIES_B1_TRANSITION', 'Stories B1 transition attestation is not applicable');
   }
   const f5 = F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION;
   const f5Candidate = !recoveryMode && migrations?.some(item => item.version === '20261026072512'
@@ -2383,6 +2575,7 @@ export function buildManifest({
       config_changed: recoveryMode ? false : (classified?.config?.length ?? 0) > 0,
       ...(managedScopeTransition ? { managed_scope_transition: stableCopy(managedScopeTransition) } : {}),
       ...(financeAuthorityTransition ? { finance_authority_transition: stableCopy(financeAuthorityTransition) } : {}),
+      ...(storiesB1Transition ? { stories_b1_transition: stableCopy(storiesB1Transition) } : {}),
     },
     risk: stableCopy(risk),
     blockers,

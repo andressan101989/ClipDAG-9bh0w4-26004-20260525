@@ -87,6 +87,148 @@ const F2_MANAGED_SCOPE_TRANSITION = {
 };
 const P2_RELATION_ADVISOR_FINGERPRINT = '8088d6be7ca6bd32b041ed429091a56f26d26ac0d7148eb5bf15f9e3c5e70bd6';
 
+const STORIES_B1_MIGRATION_PATH =
+  'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql';
+const STORIES_B1_FUNCTIONS = [
+  'cleanup-stale-media-uploads',
+  'content-safety-scan',
+  'create-media-upload',
+  'create-stream-upload',
+  'get-stream-playback',
+  'stream-webhook',
+];
+
+test('Stories B1 policy binds one migration, six Edge contracts, and fail-closed non-activation', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  assert.deepEqual(policy.stories_b1_transition, gate.STORIES_B1_RELEASE_TRANSITION);
+  assert.deepEqual(policy.stories_b1_transition.functions.map(item => item.name), STORIES_B1_FUNCTIONS);
+  assert.equal(policy.stories_b1_transition.migration_path, STORIES_B1_MIGRATION_PATH);
+  assert.deepEqual(policy.stories_b1_transition.safety, {
+    activation: false,
+    complete_evidence_state: 'review',
+    fabricated_pass_allowed: false,
+    incomplete_evidence_state: 'pending',
+    mode: 'fail_closed_review',
+    owner_approved_policy: false,
+    physical_readiness_claim_allowed: false,
+  });
+  assert.equal(gate.validatePolicy(policy), true);
+
+  for (const mutate of [
+    candidate => { candidate.safety.owner_approved_policy = true; },
+    candidate => { candidate.safety.activation = true; },
+    candidate => { candidate.safety.complete_evidence_state = 'passed'; },
+    candidate => { candidate.functions.pop(); },
+    candidate => { candidate.migration_sha256 = '0'.repeat(64); },
+  ]) {
+    const candidate = structuredClone(policy);
+    mutate(candidate.stories_b1_transition);
+    assertDenied(() => gate.validatePolicy(candidate), 'INVALID_STORIES_B1_TRANSITION');
+  }
+  const missing = structuredClone(policy);
+  delete missing.stories_b1_transition;
+  assertDenied(() => gate.validatePolicy(missing), 'INVALID_STORIES_B1_TRANSITION');
+});
+
+test('Stories B1 manifest accepts only the exact migration and six graph-derived Edge contracts', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.stories_b1_transition;
+  const approvedSha = MAIN_SHA;
+  const changes = transition.productive_paths.map(path => ({
+    status: path === transition.migration_path ? 'A' : 'M',
+    path,
+    fileType: 'file',
+  }));
+  const classified = gate.classifyChangedPaths(changes);
+  const storiesB1Transition = {
+    ...structuredClone(transition),
+    approved_sha: approvedSha,
+    baseline_descendant_verified: true,
+    integration_base_descendant_verified: true,
+    reviewed_source_descendant_verified: true,
+  };
+  const functionContracts = transition.functions.map(item => ({
+    name: item.name,
+    entrypoint: `supabase/functions/${item.name}/index.ts`,
+    import_map: null,
+    verify_jwt: item.verify_jwt,
+    source_changed: true,
+    source_files: [{ path: `supabase/functions/${item.name}/index.ts`, sha256: 'a'.repeat(64) }],
+    source_sha256: item.source_sha256,
+  }));
+  const input = manifestInput(policy, {
+    request: request({ approvedSha, mainSha: approvedSha }),
+    gitState: { baselineSha: transition.baseline_sha, approvedSha, originMainSha: approvedSha, changes },
+    classified,
+    migrations: [{
+      version: '20261027042552', path: transition.migration_path,
+      blob: transition.migration_blob, sha256: transition.migration_sha256,
+    }],
+    affectedFunctions: [...STORIES_B1_FUNCTIONS],
+    functionContracts,
+    storiesB1Transition,
+  });
+  const manifest = gate.buildManifest(input);
+  assert.deepEqual(manifest.resources.functions, STORIES_B1_FUNCTIONS);
+  assert.deepEqual(manifest.resources.stories_b1_transition, storiesB1Transition);
+  assert.equal(manifest.resources.migrations.length, 1);
+  assert.equal(manifest.result, 'PLAN READY');
+
+  const wrongContract = structuredClone(functionContracts);
+  wrongContract[0].source_sha256 = '0'.repeat(64);
+  assertDenied(() => gate.buildManifest({ ...input, functionContracts: wrongContract }),
+    'INVALID_STORIES_B1_TRANSITION');
+  assertDenied(() => gate.buildManifest({ ...input, affectedFunctions: [...STORIES_B1_FUNCTIONS, 'agora-token'] }),
+    'FUNCTION_CONTRACT_MISMATCH');
+  assertDenied(() => gate.buildManifest({
+    ...input,
+    storiesB1Transition: { ...storiesB1Transition, migration_sha256: '0'.repeat(64) },
+  }), 'INVALID_STORIES_B1_TRANSITION');
+});
+
+test('Stories B1 Git attestation rejects altered migration, Edge, config, or Supabase closure', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.stories_b1_transition;
+  const root = new URL('..', import.meta.url);
+  const runGit = args => execFileSync('git', args, {
+    cwd: root,
+    encoding: args.includes('-z') ? 'buffer' : 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const approvedSha = String(runGit(['rev-parse', 'HEAD'])).trim();
+  const changes = transition.productive_paths.map(path => ({
+    path,
+    status: path === transition.migration_path ? 'A' : 'M',
+  }));
+  const input = {
+    cwd: root,
+    policy,
+    mode: 'plan_only',
+    approvedSha,
+    changes,
+    migrations: [{ path: transition.migration_path, version: '20261027042552' }],
+    affectedFunctions: [...STORIES_B1_FUNCTIONS],
+    runGit,
+  };
+  const attested = gate.attestStoriesB1Transition(input);
+  assert.equal(attested.attestation.approved_sha, approvedSha);
+  assert.equal(attested.migrations[0].blob, transition.migration_blob);
+  assert.equal(attested.migrations[0].sha256, transition.migration_sha256);
+
+  const alteredRunGit = args => {
+    if (args[0] === 'rev-parse' && args[1] === `${approvedSha}:${transition.migration_path}`) {
+      return `${'0'.repeat(40)}\n`;
+    }
+    return runGit(args);
+  };
+  assertDenied(() => gate.attestStoriesB1Transition({ ...input, runGit: alteredRunGit }),
+    'INVALID_STORIES_B1_TRANSITION');
+  assertDenied(() => gate.attestStoriesB1Transition({
+    ...input,
+    changes: [...changes, { path: 'supabase/functions/agora-token/index.ts', status: 'M' }],
+  }), 'INVALID_STORIES_B1_TRANSITION');
+});
+
 async function loadGateAndPolicy() {
   assert.ok(existsSync(policyUrl), 'release policy must exist');
   assert.ok(existsSync(gateUrl), 'release gate helper must exist');

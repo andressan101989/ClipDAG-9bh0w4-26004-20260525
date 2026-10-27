@@ -970,6 +970,65 @@ select pg_catalog.jsonb_build_object(
   ) order by schema,name) from relation_rows),'[]'::jsonb)
 ) snapshot;`;
 
+export const STORIES_B1_PRE_STATE_SQL = `select pg_catalog.jsonb_build_object(
+  'schema_version',1,
+  'complete',true,
+  'infrastructure_installed',false,
+  'owner_approved_policy',exists(
+    select 1 from private.content_safety_rules rule
+    where rule.approval_state='approved' and rule.enabled and 'story_text'=any(rule.scopes)
+  ),
+  'activation',false,
+  'mode','fail_closed_review',
+  'story_count',(select pg_catalog.count(*)::integer from public.stories),
+  'direct_story_count',(select pg_catalog.count(*)::integer from public.stories where story_kind='media'),
+  'safety_state_counts',pg_catalog.jsonb_build_object('blocked',0,'passed',0,'pending',0,'review',0),
+  'complete_evidence_count',0,
+  'complete_evidence_pass_count',0,
+  'fabricated_pass_count',0
+) snapshot;`;
+
+export const STORIES_B1_POST_STATE_SQL = `with counts as (
+  select
+    pg_catalog.count(*) filter(where state='blocked')::integer blocked,
+    pg_catalog.count(*) filter(where state='passed')::integer passed,
+    pg_catalog.count(*) filter(where state='pending')::integer pending,
+    pg_catalog.count(*) filter(where state='review')::integer review,
+    pg_catalog.count(*) filter(where visual_complete and audio_complete and text_complete
+      and evidence_generation=generation)::integer complete_evidence,
+    pg_catalog.count(*) filter(where state='passed' and visual_complete and audio_complete and text_complete
+      and evidence_generation=generation)::integer complete_evidence_pass,
+    pg_catalog.count(*) filter(where state='passed' and (not visual_complete or not audio_complete
+      or not text_complete or evidence_generation is distinct from generation
+      or evidence_fingerprint is null or policy_digest is null or decided_at is null))::integer fabricated_pass
+  from private.story_safety_state
+)
+select pg_catalog.jsonb_build_object(
+  'schema_version',1,
+  'complete',true,
+  'infrastructure_installed',
+    pg_catalog.to_regclass('private.story_interactive_elements') is not null
+    and pg_catalog.to_regclass('private.story_interactive_responses') is not null
+    and pg_catalog.to_regclass('private.story_safety_state') is not null,
+  'owner_approved_policy',exists(
+    select 1 from private.content_safety_rules rule
+    where rule.approval_state='approved' and rule.enabled and 'story_text'=any(rule.scopes)
+  ),
+  'activation',exists(
+    select 1 from private.story_safety_state state
+    where state.state='passed' or state.policy_digest is not null
+  ),
+  'mode','fail_closed_review',
+  'story_count',(select pg_catalog.count(*)::integer from public.stories),
+  'direct_story_count',(select pg_catalog.count(*)::integer from public.stories where story_kind='media'),
+  'safety_state_counts',pg_catalog.jsonb_build_object(
+    'blocked',counts.blocked,'passed',counts.passed,'pending',counts.pending,'review',counts.review
+  ),
+  'complete_evidence_count',counts.complete_evidence,
+  'complete_evidence_pass_count',counts.complete_evidence_pass,
+  'fabricated_pass_count',counts.fabricated_pass
+) snapshot from counts;`;
+
 function normalizeCanonical(value, seen = new Set()) {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
   if (typeof value === 'number') {
@@ -1018,6 +1077,88 @@ export function assertReadOnlySql(sql) {
     || /\b(?:alter|call|copy|create|delete|do|drop|grant|insert|refresh|reset|revoke|set|truncate|update|vacuum)\b/i.test(trimmed)
     || /\breconcile_creator_premium_publications_v1\b/i.test(trimmed)) {
     fail('READ_ONLY_QUERY_REJECTED', 'query is outside the fixed read-only contract');
+  }
+  return true;
+}
+
+function storiesB1Transition(policy, manifest) {
+  const expected = policy?.stories_b1_transition;
+  const attestation = manifest?.resources?.stories_b1_transition;
+  if (!attestation) return null;
+  const expectedAttestation = expected && {
+    ...expected,
+    approved_sha: manifest?.identity?.approved_sha,
+    baseline_descendant_verified: true,
+    integration_base_descendant_verified: true,
+    reviewed_source_descendant_verified: true,
+  };
+  if (!expected || canonicalJson(attestation) !== canonicalJson(expectedAttestation)) {
+    fail('INVALID_STORIES_B1_TRANSITION', 'Stories B1 manifest attestation differs from policy');
+  }
+  return expected;
+}
+
+export function normalizeStoriesB1State(snapshot) {
+  const withDigest = Object.hasOwn(snapshot ?? {}, 'sha256');
+  exactKeys(snapshot, [
+    'schema_version', 'complete', 'infrastructure_installed', 'owner_approved_policy',
+    'activation', 'mode', 'story_count', 'direct_story_count', 'safety_state_counts',
+    'complete_evidence_count', 'complete_evidence_pass_count', 'fabricated_pass_count',
+    ...(withDigest ? ['sha256'] : []),
+  ], 'STORIES_B1_POSTCHECK_FAILED');
+  exactKeys(snapshot.safety_state_counts, ['blocked', 'passed', 'pending', 'review'],
+    'STORIES_B1_POSTCHECK_FAILED');
+  const integerFields = [
+    snapshot.story_count,
+    snapshot.direct_story_count,
+    snapshot.complete_evidence_count,
+    snapshot.complete_evidence_pass_count,
+    snapshot.fabricated_pass_count,
+    ...Object.values(snapshot.safety_state_counts),
+  ];
+  if (snapshot.schema_version !== 1 || snapshot.complete !== true
+    || typeof snapshot.infrastructure_installed !== 'boolean'
+    || typeof snapshot.owner_approved_policy !== 'boolean'
+    || typeof snapshot.activation !== 'boolean'
+    || snapshot.mode !== 'fail_closed_review'
+    || integerFields.some(value => !Number.isInteger(value) || value < 0)
+    || snapshot.direct_story_count > snapshot.story_count
+    || snapshot.complete_evidence_pass_count > snapshot.complete_evidence_count
+    || snapshot.fabricated_pass_count > snapshot.safety_state_counts.passed) {
+    fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 snapshot has an invalid shape or count');
+  }
+  const { sha256: claimed, ...unsigned } = snapshot;
+  const digest = sha256(canonicalJson(unsigned));
+  if (withDigest && (!HASH_PATTERN.test(claimed ?? '') || claimed !== digest)) {
+    fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 snapshot digest differs');
+  }
+  return { ...unsigned, sha256: digest };
+}
+
+export function validateStoriesB1StateTransition(preSnapshot, postSnapshot, transition) {
+  const pre = normalizeStoriesB1State(preSnapshot);
+  const post = normalizeStoriesB1State(postSnapshot);
+  const safety = transition?.safety;
+  if (transition?.from_phase !== 'stories_v2_legacy'
+    || transition?.to_phase !== 'stories_v2_interactive_b1_fail_closed'
+    || canonicalJson(safety ?? null) !== canonicalJson({
+      activation: false,
+      complete_evidence_state: 'review',
+      fabricated_pass_allowed: false,
+      incomplete_evidence_state: 'pending',
+      mode: 'fail_closed_review',
+      owner_approved_policy: false,
+      physical_readiness_claim_allowed: false,
+    })
+    || pre.infrastructure_installed !== false || post.infrastructure_installed !== true
+    || pre.owner_approved_policy !== false || post.owner_approved_policy !== false
+    || pre.activation !== false || post.activation !== false
+    || post.safety_state_counts.passed !== 0
+    || post.complete_evidence_pass_count !== 0 || post.fabricated_pass_count !== 0
+    || Object.values(pre.safety_state_counts).some(value => value !== 0)
+    || Object.values(post.safety_state_counts).reduce((sum, value) => sum + value, 0) !== post.story_count
+    || post.story_count !== pre.story_count || post.direct_story_count !== pre.direct_story_count) {
+    fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 release is not exact fail-closed infrastructure');
   }
   return true;
 }
@@ -1409,11 +1550,15 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   const financeQueries = selectFinanceSnapshotQueries(evidence?.migrations);
   const financeTransition = activeFinanceAuthorityTransition(policy, manifest);
   const requireFinanceAuthority = Boolean(financeTransition) || financeQueries.phase !== 'legacy';
+  const storiesTransition = storiesB1Transition(policy, manifest);
+  const requireStoriesB1 = Boolean(storiesTransition);
+  const storiesQuery = phase === 'pre' ? STORIES_B1_PRE_STATE_SQL : STORIES_B1_POST_STATE_SQL;
   exactKeys(evidence, [
     'adapter', 'backup', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
     'health', 'identity', 'migrations', 'observed_at', 'phase', 'premium_state', 'project_ref',
     'requests', 'rpc_security', 'schema_version',
     ...(requireFinanceAuthority ? ['finance_authority','finance_facts'] : []),
+    ...(requireStoriesB1 ? ['stories_b1_state'] : []),
   ], 'INVALID_SNAPSHOT');
   const { evidence_sha256: claimedDigest, ...unsigned } = evidence;
   if (!HASH_PATTERN.test(claimedDigest ?? '') || claimedDigest !== sha256(canonicalJson(unsigned))) {
@@ -1437,6 +1582,10 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       { id: 'nelyon-finance-authority-v1', sha256: sha256(financeQueries.authority) },
       { id: `nelyon-finance-facts-${financeQueries.phase}-v1`, sha256: sha256(financeQueries.facts) },
     ] : []),
+    ...(requireStoriesB1 ? [{
+      id: `nelyon-stories-b1-${phase === 'pre' ? 'pre' : 'post'}-state-v1`,
+      sha256: sha256(storiesQuery),
+    }] : []),
   ];
   if (!HASH_PATTERN.test(adapterSourceSha256 ?? '')
     || evidence.adapter.source_sha256 !== adapterSourceSha256
@@ -1458,6 +1607,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   if (requireFinanceAuthority) expectedRequests.push(
     ['POST', `${base}/database/query/read-only`, 201], ['POST', `${base}/database/query/read-only`, 201],
   );
+  if (requireStoriesB1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (!Array.isArray(evidence.requests) || evidence.requests.length !== expectedRequests.length
     || evidence.requests.some((receipt, index) => {
       try {
@@ -1523,6 +1673,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   validateRpcSecuritySnapshot(evidence.rpc_security);
   validateRpcIdentitySet(evidence.rpc_security, phaseExceptions);
   validatePremiumPostcheckState(evidence.premium_state);
+  if (requireStoriesB1) normalizeStoriesB1State(evidence.stories_b1_state);
   return evidence;
 }
 
@@ -1765,6 +1916,16 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
 export function verifyProductionPreSnapshot({ pre, policy, request, manifest, adapterSourceSha256 }) {
   validateCapturedEvidence({ evidence: pre, phase: 'pre', policy, request, manifest, adapterSourceSha256 });
   validateRpcSecurityAttestations(pre.rpc_security, advisorExceptionsForPhase(policy, manifest, 'pre'));
+  const storiesTransition = storiesB1Transition(policy, manifest);
+  if (storiesTransition) {
+    const stories = normalizeStoriesB1State(pre.stories_b1_state);
+    if (stories.infrastructure_installed !== false || stories.owner_approved_policy !== false
+      || stories.activation !== false || stories.complete_evidence_count !== 0
+      || stories.complete_evidence_pass_count !== 0 || stories.fabricated_pass_count !== 0
+      || Object.values(stories.safety_state_counts).some(value => value !== 0)) {
+      fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 pre-snapshot is not the exact fail-closed predecessor');
+    }
+  }
   const baseline = policy?.baseline;
   if (baseline?.state !== 'verified'
     || !HASH_PATTERN.test(baseline.evidence ?? '')
@@ -1847,6 +2008,10 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
   validateCapturedEvidence({ evidence: post, phase: 'post', policy, request, manifest, adapterSourceSha256 });
   validateRpcSecurityAttestations(post.rpc_security, advisorExceptionsForPhase(policy, manifest, 'post'));
   const financeTransition = activeFinanceAuthorityTransition(policy, manifest);
+  const storiesTransition = storiesB1Transition(policy, manifest);
+  if (storiesTransition) {
+    validateStoriesB1StateTransition(pre.stories_b1_state, post.stories_b1_state, storiesTransition);
+  }
   validatePremiumStateTransition(pre.premium_state, post.premium_state, manifest, policy);
   if (Date.parse(post.observed_at) < Date.parse(pre.observed_at)
     || Date.parse(post.finance.database_time) < Date.parse(pre.finance.database_time)) {
@@ -2728,6 +2893,9 @@ export async function captureProductionSnapshot({
   assertReadOnlySql(CRON_SNAPSHOT_SQL);
   assertReadOnlySql(RPC_SECURITY_ATTESTATION_SQL);
   assertReadOnlySql(PREMIUM_POSTCHECK_STATE_SQL);
+  const storiesTransition = storiesB1Transition(policy, manifest);
+  const storiesQuery = phase === 'pre' ? STORIES_B1_PRE_STATE_SQL : STORIES_B1_POST_STATE_SQL;
+  if (storiesTransition) assertReadOnlySql(storiesQuery);
   const base = `/v1/projects/${PRODUCTION_PROJECT_REF}`;
   const calls = [];
   const get = async (path, label) => {
@@ -2781,6 +2949,13 @@ export async function captureProductionSnapshot({
       value => validateFinanceFacts(value, financeQueries.phase), 'finance fact envelope');
     validateFinanceAuthority(financeAuthority, policy, financeQueries.phase);
   }
+  const storiesB1State = storiesTransition
+    ? singleSnapshot(
+      await sql(storiesQuery, null, 'Stories B1 fail-closed state'),
+      normalizeStoriesB1State,
+      'Stories B1 fail-closed state',
+    )
+    : null;
   const rpcSecurity = normalizeRpcSecurityAttestations(rpcSecurityBody);
   validateRpcIdentitySet(rpcSecurity, phaseExceptions);
   const evidence = {
@@ -2800,6 +2975,10 @@ export async function captureProductionSnapshot({
           { id: 'nelyon-finance-authority-v1', sha256: sha256(financeQueries.authority) },
           { id: `nelyon-finance-facts-${financeQueries.phase}-v1`, sha256: sha256(financeQueries.facts) },
         ] : []),
+        ...(storiesTransition ? [{
+          id: `nelyon-stories-b1-${phase === 'pre' ? 'pre' : 'post'}-state-v1`,
+          sha256: sha256(storiesQuery),
+        }] : []),
       ],
     },
     observed_at: new Date(observedAt).toISOString(),
@@ -2816,6 +2995,7 @@ export async function captureProductionSnapshot({
     ...(requireFinanceAuthority ? { finance_authority: financeAuthority, finance_facts: financeFacts } : {}),
     rpc_security: rpcSecurity,
     premium_state: singleSnapshot(premiumStateBody, normalizePremiumPostcheckState, 'Premium postcheck state'),
+    ...(storiesTransition ? { stories_b1_state: storiesB1State } : {}),
     requests: calls,
   };
   return { ...evidence, evidence_sha256: sha256(canonicalJson(evidence)) };
