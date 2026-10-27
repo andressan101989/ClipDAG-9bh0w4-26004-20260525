@@ -66,6 +66,38 @@ test('same persisted transform projects responsively without mutation', () => {
   assert.deepEqual(persisted, { x: 0.2, y: 0.8, scale: 1.2, rotation: -35 });
 });
 
+test('viewer read-time fit keeps a rotated six-option card inside phone safe bounds without mutating tablet composition', () => {
+  const persisted = Object.freeze({ x: 0.92, y: 0.9, scale: 4, rotation: 35 });
+  const measuredSixOptionCard = { width: 260, height: 400 };
+  const phone = {
+    width: 320,
+    height: 568,
+    safeInsets: geometry.createStoryStageSafeInsets(
+      { top: 47, right: 0, bottom: 21, left: 0 },
+      { top: 92, bottom: 104 },
+    ),
+  };
+  const fitted = geometry.fitStoryElementTransform(persisted, measuredSixOptionCard, phone);
+  const projected = geometry.projectStoryElementTransform(fitted, phone);
+  const extents = geometry.storyRotatedHalfExtents(measuredSixOptionCard, fitted.scale, fitted.rotation);
+  assert.ok(fitted.scale < persisted.scale && fitted.scale >= 0.5);
+  assert.ok(projected.x - extents.x >= phone.safeInsets.left - 1e-9);
+  assert.ok(projected.x + extents.x <= phone.width - phone.safeInsets.right + 1e-9);
+  assert.ok(projected.y - extents.y >= phone.safeInsets.top - 1e-9);
+  assert.ok(projected.y + extents.y <= phone.height - phone.safeInsets.bottom + 1e-9);
+  assert.deepEqual(persisted, { x: 0.92, y: 0.9, scale: 4, rotation: 35 });
+});
+
+test('editor and viewers derive canonical safe insets from shared system and chrome inputs', () => {
+  assert.deepEqual(
+    geometry.createStoryStageSafeInsets(
+      { top: 59, right: 7, bottom: 34, left: 3 },
+      { top: 115, bottom: 122, padding: 8 },
+    ),
+    { top: 123, right: 8, bottom: 130, left: 8 },
+  );
+});
+
 test('two-finger gesture updates centroid, scale and rotation from one snapshot', () => {
   const result = geometry.deriveStoryGestureTransform(
     { x: 0.5, y: 0.5, scale: 1, rotation: 10 },

@@ -51,6 +51,15 @@ test('realtime recovery is bounded exponential backoff and recognizes terminal c
   assert.equal(runtime.realtimeRetryDelay(0, 0.5), 1000);
   assert.equal(runtime.realtimeRetryDelay(3, 0.5), 8000);
   assert.equal(runtime.realtimeRetryDelay(20, 0.5), 30000);
+  let attempt = 0;
+  const delays = [];
+  for (let failure = 0; failure < 4; failure += 1) {
+    const next = runtime.nextRealtimeRetry(attempt, 0.5);
+    delays.push(next.delay);
+    attempt = next.attempt;
+  }
+  assert.deepEqual(delays, [1000, 2000, 4000, 8000]);
+  assert.equal(attempt, 4, 'attempt state must survive channel epoch recreation');
 });
 
 test('interactive payload identity is canonical and slider values are bounded', async () => {
