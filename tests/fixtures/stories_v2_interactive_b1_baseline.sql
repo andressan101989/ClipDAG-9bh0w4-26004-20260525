@@ -4369,7 +4369,7 @@ create table public.video_assets(
   constraint video_assets_creator_premium_contract_check check(
     purpose<>'creator_premium_video' or(provider='cloudflare_stream' and visibility='private'
       and mime_type in('video/mp4','video/quicktime','video/webm')
-      and size_bytes between 1 and 200000000 and max_duration_seconds=180)),
+      and size_bytes between 1 and 200000000 and max_duration_seconds between 1 and 180)),
   constraint video_assets_ready_invariants_check check(
     (status='ready' and cloudflare_uid is not null and ready_at is not null
       and duration_seconds is not null and duration_seconds>0

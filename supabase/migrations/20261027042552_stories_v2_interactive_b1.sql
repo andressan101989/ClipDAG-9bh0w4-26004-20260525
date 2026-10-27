@@ -732,7 +732,10 @@ alter table public.video_assets
       provider='cloudflare_stream' and visibility='private'
       and mime_type in ('video/mp4','video/quicktime','video/webm')
       and size_bytes between 1 and 200000000
-      and max_duration_seconds=case when purpose='story_video' then 15 else 180 end
+      and (
+        (purpose='creator_premium_video' and max_duration_seconds between 1 and 180)
+        or (purpose='story_video' and max_duration_seconds=15)
+      )
     )
   ),
   add constraint video_assets_ready_invariants_check check (

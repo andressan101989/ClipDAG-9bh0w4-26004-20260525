@@ -47,6 +47,8 @@ test('Story Stream is private, CAS-fenced, signed, and never exposed by raw view
   assert.match(playback, /entity_type[^\n]*story/);
   assert.match(cleanup, /story_video/);
   assert.match(migration, /video_asset_links_story_shape_check/);
+  assert.match(migration, /purpose='creator_premium_video' and max_duration_seconds between 1 and 180/);
+  assert.match(migration, /purpose='story_video' and max_duration_seconds=15/);
   assert.match(migration, /story_video[^\n]*private/);
   assert.match(migration, /duration_seconds\s*>\s*0/);
   assert.match(migration, /duration_seconds\s*<=\s*15/);
