@@ -19,6 +19,7 @@ const STORIES_B1_SUPABASE_SCOPE = [
   'supabase/functions/stream-webhook/index.ts',
   'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql',
   'supabase/migrations/20261027120000_stories_v2_safety_c1_technical_policy_prep.sql',
+  'supabase/migrations/20261027191918_stories_v2_safety_c2_publish_first_async_review.sql',
 ];
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 const feedContext = read('contexts/FeedContext.tsx');
@@ -199,7 +200,7 @@ test('server composition validation remains unchanged', () => {
   assert.equal(migration, baseFile(migrationPath));
 });
 
-test('I package authorities remain untouched and B1 plus Safety C1 own the exact authorized Supabase scope', () => {
+test('I package authorities remain untouched and B1 plus Safety C1/C2 own the exact authorized Supabase scope', () => {
   const headFile = path => execFileSync('git', ['show', `HEAD:${path}`], gitOptions).replace(/\r\n/g, '\n');
   const currentPackage = JSON.parse(read('package.json'));
   const approvedPackage = JSON.parse(headFile('package.json'));
