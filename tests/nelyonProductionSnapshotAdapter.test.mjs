@@ -144,6 +144,59 @@ async function loadAdapter() {
   return import(`${adapterUrl.href}?test=${Date.now()}-${Math.random()}`);
 }
 
+test('Stories B1 snapshot contract is fail-closed and rejects policy activation or fabricated pass', async () => {
+  const adapter = await loadAdapter();
+  assert.equal(adapter.assertReadOnlySql(adapter.STORIES_B1_PRE_STATE_SQL), true);
+  assert.equal(adapter.assertReadOnlySql(adapter.STORIES_B1_POST_STATE_SQL), true);
+  assert.match(adapter.STORIES_B1_PRE_STATE_SQL, /content_safety_rules/);
+  assert.match(adapter.STORIES_B1_POST_STATE_SQL, /story_safety_state/);
+  const pre = adapter.normalizeStoriesB1State({
+    schema_version: 1,
+    complete: true,
+    infrastructure_installed: false,
+    owner_approved_policy: false,
+    activation: false,
+    mode: 'fail_closed_review',
+    story_count: 0,
+    direct_story_count: 0,
+    safety_state_counts: { blocked: 0, passed: 0, pending: 0, review: 0 },
+    complete_evidence_count: 0,
+    complete_evidence_pass_count: 0,
+    fabricated_pass_count: 0,
+  });
+  const post = adapter.normalizeStoriesB1State({
+    schema_version: 1,
+    complete: true,
+    infrastructure_installed: true,
+    owner_approved_policy: false,
+    activation: false,
+    mode: 'fail_closed_review',
+    story_count: 0,
+    direct_story_count: 0,
+    safety_state_counts: { blocked: 0, passed: 0, pending: 0, review: 0 },
+    complete_evidence_count: 0,
+    complete_evidence_pass_count: 0,
+    fabricated_pass_count: 0,
+  });
+  assert.equal(adapter.validateStoriesB1StateTransition(pre, post, installedPolicy.stories_b1_transition), true);
+
+  for (const mutate of [
+    state => { state.owner_approved_policy = true; },
+    state => { state.activation = true; },
+    state => { state.safety_state_counts.passed = 1; state.fabricated_pass_count = 1; },
+    state => { state.complete_evidence_count = 1; state.complete_evidence_pass_count = 1; },
+  ]) {
+    const hostile = structuredClone(post);
+    delete hostile.sha256;
+    mutate(hostile);
+    assert.throws(() => adapter.validateStoriesB1StateTransition(
+      pre,
+      adapter.normalizeStoriesB1State(hostile),
+      installedPolicy.stories_b1_transition,
+    ), /STORIES_B1_POSTCHECK_FAILED/);
+  }
+});
+
 test('F3 disposable catalog verifies exact authority and detects real PostgreSQL security drift', {
   skip: process.env.RUN_F3_GOVERNANCE_LOCAL !== '1', timeout: 120000,
 }, async t => {
