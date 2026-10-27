@@ -6,12 +6,17 @@ import { VISUAL_AI_PROVIDER, VISUAL_MODEL, VisualProbeError, runVisualMultiImage
 import { CREATOR_PREMIUM_VISUAL_PROMPT_VERSION, MAX_PREMIUM_VISUAL_IMAGE_BYTES, MAX_VISUAL_IMAGE_BYTES, VISUAL_PROMPT_VERSION, VisualPipelineError, analyzeVisualBytes, fetchStreamFrame, mergeVisualFrameResults, sampleVideoFrameTimestamps } from './visualPipeline.mjs'
 import { POLICY_CONTEXT_POLICY_ID, POLICY_CONTEXT_PROMPT_VERSION, POLICY_CONTEXT_SCHEMA_VERSION, PolicyContextError, policyContextCompletionError, policyContextErrorFrom, runPolicyContextAnalysis, runPolicyContextProviderProbe } from './policyContext.mjs'
 import { streamAccountId, streamCustomerCode, streamFetch } from '../_shared/stream.ts'
-import { createPremiumStreamAudioDownloadGrant, createPremiumStreamPlaybackGrant } from '../_shared/premiumStreamSecurity.ts'
+import {
+  STORY_STREAM_PURPOSE,
+  createPrivateStreamAudioDownloadGrant,
+  createPrivateStreamPlaybackGrant,
+} from '../_shared/premiumStreamSecurity.ts'
 import { getObjectBytes, isR2Transient } from '../_shared/r2.ts'
 
 const BATCH_LIMIT = 25
 const TRANSCRIPT_BATCH_LIMIT = 10
 const WORKER_CONTRACT = 'content-safety-scan-p3-v1'
+const CONTENT_FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/u
 const json = (body: Record<string, unknown>, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { 'Content-Type': 'application/json' },
@@ -74,7 +79,7 @@ async function streamAudioDownload(uid: string, targetType: unknown) {
     uid,
     customerCode: streamCustomerCode(),
     providerUrl: audio.url,
-    createPrivateGrant: createPremiumStreamAudioDownloadGrant,
+    createPrivateGrant: createPrivateStreamAudioDownloadGrant,
   })
   return downloadStreamAudioBytes({ route })
 }
@@ -198,7 +203,21 @@ Deno.serve(async req => {
   const { data: audioData, error: audioClaimError } = await admin.rpc('claim_content_safety_audio_scans', { p_limit: 1 })
   if (!audioClaimError) for (const value of Array.isArray(audioData) ? audioData : []) {
     const scan = object(value); audioClaimed += 1
-    if (!uuid(scan.scan_id) || !uuid(scan.source_asset_id) || typeof scan.cloudflare_uid !== 'string' || typeof scan.content_fingerprint !== 'string') { audioFailed += 1; continue }
+    const malformedStoryVideo = scan.target_type === 'story' && (
+      (scan.purpose !== undefined && scan.purpose !== STORY_STREAM_PURPOSE) ||
+      typeof scan.duration_seconds !== 'number' || scan.duration_seconds <= 0 || scan.duration_seconds > 15
+    )
+    if (!uuid(scan.scan_id) || !uuid(scan.source_asset_id) || typeof scan.cloudflare_uid !== 'string' ||
+        typeof scan.content_fingerprint !== 'string' || !CONTENT_FINGERPRINT_PATTERN.test(scan.content_fingerprint) ||
+        malformedStoryVideo) {
+      if (uuid(scan.scan_id)) await admin.rpc('fail_content_safety_audio_scan', {
+        p_scan_id: scan.scan_id,
+        p_error_code: malformedStoryVideo ? 'story_video_incomplete_modality_evidence' : 'malformed_audio_scan',
+        p_retryable: false,
+        p_provider_called: false,
+      })
+      audioFailed += 1; continue
+    }
     let stage = 'stream_audio'
     try {
       const audio = await streamAudioDownload(scan.cloudflare_uid, scan.target_type)
@@ -258,15 +277,26 @@ Deno.serve(async req => {
     const promptVersion = String(scan.visual_prompt_version ?? '')
     const supportedPrompt = promptVersion === VISUAL_PROMPT_VERSION ||
       (scan.target_type === 'creator_premium' && promptVersion === CREATOR_PREMIUM_VISUAL_PROMPT_VERSION)
-    if (!uuid(scan.scan_id) || typeof scan.content_fingerprint !== 'string' || !['eligible_image', 'eligible_stream_video'].includes(String(scan.source_kind)) || !supportedPrompt) {
+    const sourceKind = String(scan.source_kind)
+    const malformedStorySource = scan.target_type === 'story' && (
+      (sourceKind === 'eligible_stream_video' && (
+        (scan.purpose !== undefined && scan.purpose !== STORY_STREAM_PURPOSE) ||
+        typeof scan.duration_seconds !== 'number' || scan.duration_seconds <= 0 || scan.duration_seconds > 15
+      )) ||
+      (sourceKind === 'eligible_image' && scan.purpose !== undefined && scan.purpose !== 'story_image')
+    )
+    if (!uuid(scan.scan_id) || typeof scan.content_fingerprint !== 'string' ||
+        !CONTENT_FINGERPRINT_PATTERN.test(scan.content_fingerprint) ||
+        !['eligible_image', 'eligible_stream_video'].includes(sourceKind) || !supportedPrompt || malformedStorySource) {
       if (uuid(scan.scan_id)) await admin.rpc('fail_content_safety_visual_scan', { p_scan_id: scan.scan_id, p_error_code: 'malformed_visual_scan', p_retryable: false, p_provider_called: false })
       visualFailed += 1; continue
     }
     let providerCalled = false
     try {
-      const sourceKind = String(scan.source_kind)
       const frameCursor = Number(scan.frame_cursor ?? 0)
       const isPremium = scan.target_type === 'creator_premium'
+      const isStory = scan.target_type === 'story'
+      const isPrivateStream = isPremium || isStory
       let bytes: Uint8Array, mimeType: string, timestampMs: number | null = null, timestamps: number[] = []
       if (sourceKind === 'eligible_image') {
         if (!uuid(scan.media_asset_id) || typeof scan.bucket_name !== 'string' || typeof scan.object_key !== 'string' ||
@@ -284,8 +314,11 @@ Deno.serve(async req => {
         timestamps = sampleVideoFrameTimestamps(scan.duration_seconds)
         if (!Number.isInteger(frameCursor) || frameCursor < 0 || frameCursor >= timestamps.length) throw new VisualPipelineError('invalid_visual_frame_cursor')
         timestampMs = timestamps[frameCursor]
-        const signedThumbnailUrl = isPremium
-          ? (await createPremiumStreamPlaybackGrant({
+        // Both Premium and Story Stream assets are private. Content Safety gets
+        // the same bounded provider grant used by playback; no provider UID or
+        // signed URL is exposed to the client.
+        const signedThumbnailUrl = isPrivateStream
+          ? (await createPrivateStreamPlaybackGrant({
               cloudflareUid: scan.cloudflare_uid,
               customerCode: streamCustomerCode(),
             })).thumbnailUrl

@@ -7,11 +7,17 @@ import {
 } from './stream.ts';
 
 export const CREATOR_PREMIUM_STREAM_PURPOSE='creator_premium_video';
+export const CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS=180;
+export const STORY_STREAM_PURPOSE='story_video';
+export const STORY_STREAM_MAX_DURATION_SECONDS=15;
 export const PREMIUM_STREAM_TOKEN_TTL_SECONDS=300;
 export const PREMIUM_STREAM_TOKEN_NBF_SKEW_SECONDS=30;
 
-type PremiumStreamStatus='uploading'|'processing'|'ready'|'failed';
-type PremiumStreamGrantInput={
+export type PrivateStreamPurpose=
+  |typeof CREATOR_PREMIUM_STREAM_PURPOSE
+  |typeof STORY_STREAM_PURPOSE;
+type PrivateStreamStatus='uploading'|'processing'|'ready'|'failed';
+type PrivateStreamGrantInput={
   cloudflareUid:string;
   customerCode:string;
   nowSeconds?:number;
@@ -33,10 +39,27 @@ function dimensions(result:Record<string,unknown>):{width:number|null;height:num
   };
 }
 
-export function reconcilePremiumStreamVideo(
+export function isPrivateStreamPurpose(value:unknown):value is PrivateStreamPurpose {
+  return value===CREATOR_PREMIUM_STREAM_PURPOSE||value===STORY_STREAM_PURPOSE;
+}
+
+export function privateStreamMaxDurationSeconds(purpose:PrivateStreamPurpose):number {
+  return purpose===STORY_STREAM_PURPOSE
+    ?STORY_STREAM_MAX_DURATION_SECONDS
+    :CREATOR_PREMIUM_STREAM_MAX_DURATION_SECONDS;
+}
+
+export function privateStreamSignedUrlsErrorCode(purpose:PrivateStreamPurpose):string {
+  return purpose===CREATOR_PREMIUM_STREAM_PURPOSE
+    ?'creator_premium_stream_signed_urls_required'
+    :'story_video_signed_urls_required';
+}
+
+export function reconcilePrivateStreamVideo(
   result:Record<string,unknown>,
   expectedUid:string,
-  maxDurationSeconds=STREAM_MAX_DURATION_SECONDS,
+  purpose:PrivateStreamPurpose=CREATOR_PREMIUM_STREAM_PURPOSE,
+  maxDurationSeconds=privateStreamMaxDurationSeconds(purpose),
 ) {
   const status=(result.status&&typeof result.status==='object'?result.status:{}) as Record<string,unknown>;
   const state=String(status.state??result.state??'').toLowerCase().replace(/[\s_-]/g,'');
@@ -45,7 +68,7 @@ export function reconcilePremiumStreamVideo(
   const uid=typeof result.uid==='string'?result.uid.trim():'';
   const duration=durationOrNull(result.duration);
   const size=dimensions(result);
-  let internalStatus:PremiumStreamStatus;
+  let internalStatus:PrivateStreamStatus;
   let errorCode:string|null=null;
 
   if(state==='error') {
@@ -54,10 +77,11 @@ export function reconcilePremiumStreamVideo(
   } else if(state==='pendingupload') {
     internalStatus='uploading';
   } else if(state==='ready'&&readyToStream) {
-    const coreReady=uid.length>0&&uid===expectedUid&&duration!==null&&duration<=maxDurationSeconds;
+    const coreReady=uid.length>0&&uid===expectedUid&&duration!==null
+      &&duration>0&&duration<=maxDurationSeconds;
     if(!requiresSignedUrls) {
       internalStatus='failed';
-      errorCode='creator_premium_stream_signed_urls_required';
+      errorCode=privateStreamSignedUrlsErrorCode(purpose);
     } else if(!coreReady) {
       internalStatus='failed';
       errorCode='stream_ready_invariant_failed';
@@ -86,6 +110,19 @@ export function reconcilePremiumStreamVideo(
     ready_at:ready?checkedAt:null,
     last_provider_check_at:checkedAt,
   };
+}
+
+export function reconcilePremiumStreamVideo(
+  result:Record<string,unknown>,
+  expectedUid:string,
+  maxDurationSeconds=STREAM_MAX_DURATION_SECONDS,
+) {
+  return reconcilePrivateStreamVideo(
+    result,
+    expectedUid,
+    CREATOR_PREMIUM_STREAM_PURPOSE,
+    maxDurationSeconds,
+  );
 }
 
 function encodeBase64Url(bytes:Uint8Array):string {
@@ -126,7 +163,7 @@ function validateSigningInput(cloudflareUid:string,customerCode:string,keyId:str
   }
 }
 
-async function createPremiumStreamToken(input:PremiumStreamGrantInput,downloadable:boolean) {
+async function createPrivateStreamToken(input:PrivateStreamGrantInput,downloadable:boolean) {
   const keyId=input.keyId?.trim()||requiredSecret('STREAM_SIGNING_KEY_ID');
   const encodedJwk=input.privateJwkB64?.trim()||requiredSecret('STREAM_SIGNING_KEY_JWK_B64');
   const uid=input.cloudflareUid.trim();
@@ -172,8 +209,8 @@ async function createPremiumStreamToken(input:PremiumStreamGrantInput,downloadab
   };
 }
 
-export async function createPremiumStreamPlaybackGrant(input:PremiumStreamGrantInput) {
-  const {token,code,expiresAt}=await createPremiumStreamToken(input,false);
+export async function createPrivateStreamPlaybackGrant(input:PrivateStreamGrantInput) {
+  const {token,code,expiresAt}=await createPrivateStreamToken(input,false);
   const base=`https://customer-${code}.cloudflarestream.com/${token}`;
   return {
     hlsUrl:`${base}/manifest/video.m3u8`,
@@ -183,10 +220,14 @@ export async function createPremiumStreamPlaybackGrant(input:PremiumStreamGrantI
   };
 }
 
-export async function createPremiumStreamAudioDownloadGrant(input:PremiumStreamGrantInput) {
-  const {token,code,expiresAt}=await createPremiumStreamToken(input,true);
+export async function createPrivateStreamAudioDownloadGrant(input:PrivateStreamGrantInput) {
+  const {token,code,expiresAt}=await createPrivateStreamToken(input,true);
   return {
     audioUrl:`https://customer-${code}.cloudflarestream.com/${token}/downloads/audio.m4a`,
     expiresAt,
   };
 }
+
+// Creator Premium and Stories share one private Stream signing authority.
+export const createPremiumStreamPlaybackGrant=createPrivateStreamPlaybackGrant;
+export const createPremiumStreamAudioDownloadGrant=createPrivateStreamAudioDownloadGrant;

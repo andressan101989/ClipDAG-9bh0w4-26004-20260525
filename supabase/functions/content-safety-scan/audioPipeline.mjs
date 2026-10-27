@@ -109,7 +109,7 @@ export function validateStreamAudioDeliveryRedirect(value, expectedIdentity, exp
 }
 
 export function validateStreamAudioTargetType(value) {
-  if (value !== 'video' && value !== 'creator_premium') {
+  if (value !== 'video' && value !== 'creator_premium' && value !== 'story') {
     throw new AudioPipelineError('stream_audio_target_type_invalid', { status: 422 })
   }
   return value
@@ -192,7 +192,7 @@ export async function selectStreamAudioDownloadRoute({ targetType, uid, customer
     throw new AudioPipelineError('stream_audio_url_untrusted_host')
   }
   return {
-    access: 'premium_private',
+    access: canonicalTargetType === 'story' ? 'story_private' : 'premium_private',
     url: signedAudioUrl,
     validateRedirect: value => validateStreamAudioDeliveryRedirect(value, uid, signedAudioUrl),
   }

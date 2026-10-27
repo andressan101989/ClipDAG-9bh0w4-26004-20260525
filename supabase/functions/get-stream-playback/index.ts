@@ -1,7 +1,8 @@
 import { authenticatedClient,authenticatedUser,admin,corsHeaders,json } from '../_shared/mediaAuth.ts';
 import {
-  CREATOR_PREMIUM_STREAM_PURPOSE,createPremiumStreamPlaybackGrant,
-  reconcilePremiumStreamVideo,
+  CREATOR_PREMIUM_STREAM_PURPOSE,STORY_STREAM_PURPOSE,
+  createPrivateStreamPlaybackGrant,createPremiumStreamPlaybackGrant,
+  isPrivateStreamPurpose,reconcilePrivateStreamVideo,
 } from '../_shared/premiumStreamSecurity.ts';
 import {
   isUuid,monotonicStreamUpdates,reconcileStreamVideo,sanitizeProviderError,
@@ -19,8 +20,8 @@ const premiumJson=(body:unknown,status=200)=>new Response(JSON.stringify(body),{
 });
 
 function descriptor(asset:Record<string,unknown>) {
-  const premium=asset.purpose===CREATOR_PREMIUM_STREAM_PURPOSE;
-  const ready=asset.status==='ready'&&!premium;
+  const privatePurpose=isPrivateStreamPurpose(asset.purpose);
+  const ready=asset.status==='ready'&&!privatePurpose;
   return {
     assetId:asset.id,
     status:asset.status,
@@ -33,14 +34,17 @@ function descriptor(asset:Record<string,unknown>) {
     thumbnailUrl:ready?asset.thumbnail_url:null,
     errorCode:asset.error_code??null,
     readyAt:asset.ready_at??null,
-    ...(premium?{playbackMode:'premium_entitlement_required'}:{}),
+    ...(asset.purpose===CREATOR_PREMIUM_STREAM_PURPOSE
+      ?{playbackMode:'premium_entitlement_required'}
+      :asset.purpose===STORY_STREAM_PURPOSE
+        ?{playbackMode:'story_visibility_required'}:{}),
   };
 }
 
-function hasPremiumProviderProof(asset:Record<string,unknown>):boolean {
+function hasPrivateProviderProof(asset:Record<string,unknown>,purpose:string):boolean {
   const metadata=asset.provider_metadata&&typeof asset.provider_metadata==='object'
     ? asset.provider_metadata as Record<string,unknown>:{};
-  return asset.purpose===CREATOR_PREMIUM_STREAM_PURPOSE
+  return asset.purpose===purpose
     && asset.provider==='cloudflare_stream'
     && asset.visibility==='private'
     && typeof asset.cloudflare_uid==='string'
@@ -62,10 +66,55 @@ Deno.serve(async(req)=>{
   const body=await req.json().catch(()=>({})) as Record<string,unknown>;
   const hasAsset=body.asset_id!==undefined;
   const hasPremiumContent=body.premium_content_id!==undefined;
+  const hasStory=body.story_id!==undefined;
   const hasAdminReview=body.admin_review!==undefined;
-  if(hasAsset===hasPremiumContent) return json({error:'invalid_request'},400);
+  if(Number(hasAsset)+Number(hasPremiumContent)+Number(hasStory)!==1) {
+    return json({error:'invalid_request'},400);
+  }
   if(hasAdminReview&&body.admin_review!==true) return json({error:'invalid_request'},400);
   if(hasAdminReview&&!hasPremiumContent) return json({error:'invalid_request'},400);
+
+  if(hasStory) {
+    if(!isUuid(body.story_id)) return premiumJson({error:'invalid_story'},400);
+    const storyId=body.story_id;
+    const caller=authenticatedClient(req);
+    if(!caller) return premiumJson({error:'unauthorized'},401);
+    // This read intentionally uses the caller JWT. The canonical Stories RLS
+    // owns expiry, blocks, moderation and fail-closed safety visibility.
+    const {data:story,error:storyError}=await caller.from('stories')
+      .select('id,user_id,media_type').eq('id',storyId).maybeSingle();
+    if(storyError) return premiumJson({error:'story_video_unavailable'},503);
+    if(!story||story.media_type!=='video') return premiumJson({error:'not_found'},404);
+
+    const db=admin();
+    const {data:links,error:linksError}=await db.from('video_asset_links')
+      .select('asset_id,owner_id').eq('entity_type','story').eq('entity_id',storyId)
+      .eq('slot','media').eq('position',0).limit(2);
+    if(linksError) return premiumJson({error:'story_video_unavailable'},503);
+    if(!links?.length) return premiumJson({error:'not_found'},404);
+    if(links.length!==1) return premiumJson({error:'story_video_ambiguous'},409);
+    const {data:asset,error:assetError}=await db.from('video_assets')
+      .select('*').eq('id',links[0].asset_id).maybeSingle();
+    if(assetError) return premiumJson({error:'story_video_unavailable'},503);
+    if(!asset) return premiumJson({error:'not_found'},404);
+    if(links[0].owner_id!==story.user_id||asset.owner_id!==story.user_id
+      ||!hasPrivateProviderProof(asset as Record<string,unknown>,STORY_STREAM_PURPOSE)) {
+      return premiumJson({error:'story_video_forbidden'},403);
+    }
+    if(asset.status!=='ready'||Number(asset.duration_seconds)<=0
+      ||Number(asset.duration_seconds)>15) {
+      return premiumJson({error:'story_video_unavailable'},409);
+    }
+    try {
+      const grant=await createPrivateStreamPlaybackGrant({
+        cloudflareUid:String(asset.cloudflare_uid),customerCode:streamCustomerCode(),
+      });
+      return premiumJson({success:true,data:{storyId,...grant}});
+    } catch(error) {
+      const safe=sanitizeProviderError(error);
+      return premiumJson({error:safe.code},safe.status);
+    }
+  }
 
   if(hasPremiumContent) {
     if(!isUuid(body.premium_content_id)) return json({error:'invalid_premium_content'},400);
@@ -119,7 +168,7 @@ Deno.serve(async(req)=>{
       .maybeSingle();
     if(assetError) return premiumJson({error:'premium_video_unavailable'},503);
     if(!asset) return premiumJson({error:'not_found'},404);
-    if(!hasPremiumProviderProof(asset as Record<string,unknown>)) {
+    if(!hasPrivateProviderProof(asset as Record<string,unknown>,CREATOR_PREMIUM_STREAM_PURPOSE)) {
       return premiumJson({error:'premium_video_forbidden'},403);
     }
     if(body.admin_review===true&&asset.owner_id!==adminReviewCreatorId) {
@@ -156,9 +205,10 @@ Deno.serve(async(req)=>{
       if(!providerUid||providerUid!==asset.cloudflare_uid) {
         return json({error:'stream_provider_uid_mismatch'},502);
       }
-      const updates=asset.purpose===CREATOR_PREMIUM_STREAM_PURPOSE
-        ? reconcilePremiumStreamVideo(
-          result,String(asset.cloudflare_uid),Number(asset.max_duration_seconds??60),
+      const updates=isPrivateStreamPurpose(asset.purpose)
+        ? reconcilePrivateStreamVideo(
+          result,String(asset.cloudflare_uid),asset.purpose,
+          Number(asset.max_duration_seconds??60),
         )
         : reconcileStreamVideo(
           result,streamCustomerCode(),String(asset.cloudflare_uid),Number(asset.max_duration_seconds??60),

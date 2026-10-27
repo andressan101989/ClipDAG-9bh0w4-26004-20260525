@@ -18,7 +18,7 @@ type MediaCleanupRow={
 type StreamVideoCleanupRow={
   id:string;
   cloudflare_uid:string|null;
-  purpose:'feed_video'|'business_library'|'creator_premium_video';
+  purpose:'feed_video'|'business_library'|'creator_premium_video'|'story_video';
   delete_attempts:number;
   operation:CleanupOperation;
   failure_exhausts:boolean;
@@ -50,6 +50,7 @@ Deno.serve(async(req)=>{
   let objectsDeleted=0,objectsRechecked=0,staleClaims=0,exhaustedClaims=0;
   let streamVideosDeleted=0,streamVideosRechecked=0;
   let premiumVideosClaimed=0,premiumVideosDeleted=0,premiumVideosRechecked=0;
+  let storyVideosClaimed=0,storyVideosDeleted=0,storyVideosRechecked=0;
   let r2Claimed=0,streamClaimed=0;
   let persistenceFailed=false;
   let r2LaneStopped=false,streamLaneStopped=false;
@@ -178,12 +179,14 @@ Deno.serve(async(req)=>{
       if(completion==='finalized') {
         streamVideosDeleted++;
         if(row.purpose==='creator_premium_video') premiumVideosDeleted++;
+        if(row.purpose==='story_video') storyVideosDeleted++;
       }
       else if([
         'recheck_scheduled','verified','verified_recheck_scheduled',
       ].includes(String(completion))) {
         streamVideosRechecked++;
         if(row.purpose==='creator_premium_video') premiumVideosRechecked++;
+        if(row.purpose==='story_video') storyVideosRechecked++;
       }
       else if(completion==='exhausted') exhaustedClaims++;
       else staleClaims++;
@@ -252,6 +255,7 @@ Deno.serve(async(req)=>{
           progressed=true;
           streamClaimed++;
           if(row.purpose==='creator_premium_video') premiumVideosClaimed++;
+          if(row.purpose==='story_video') storyVideosClaimed++;
           work.push({lane:'stream',run:()=>processStream(row)});
         }
       }
@@ -285,6 +289,9 @@ Deno.serve(async(req)=>{
     premiumVideosStale:premiumVideosClaimed,
     premiumVideosDeleted,
     premiumVideosRechecked,
+    storyVideosStale:storyVideosClaimed,
+    storyVideosDeleted,
+    storyVideosRechecked,
     staleClaims,
     exhaustedClaims,
   };

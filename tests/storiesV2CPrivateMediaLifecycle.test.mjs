@@ -50,11 +50,14 @@ test('Story purpose sizes and the shared image normalizer remain canonical', () 
   assert.match(mediaClient, /const IMAGE_PURPOSES = new Set<MediaPurpose>\([\s\S]*"story_image"/);
 });
 
-test('new photo and video callers upload private Story-specific media', () => {
-  assert.match(feed, /purpose: isVideo \? 'story_video' : 'story_image'/);
+test('new photos use private R2 while new videos use the canonical private Stream uploader', () => {
+  assert.match(feed, /createStoryStreamUpload\(/);
+  assert.match(feed, /uploadStoryVideoWithTus\(/);
+  assert.match(feed, /waitForStoryStreamReady\(/);
+  assert.match(feed, /purpose: 'story_image'/);
   assert.match(feed, /visibility: 'private'/);
   assert.match(feed, /if \(uploaded\.url\) throw new Error\('Private Story upload returned a persistent URL'\)/);
-  assert.doesNotMatch(feed, /purpose: isVideo \? 'story_video' : 'post_image'/);
+  assert.doesNotMatch(feed, /purpose:\s*(?:isVideo\s*\?|['"]story_video['"])/);
 });
 
 test('canonical private Story creation derives type and stores no URL', () => {
@@ -144,9 +147,13 @@ test('StoriesContext discovers one opaque asset ID per visible Story', () => {
   assert.doesNotMatch(storiesContext, /bucket_name|object_key/);
 });
 
-test('canonical playback uses get-media-url and legacy playback uses HTTPS media_url only without a link', () => {
-  assert.match(storyHook, /if \(!story\.mediaAssetId\)[\s\S]*\^https:\\\/\\\//);
-  assert.match(storyHook, /getMediaUrl\(story\.mediaAssetId\)/);
+test('canonical playback authorizes Stream by Story identity and keeps private R2 fallback for legacy links', () => {
+  assert.match(storyHook, /const isDirectVideo = story\.mediaType === 'video' && story\.storyKind === 'media'/);
+  assert.match(storyHook, /const loadUrl = isDirectVideo/);
+  assert.match(storyHook, /story\.mediaType === 'video'[\s\S]*getStoryStreamPlayback\(story\.id\)/);
+  assert.match(storyHook, /if \(story\.mediaAssetId\) return getMediaUrl\(story\.mediaAssetId\)/);
+  assert.match(storyHook, /!isDirectVideo && !story\.mediaAssetId[\s\S]*\^https:\\\/\\\//);
+  assert.doesNotMatch(storyHook, /getStoryStreamPlayback\(story\.mediaAssetId/);
   assert.match(storyHook, /SIGNED_URL_REFRESH_MS = 270_000/);
   assert.match(nativeViewer, /useStoryMediaUrl\(story, isActive\)/);
   assert.match(webViewer, /useStoryMediaUrl\(story, isActive\)/);

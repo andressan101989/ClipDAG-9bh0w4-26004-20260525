@@ -211,10 +211,88 @@ test('B1 disposable PostgreSQL behavior and isolation', {skip:!enabled}, async t
       const first=run(as(owner,sql)); assert.equal(run(as(owner,sql)),first);
       const sid=first.split('\n').at(-1).trim();
       assert.equal(run(`select state from private.story_safety_state where story_id='${sid}'`),'pending');
+      assert.equal(run(`select private.content_safety_audio_source('story','${sid}')->>'kind'`),'not_applicable');
+      assert.equal(run(`select private.content_safety_visual_source('story','${sid}')->>'kind'`),'eligible_image');
+      assert.equal(run(`select count(*) from private.content_safety_scans scan join private.story_safety_state safety on safety.scan_id=scan.id where safety.story_id='${sid}' and scan.content_fingerprint=private.content_safety_sha256('story|'||scan.target_id::text||'|'||private.story_current_fingerprint(scan.target_id)) and scan.audio_status='not_applicable' and scan.visual_status='pending' and scan.visual_media_asset_id='${asset}'`),'1');
       fail(viewer,`select public.get_story_interactive_state('${sid}')`,/story_not_visible/);
       const before=run('select count(*) from public.stories');
       fail(owner,`select public.create_story_with_media('${asset}',${literal(JSON.stringify(composition))},'${client}','[]')`,/idempotency_conflict/);
       assert.equal(run('select count(*) from public.stories'),before);
+    });
+    await t.test('new Story video rejects R2 and requires signed provider-ready Stream metadata',()=>{
+      const r2=randomUUID(),r2Client=randomUUID();
+      run(`insert into public.media_assets(id,owner_id,provider,media_kind,purpose,visibility,bucket_name,object_key,mime_type,size_bytes,status) values('${r2}','${owner}','r2','video','story_video','private','local-test','stories/${r2}.mp4','video/mp4',100,'ready')`);
+      fail(owner,`select public.create_story_with_media('${r2}','{"version":1,"elements":[]}','${r2Client}')`,/story_asset_not_ready_or_owned/);
+
+      const unsigned=randomUUID();
+      assert.equal(run(`select public.reserve_stream_upload_asset('${unsigned}','${owner}','video/mp4',100,'unsigned.mp4','story_video')`),'created');
+      const unsignedReady=run(`update public.video_assets set status='ready',cloudflare_uid='fixture-${unsigned}',duration_seconds=10,ready_at=now(),provider_metadata='{"require_signed_urls":false}' where id='${unsigned}'`,db,true);
+      assert.notEqual(unsignedReady.status,0);
+      assert.match(unsignedReady.stderr,/video_assets_ready_invariants_check/);
+      run(`update public.video_assets set status='failed',error_code='fixture_invalid' where id='${unsigned}'`);
+
+      const missingSigned=randomUUID();
+      assert.equal(run(`select public.reserve_stream_upload_asset('${missingSigned}','${owner}','video/mp4',100,'missing-signed.mp4','story_video')`),'created');
+      const missingSignedReady=run(`update public.video_assets set status='ready',cloudflare_uid='fixture-${missingSigned}',duration_seconds=10,ready_at=now(),provider_metadata='{}' where id='${missingSigned}'`,db,true);
+      assert.notEqual(missingSignedReady.status,0);
+      assert.match(missingSignedReady.stderr,/video_assets_ready_invariants_check/);
+      run(`update public.video_assets set status='failed',error_code='fixture_invalid' where id='${missingSigned}'`);
+
+      const tooLong=randomUUID();
+      assert.equal(run(`select public.reserve_stream_upload_asset('${tooLong}','${owner}','video/mp4',100,'long.mp4','story_video')`),'created');
+      const longReady=run(`update public.video_assets set status='ready',cloudflare_uid='fixture-${tooLong}',duration_seconds=16,ready_at=now(),provider_metadata='{"require_signed_urls":true}' where id='${tooLong}'`,db,true);
+      assert.notEqual(longReady.status,0);
+      assert.match(longReady.stderr,/video_assets_ready_invariants_check/);
+      run(`update public.video_assets set status='failed',error_code='fixture_invalid' where id='${tooLong}'`);
+
+      const stream=randomUUID(),client=randomUUID();
+      assert.equal(run(`select public.reserve_stream_upload_asset('${stream}','${owner}','video/mp4',100,'story.mp4','story_video')`),'created');
+      run(`update public.video_assets set status='ready',cloudflare_uid='fixture-${stream}',duration_seconds=15,ready_at=now(),provider_metadata='{"require_signed_urls":true}' where id='${stream}'`);
+      const sid=run(as(owner,`select public.create_story_with_media('${stream}','{"version":1,"elements":[]}','${client}')`)).split('\n').at(-1).trim();
+      assert.equal(run(`select media_type||':'||story_kind from public.stories where id='${sid}'`),'video:media');
+      assert.equal(run(`select count(*) from public.video_asset_links where entity_type='story' and entity_id='${sid}' and asset_id='${stream}' and owner_id='${owner}' and slot='media' and position=0`),'1');
+      assert.equal(run(`select private.content_safety_audio_source('story','${sid}')->>'kind'`),'eligible');
+      assert.equal(run(`select private.content_safety_visual_source('story','${sid}')->>'kind'`),'eligible_stream_video');
+      assert.equal(run(`select count(*) from private.content_safety_scans scan join private.story_safety_state safety on safety.scan_id=scan.id where safety.story_id='${sid}' and scan.content_fingerprint=private.content_safety_sha256('story|'||scan.target_id::text||'|'||private.story_current_fingerprint(scan.target_id)) and scan.audio_status='pending' and scan.visual_status='pending' and scan.audio_source_asset_id='${stream}' and scan.visual_video_asset_id='${stream}'`),'1');
+
+      const stableFingerprint=run(`select private.story_current_fingerprint('${sid}')`);
+      run(`update public.video_assets set updated_at=updated_at+interval '1 second' where id='${stream}'`);
+      assert.equal(run(`select private.story_current_fingerprint('${sid}')`),stableFingerprint);
+
+      const generationBefore=Number(run(`select generation from private.story_safety_state where story_id='${sid}'`));
+      run(`update public.video_assets set duration_seconds=14 where id='${stream}'`);
+      run(`select private.story_enqueue_media_safety_v1('${sid}')`);
+      assert.equal(Number(run(`select generation from private.story_safety_state where story_id='${sid}'`)),generationBefore+1);
+      assert.equal(run(`select evidence_fingerprint=private.story_current_fingerprint(story_id) from private.story_safety_state where story_id='${sid}'`),'t');
+
+      const ambiguousImage=randomUUID();
+      run(`insert into public.media_assets(id,owner_id,provider,media_kind,purpose,visibility,bucket_name,object_key,mime_type,size_bytes,status) values('${ambiguousImage}','${owner}','r2','image','story_image','private','local-test','stories/${ambiguousImage}.jpg','image/jpeg',10,'ready')`);
+      run(`insert into public.media_asset_links(asset_id,entity_type,entity_id,slot,position) values('${ambiguousImage}','story','${sid}','media',0)`);
+      assert.equal(run(`select private.content_safety_audio_source('story','${sid}')->>'reason'`),'story_media_source_ambiguous');
+      assert.equal(run(`select private.content_safety_visual_source('story','${sid}')->>'reason'`),'story_media_source_ambiguous');
+      run(`delete from public.media_asset_links where asset_id='${ambiguousImage}'; delete from public.media_assets where id='${ambiguousImage}'; select private.story_enqueue_media_safety_v1('${sid}')`);
+
+      const scanId=run(`select scan_id from private.story_safety_state where story_id='${sid}'`);
+      const currentFingerprint=run(`select content_fingerprint from private.content_safety_scans where id='${scanId}'`);
+      run(`update private.content_safety_scans set content_fingerprint=repeat('0',64) where id='${scanId}'`);
+      const staleAudio=JSON.parse(run(`begin; select set_config('request.jwt.claim.role','service_role',true); select public.claim_content_safety_audio_scans(1); rollback;`).split('\n').at(-1));
+      assert.equal(staleAudio.some(claim=>claim.scan_id===scanId),false);
+      const staleVisual=JSON.parse(run(`begin; select private.claim_content_safety_visual_scans_for_prompts(1,array['visual-safety-v1']); rollback;`).split('\n').at(-1));
+      assert.equal(staleVisual.some(claim=>claim.scan_id===scanId),false);
+      run(`update private.content_safety_scans set content_fingerprint='${currentFingerprint}' where id='${scanId}'`);
+
+      const stale=run(`update private.content_safety_scans scan set content_fingerprint=repeat('0',64),visual_status='analyzed' from private.story_safety_state safety where safety.story_id='${sid}' and safety.scan_id=scan.id`,db,true);
+      assert.notEqual(stale.status,0);
+      assert.match(stale.stderr,/story_safety_stale_evidence/);
+      run(`update private.content_safety_scans scan set text_status='analyzed',audio_status='analyzed',visual_status='analyzed' from private.story_safety_state safety where safety.story_id='${sid}' and safety.scan_id=scan.id`);
+      assert.equal(run(`select state from private.story_safety_state where story_id='${sid}'`),'review');
+      fail(viewer,`select public.get_story_interactive_state('${sid}')`,/story_not_visible/);
+
+      run(as(owner,`select public.delete_story('${sid}')`));
+      assert.equal(run(`select status from public.video_assets where id='${stream}'`),'delete_pending');
+      assert.equal(run(`select count(*) from public.video_asset_links where asset_id='${stream}'`),'0');
+      run(`update public.video_assets set upload_expires_at=now()-interval '1 hour' where id='${stream}'`);
+      assert.equal(run(`select purpose||':'||operation from public.cleanup_stale_creator_premium_video_records(10) where id='${stream}'`),'story_video:delete');
     });
     await t.test('RLS, ACL, fixed paths and sanitized revisions',()=>{
       fail(viewer,'select * from private.story_interactive_responses',/permission denied/);

@@ -1,6 +1,7 @@
 import { admin,json } from '../_shared/mediaAuth.ts';
 import {
-  CREATOR_PREMIUM_STREAM_PURPOSE,reconcilePremiumStreamVideo,
+  STORY_STREAM_PURPOSE,isPrivateStreamPurpose,privateStreamSignedUrlsErrorCode,
+  reconcilePrivateStreamVideo,
 } from '../_shared/premiumStreamSecurity.ts';
 import {
   isUuid,monotonicStreamUpdates,reconcileStreamVideo,streamCustomerCode,
@@ -32,17 +33,22 @@ Deno.serve(async(req)=>{
   if(!asset) return json({success:true},202);
   if(!asset.cloudflare_uid||uid!==asset.cloudflare_uid) return json({success:true},202);
   if(['deleted','delete_pending'].includes(asset.status)) return json({success:true});
-  const premium=asset.purpose===CREATOR_PREMIUM_STREAM_PURPOSE;
-  const updates=premium
-    ? reconcilePremiumStreamVideo(video,asset.cloudflare_uid,Number(asset.max_duration_seconds??60))
+  const privatePurpose=isPrivateStreamPurpose(asset.purpose)?asset.purpose:null;
+  const privateMaxDuration=privatePurpose===STORY_STREAM_PURPOSE
+    ? 15 // story_video provider-trusted ceiling
+    : Number(asset.max_duration_seconds??60);
+  const updates=privatePurpose
+    ? reconcilePrivateStreamVideo(
+      video,asset.cloudflare_uid,privatePurpose,privateMaxDuration,
+    )
     : reconcileStreamVideo(
       video,streamCustomerCode(),asset.cloudflare_uid,Number(asset.max_duration_seconds??60),
     );
   let allowReadySecurityFailure=false;
   if(asset.status==='ready') {
-    if(premium) {
+    if(privatePurpose) {
       if(updates.status!=='ready') {
-        if(updates.error_code!=='creator_premium_stream_signed_urls_required'
+        if(updates.error_code!==privateStreamSignedUrlsErrorCode(privatePurpose)
           ||video.requireSignedURLs!==false) {
           return json({success:true});
         }
