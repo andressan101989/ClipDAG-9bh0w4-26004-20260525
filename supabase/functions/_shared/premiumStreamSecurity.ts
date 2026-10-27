@@ -21,6 +21,7 @@ type PrivateStreamGrantInput={
   cloudflareUid:string;
   customerCode:string;
   nowSeconds?:number;
+  maximumExpiresAtSeconds?:number;
   keyId?:string;
   privateJwkB64?:string;
 };
@@ -174,7 +175,14 @@ async function createPrivateStreamToken(input:PrivateStreamGrantInput,downloadab
   if(!Number.isSafeInteger(now)||now<=0) {
     throw new StreamProviderError('stream_signing_clock_invalid',500);
   }
-  const expires=now+PREMIUM_STREAM_TOKEN_TTL_SECONDS;
+  const defaultExpires=now+PREMIUM_STREAM_TOKEN_TTL_SECONDS;
+  const maximumExpires=input.maximumExpiresAtSeconds;
+  if(maximumExpires!==undefined
+    &&(!Number.isSafeInteger(maximumExpires)||maximumExpires<=now)) {
+    throw new StreamProviderError('stream_signing_expiry_invalid',500);
+  }
+  const expires=maximumExpires===undefined
+    ?defaultExpires:Math.min(defaultExpires,maximumExpires);
   const header=encodeJson({alg:'RS256',kid:keyId});
   const claims=encodeJson({
     sub:uid,

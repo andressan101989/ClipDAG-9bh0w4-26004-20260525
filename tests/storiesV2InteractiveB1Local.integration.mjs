@@ -281,6 +281,57 @@ test('B1 disposable PostgreSQL behavior and isolation', {skip:!enabled}, async t
       assert.equal(staleVisual.some(claim=>claim.scan_id===scanId),false);
       run(`update private.content_safety_scans set content_fingerprint='${currentFingerprint}' where id='${scanId}'`);
 
+      const coreTarget=randomUUID(),coreScan=randomUUID();
+      run(`
+        insert into private.content_safety_scans(
+          id,target_type,target_id,owner_user_id,content_fingerprint,requested_reason,
+          text_status,audio_status,visual_status,reports_status,visual_prompt_version
+        ) values(
+          '${coreScan}','video','${coreTarget}','${owner}',repeat('1',64),'lane-fairness',
+          'analyzed','pending','pending','analyzed','visual-safety-v1'
+        );
+        create or replace function private.claim_content_safety_audio_scans_b1_core(p_limit integer default 1)
+        returns jsonb language plpgsql security definer set search_path='' as $lane$
+        declare v_id uuid;
+        begin
+          select scan.id into v_id from private.content_safety_scans scan
+          where scan.target_type='video' and scan.audio_status='pending'
+            and (scan.audio_started_at is null or scan.audio_started_at<pg_catalog.clock_timestamp()-interval '10 minutes')
+          order by scan.id for update of scan skip locked limit 1;
+          if not found then return '[]'::jsonb;end if;
+          update private.content_safety_scans set audio_started_at=pg_catalog.clock_timestamp()
+          where id=v_id;
+          return pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+            'scan_id',v_id,'target_type','video','lane','core'));
+        end;$lane$;
+        create or replace function private.claim_content_safety_visual_scans_for_prompts_b1_core(
+          p_limit integer,p_prompt_versions text[]
+        ) returns jsonb language plpgsql security definer set search_path='' as $lane$
+        declare v_id uuid;
+        begin
+          select scan.id into v_id from private.content_safety_scans scan
+          where scan.target_type='video' and scan.visual_status='pending'
+            and (scan.visual_started_at is null or scan.visual_started_at<pg_catalog.clock_timestamp()-interval '10 minutes')
+          order by scan.id for update of scan skip locked limit 1;
+          if not found then return '[]'::jsonb;end if;
+          update private.content_safety_scans set visual_started_at=pg_catalog.clock_timestamp()
+          where id=v_id;
+          return pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+            'scan_id',v_id,'target_type','video','lane','core'));
+        end;$lane$;
+        insert into private.story_b1_worker_lane_state(worker_name,next_lane) values
+          ('audio','story'),('visual','story')
+        on conflict(worker_name) do update set next_lane=excluded.next_lane;
+      `);
+      const storyAudio=JSON.parse(run(`begin; select set_config('request.jwt.claim.role','service_role',true); select public.claim_content_safety_audio_scans(1); commit;`).split('\n').at(-1));
+      run('select pg_catalog.txid_current()');
+      const coreAudio=JSON.parse(run(`begin; select set_config('request.jwt.claim.role','service_role',true); select public.claim_content_safety_audio_scans(1); commit;`).split('\n').at(-1));
+      assert.deepEqual([storyAudio[0].target_type,coreAudio[0].target_type],['story','video']);
+      const storyVisual=JSON.parse(run(`select private.claim_content_safety_visual_scans_for_prompts(1,array['visual-safety-v1'])`).split('\n').at(-1));
+      run('select pg_catalog.txid_current()');
+      const coreVisual=JSON.parse(run(`select private.claim_content_safety_visual_scans_for_prompts(1,array['visual-safety-v1'])`).split('\n').at(-1));
+      assert.deepEqual([storyVisual[0].target_type,coreVisual[0].target_type],['story','video']);
+
       const stale=run(`update private.content_safety_scans scan set content_fingerprint=repeat('0',64),visual_status='analyzed' from private.story_safety_state safety where safety.story_id='${sid}' and safety.scan_id=scan.id`,db,true);
       assert.notEqual(stale.status,0);
       assert.match(stale.stderr,/story_safety_stale_evidence/);
@@ -291,8 +342,44 @@ test('B1 disposable PostgreSQL behavior and isolation', {skip:!enabled}, async t
       run(as(owner,`select public.delete_story('${sid}')`));
       assert.equal(run(`select status from public.video_assets where id='${stream}'`),'delete_pending');
       assert.equal(run(`select count(*) from public.video_asset_links where asset_id='${stream}'`),'0');
-      run(`update public.video_assets set upload_expires_at=now()-interval '1 hour' where id='${stream}'`);
-      assert.equal(run(`select purpose||':'||operation from public.cleanup_stale_creator_premium_video_records(10) where id='${stream}'`),'story_video:delete');
+      run(`
+        update public.video_assets set upload_expires_at=now()-interval '1 hour' where id='${stream}';
+        insert into public.video_assets(
+          owner_id,provider,purpose,visibility,status,cloudflare_uid,mime_type,size_bytes,
+          original_filename,max_duration_seconds,upload_expires_at,lifecycle_contract_version,
+          next_cleanup_attempt_at
+        ) select '${owner}','cloudflare_stream','creator_premium_video','private','delete_pending',
+          'core-cleanup-'||n,'video/mp4',100,'core-'||n||'.mp4',180,
+          now()-interval '1 hour',1,now()
+        from pg_catalog.generate_series(1,6) n;
+        create or replace function private.cleanup_stale_stream_video_records_b1_core(p_limit integer default 50)
+        returns table(id uuid,cloudflare_uid text,purpose text,delete_attempts integer,
+          operation text,failure_exhausts boolean)
+        language plpgsql security definer set search_path='' as $lane$
+        begin
+          return query
+          with claimed as(
+            select asset.id from public.video_assets asset
+            where asset.purpose='creator_premium_video' and asset.status='delete_pending'
+              and asset.next_cleanup_attempt_at<=pg_catalog.clock_timestamp()
+            order by asset.created_at,asset.id for update of asset skip locked limit p_limit
+          )
+          update public.video_assets asset set delete_attempts=asset.delete_attempts+1,
+            next_cleanup_attempt_at=pg_catalog.clock_timestamp()+interval '1 hour'
+          from claimed where asset.id=claimed.id
+          returning asset.id,asset.cloudflare_uid,asset.purpose,asset.delete_attempts,
+            'delete'::text,false;
+        end;$lane$;
+        insert into private.story_b1_worker_lane_state(worker_name,next_lane)
+        values('stream_cleanup','story')
+        on conflict(worker_name) do update set next_lane=excluded.next_lane;
+      `);
+      const cleanupClaims=JSON.parse(run(`select coalesce(pg_catalog.jsonb_agg(row_to_json(claim) order by claim.purpose,claim.id),'[]'::jsonb)
+        from public.cleanup_stale_creator_premium_video_records(4) claim`).split('\n').at(-1));
+      assert.equal(cleanupClaims.length,4);
+      assert.equal(cleanupClaims.filter(claim=>claim.purpose==='story_video').length,1);
+      assert.equal(cleanupClaims.filter(claim=>claim.purpose==='creator_premium_video').length,3);
+      assert.equal(cleanupClaims.find(claim=>claim.id===stream)?.operation,'delete');
     });
     await t.test('RLS, ACL, fixed paths and sanitized revisions',()=>{
       fail(viewer,'select * from private.story_interactive_responses',/permission denied/);

@@ -1329,6 +1329,40 @@ begin
 end;
 $$;
 
+-- A durable cursor, serialized per worker, keeps the established and Story
+-- queues progressing even when unrelated transactions consume XIDs between
+-- worker polls. It is scheduling metadata only; the canonical claim and
+-- cleanup RPCs remain the sole authorities for their operations.
+create table private.story_b1_worker_lane_state(
+  worker_name text primary key check(worker_name in('audio','visual','stream_cleanup')),
+  next_lane text not null check(next_lane in('story','core')),
+  updated_at timestamptz not null default pg_catalog.clock_timestamp()
+);
+alter table private.story_b1_worker_lane_state enable row level security;
+alter table private.story_b1_worker_lane_state force row level security;
+revoke all on private.story_b1_worker_lane_state from public,anon,authenticated,service_role;
+
+create function private.story_b1_take_worker_lane_v1(p_worker_name text)
+returns text language plpgsql security definer set search_path='' as $$
+declare v_lane text;
+begin
+  if p_worker_name not in('audio','visual','stream_cleanup') then
+    raise exception using errcode='22023',message='invalid_story_worker_lane';end if;
+  insert into private.story_b1_worker_lane_state(worker_name,next_lane)
+  values(p_worker_name,'story') on conflict(worker_name) do nothing;
+  select state.next_lane into v_lane
+  from private.story_b1_worker_lane_state state
+  where state.worker_name=p_worker_name for update;
+  update private.story_b1_worker_lane_state set
+    next_lane=case v_lane when 'story' then 'core' else 'story' end,
+    updated_at=pg_catalog.clock_timestamp()
+  where worker_name=p_worker_name;
+  return v_lane;
+end;
+$$;
+revoke all on function private.story_b1_take_worker_lane_v1(text)
+  from public,anon,authenticated,service_role;
+
 -- Audio claims use the same public RPC. Story direct video is claimed from the
 -- private signed Stream lane; all historical targets delegate to the prior
 -- implementation unchanged.
@@ -1342,9 +1376,7 @@ begin
   if auth.role()<>'service_role' then
     raise exception using errcode='42501',message='content_safety_service_role_required';end if;
   if p_limit<1 or p_limit>1 then raise exception using errcode='22023',message='invalid_audio_claim_limit';end if;
-  -- Alternate claim lanes by transaction so a sustained Story backlog cannot
-  -- starve the established Video/Premium workers (or vice versa).
-  v_story_first:=pg_catalog.mod(pg_catalog.txid_current(),2)=0;
+  v_story_first:=private.story_b1_take_worker_lane_v1('audio')='story';
   if not v_story_first then
     v_core:=private.claim_content_safety_audio_scans_b1_core(p_limit);
     if pg_catalog.jsonb_array_length(v_core)>0 then return v_core;end if;
@@ -1465,7 +1497,7 @@ begin
   if p_limit<1 or p_limit>1 then raise exception using errcode='22023',message='invalid_visual_claim_limit';end if;
   if not ('visual-safety-v1'=any(p_prompt_versions)) then
     return private.claim_content_safety_visual_scans_for_prompts_b1_core(p_limit,p_prompt_versions);end if;
-  v_story_first:=pg_catalog.mod(pg_catalog.txid_current(),2)=0;
+  v_story_first:=private.story_b1_take_worker_lane_v1('visual')='story';
   if not v_story_first then
     v_core:=private.claim_content_safety_visual_scans_for_prompts_b1_core(p_limit,p_prompt_versions);
     if pg_catalog.jsonb_array_length(v_core)>0 then return v_core;end if;
@@ -1971,12 +2003,30 @@ returns table(id uuid,cloudflare_uid text,purpose text,delete_attempts integer,
   operation text,failure_exhausts boolean)
 language plpgsql security definer set search_path='' as $$
 declare v_limit integer:=greatest(1,least(coalesce(p_limit,50),100));
-  v_used integer:=0;v_claim record;v_reaper record;
+  v_core_budget integer;v_story_budget integer;v_batch integer:=0;
+  v_total integer:=0;v_story_returned integer:=0;v_story_first boolean;
+  v_claim record;v_reaper record;
 begin
-  return query select * from private.cleanup_stale_stream_video_records_b1_core(v_limit);
-  get diagnostics v_used=row_count;
-  v_limit:=v_limit-v_used;
-  if v_limit<=0 then return;end if;
+  v_story_first:=private.story_b1_take_worker_lane_v1('stream_cleanup')='story';
+  if v_limit=1 then
+    v_core_budget:=case when v_story_first then 0 else 1 end;
+  else
+    v_core_budget:=v_limit/2;
+    if not v_story_first and pg_catalog.mod(v_limit,2)=1 then
+      v_core_budget:=v_core_budget+1;end if;
+  end if;
+  v_story_budget:=v_limit-v_core_budget;
+
+  if v_core_budget>0 then
+    return query select *
+    from private.cleanup_stale_stream_video_records_b1_core(v_core_budget);
+    get diagnostics v_batch=row_count;
+    v_total:=v_total+v_batch;
+    -- Lend unused core capacity to Story while preserving the hard total cap.
+    v_story_budget:=v_story_budget+(v_core_budget-v_batch);
+  end if;
+  v_story_budget:=least(v_story_budget,v_limit-v_total);
+  if v_story_budget<=0 then return;end if;
 
   with abandoned as(
     select asset.id from public.video_assets asset
@@ -1985,7 +2035,7 @@ begin
       and asset.status in('pending','uploading','processing','ready','failed')
       and asset.created_at<pg_catalog.clock_timestamp()-interval '24 hours'
       and not exists(select 1 from public.video_asset_links link where link.asset_id=asset.id)
-    order by asset.created_at,asset.id for update of asset skip locked limit v_limit
+    order by asset.created_at,asset.id for update of asset skip locked limit v_story_budget
   ) update public.video_assets asset set status='delete_pending',hls_url=null,dash_url=null,
     thumbnail_url=null,error_code='story_video_abandoned',error_message=null,
     delete_attempts=0,post_delete_verification_attempts=0,
@@ -2009,7 +2059,7 @@ begin
               and asset.provider_absence_recheck_after<=pg_catalog.clock_timestamp()))
         and not exists(select 1 from public.video_asset_links link where link.asset_id=asset.id)
       order by coalesce(asset.provider_absence_recheck_after,asset.next_cleanup_attempt_at,asset.updated_at),asset.id
-      for update of asset skip locked limit v_limit
+      for update of asset skip locked limit v_story_budget
     ) update public.video_assets asset set
       error_code=case when expired_final_claim.status='deleted'
         then 'stream_post_delete_verification_exhausted' else 'stream_cleanup_attempts_exhausted' end,
@@ -2044,7 +2094,7 @@ begin
               and asset.provider_absence_recheck_after<=pg_catalog.clock_timestamp()))
         and not exists(select 1 from public.video_asset_links link where link.asset_id=asset.id)
       order by coalesce(asset.provider_absence_recheck_after,asset.next_cleanup_attempt_at,asset.created_at),asset.id
-      for update of asset skip locked limit v_limit
+      for update of asset skip locked limit v_story_budget
     ) update public.video_assets asset set
       delete_attempts=asset.delete_attempts+1,
       post_delete_verification_attempts=case when claimed.status='deleted'
@@ -2077,8 +2127,15 @@ begin
     id:=v_claim.claimed_id;cloudflare_uid:=v_claim.claimed_provider_identity;
     purpose:=v_claim.claimed_purpose;delete_attempts:=v_claim.claimed_attempt;
     operation:=v_claim.claimed_operation;failure_exhausts:=v_claim.claimed_failure_exhausts;
-    return next;
+    return next;v_story_returned:=v_story_returned+1;
   end loop;
+  v_total:=v_total+v_story_returned;
+  -- If the reserved Story share was idle, let the existing lane fill the
+  -- remaining slots without ever exceeding the caller's requested batch.
+  if v_total<v_limit then
+    return query select *
+    from private.cleanup_stale_stream_video_records_b1_core(v_limit-v_total);
+  end if;
 end;
 $$;
 revoke all on function public.cleanup_stale_creator_premium_video_records(integer)

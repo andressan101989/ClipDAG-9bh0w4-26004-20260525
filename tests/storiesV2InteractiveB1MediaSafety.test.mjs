@@ -40,6 +40,8 @@ test('Story Stream is private, CAS-fenced, signed, and never exposed by raw view
   assert.match(webhook, /story_video/);
   assert.match(webhook, /reconcilePrivateStreamVideo/);
   assert.match(playback, /story_id/);
+  assert.match(playback, /select\(['"]id,user_id,media_type,expires_at['"]\)/);
+  assert.match(playback, /maximumExpiresAtSeconds/);
   assert.match(playback, /createPrivateStreamPlaybackGrant/);
   assert.match(playback, /story_video/);
   assert.match(playback, /entity_type[^\n]*story/);
@@ -59,8 +61,20 @@ test('Story media is hydrated after binding and multimodal evidence remains fail
   assert.match(migration, /content_safety_content_version_changed|story_safety_stale_evidence/);
   assert.match(migration, /missing_owner_approved_story_policy/);
   assert.doesNotMatch(migration, /update private\.story_safety_state[\s\S]{0,120}state\s*=\s*'passed'/i);
-  assert.match(migration, /txid_current\(\)[\s\S]{0,120}(?:claim_content_safety_audio_scans_b1_core|claim_content_safety_visual_scans_for_prompts_b1_core)/);
+  assert.match(migration, /story_b1_take_worker_lane_v1\('audio'\)/);
+  assert.match(migration, /story_b1_take_worker_lane_v1\('visual'\)/);
+  assert.doesNotMatch(migration, /mod\s*\(\s*pg_catalog\.txid_current\(\)\s*,\s*2\s*\)/i);
   assert.match(scanner, /target_type[^\n]*story|targetType[^\n]*story/);
+});
+
+test('Story worker lanes and Stream cleanup use durable bounded fairness', () => {
+  assert.match(migration, /create table private\.story_b1_worker_lane_state/);
+  assert.match(migration, /select state\.next_lane[\s\S]{0,200}for update/i);
+  assert.match(migration, /story_b1_take_worker_lane_v1\('stream_cleanup'\)/);
+  assert.match(migration, /v_story_budget/);
+  assert.match(migration, /v_core_budget/);
+  assert.match(migration, /v_total\s*<\s*v_limit/);
+  assert.doesNotMatch(migration, /sustained Story backlog cannot\s*\n\s*-- starve/i);
 });
 
 test('Story Content Safety signs private sources and refuses incomplete modalities', () => {
