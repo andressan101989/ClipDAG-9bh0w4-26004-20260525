@@ -322,7 +322,7 @@ test('Stories Safety C1 policy adds an exact inactive one-migration zero-Edge tr
     from_phase: 'stories_v2_interactive_b1_fail_closed',
     to_phase: 'stories_v2_safety_c1_technical_prep_fail_closed',
     baseline_sha: '01dd6467484d11ad11aeb611374437e212fb7401',
-    reviewed_source_sha: '65802c2f59e106eb5566e9911032acd5d87e328d',
+    reviewed_source_sha: '5ba49a3b118d6fde4eea6d97ec4c193f6f48a64a',
     integration_base_sha: '69ba61b04a1329231dcc9f22363f1c273e5b524c',
     migration_path: STORIES_SAFETY_C1_MIGRATION_PATH,
     migration_blob: 'c6c10913db7bb71411436835c923c14c129f51b7',
