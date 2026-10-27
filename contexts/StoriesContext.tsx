@@ -9,6 +9,7 @@ import {
   EMPTY_STORY_COMPOSITION,
   type StoryComposition,
 } from '@/components/feature/storyComposition';
+import type { StoryInteractiveSubmissionDefinition } from '@/components/feature/storyInteractiveTypes';
 
 export type StorySharedContent =
   | { status: 'unavailable' }
@@ -30,11 +31,13 @@ interface StoriesContextType {
     mediaAssetId: string,
     composition: StoryComposition,
     clientStoryId: string,
+    interactiveDefinitions?: StoryInteractiveSubmissionDefinition[],
   ) => Promise<string | undefined>;
   addSharedStory: (
     videoId: string,
     composition: StoryComposition,
     clientStoryId: string,
+    interactiveDefinitions?: StoryInteractiveSubmissionDefinition[],
   ) => Promise<string>;
   getStorySharedContent: (storyId: string) => Promise<StorySharedContent>;
   markStoryViewed: (storyId: string) => Promise<void>;
@@ -393,6 +396,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     mediaAssetId: string,
     composition: StoryComposition,
     clientStoryId: string,
+    interactiveDefinitions: StoryInteractiveSubmissionDefinition[] = [],
   ) => {
     if (!user) return undefined;
     const supabase = supabaseRef.current;
@@ -401,6 +405,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       p_asset_id: mediaAssetId,
       p_composition: composition,
       p_client_story_id: clientStoryId,
+      p_interactive_definitions: interactiveDefinitions,
     });
     if (error || typeof data !== 'string') {
       console.warn('[StoriesContext] story persistence failed', {
@@ -557,6 +562,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     videoId: string,
     composition: StoryComposition,
     clientStoryId: string,
+    interactiveDefinitions: StoryInteractiveSubmissionDefinition[] = [],
   ): Promise<string> => {
     if (!user) throw new Error('STORY_CREATE_NOT_AUTHENTICATED');
     const supabase = supabaseRef.current;
@@ -565,6 +571,7 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       p_video_id: videoId,
       p_composition: composition,
       p_client_story_id: clientStoryId,
+      p_interactive_definitions: interactiveDefinitions,
     });
     if (error || typeof data !== 'string') {
       console.warn('[StoriesContext] shared Story persistence failed', {

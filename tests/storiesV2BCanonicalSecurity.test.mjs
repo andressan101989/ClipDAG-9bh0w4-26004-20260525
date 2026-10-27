@@ -75,13 +75,17 @@ test('raw Story creation and excessive client table grants are removed', () => {
   assert.doesNotMatch(feed, /from\('stories'\)\.insert/);
 });
 
-test('photo and video callers share the canonical R2 media pipeline', () => {
+test('photo uses canonical private R2 and video uses canonical private Stream without parallel persistence', () => {
   assert.match(context, /rpc\('create_story_with_media'/);
   assert.match(feed, /uploadMediaFromUri\(/);
-  assert.match(feed, /purpose: isVideo \? 'story_video' : 'story_image'/);
+  assert.match(feed, /purpose: 'story_image'/);
   assert.match(feed, /visibility: 'private'/);
-  assert.match(feed, /addStory\(uploadedAssetId, composition, clientStoryId\)/);
-  assert.match(feed, /deleteMediaAsset\(uploadedAssetId\)/);
+  assert.match(feed, /createStoryStreamUpload\(/);
+  assert.match(feed, /uploadStoryVideoWithTus\(/);
+  assert.match(feed, /waitForStoryStreamReady\(/);
+  assert.match(feed, /addStory\([\s\S]*uploadedAssetId,[\s\S]*publication\.composition,[\s\S]*clientStoryId,[\s\S]*publication\.interactiveDefinitions/);
+  assert.match(feed, /deleteMediaAsset\(uploadedAttempt\.assetId\)/);
+  assert.match(feed, /deleteStreamVideo\(uploadedAttempt\.assetId\)/);
   assert.doesNotMatch(feed, /uploadFileFromUri/);
   assert.doesNotMatch(feed, /storage\.from/);
   assert.doesNotMatch(context, /Date\.now\(\) \+ 24 \* 60 \* 60|expires_at:\s*expires/i);

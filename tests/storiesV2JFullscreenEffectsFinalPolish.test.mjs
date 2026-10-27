@@ -182,17 +182,19 @@ test('single editor is safe-area and keyboard aware with visual selection and ac
   assert.equal((editor.match(/export function StoryEditor/g) ?? []).length, 1);
   assert.match(editor, /KeyboardAvoidingView/);
   assert.match(editor, /useSafeAreaInsets/);
-  assert.match(editor, /useWindowDimensions/);
+  assert.match(editor, /onLayout=\{handleStageLayout\}/);
+  assert.match(editor, /safeInsets/);
+  assert.doesNotMatch(editor, /screenHeight - headerHeight - toolbarHeight/);
   assert.match(editor, /accessibilityLabel="Añadir texto"/);
   assert.match(editor, /accessibilityLabel="Eliminar elemento"/);
   assert.match(editor, /selected.*borderColor: Colors\.primaryLight/s);
 });
 
-test('editor behavior preserves text, sticker, drag, pinch and validation contracts', () => {
+test('editor behavior preserves text, sticker, drag, two-finger transform and validation contracts', () => {
   assert.match(editor, /PanResponder\.create/);
-  assert.match(editor, /start\.current\.scale \* pinch \/ start\.current\.pinch/);
-  assert.match(editor, /gesture\.dx \/ CANVAS_W/);
-  assert.match(editor, /gesture\.dy \/ CANVAS_H/);
+  assert.match(editor, /deriveStoryGestureTransform/);
+  assert.match(editor, /currentTouches\.length >= 2/);
+  assert.match(editor, /accessibilityActions/);
   assert.match(editor, /STORY_MAX_ELEMENTS = 32/);
   assert.match(editor, /STORY_MAX_TEXT_ELEMENTS = 10/);
   assert.match(editor, /STORY_MAX_STICKER_ELEMENTS = 24/);

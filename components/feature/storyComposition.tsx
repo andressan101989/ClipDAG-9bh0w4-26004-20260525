@@ -1,40 +1,31 @@
 import React from 'react';
 import { Text, View, StyleSheet } from 'react-native';
+import {
+  clampStoryElementTransform,
+} from './storyStageGeometry';
+import type {
+  StoryComposition,
+  StoryCompositionElement,
+  StoryStaticElement,
+  StoryTextSize,
+} from './storyInteractiveTypes';
+
+export type {
+  StoryComposition,
+  StoryCompositionElement,
+  StoryInteractivePlacement,
+  StoryStaticElement,
+  StoryStickerElement,
+  StoryTextElement,
+  StoryTextSize,
+} from './storyInteractiveTypes';
 
 export const STORY_STICKERS = ['❤️', '😂', '😮', '😢', '🔥', '👏', '✨', '⭐', '💯', '🎉', '😍'] as const;
 export const STORY_TEXT_COLORS = ['#FFFFFF', '#111111', '#FF2D78', '#7C5CFF', '#00D4FF', '#FFD60A'] as const;
-export type StoryTextSize = 'small' | 'medium' | 'large';
-
-interface StoryElementBase {
-  id: string;
-  x: number;
-  y: number;
-  scale: number;
-  rotation: number;
-}
-
-export interface StoryTextElement extends StoryElementBase {
-  type: 'text';
-  text: string;
-  color: typeof STORY_TEXT_COLORS[number];
-  align: 'left' | 'center' | 'right';
-  size: StoryTextSize;
-}
-
-export interface StoryStickerElement extends StoryElementBase {
-  type: 'sticker';
-  value: typeof STORY_STICKERS[number];
-}
-
-export type StoryCompositionElement = StoryTextElement | StoryStickerElement;
-export interface StoryComposition { version: 1; elements: StoryCompositionElement[] }
 export const EMPTY_STORY_COMPOSITION: StoryComposition = { version: 1, elements: [] };
 
 const TEXT_SIZE: Record<StoryTextSize, number> = { small: 22, medium: 32, large: 44 };
-export const STORY_ELEMENT_MIN_SCALE = 0.5;
-export const STORY_ELEMENT_MAX_SCALE = 4;
-
-export function storyElementFrame(element: StoryCompositionElement, canvasWidth: number) {
+export function storyElementFrame(element: StoryStaticElement, canvasWidth: number) {
   if (element.type === 'sticker') return { width: 88, minHeight: 88 };
   return {
     width: Math.min(300, Math.max(220, canvasWidth - 48)),
@@ -42,31 +33,29 @@ export function storyElementFrame(element: StoryCompositionElement, canvasWidth:
   };
 }
 
-export function clampStoryScale(scale: number) {
-  return Math.max(STORY_ELEMENT_MIN_SCALE, Math.min(STORY_ELEMENT_MAX_SCALE, scale));
-}
+export { clampStoryScale } from './storyStageGeometry';
 
 export function clampStoryElementPosition(
-  element: StoryCompositionElement,
+  element: StoryStaticElement,
   canvasWidth: number,
   canvasHeight: number,
   x: number,
   y: number,
 ) {
   const frame = storyElementFrame(element, canvasWidth);
-  const halfWidth = Math.min(0.5, (frame.width * element.scale) / (2 * canvasWidth));
-  const halfHeight = Math.min(0.5, (frame.minHeight * element.scale) / (2 * canvasHeight));
-  return {
-    x: Math.max(halfWidth, Math.min(1 - halfWidth, x)),
-    y: Math.max(halfHeight, Math.min(1 - halfHeight, y)),
-  };
+  const clamped = clampStoryElementTransform(
+    { x, y, scale: element.scale, rotation: element.rotation },
+    { width: frame.width, height: frame.minHeight },
+    { width: canvasWidth, height: canvasHeight },
+  );
+  return { x: clamped.x, y: clamped.y };
 }
 
 export function StoryCompositionElementContent({
   element,
   canvasWidth,
 }: {
-  element: StoryCompositionElement;
+  element: StoryStaticElement;
   canvasWidth: number;
 }) {
   const frame = storyElementFrame(element, canvasWidth);
@@ -98,9 +87,10 @@ export function StoryCompositionOverlay({
   width: number;
   height: number;
 }) {
+  const elements: StoryCompositionElement[] = composition.elements;
   return (
     <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.overlay]}>
-      {composition.elements.map(element => (
+      {elements.filter((element): element is StoryStaticElement => element.type !== 'interactive').map(element => (
         <View key={element.id} style={[
           styles.element,
           {

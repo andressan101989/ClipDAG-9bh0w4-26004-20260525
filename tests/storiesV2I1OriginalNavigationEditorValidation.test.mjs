@@ -140,8 +140,8 @@ test('editor total limit matches the server limit of 32', () => {
   assert.match(migration, /jsonb_array_length\(p_composition -> 'elements'\) > 32/i);
 });
 
-test('a thirty-third element is rejected locally for text and stickers', () => {
-  assert.equal((editor.match(/composition\.elements\.length >= STORY_MAX_ELEMENTS/g) ?? []).length, 2);
+test('a thirty-third element is rejected locally for text, stickers and interactions', () => {
+  assert.equal((editor.match(/composition\.elements\.length >= STORY_MAX_ELEMENTS/g) ?? []).length, 3);
 });
 
 test('the ten-text limit is preserved', () => {
@@ -170,7 +170,8 @@ test('empty text is removed when editing finishes', () => {
 test('whitespace-only text cannot reach onPublish', () => {
   assert.match(editor, /publishableComposition/);
   assert.match(editor, /element\.type !== 'text' \|\| element\.text\.trim\(\)\.length > 0/);
-  assert.match(editor, /onPublish\(source, publishableComposition, clientStoryIdRef\.current\)/);
+  assert.match(editor, /buildStoryInteractivePublication\(publishableComposition, interactiveDrafts\)/);
+  assert.match(editor, /onPublish\(source, publication, clientStoryIdRef\.current\)/);
 });
 
 test('valid text remains part of the publishable composition', () => {
