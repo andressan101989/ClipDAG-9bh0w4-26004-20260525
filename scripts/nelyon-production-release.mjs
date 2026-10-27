@@ -383,6 +383,555 @@ export const STORIES_B1_RELEASE_TRANSITION = Object.freeze({
   requires_separate_baseline_promotion: true,
 });
 
+export const STORIES_SAFETY_C2_RELEASE_TRANSITION = Object.freeze({
+  "id": "stories-v2-safety-c2-publish-first-async-review-v1",
+  "from_phase": "stories_v2_safety_c1_technical_prep_fail_closed",
+  "to_phase": "stories_v2_safety_c2_publish_first_async_review",
+  "baseline_sha": "e4c7199da157446f455822ea96e812784354b1db",
+  "reviewed_source_sha": "244d458bb55b73782f4e7a32004b764ce622702e",
+  "integration_base_sha": "25ce25cd23226af0ff729adc618380436d432501",
+  "approved_sha_ancestry": "verified_integration_base",
+  "migration_path": "supabase/migrations/20261027191918_stories_v2_safety_c2_publish_first_async_review.sql",
+  "migration_blob": "a621158297c9d75b56fe739f1c7dd72c8b786c97",
+  "migration_sha256": "4f83efa4087650788f4a975d88489a3d407a66cc421c951da6cd77c1ec8701d1",
+  "productive_paths": [
+    "supabase/functions/get-stream-playback/index.ts",
+    "supabase/migrations/20261027191918_stories_v2_safety_c2_publish_first_async_review.sql"
+  ],
+  "path_attestations": [
+    {
+      "path": "supabase/functions/get-stream-playback/index.ts",
+      "blob": "1e1d63a7585ea4d2aff4e42cd985b560976f6f7d",
+      "sha256": "1d9bde70fdd575503b75819b0776029990ec786691f89e2f26bd185953ef23d5"
+    },
+    {
+      "path": "supabase/migrations/20261027191918_stories_v2_safety_c2_publish_first_async_review.sql",
+      "blob": "a621158297c9d75b56fe739f1c7dd72c8b786c97",
+      "sha256": "4f83efa4087650788f4a975d88489a3d407a66cc421c951da6cd77c1ec8701d1"
+    }
+  ],
+  "functions": [
+    {
+      "name": "get-stream-playback",
+      "source_sha256": "2b790fa26aa2dadb025c55365340f8dd3085f37cc839040055b3254bf31bdfd9",
+      "verify_jwt": true
+    }
+  ],
+  "config_changed": false,
+  "policy_artifact": {
+    "path": "docs/stories-v2-content-safety-policy-publish-first-v1.json",
+    "blob": "054d4b58d81028fbd05dfa29e24326196db65f70",
+    "sha256": "cda5960571c33b88e3b22a7d442aeb6b5cee9250b2d0a298b8907a72ba083fcf",
+    "policy_id": "nelyon.stories.general.safety.publish_first.v1"
+  },
+  "preserved_paths": [
+    {
+      "path": "supabase/functions/content-safety-scan/index.ts",
+      "blob": "80a32f5b51d1eb037cf23cb6f96243bce40ad6d3",
+      "sha256": "5d044c389d86581bdcaf5e705371485dc405e660b8ea2637063ec12dfd5001f9"
+    },
+    {
+      "path": "supabase/functions/content-safety-scan/audioPipeline.mjs",
+      "blob": "70ac9bf3a1f0db98b616acd2556003de29995ca7",
+      "sha256": "568e3f21a9af69e6e5c6b5d3e04a03e4fe77bcb76df1b7f9a6161339000b8322"
+    },
+    {
+      "path": "supabase/config.toml",
+      "blob": "7c3ff52db72f9983aa4128f5c2e7e686bba31d5d",
+      "sha256": "22ba64183c399f012593bef27ed5795065dc741a90808268bc7dbb23582d5959"
+    }
+  ],
+  "helper_attestations": [
+    {
+      "identity": "private.content_safety_target_snapshot(text,uuid)",
+      "definition_sha256": "28a12d9cf823eeebe68017a687f038a68e926bcc9dbb63101f3a0405f8b1a04b",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.content_safety_visual_source(text,uuid)",
+      "definition_sha256": "7006dbf8f506852b9a251a891d0329f64f22383a54a5b7e89d4873e152f5666d",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.create_story_from_content_core_c2_v1(uuid,jsonb,uuid)",
+      "definition_sha256": "8c757c4cadd266046a64b21a260383bcc7edbf6771eb3b328bd9dcacb71d019c",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.enqueue_content_safety_scan(text,uuid,text)",
+      "definition_sha256": "76020c7fd4cd68169f2e9fc9596a7fcca0e9f6468547d3dd62ed4b24e0d775bb",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_alert_moderation_c2_v1()",
+      "definition_sha256": "3c4c634352705652eab1beb0a27fe67f845bcfc7495e3a03f78de17562afeba1",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_author_text_bundle_c1_v1(uuid)",
+      "definition_sha256": "cb4e87cd6da0de3d3aa67c66a30b561ccdb68fbec24e0a9264779400ec840a73",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_can_access(uuid,boolean)",
+      "definition_sha256": "d2d480bc91190028718f09468c5bed7f72727cf7e036b3dbad5cccbe7e99abbc",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": true,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_content_safety_candidate_c1_v1(uuid)",
+      "definition_sha256": "6eb36a146908d378eeebdb0ca7a24f33ac1cb3876213bafb74f79ccfb2b0be9d",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_content_safety_control_c1_v1()",
+      "definition_sha256": "eeb34ea22b46c7373915083212e6f82bcb34afdf1921db956d9221529156d379",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_content_safety_control_c2_v1()",
+      "definition_sha256": "5396053f90cb7c494fda5f8aadd1e2a28d9288674f13fc05411c59024421889f",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_content_safety_policy_c1_v1()",
+      "definition_sha256": "2e7881a96094970ef987c41dd6166e55c027757a3dacd7d3035cec0b192a5b5a",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_content_safety_policy_c2_v1()",
+      "definition_sha256": "50a1e9384a43def5f9ab20a4d01a773dcb244a47bd13b8e4243d2272da041d77",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_current_fingerprint(uuid)",
+      "definition_sha256": "c2b07454cd20c94c9b669fc1b662daede4a89b0a64fd1954eae651e1e2c30014",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_enqueue_media_safety_v1(uuid)",
+      "definition_sha256": "9be19b0ae8f8232f68d47202fc5e2a33a2548c5c68ed59b5021221e8cd0f2ca9",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_initialize_safety()",
+      "definition_sha256": "9f8b209bc4c1a5b1da9281b949ab18af3c0326e1738e5333af7adf4ae9d8213f",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_publish_c2_v1(uuid,uuid)",
+      "definition_sha256": "a68c8e7cea00e2959ed5be286f4b40673951e41f3298d9018cf92068abe6bb98",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_refresh_safety_from_transcript_c1_v1()",
+      "definition_sha256": "56dd495f6fe8197f234c2d5ca55134f0f529b9a949ce7c61dae73c42d6910dcb",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_runtime_status_c2_v1(uuid)",
+      "definition_sha256": "24f3afedef669a9aa3064b7080e6c6d05a31af2932af98b742b9beb108147bfe",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "private.story_sync_safety_from_scan_v1()",
+      "definition_sha256": "5d07e049fbbe595239f09f39561d820d267d176ca8f3d2834613e7d44e96fb26",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "public.admin_moderate_story(uuid,text,text,uuid)",
+      "definition_sha256": "35302740034ba636eba83f0a0ace03b7f1aa124cb2ffd1af4e6ef57db7a81ac4",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": true,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "public.create_story_from_content(uuid,jsonb,uuid,jsonb)",
+      "definition_sha256": "26ab9b07eb16a4409d42bb59a3266af552ead619fc02aa12ff153a6dd905ca7f",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": true,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "public.create_story_from_content(uuid,jsonb,uuid)",
+      "definition_sha256": "82632e1f2b891ff7e435ad4d5e80186fdf78a64b1092d549d8ab4863eb78f4fe",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": true,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "public.create_story_with_media(uuid,jsonb,uuid,jsonb)",
+      "definition_sha256": "88457706580fb314cc484aa52574da009e77bff9084284828dac1b49c99845eb",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": true,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "public.create_story_with_media(uuid,jsonb,uuid)",
+      "definition_sha256": "ce887696a60e9f52031334a3779d8132d69efb4ad8e37e8fe719ab9939e0ff1b",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": true,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "public.create_story_with_media(uuid)",
+      "definition_sha256": "99c9e0cbc57d72b9da4f9fa304f570ba2142a0d84fdc0bcd8be5ada29239a98b",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": true,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "public.get_admin_story_detail(uuid)",
+      "definition_sha256": "9e4f1e31cd4203b8bf5468c83052f93cc6b05a5ef31496e9da19476d78ee0314",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": true,
+        "public": false,
+        "service_role": false
+      }
+    },
+    {
+      "identity": "public.search_admin_stories(text,text,uuid,timestampwithtimezone,uuid,integer)",
+      "definition_sha256": "d547adb94693ba5ef2a6975f8175372f0146b8c57e0c1d3a3bbfae527d7db96e",
+      "owner": "postgres",
+      "security_definer": true,
+      "search_path": [
+        "search_path=\"\""
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": true,
+        "public": false,
+        "service_role": false
+      }
+    }
+  ],
+  "trigger_attestation": {
+    "name": "content_safety_story_transcript_refresh_c1",
+    "table": "private.content_safety_audio_transcripts",
+    "enabled": "O",
+    "definition_sha256": "5af6160fc3312ff676295ec876b7b5d1d75fef56e9b81a70aa99028626252de5",
+    "function_identity": "private.story_refresh_safety_from_transcript_c1_v1()"
+  },
+  "alert_trigger_attestation": {
+    "name": "content_safety_story_alert_moderation_c2",
+    "table": "private.content_safety_alerts",
+    "enabled": "O",
+    "definition_sha256": "60c9698dc0ee608138902fb5be1440185233e6cc523a54d8c054464fcf87d4dd",
+    "function_identity": "private.story_alert_moderation_c2_v1()"
+  },
+  "initialization_trigger_attestation": {
+    "name": "story_initialize_safety",
+    "table": "public.stories",
+    "enabled": "O",
+    "definition_sha256": "a87b90beba3fc21c799de14b6578329fd3b73340d66dc66afc8a0f2a8e989e94",
+    "function_identity": "private.story_initialize_safety()"
+  },
+  "column_attestations": [
+    {
+      "name": "moderated_at",
+      "type": "timestamp with time zone",
+      "default": null,
+      "not_null": false
+    },
+    {
+      "name": "moderation_actor_id",
+      "type": "uuid",
+      "default": null,
+      "not_null": false
+    },
+    {
+      "name": "moderation_reason",
+      "type": "text",
+      "default": null,
+      "not_null": false
+    },
+    {
+      "name": "moderation_status",
+      "type": "text",
+      "default": "'unreviewed'::text",
+      "not_null": true
+    },
+    {
+      "name": "publication_policy_id",
+      "type": "text",
+      "default": null,
+      "not_null": false
+    },
+    {
+      "name": "publication_status",
+      "type": "text",
+      "default": "'unpublished'::text",
+      "not_null": true
+    },
+    {
+      "name": "published_at",
+      "type": "timestamp with time zone",
+      "default": null,
+      "not_null": false
+    }
+  ],
+  "safety": {
+    "activation": true,
+    "owner_approved_operating_model": true,
+    "owner_approved_policy": false,
+    "mode": "PUBLISH_FIRST_ASYNC_REVIEW",
+    "automatic_allow_authorized": false,
+    "automatic_block_authorized": false,
+    "numeric_thresholds": null,
+    "historical_backfill": false
+  },
+  "finance_policy": {
+    "platform_fee_bps": 2000,
+    "purchase_enabled": true,
+    "refunds_enabled": true,
+    "subscription_enabled": true
+  },
+  "requires_separate_baseline_promotion": true
+});
+
 export const STORIES_SAFETY_C1_RELEASE_TRANSITION = Object.freeze({
   id: 'stories-v2-safety-c1-technical-policy-prep-v1',
   from_phase: 'stories_v2_interactive_b1_fail_closed',
@@ -1068,6 +1617,11 @@ export function validatePolicy(policy) {
       'INVALID_STORIES_SAFETY_C1_TRANSITION',
       'Stories Safety C1 authority must match the exact reviewed technical-preparation contract',
     );
+  }
+  if (canonicalJson(policy.stories_safety_c2_transition ?? null)
+    !== canonicalJson(STORIES_SAFETY_C2_RELEASE_TRANSITION)) {
+    deny('INVALID_STORIES_SAFETY_C2_TRANSITION',
+      'Stories Safety C2 authority must match the exact reviewed publish-first operating model');
   }
   const c2AdminFinanceRpc = policy.finance_security_advisor?.c2_rpc_replacements?.find(exception =>
     exception?.object?.schema === 'public'
@@ -1813,6 +2367,88 @@ export function attestStoriesSafetyC1Transition({
   } catch (error) {
     if (error?.code === code) throw error;
     deny(code, 'approved commit does not attest the exact Stories Safety C1 ancestry and bytes');
+  }
+  return {
+    migrations: migrations.map(item => ({
+      ...item,
+      blob: transition.migration_blob,
+      sha256: transition.migration_sha256,
+    })),
+    attestation: {
+      ...stableCopy(transition),
+      approved_sha: approvedSha,
+      baseline_descendant_verified: true,
+      integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true,
+    },
+  };
+}
+
+export function attestStoriesSafetyC2Transition({
+  cwd,
+  policy,
+  mode,
+  approvedSha,
+  changes,
+  migrations,
+  affectedFunctions,
+  runGit,
+}) {
+  if (mode === 'postcheck_recovery') return { migrations, attestation: null };
+  const transition = STORIES_SAFETY_C2_RELEASE_TRANSITION;
+  const supabaseChanges = (changes ?? [])
+    .filter(item => item?.path?.startsWith('supabase/'))
+    .map(item => ({ path: item.path, status: item.status }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const expectedChanges = transition.productive_paths.map(path => ({
+    path, status: path === transition.migration_path ? 'A' : 'M',
+  })).sort((left, right) => left.path.localeCompare(right.path));
+  const expectedFunctions = transition.functions.map(item => item.name).sort();
+  const hasExactMigration = migrations?.some(item => item?.path === transition.migration_path);
+  const hasCompletePredecessorScope = policy?.baseline?.sha === transition.baseline_sha
+    && canonicalJson([...(affectedFunctions ?? [])].sort()) === canonicalJson(expectedFunctions)
+    && canonicalJson(supabaseChanges) === canonicalJson(expectedChanges);
+  const candidate = hasExactMigration || hasCompletePredecessorScope;
+  if (!candidate) return { migrations, attestation: null };
+  const code = 'INVALID_STORIES_SAFETY_C2_TRANSITION';
+  if (canonicalJson(policy?.stories_safety_c2_transition ?? null) !== canonicalJson(transition)
+    || policy?.baseline?.sha !== transition.baseline_sha
+    || canonicalJson(policy?.supabase?.finance_policy ?? null) !== canonicalJson(transition.finance_policy)
+    || !SHA_PATTERN.test(approvedSha ?? '') || typeof runGit !== 'function'
+    || migrations?.length !== 1 || migrations[0]?.path !== transition.migration_path
+    || migrations[0]?.version !== '20261027191918'
+    || canonicalJson([...(affectedFunctions ?? [])].sort()) !== canonicalJson(expectedFunctions)
+    || canonicalJson(supabaseChanges) !== canonicalJson(expectedChanges)) {
+    deny(code, 'Stories Safety C2 permits exactly one migration, the sole get-stream-playback Edge closure, and no config drift');
+  }
+  try {
+    runGit(['cat-file', '-e', `${approvedSha}^{commit}`], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.baseline_sha, transition.integration_base_sha], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.integration_base_sha, approvedSha], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.reviewed_source_sha, approvedSha], { cwd });
+    for (const source of [
+      ...transition.path_attestations,
+      transition.policy_artifact,
+      ...transition.preserved_paths,
+    ]) {
+      for (const ref of [transition.reviewed_source_sha, approvedSha]) {
+        if (gitText(runGit, ['rev-parse', `${ref}:${source.path}`], cwd) !== source.blob
+          || fileTypeAtCommit(runGit, cwd, ref, source.path) !== 'file'
+          || sha256Hex(runGit(['show', `${ref}:${source.path}`], { cwd })) !== source.sha256) {
+          deny(code, `Stories Safety C2 Git blob differs from reviewed bytes: ${source.path}`);
+        }
+      }
+    }
+    const actualChanges = parseNameStatusZ(runGit([
+      'diff', '--name-status', '-z', transition.integration_base_sha, approvedSha, '--', 'supabase/',
+    ], { cwd })).map(item => ({ path: item.path, status: item.status }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    if (canonicalJson(actualChanges) !== canonicalJson(expectedChanges)) {
+      deny(code, 'Stories Safety C2 committed Supabase closure differs from the exact migration and Stream Edge authority');
+    }
+  } catch (error) {
+    if (error?.code === code) throw error;
+    deny(code, 'approved commit does not attest the exact Stories Safety C2 ancestry and bytes');
   }
   return {
     migrations: migrations.map(item => ({
@@ -2641,6 +3277,10 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     affectedFunctions,
     runGit,
   });
+  const storiesSafetyC2Transition = attestStoriesSafetyC2Transition({
+    cwd, policy, mode: request.mode, approvedSha: request.approvedSha,
+    changes: gitState.changes, migrations: storiesSafetyC1Transition.migrations, affectedFunctions, runGit,
+  });
   const risk = classifyRisk({
     affectedFunctions,
     changedPaths: gitState.changes.map(change => change.path),
@@ -2652,11 +3292,12 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   return {
     gitState,
     classified,
-    migrations: storiesSafetyC1Transition.migrations,
+    migrations: storiesSafetyC2Transition.migrations,
     managedScopeTransition: transitionEvidence.attestation,
     financeAuthorityTransition: financeTransition.attestation,
     storiesB1Transition: storiesB1Transition.attestation,
     storiesSafetyC1Transition: storiesSafetyC1Transition.attestation,
+    storiesSafetyC2Transition: storiesSafetyC2Transition.attestation,
     affectedFunctions,
     functionContracts,
     reproducibility,
@@ -2685,6 +3326,7 @@ export function buildManifest({
   financeAuthorityTransition,
   storiesB1Transition,
   storiesSafetyC1Transition,
+  storiesSafetyC2Transition,
   affectedFunctions,
   functionContracts,
   reproducibility,
@@ -2822,6 +3464,53 @@ export function buildManifest({
   } else if (storiesSafetyC1Transition !== undefined && storiesSafetyC1Transition !== null) {
     deny('INVALID_STORIES_SAFETY_C1_TRANSITION',
       'Stories Safety C1 transition attestation is not applicable');
+  }
+  const storiesSafetyC2 = STORIES_SAFETY_C2_RELEASE_TRANSITION;
+  const storiesSafetyC2Candidate = !recoveryMode
+    && migrations?.some(item => item?.path === storiesSafetyC2.migration_path);
+  if (storiesSafetyC2Candidate) {
+    const expectedFunctions = storiesSafetyC2.functions.map(item => item.name).sort();
+    const expectedByName = new Map(storiesSafetyC2.functions.map(item => [item.name, item]));
+    const expectedAttestation = {
+      ...stableCopy(storiesSafetyC2),
+      approved_sha: request.approvedSha,
+      baseline_descendant_verified: true,
+      integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true,
+    };
+    if (canonicalJson(policy?.stories_safety_c2_transition ?? null) !== canonicalJson(storiesSafetyC2)
+      || policy.baseline.sha !== storiesSafetyC2.baseline_sha
+      || gitState.approvedSha !== request.approvedSha || gitState.originMainSha !== request.approvedSha
+      || gitState.baselineSha !== storiesSafetyC2.baseline_sha || risk.level !== 'HIGH'
+      || migrations.length !== 1 || migrations[0].path !== storiesSafetyC2.migration_path
+      || migrations[0].version !== '20261027191918'
+      || migrations[0].blob !== storiesSafetyC2.migration_blob
+      || migrations[0].sha256 !== storiesSafetyC2.migration_sha256
+      || canonicalJson(functionNames) !== canonicalJson(expectedFunctions)
+      || contracts.length !== 1 || contracts.some(contract => {
+        const expected = expectedByName.get(contract.name);
+        return !expected || contract.source_changed !== true || contract.source_sha256 !== expected.source_sha256
+          || contract.verify_jwt !== expected.verify_jwt;
+      })
+      || canonicalJson(storiesSafetyC2Transition ?? null) !== canonicalJson(expectedAttestation)
+      || classified.config.length !== 0
+      || canonicalJson(classified.productive.map(item => item.path).sort())
+        !== canonicalJson(storiesSafetyC2.productive_paths)
+      || canonicalJson(policy.supabase.finance_policy) !== canonicalJson(storiesSafetyC2.finance_policy)
+      || storiesSafetyC2.safety.activation !== true
+      || storiesSafetyC2.safety.owner_approved_policy !== false
+      || storiesSafetyC2.safety.owner_approved_operating_model !== true
+      || storiesSafetyC2.safety.automatic_allow_authorized !== false
+      || storiesSafetyC2.safety.automatic_block_authorized !== false
+      || storiesSafetyC2.safety.mode !== 'PUBLISH_FIRST_ASYNC_REVIEW'
+      || storiesSafetyC2.safety.numeric_thresholds !== null
+      || storiesSafetyC2.safety.historical_backfill !== false) {
+      deny('INVALID_STORIES_SAFETY_C2_TRANSITION',
+        'manifest lacks the exact Stories Safety C2 publish-first operating-model attestation');
+    }
+  } else if (storiesSafetyC2Transition !== undefined && storiesSafetyC2Transition !== null) {
+    deny('INVALID_STORIES_SAFETY_C2_TRANSITION',
+      'Stories Safety C2 transition attestation is not applicable');
   }
   const f5 = F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION;
   const f5Candidate = !recoveryMode && migrations?.some(item => item.version === '20261026072512'
@@ -2989,6 +3678,9 @@ export function buildManifest({
       ...(storiesB1Transition ? { stories_b1_transition: stableCopy(storiesB1Transition) } : {}),
       ...(storiesSafetyC1Transition
         ? { stories_safety_c1_transition: stableCopy(storiesSafetyC1Transition) }
+        : {}),
+      ...(storiesSafetyC2Transition
+        ? { stories_safety_c2_transition: stableCopy(storiesSafetyC2Transition) }
         : {}),
     },
     risk: stableCopy(risk),

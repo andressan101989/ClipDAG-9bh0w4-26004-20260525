@@ -1195,6 +1195,259 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+// C2 captures whole legacy rows: the old `state` alias is also a text column.
+// Preserve the historical C1 query bytes while correcting C2's predecessor proof.
+export const STORIES_SAFETY_C2_PRE_STATE_SQL = STORIES_SAFETY_C1_STATE_SQL.replace(
+  'pg_catalog.to_jsonb(state)::text,E\'\\n\' order by state.story_id)',
+  'pg_catalog.to_jsonb(safety)::text,E\'\\n\' order by safety.story_id)',
+).replace('from private.story_safety_state state\n)', 'from private.story_safety_state safety\n)');
+
+// C2 preserves the immutable C1 query and captures the separate operating authority.
+export const STORIES_SAFETY_C2_STATE_SQL = `with expected(identity) as (
+  values
+    ('private.create_story_from_content_core_c2_v1(uuid,jsonb,uuid)'),
+    ('private.content_safety_target_snapshot(text,uuid)'),
+    ('private.content_safety_visual_source(text,uuid)'),
+    ('private.enqueue_content_safety_scan(text,uuid,text)'),
+    ('private.story_alert_moderation_c2_v1()'),
+    ('private.story_author_text_bundle_c1_v1(uuid)'),
+    ('private.story_can_access(uuid,boolean)'),
+    ('private.story_content_safety_candidate_c1_v1(uuid)'),
+    ('private.story_content_safety_control_c1_v1()'),
+    ('private.story_content_safety_control_c2_v1()'),
+    ('private.story_content_safety_policy_c1_v1()'),
+    ('private.story_content_safety_policy_c2_v1()'),
+    ('private.story_current_fingerprint(uuid)'),
+    ('private.story_enqueue_media_safety_v1(uuid)'),
+    ('private.story_initialize_safety()'),
+    ('private.story_publish_c2_v1(uuid,uuid)'),
+    ('private.story_refresh_safety_from_transcript_c1_v1()'),
+    ('private.story_runtime_status_c2_v1(uuid)'),
+    ('private.story_sync_safety_from_scan_v1()'),
+    ('public.admin_moderate_story(uuid,text,text,uuid)'),
+    ('public.create_story_from_content(uuid,jsonb,uuid)'),
+    ('public.create_story_from_content(uuid,jsonb,uuid,jsonb)'),
+    ('public.create_story_with_media(uuid)'),
+    ('public.create_story_with_media(uuid,jsonb,uuid)'),
+    ('public.create_story_with_media(uuid,jsonb,uuid,jsonb)'),
+    ('public.get_admin_story_detail(uuid)'),
+    ('public.search_admin_stories(text,text,uuid,timestampwithtimezone,uuid,integer)')
+), function_rows as (
+  select n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' identity,
+    owner_role.rolname owner,p.prosecdef security_definer,coalesce(pg_catalog.to_jsonb(p.proconfig),'[]'::jsonb) search_path,
+    pg_catalog.jsonb_build_object(
+      'anon',pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE'),
+      'authenticated',pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE'),
+      'public',pg_catalog.has_function_privilege('public',p.oid,'EXECUTE'),
+      'service_role',pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE')
+    ) execute,
+    coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable
+    ) order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      acl.privilege_type,acl.is_grantable)
+      from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+      left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee),'[]'::jsonb) acl,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex') definition_sha256,
+    p.prosrc
+  from pg_catalog.pg_proc p
+  join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
+  join expected e on e.identity=n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')'
+), trigger_rows as (
+  select t.tgname name,n.nspname||'.'||c.relname table_name,t.tgenabled enabled,
+    fnn.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' function_identity,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_triggerdef(t.oid,true),'UTF8')),'hex') definition_sha256
+  from pg_catalog.pg_trigger t
+  join pg_catalog.pg_class c on c.oid=t.tgrelid
+  join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+  join pg_catalog.pg_proc p on p.oid=t.tgfoid
+  join pg_catalog.pg_namespace fnn on fnn.oid=p.pronamespace
+  where not t.tgisinternal and t.tgname='content_safety_story_transcript_refresh_c1'
+), alert_trigger_rows as (
+  select t.tgname name,n.nspname||'.'||c.relname table_name,t.tgenabled enabled,
+    fnn.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' function_identity,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_triggerdef(t.oid,true),'UTF8')),'hex') definition_sha256
+  from pg_catalog.pg_trigger t
+  join pg_catalog.pg_class c on c.oid=t.tgrelid
+  join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+  join pg_catalog.pg_proc p on p.oid=t.tgfoid
+  join pg_catalog.pg_namespace fnn on fnn.oid=p.pronamespace
+  where not t.tgisinternal and t.tgname='content_safety_story_alert_moderation_c2'
+), initialization_trigger_rows as (
+  select t.tgname name,n.nspname||'.'||c.relname table_name,t.tgenabled enabled,
+    fnn.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' function_identity,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_triggerdef(t.oid,true),'UTF8')),'hex') definition_sha256
+  from pg_catalog.pg_trigger t
+  join pg_catalog.pg_class c on c.oid=t.tgrelid
+  join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+  join pg_catalog.pg_proc p on p.oid=t.tgfoid
+  join pg_catalog.pg_namespace fnn on fnn.oid=p.pronamespace
+  where not t.tgisinternal and t.tgname='story_initialize_safety'
+), installed_state as (
+  select (select pg_catalog.count(*) from function_rows)=27
+    and (select pg_catalog.count(*) from alert_trigger_rows)=1
+    and (select pg_catalog.count(*) from initialization_trigger_rows)=1
+    and (select pg_catalog.count(*) from trigger_rows)=1 installed
+), control_source as (
+  select prosrc from function_rows where identity='private.story_content_safety_control_c2_v1()'
+), policy_source as (
+  select prosrc from function_rows where identity='private.story_content_safety_policy_c2_v1()'
+), story_inventory as (
+  select pg_catalog.count(*)::integer count,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.string_agg(
+      pg_catalog.to_jsonb(story)::text,E'\\n' order by story.id),''),'UTF8')),'hex') sha256
+  from public.stories story
+), safety_inventory as (
+  select pg_catalog.count(*)::integer count,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.string_agg(
+      (pg_catalog.to_jsonb(safety)-array['publication_status','moderation_status','published_at',
+        'publication_policy_id','moderation_actor_id','moderation_reason','moderated_at']::text[])::text,E'\\n' order by safety.story_id),''),'UTF8')),'hex') sha256
+  from private.story_safety_state safety
+), runtime as (
+  select safety.*,case
+    when scan.id is null then null
+    when scan.status='failed' or scan.text_status='failed' or scan.visual_status in('failed','not_configured')
+      or scan.audio_status in('failed','not_configured') then 'failed'
+    when safety.visual_complete and safety.audio_complete and safety.text_complete
+      and safety.evidence_generation=safety.generation then 'completed'
+    when scan.status='processing' or scan.text_status='processing' or scan.visual_status='processing'
+      or scan.audio_status='processing' then 'processing' else 'queued' end scan_status
+  from private.story_safety_state safety
+  left join private.content_safety_scans scan on scan.id=safety.scan_id and scan.target_type='story'
+    and scan.target_id=safety.story_id
+    and safety.evidence_fingerprint=(select pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.jsonb_build_object(
+    'version','stories-safety-evidence-c1-v1',
+    'story',s.id,'owner',s.user_id,'kind',s.story_kind,'source',s.shared_video_id,
+    'legacy',s.media_url,'type',s.media_type,'composition',s.story_composition,
+    'author_text',(with definitions as (
+    select e.public_config,pg_catalog.row_number() over(order by e.element_id) element_order
+    from private.story_interactive_elements e where e.story_id=safety.story_id
+  )
+  select coalesce(pg_catalog.string_agg(parts.value,E'\\n' order by parts.section,parts.element_order,parts.option_order),'')
+  from (
+    select 0 section,x.ordinality element_order,0::bigint option_order,x.element->>'text' value
+    from public.stories s
+    cross join lateral pg_catalog.jsonb_array_elements(coalesce(s.story_composition->'elements','[]'::jsonb))
+      with ordinality x(element,ordinality)
+    where s.id=safety.story_id and x.element->>'type'='text'
+    union all
+    select 0 section,x.ordinality element_order,0::bigint option_order,x.element->>'value'
+    from public.stories s
+    cross join lateral pg_catalog.jsonb_array_elements(coalesce(s.story_composition->'elements','[]'::jsonb))
+      with ordinality x(element,ordinality)
+    where s.id=safety.story_id and x.element->>'type'='sticker'
+    union all
+    select 1,e.element_order,0::bigint,e.public_config->>'prompt'
+    from definitions e
+    union all
+    select 1,e.element_order,1::bigint,e.public_config->>'emoji'
+    from definitions e where e.public_config->>'type' in('slider','reaction')
+    union all
+    select 1,e.element_order,o.ordinality+1,o.option->>'label'
+    from definitions e
+    cross join lateral pg_catalog.jsonb_array_elements(coalesce(e.public_config->'options','[]'::jsonb))
+      with ordinality o(option,ordinality)
+  ) parts where parts.value is not null),
+    'shared_source',case when s.shared_video_id is not null then pg_catalog.jsonb_build_object(
+      'owner',source.snapshot->>'owner_user_id','content_version',source.snapshot->>'content_version') end,
+    'definitions',(select pg_catalog.jsonb_agg(e.definition_digest order by e.element_id)
+      from private.story_interactive_elements e where e.story_id=s.id),
+    'r2',(select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'link',l.id,'id',a.id,'owner',a.owner_id,'status',a.status,'provider',a.provider,
+        'purpose',a.purpose,'visibility',a.visibility,'bucket',a.bucket_name,'key',a.object_key,
+        'mime',a.mime_type,'size',a.size_bytes,'deleted_at',a.deleted_at,'public_url',a.public_url,
+        'contract',a.lifecycle_contract_version) order by l.id)
+      from public.media_asset_links l join public.media_assets a on a.id=l.asset_id
+      where l.entity_type='story' and l.entity_id=s.id and l.slot='media' and l.position=0),
+    'stream',(select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'link',l.id,'id',a.id,'owner',a.owner_id,'status',a.status,'provider',a.provider,
+        'purpose',a.purpose,'visibility',a.visibility,'uid',a.cloudflare_uid,
+        'mime',a.mime_type,'size',a.size_bytes,'duration',a.duration_seconds,
+        'max_duration',a.max_duration_seconds,'deleted_at',a.deleted_at,
+        'hls_url',a.hls_url,'dash_url',a.dash_url,'thumbnail_url',a.thumbnail_url,
+        'signed',a.provider_metadata->'require_signed_urls',
+        'contract',a.lifecycle_contract_version) order by l.id)
+      from public.video_asset_links l join public.video_assets a on a.id=l.asset_id
+      where l.entity_type='story' and l.entity_id=s.id and l.slot='media' and l.position=0)
+  )::text,'UTF8')),'hex')
+  from public.stories s
+  left join lateral (select (select pg_catalog.jsonb_build_object(
+      'owner_user_id',video.user_id,
+      'content_version',pg_catalog.jsonb_build_object('caption',video.caption,'video_url',video.video_url,
+        'media_urls',video.media_urls,'edited_at',video.edited_at,'created_at',video.created_at)::text)
+      from public.videos video where video.id=s.shared_video_id) snapshot
+    where s.shared_video_id is not null) source on true
+  where s.id=safety.story_id)
+    and scan.content_fingerprint=pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+      'story|'||safety.story_id::text||'|'||safety.evidence_fingerprint,'UTF8')),'hex')
+)
+select pg_catalog.jsonb_build_object(
+  'schema_version',1,'complete',true,'installed',installed_state.installed,
+  'policy_id',case when installed_state.installed then
+    (select pg_catalog.substring(prosrc,'"policy_id"[[:space:]]*:[[:space:]]*"([^"]+)"') from policy_source) end,
+  'policy_artifact_sha256',case when installed_state.installed then
+    (select pg_catalog.substring(prosrc,'"policy_artifact_sha256"[[:space:]]*:[[:space:]]*"([a-f0-9]{64})"') from control_source) end,
+  'control',case when installed_state.installed then (select pg_catalog.split_part(prosrc,'$control$',2)::jsonb from control_source) end,
+  'approved_story_rule_count',(select pg_catalog.count(*)::integer from private.content_safety_rules rule
+    where rule.approval_state='approved'
+      and rule.scopes&&array['story_image','story_video','story_audio','story_text']::text[]),
+  'passed_count',(select pg_catalog.count(*)::integer from private.story_safety_state where state='passed'),
+  'policy_digest_count',(select pg_catalog.count(*)::integer from private.story_safety_state where policy_digest is not null),
+  'story_count',story_inventory.count,'safety_state_count',safety_inventory.count,
+  'story_inventory_sha256',story_inventory.sha256,'safety_inventory_sha256',safety_inventory.sha256,
+  'transcript_refresh_trigger_installed',(select pg_catalog.count(*)=1 from trigger_rows),
+  'trigger',case when installed_state.installed then (select pg_catalog.jsonb_build_object(
+    'name',name,'table',table_name,'enabled',enabled,'function_identity',function_identity,
+    'definition_sha256',definition_sha256) from trigger_rows) end,
+  'alert_trigger',(select pg_catalog.jsonb_build_object(
+    'name',name,'table',table_name,'enabled',enabled,'function_identity',function_identity,
+    'definition_sha256',definition_sha256) from alert_trigger_rows),
+  'initialization_trigger',(select pg_catalog.jsonb_build_object(
+    'name',name,'table',table_name,'enabled',enabled,'function_identity',function_identity,
+    'definition_sha256',definition_sha256) from initialization_trigger_rows),
+  'columns',(select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+    'name',attribute.attname,'type',pg_catalog.format_type(attribute.atttypid,attribute.atttypmod),
+    'not_null',attribute.attnotnull,'default',pg_catalog.pg_get_expr(default_value.adbin,default_value.adrelid))
+    order by attribute.attname)
+    from pg_catalog.pg_attribute attribute left join pg_catalog.pg_attrdef default_value
+      on default_value.adrelid=attribute.attrelid and default_value.adnum=attribute.attnum
+    where attribute.attrelid='private.story_safety_state'::regclass and not attribute.attisdropped
+      and attribute.attname=any(array['publication_status','moderation_status','published_at','publication_policy_id',
+        'moderation_actor_id','moderation_reason','moderated_at']::text[])),
+  'enabled_numeric_story_rule_count',(select pg_catalog.count(*)::integer from private.content_safety_rules rule
+    where rule.enabled and rule.scopes&&array['story_image','story_video','story_audio','story_text']::text[]),
+  'published_without_current_scan_count',(select pg_catalog.count(*)::integer from runtime
+    where publication_status='published' and (scan_status is null
+      or publication_policy_id is distinct from 'nelyon.stories.general.safety.publish_first.v1' or published_at is null)),
+  'no_current_scan_count',(select pg_catalog.count(*)::integer from runtime where scan_status is null),
+  'publication_metadata_count',(select pg_catalog.count(*)::integer from runtime where published_at is not null
+    or publication_policy_id is not null or moderation_actor_id is not null or moderation_reason is not null or moderated_at is not null),
+  'publication_status',(select pg_catalog.jsonb_build_object(
+    'unpublished',pg_catalog.count(*) filter(where publication_status='unpublished')::integer,
+    'published',pg_catalog.count(*) filter(where publication_status='published')::integer,
+    'restricted',pg_catalog.count(*) filter(where publication_status='restricted')::integer,
+    'removed',pg_catalog.count(*) filter(where publication_status='removed')::integer
+  ) from runtime),
+  'moderation_status',(select pg_catalog.jsonb_build_object(
+    'unreviewed',pg_catalog.count(*) filter(where moderation_status='unreviewed')::integer,
+    'alerted',pg_catalog.count(*) filter(where moderation_status='alerted')::integer,
+    'reviewed_keep',pg_catalog.count(*) filter(where moderation_status='reviewed_keep')::integer,
+    'reviewed_restrict',pg_catalog.count(*) filter(where moderation_status='reviewed_restrict')::integer,
+    'reviewed_remove',pg_catalog.count(*) filter(where moderation_status='reviewed_remove')::integer
+  ) from runtime),
+  'scan_status',(select pg_catalog.jsonb_build_object(
+    'queued',pg_catalog.count(*) filter(where scan_status='queued')::integer,
+    'processing',pg_catalog.count(*) filter(where scan_status='processing')::integer,
+    'completed',pg_catalog.count(*) filter(where scan_status='completed')::integer,
+    'failed',pg_catalog.count(*) filter(where scan_status='failed')::integer
+  ) from runtime),
+  'helpers',case when installed_state.installed then coalesce((select pg_catalog.jsonb_agg(
+    pg_catalog.jsonb_build_object('identity',identity,'owner',owner,'security_definer',security_definer,
+      'search_path',search_path,'execute',execute,'acl',acl,'definition_sha256',definition_sha256)
+    order by identity) from function_rows),'[]'::jsonb) else '[]'::jsonb end
+) snapshot from installed_state cross join story_inventory cross join safety_inventory;`;
+
 function fail(code, message) {
   const error = new Error(`${code}: ${message}`);
   error.code = code;
@@ -1293,15 +1546,58 @@ function storiesSafetyC1Transition(policy, manifest) {
   return expected;
 }
 
-function storiesSafetyC1StateRequirement(policy, manifest) {
+function storiesSafetyC2Transition(policy, manifest) {
+  const expected = policy?.stories_safety_c2_transition;
+  const attestation = manifest?.resources?.stories_safety_c2_transition;
+  if (!attestation) return null;
+  if (!expected || canonicalJson(attestation) !== canonicalJson({
+    ...expected, approved_sha: manifest?.identity?.approved_sha,
+    baseline_descendant_verified: true, integration_base_descendant_verified: true,
+    reviewed_source_descendant_verified: true,
+  })) fail('INVALID_STORIES_SAFETY_C2_TRANSITION', 'Stories Safety C2 manifest attestation differs from policy');
+  return expected;
+}
+
+export function storiesSafetyC2StateRequirement(policy, manifest, phase, { request, migrations } = {}) {
+  const authority = policy?.stories_safety_c2_transition;
+  const migration = authority?.migration_path?.split('/').at(-1)?.replace(/\.sql$/, '');
+  const transition = storiesSafetyC2Transition(policy, manifest);
+  const installed = Boolean(migration) && String(policy?.baseline?.latest_migration ?? '') >= migration;
+  const source = phase === 'recovery' && request?.mode === 'postcheck_recovery'
+    && request?.scopeConfirmation === 'POSTCHECK_RECOVERY_READ_ONLY'
+    && manifest?.identity?.mode === 'postcheck_recovery'
+    && canonicalJson(manifest?.resources ?? null) === canonicalJson({
+      config_changed: false, function_contracts: [], functions: [], migrations: [],
+    })
+    ? policy?.postcheck_recovery?.approved_sources?.find(item => String(item.run_id) === String(request.recoverySourceRunId))
+    : null;
+  const recovery = Boolean(migration) && source?.expected_latest_migration === migration
+    && source.expected_migration_count === policy?.baseline?.migration_count + 1
+    && canonicalJson(source.expected_migrations) === canonicalJson([{ name: migration, blob: authority.migration_blob }])
+    && canonicalJson((source.edge_functions ?? []).map(item => item.name).sort())
+      === canonicalJson((authority.functions ?? []).map(item => item.name).sort())
+    && (source.edge_functions ?? []).every(item => item.status === 'ACTIVE'
+      && Number.isInteger(item.version) && item.version > 0 && HASH_PATTERN.test(item.source_sha256 ?? '')
+      && item.verify_jwt === authority.functions.find(expected => expected.name === item.name)?.verify_jwt)
+    && (!migrations || hasExactBaselineMigrationAppend(policy, migrations, migration));
+  return {
+    required: installed || Boolean(transition && phase !== 'pre') || recovery,
+    installed, transition, recovery,
+    query_id: 'nelyon-stories-safety-c2-state-v1',
+  };
+}
+
+function storiesSafetyC1StateRequirement(policy, manifest, phase = 'pre', context = {}) {
   const transition = storiesSafetyC1Transition(policy, manifest);
   const installed = String(policy?.baseline?.latest_migration ?? '') >= STORIES_SAFETY_C1_MIGRATION;
+  const c2Predecessor = phase === 'pre' && Boolean(storiesSafetyC2Transition(policy, manifest));
   return {
-    required: Boolean(transition) || installed,
+    required: (Boolean(transition) || installed)
+      && !storiesSafetyC2StateRequirement(policy, manifest, phase, context).required,
     transition,
     installed,
-    query: STORIES_SAFETY_C1_STATE_SQL,
-    query_id: 'nelyon-stories-safety-c1-state-v1',
+    query: c2Predecessor ? STORIES_SAFETY_C2_PRE_STATE_SQL : STORIES_SAFETY_C1_STATE_SQL,
+    query_id: c2Predecessor ? 'nelyon-stories-safety-c2-predecessor-state-v1' : 'nelyon-stories-safety-c1-state-v1',
   };
 }
 
@@ -1596,6 +1892,125 @@ export function validateStoriesSafetyC1StateTransition(preSnapshot, postSnapshot
     || post.safety_inventory_sha256 !== pre.safety_inventory_sha256) {
     fail('STORIES_SAFETY_C1_POSTCHECK_FAILED',
       'Stories Safety C1 release activated policy or mutated protected Story inventories');
+  }
+  return true;
+}
+
+const STORIES_C2_STATUS_VALUES = Object.freeze({
+  publication_status: ['unpublished', 'published', 'restricted', 'removed'],
+  moderation_status: ['unreviewed', 'alerted', 'reviewed_keep', 'reviewed_restrict', 'reviewed_remove'],
+  scan_status: ['queued', 'processing', 'completed', 'failed'],
+});
+
+export function normalizeStoriesSafetyC2State(snapshot) {
+  const code = 'STORIES_SAFETY_C2_POSTCHECK_FAILED';
+  const { publication_status, moderation_status, scan_status, enabled_numeric_story_rule_count,
+    published_without_current_scan_count, no_current_scan_count, publication_metadata_count,
+    alert_trigger, initialization_trigger, columns, control, sha256: claimed, ...legacy } = snapshot ?? {};
+  let base;
+  try {
+    base = normalizeStoriesSafetyC1State({ ...legacy, control: null });
+  } catch {
+    fail(code, 'Stories Safety C2 base evidence is malformed');
+  }
+  delete base.sha256;
+  exactKeys(control, ['policy_id', 'policy_artifact_sha256', 'activation', 'owner_approved_operating_model',
+    'owner_approved_policy', 'mode', 'automatic_allow_authorized', 'automatic_block_authorized',
+    'numeric_thresholds', 'historical_backfill'], code);
+  const statuses = { publication_status, moderation_status, scan_status };
+  for (const [key, values] of Object.entries(STORIES_C2_STATUS_VALUES)) {
+    exactKeys(statuses[key], values, code);
+    if (Object.values(statuses[key]).some(value => !Number.isInteger(value) || value < 0)
+      || Object.values(statuses[key]).reduce((sum, value) => sum + value, 0)
+        + (key === 'scan_status' ? no_current_scan_count : 0) !== base.safety_state_count) {
+      fail(code, `Stories Safety C2 ${key} inventory is incomplete`);
+    }
+  }
+  if (![enabled_numeric_story_rule_count, published_without_current_scan_count,
+    no_current_scan_count, publication_metadata_count]
+    .every(value => Number.isInteger(value) && value >= 0)) {
+    fail(code, 'Stories Safety C2 invariant counts are malformed');
+  }
+  let normalizedAlertTrigger;
+  let normalizedInitializationTrigger;
+  try {
+    normalizedAlertTrigger = normalizeStoriesSafetyC1Trigger(alert_trigger);
+    normalizedInitializationTrigger = normalizeStoriesSafetyC1Trigger(initialization_trigger);
+  }
+  catch { fail(code, 'Stories Safety C2 alert trigger evidence is malformed'); }
+  if (!Array.isArray(columns) || columns.length !== 7) fail(code, 'Stories Safety C2 columns are incomplete');
+  const normalizedColumns = columns.map(column => {
+    exactKeys(column, ['name', 'type', 'not_null', 'default'], code);
+    if (typeof column.name !== 'string' || typeof column.type !== 'string'
+      || typeof column.not_null !== 'boolean' || !(column.default === null || typeof column.default === 'string')) {
+      fail(code, 'Stories Safety C2 column evidence is malformed');
+    }
+    return { ...column };
+  }).sort((left, right) => left.name.localeCompare(right.name));
+  if (new Set(normalizedColumns.map(column => column.name)).size !== 7) fail(code, 'Stories Safety C2 columns are duplicate');
+  const unsigned = { ...base, control, ...statuses, enabled_numeric_story_rule_count, published_without_current_scan_count,
+    no_current_scan_count, publication_metadata_count, alert_trigger: normalizedAlertTrigger,
+    initialization_trigger: normalizedInitializationTrigger, columns: normalizedColumns };
+  const digest = sha256(canonicalJson(unsigned));
+  if (Object.hasOwn(snapshot ?? {}, 'sha256') && claimed !== digest) {
+    fail(code, 'Stories Safety C2 snapshot digest differs');
+  }
+  return { ...unsigned, sha256: digest };
+}
+
+export function validateStoriesSafetyC2InstalledState(snapshot, transition) {
+  const state = normalizeStoriesSafetyC2State(snapshot);
+  const expectedControl = {
+    policy_id: transition?.policy_artifact?.policy_id,
+    policy_artifact_sha256: transition?.policy_artifact?.sha256,
+    activation: true, owner_approved_operating_model: true, owner_approved_policy: false,
+    mode: 'PUBLISH_FIRST_ASYNC_REVIEW', automatic_allow_authorized: false, automatic_block_authorized: false,
+    numeric_thresholds: null, historical_backfill: false,
+  };
+  const expectedHelpers = (transition?.helper_attestations ?? []).map(item => ({
+    ...item,
+    acl: [
+      ...(item.execute?.authenticated ? [{ grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false }] : []),
+      { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+      ...(item.execute?.service_role ? [{ grantee: 'service_role', privilege_type: 'EXECUTE', is_grantable: false }] : []),
+    ],
+  })).sort((left, right) => left.identity.localeCompare(right.identity));
+  if (state.installed !== true || !expectedHelpers.length
+    || state.policy_id !== transition?.policy_artifact?.policy_id
+    || state.policy_artifact_sha256 !== transition?.policy_artifact?.sha256
+    || canonicalJson(state.control) !== canonicalJson(expectedControl)
+    || state.approved_story_rule_count !== 0 || state.enabled_numeric_story_rule_count !== 0
+    || state.passed_count !== 0 || state.policy_digest_count !== 0
+    || state.published_without_current_scan_count !== 0
+    || state.transcript_refresh_trigger_installed !== true
+    || canonicalJson(state.trigger) !== canonicalJson(transition?.trigger_attestation ?? null)
+    || canonicalJson(state.alert_trigger) !== canonicalJson(transition?.alert_trigger_attestation ?? null)
+    || canonicalJson(state.initialization_trigger) !== canonicalJson(transition?.initialization_trigger_attestation ?? null)
+    || canonicalJson(state.columns) !== canonicalJson(transition?.column_attestations ?? null)
+    || canonicalJson(state.helpers) !== canonicalJson(expectedHelpers)) {
+    fail('STORIES_SAFETY_C2_POSTCHECK_FAILED', 'Stories Safety C2 installed authority differs from exact publish-first controls');
+  }
+  return state;
+}
+
+export function validateStoriesSafetyC2StateTransition(preSnapshot, postSnapshot, transition, predecessor) {
+  const code = 'STORIES_SAFETY_C2_POSTCHECK_FAILED';
+  let pre;
+  try {
+    pre = validateStoriesSafetyC1InstalledState(preSnapshot, predecessor);
+  } catch {
+    fail(code, 'Stories Safety C2 predecessor is not exact C1 technical preparation');
+  }
+  const post = validateStoriesSafetyC2InstalledState(postSnapshot, transition);
+  if (transition?.from_phase !== 'stories_v2_safety_c1_technical_prep_fail_closed'
+    || transition?.to_phase !== 'stories_v2_safety_c2_publish_first_async_review'
+    || post.story_count !== pre.story_count || post.safety_state_count !== pre.safety_state_count
+    || post.story_inventory_sha256 !== pre.story_inventory_sha256
+    || post.safety_inventory_sha256 !== pre.safety_inventory_sha256
+    || post.publication_metadata_count !== 0
+    || post.publication_status.unpublished !== pre.safety_state_count
+    || post.moderation_status.unreviewed !== pre.safety_state_count) {
+    fail(code, 'Stories Safety C2 release changed historical Story publication, moderation, scans or inventories');
   }
   return true;
 }
@@ -1993,8 +2408,10 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   });
   const requireStoriesB1 = storiesRequirement.required;
   const storiesQuery = storiesRequirement.query;
-  const storiesSafetyRequirement = storiesSafetyC1StateRequirement(policy, manifest);
+  const storiesSafetyRequirement = storiesSafetyC1StateRequirement(policy, manifest, phase, { request, migrations: evidence?.migrations });
   const requireStoriesSafetyC1 = storiesSafetyRequirement.required;
+  const storiesSafetyC2Requirement = storiesSafetyC2StateRequirement(policy, manifest, phase, { request, migrations: evidence?.migrations });
+  const requireStoriesSafetyC2 = storiesSafetyC2Requirement.required;
   exactKeys(evidence, [
     'adapter', 'backup', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
     'health', 'identity', 'migrations', 'observed_at', 'phase', 'premium_state', 'project_ref',
@@ -2002,6 +2419,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     ...(requireFinanceAuthority ? ['finance_authority','finance_facts'] : []),
     ...(requireStoriesB1 ? ['stories_b1_state'] : []),
     ...(requireStoriesSafetyC1 ? ['stories_safety_c1_state'] : []),
+    ...(requireStoriesSafetyC2 ? ['stories_safety_c2_state'] : []),
   ], 'INVALID_SNAPSHOT');
   const { evidence_sha256: claimedDigest, ...unsigned } = evidence;
   if (!HASH_PATTERN.test(claimedDigest ?? '') || claimedDigest !== sha256(canonicalJson(unsigned))) {
@@ -2029,9 +2447,12 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       id: storiesRequirement.query_id,
       sha256: sha256(storiesQuery),
     }] : []),
+    ...(requireStoriesSafetyC2 ? [{
+      id: storiesSafetyC2Requirement.query_id, sha256: sha256(STORIES_SAFETY_C2_STATE_SQL),
+    }] : []),
     ...(requireStoriesSafetyC1 ? [{
       id: storiesSafetyRequirement.query_id,
-      sha256: sha256(STORIES_SAFETY_C1_STATE_SQL),
+      sha256: sha256(storiesSafetyRequirement.query),
     }] : []),
   ];
   if (!HASH_PATTERN.test(adapterSourceSha256 ?? '')
@@ -2056,6 +2477,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   );
   if (requireStoriesB1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (requireStoriesSafetyC1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
+  if (requireStoriesSafetyC2) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (!Array.isArray(evidence.requests) || evidence.requests.length !== expectedRequests.length
     || evidence.requests.some((receipt, index) => {
       try {
@@ -2123,6 +2545,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   validatePremiumPostcheckState(evidence.premium_state);
   if (requireStoriesB1) normalizeStoriesB1State(evidence.stories_b1_state);
   if (requireStoriesSafetyC1) normalizeStoriesSafetyC1State(evidence.stories_safety_c1_state);
+  if (requireStoriesSafetyC2) normalizeStoriesSafetyC2State(evidence.stories_safety_c2_state);
   return evidence;
 }
 
@@ -2343,7 +2766,12 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
   }
   const storiesSafetyC1Installed = (evidence.migrations?.items ?? [])
     .some(item => baselineMigrationName(item) === STORIES_SAFETY_C1_MIGRATION);
-  if (storiesSafetyC1Installed) {
+  const storiesSafetyC2Installed = (evidence.migrations?.items ?? []).some(item =>
+    baselineMigrationName(item) === policy?.stories_safety_c2_transition?.migration_path?.split('/').at(-1)?.replace(/\.sql$/, ''));
+  if (storiesSafetyC2Installed) {
+    validateStoriesSafetyC2InstalledState(evidence.stories_safety_c2_state, policy?.stories_safety_c2_transition);
+  }
+  if (storiesSafetyC1Installed && !storiesSafetyC2Installed) {
     try {
       validateStoriesSafetyC1InstalledState(
         evidence.stories_safety_c1_state,
@@ -2453,11 +2881,14 @@ export function verifyProductionPreSnapshot({ pre, policy, request, manifest, ad
       fail('STORIES_SAFETY_C1_POSTCHECK_FAILED',
         'Stories Safety C1 pre-snapshot is not the exact B1 fail-closed predecessor');
     }
-  } else if (storiesSafetyC1StateRequirement(policy, manifest).required) {
+  } else if (storiesSafetyC1StateRequirement(policy, manifest, 'pre', { request, migrations: pre.migrations }).required) {
     validateStoriesSafetyC1InstalledState(
       pre.stories_safety_c1_state,
       policy?.stories_safety_c1_transition,
     );
+  }
+  if (storiesSafetyC2StateRequirement(policy, manifest, 'pre', { request, migrations: pre.migrations }).required) {
+    validateStoriesSafetyC2InstalledState(pre.stories_safety_c2_state, policy?.stories_safety_c2_transition);
   }
   const baseline = policy?.baseline;
   if (baseline?.state !== 'verified'
@@ -2557,11 +2988,18 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
       post.stories_safety_c1_state,
       storiesSafetyTransition,
     );
-  } else if (storiesSafetyC1StateRequirement(policy, manifest).required) {
+  } else if (storiesSafetyC1StateRequirement(policy, manifest, 'post', { request, migrations: post.migrations }).required) {
     validateStoriesSafetyC1InstalledState(
       post.stories_safety_c1_state,
       policy?.stories_safety_c1_transition,
     );
+  }
+  const c2Transition = storiesSafetyC2Transition(policy, manifest);
+  if (c2Transition) {
+    validateStoriesSafetyC2StateTransition(pre.stories_safety_c1_state, post.stories_safety_c2_state,
+      c2Transition, policy?.stories_safety_c1_transition);
+  } else if (storiesSafetyC2StateRequirement(policy, manifest, 'post', { request, migrations: post.migrations }).required) {
+    validateStoriesSafetyC2InstalledState(post.stories_safety_c2_state, policy?.stories_safety_c2_transition);
   }
   validatePremiumStateTransition(pre.premium_state, post.premium_state, manifest, policy);
   if (Date.parse(post.observed_at) < Date.parse(pre.observed_at)
@@ -2748,11 +3186,14 @@ export function verifyProductionRecoverySnapshot({ recovery, policy, request, ma
   }).required) {
     validateStoriesB1InstalledState(recovery.stories_b1_state);
   }
-  if (storiesSafetyC1StateRequirement(policy, manifest).required) {
+  if (storiesSafetyC1StateRequirement(policy, manifest, 'recovery', { request, migrations: recovery.migrations }).required) {
     validateStoriesSafetyC1InstalledState(
       recovery.stories_safety_c1_state,
       policy?.stories_safety_c1_transition,
     );
+  }
+  if (storiesSafetyC2StateRequirement(policy, manifest, 'recovery', { request, migrations: recovery.migrations }).required) {
+    validateStoriesSafetyC2InstalledState(recovery.stories_safety_c2_state, policy?.stories_safety_c2_transition);
   }
   return {
     result: 'RECOVERY_SNAPSHOT_VERIFIED',
@@ -3138,6 +3579,32 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
     }
     result = [...result.filter(item => !additionsByFingerprint.has(item?.advisor_fingerprint)), ...additions];
   }
+  if (storiesSafetyC2StateRequirement(policy, manifest, phase, context).required) {
+    const authority = policy.stories_safety_c2_transition;
+    const helpers = new Map((authority.helper_attestations ?? []).map(item => [item.identity, item]));
+    result = result.map(exception => {
+      if (!Array.isArray(exception?.object?.argument_types)) return exception;
+      const helper = helpers.get(rpcIdentity(exception.object).replaceAll(' ', ''));
+      if (!helper) return exception;
+      const attestation = { ...helper };
+      delete attestation.identity;
+      return {
+        ...exception,
+        attestation: {
+          ...attestation,
+          acl: [
+            ...(helper.execute.authenticated ? [{ grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false }] : []),
+            { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+            ...(helper.execute.service_role ? [{ grantee: 'service_role', privilege_type: 'EXECUTE', is_grantable: false }] : []),
+          ],
+        },
+        origin: {
+          migration: authority.migration_path.split('/').at(-1).replace(/\.sql$/, ''),
+          migration_blob: authority.migration_blob, source_sha: authority.reviewed_source_sha,
+        },
+      };
+    });
+  }
   return phaseBoundRpcExceptions(result, manifest, phase, { policy, migrations: context.migrations });
 }
 
@@ -3513,8 +3980,10 @@ export async function captureProductionSnapshot({
   const initialStoriesRequirement = storiesB1StateRequirement(policy, manifest, phase, { request });
   const storiesQuery = initialStoriesRequirement.query;
   if (initialStoriesRequirement.required) assertReadOnlySql(storiesQuery);
-  const storiesSafetyRequirement = storiesSafetyC1StateRequirement(policy, manifest);
-  if (storiesSafetyRequirement.required) assertReadOnlySql(STORIES_SAFETY_C1_STATE_SQL);
+  const storiesSafetyRequirement = storiesSafetyC1StateRequirement(policy, manifest, phase, { request });
+  const storiesSafetyC2Requirement = storiesSafetyC2StateRequirement(policy, manifest, phase, { request });
+  if (storiesSafetyRequirement.required) assertReadOnlySql(storiesSafetyRequirement.query);
+  if (storiesSafetyC2Requirement.required) assertReadOnlySql(STORIES_SAFETY_C2_STATE_SQL);
   const base = `/v1/projects/${PRODUCTION_PROJECT_REF}`;
   const calls = [];
   const get = async (path, label) => {
@@ -3582,11 +4051,18 @@ export async function captureProductionSnapshot({
     : null;
   const storiesSafetyC1State = storiesSafetyRequirement.required
     ? singleSnapshot(
-      await sql(STORIES_SAFETY_C1_STATE_SQL, null, 'Stories Safety C1 fail-closed state'),
+      await sql(storiesSafetyRequirement.query, null, 'Stories Safety C1 predecessor state'),
       normalizeStoriesSafetyC1State,
       'Stories Safety C1 fail-closed state',
     )
     : null;
+  const storiesSafetyC2State = storiesSafetyC2Requirement.required
+    ? singleSnapshot(await sql(STORIES_SAFETY_C2_STATE_SQL, null, 'Stories Safety C2 publish-first state'),
+      normalizeStoriesSafetyC2State, 'Stories Safety C2 publish-first state') : null;
+  const observedC2Requirement = storiesSafetyC2StateRequirement(policy, manifest, phase, { request, migrations });
+  if (observedC2Requirement.required !== storiesSafetyC2Requirement.required) {
+    fail('STORIES_SAFETY_C2_POSTCHECK_FAILED', 'Stories Safety C2 capture differs from migration inventory');
+  }
   const rpcSecurity = normalizeRpcSecurityAttestations(rpcSecurityBody);
   validateRpcIdentitySet(rpcSecurity, phaseExceptions);
   const evidence = {
@@ -3610,9 +4086,12 @@ export async function captureProductionSnapshot({
           id: storiesRequirement.query_id,
           sha256: sha256(storiesQuery),
         }] : []),
+        ...(storiesSafetyC2Requirement.required ? [{
+          id: storiesSafetyC2Requirement.query_id, sha256: sha256(STORIES_SAFETY_C2_STATE_SQL),
+        }] : []),
         ...(storiesSafetyRequirement.required ? [{
           id: storiesSafetyRequirement.query_id,
-          sha256: sha256(STORIES_SAFETY_C1_STATE_SQL),
+          sha256: sha256(storiesSafetyRequirement.query),
         }] : []),
       ],
     },
@@ -3634,6 +4113,7 @@ export async function captureProductionSnapshot({
     ...(storiesSafetyRequirement.required
       ? { stories_safety_c1_state: storiesSafetyC1State }
       : {}),
+    ...(storiesSafetyC2Requirement.required ? { stories_safety_c2_state: storiesSafetyC2State } : {}),
     requests: calls,
   };
   return { ...evidence, evidence_sha256: sha256(canonicalJson(evidence)) };
