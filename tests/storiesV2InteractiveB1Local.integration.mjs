@@ -12,6 +12,8 @@ const enabled = process.env.RUN_STORIES_B1_LOCAL === '1';
 const owner = '11111111-1111-4111-8111-111111111111';
 const viewer = '22222222-2222-4222-8222-222222222222';
 const other = '33333333-3333-4333-8333-333333333333';
+const legacyPremiumOwner = '44444444-4444-4444-8444-444444444444';
+const legacyPremiumAsset = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const story = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const element = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const literal = value => `'${String(value).replaceAll("'", "''")}'`;
@@ -49,12 +51,26 @@ test('B1 disposable PostgreSQL behavior and isolation', {skip:!enabled}, async t
     if(ownTemplate) run(readFileSync(new URL('./fixtures/stories_v2_interactive_b1_baseline.sql',import.meta.url),'utf8'),template);
     run(`create database ${db} template ${template};`,'postgres');
     created=true;
+    run(`insert into auth.users(id,is_anonymous) values('${legacyPremiumOwner}',false);
+      insert into public.video_assets(
+        id,owner_id,provider,purpose,visibility,status,mime_type,size_bytes,
+        original_filename,max_duration_seconds,deleted_at
+      ) values(
+        '${legacyPremiumAsset}','${legacyPremiumOwner}','cloudflare_stream',
+        'creator_premium_video','private','deleted','video/mp4',43727650,
+        'legacy-premium.mp4',60,now()
+      );`);
     run(readFileSync(new URL(migrations[0],dir),'utf8'));
     run(`begin; ${readFileSync(new URL('./fixtures/stories_v2_interactive_b1_fixture.sql',import.meta.url),'utf8')} commit;`);
     await t.test('quiz answer and aggregates are secret before response',()=>{
       assert.equal(item(viewer,4).correct_option_id,undefined);
       assert.equal(item(viewer,1).aggregate,undefined);
       assert.equal(item(owner,1).aggregate.total,0);
+    });
+    await t.test('legacy Premium Stream duration remains valid while Story Stream is fixed at 15 seconds',()=>{
+      assert.equal(run(`select max_duration_seconds from public.video_assets where id='${legacyPremiumAsset}'`),'60');
+      assert.equal(run(`select pg_catalog.pg_get_constraintdef(oid,true) like '%creator_premium_video%max_duration_seconds >= 1%max_duration_seconds <= 180%' from pg_catalog.pg_constraint where conrelid='public.video_assets'::regclass and conname='video_assets_creator_premium_contract_check'`),'t');
+      assert.equal(run(`select pg_catalog.pg_get_constraintdef(oid,true) like '%story_video%max_duration_seconds = 15%' from pg_catalog.pg_constraint where conrelid='public.video_assets'::regclass and conname='video_assets_creator_premium_contract_check'`),'t');
     });
     await t.test('A/B, multi-poll, immutable choice and idempotent replay/conflict',()=>{
       const key=randomUUID(), first=respond(viewer,1,{option_id:'a'},key);
