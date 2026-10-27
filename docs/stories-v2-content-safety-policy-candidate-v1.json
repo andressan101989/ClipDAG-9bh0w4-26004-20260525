@@ -1,0 +1,177 @@
+{
+  "schema_version": "nelyon.stories_content_safety_policy.v1",
+  "policy_id": "nelyon.stories.general.safety.candidate.v1",
+  "title": "Stories V2 General Content Safety Candidate V1",
+  "normative_approval": {
+    "status": "pending_owner_approval",
+    "source": null,
+    "authorized_phase": null,
+    "authorized_at": null,
+    "owner_bound": false
+  },
+  "scope": {
+    "story_image": true,
+    "story_video": true,
+    "story_audio": true,
+    "story_text": true,
+    "interactive_prompts": true,
+    "interactive_options": true,
+    "viewer_question_responses": true,
+    "creator_premium_policy_changed": false,
+    "live_battles_policy_changed": false,
+    "finance_effect": false
+  },
+  "decision_matrix": {
+    "allow": [
+      "ordinary_photo",
+      "ordinary_video",
+      "permitted_text",
+      "legitimate_interactive_prompt",
+      "creative_content_without_risk_signals"
+    ],
+    "review": [
+      "low_confidence",
+      "contradictory_signals",
+      "relevant_user_reports",
+      "incomplete_multimodal_coverage",
+      "age_uncertain",
+      "consent_uncertain",
+      "contextual_artistic_or_medical_nudity",
+      "documentary_or_non_graphic_violence",
+      "ambiguous_private_information_exposure"
+    ],
+    "block": [
+      "child_sexual_exploitation",
+      "credible_threat_of_violence",
+      "non_consensual_private_information_exposure",
+      "prohibited_explicit_sexual_content",
+      "direct_incitement_to_violence_or_harm"
+    ]
+  },
+  "thresholds": {
+    "status": "pending_owner_approval",
+    "numeric_confidence_thresholds": null,
+    "automatic_allow_authorized": false,
+    "automatic_block_authorized": false,
+    "rule": "Until the owner approves an exact contextual decision contract, every completed Story remains in human review and no category or confidence value authorizes publication."
+  },
+  "evidence_contract": {
+    "story_image": {
+      "required": [
+        "current_private_r2_identity",
+        "server_verified_size_at_most_10485760_bytes",
+        "current_story_generation_and_fingerprint",
+        "visual_analysis",
+        "author_text_bundle",
+        "visible_text_when_supported",
+        "media_metadata_and_provenance"
+      ]
+    },
+    "story_video": {
+      "required": [
+        "current_private_stream_identity",
+        "provider_ready_state",
+        "server_verified_duration_at_most_15_seconds",
+        "current_story_generation_and_fingerprint",
+        "sampled_frame_visual_analysis",
+        "author_text_bundle",
+        "audio_transcript_or_explicit_no_speech",
+        "completed_transcript_rule_evaluation_when_audio_exists"
+      ]
+    },
+    "shared_story": {
+      "required": [
+        "current_source_identity",
+        "current_source_generation_and_fingerprint",
+        "compatible_current_source_decision",
+        "story_author_text_bundle"
+      ]
+    },
+    "interactive_definition": {
+      "required": [
+        "prompt_text",
+        "option_labels",
+        "definition_digest"
+      ],
+      "private_quiz_answer_is_not_classifier_input": true
+    },
+    "viewer_question_response": {
+      "required": [
+        "response_text",
+        "response_identity",
+        "moderation_result_before_public_exposure"
+      ],
+      "remains_private_while_pending": true
+    }
+  },
+  "decision_contract": {
+    "classify_content_and_context_together": true,
+    "keywords_are_context_only": true,
+    "isolated_words_do_not_authorize_block": true,
+    "all_required_modalities_must_be_current": true,
+    "stale_generation_or_fingerprint": {
+      "technical_state": "pending",
+      "normative_disposition": "review_required"
+    },
+    "missing_required_evidence": {
+      "technical_state": "pending",
+      "normative_disposition": "review_required"
+    },
+    "provider_failure": {
+      "technical_state": "pending",
+      "normative_disposition": "review_required",
+      "retry": "bounded"
+    },
+    "ambiguous_or_conflicting_evidence": {
+      "technical_state": "review",
+      "normative_disposition": "human_review_required"
+    },
+    "http_200_is_evidence": false,
+    "human_review_required_until_activation": true
+  },
+  "collection_contract": {
+    "scanner": "content-safety-scan",
+    "text_rule_scope": "story_text",
+    "visual_prompt_version": "visual-safety-v1",
+    "visual_prompt_is_triage_only": true,
+    "audio_model": "@cf/openai/whisper-large-v3-turbo",
+    "new_provider_enabled": false,
+    "new_external_inference_authorized": false
+  },
+  "publication": {
+    "requires_current_generation": true,
+    "requires_current_fingerprint": true,
+    "requires_current_owner_and_permissions": true,
+    "requires_provider_validity": true,
+    "requires_active_owner_approved_policy": true,
+    "requires_unambiguous_allow": true,
+    "historical_decisions_are_not_reclassified_automatically": true,
+    "technical_failure": "fail_closed",
+    "ambiguous_or_incomplete": "human_review",
+    "general_visibility_while_inactive": false
+  },
+  "administrative_review": {
+    "private_by_default": true,
+    "authorized_reviewers_only": true,
+    "audit_required": true,
+    "appeal_or_reconsideration_requires_an_authorized_reviewer": true,
+    "manual_decision_is_not_fabricated": true,
+    "child_sexual_exploitation_block_cannot_be_overridden_by_ordinary_review": true
+  },
+  "activation": {
+    "status": "technical_preparation_only",
+    "enabled": false,
+    "owner_approved_policy": false,
+    "auto_publish_enabled": false,
+    "mode": "fail_closed_review",
+    "blockers": [
+      "exact_policy_artifact_not_owner_approved",
+      "story_contextual_decision_schema_not_approved",
+      "automatic_allow_and_block_not_authorized",
+      "viewer_question_response_automatic_moderation_not_activated",
+      "shared_source_compatibility_contract_not_physically_verified"
+    ],
+    "activation_strategy": "forward_only_migration_after_exact_owner_approval_and_green_evidence",
+    "rollback_strategy": "forward_only_deactivation_to_fail_closed_review"
+  }
+}
