@@ -16,6 +16,8 @@ const interactions = read('components/feature/StoryInteractions.tsx');
 const effect = read('components/feature/StoryReactionEffect.tsx');
 const shared = read('components/feature/StorySharedContentCard.tsx');
 const editor = read('components/feature/StoryEditor.tsx');
+const editorSheet = read('components/feature/StoryInteractiveEditorSheet.tsx');
+const geometry = read('components/feature/storyStageGeometry.ts');
 const sheet = read('components/feature/StoryViewersSheet.tsx');
 const bar = read('components/feature/StoriesBar.tsx');
 const context = read('contexts/StoriesContext.tsx');
@@ -142,8 +144,10 @@ test('editor header, canvas and toolbar align with node 2:105', () => {
   assert.match(editor, /width: 52[\s\S]*height: 52[\s\S]*borderRadius: 26/);
   assert.match(editor, /paddingHorizontal: 19/);
   assert.match(editor, /paddingTop: 28/);
-  assert.match(editor, /Arrastra · pellizca · edita/);
+  assert.match(editor, /Arrastra · pellizca · gira · edita/);
   assert.match(editor, /backgroundColor: 'rgba\(11,11,16,0\.94\)'/);
+  assert.match(editor, /onLayout=\{handleStageLayout\}/);
+  assert.match(editor, /StyleSheet\.absoluteFill/);
 });
 
 test('editor tools and selection remain one functional authority', () => {
@@ -154,7 +158,10 @@ test('editor tools and selection remain one functional authority', () => {
   assert.match(editor, /accessibilityLabel="Eliminar elemento"/);
   assert.match(editor, /showStickerPicker/);
   assert.match(editor, /PanResponder\.create/);
-  assert.match(editor, /start\.current\.scale \* pinch \/ start\.current\.pinch/);
+  assert.match(editor, /deriveStoryGestureTransform/);
+  assert.match(geometry, /pointAngle\(currentTouches\) - pointAngle\(initialTouches\)/);
+  assert.match(editor, /accessibilityActions/);
+  assert.match(editorSheet, /minHeight: 44/);
 });
 
 test('editor validation and idempotent publication are untouched', () => {
@@ -212,7 +219,10 @@ test('own Story and Profile ring behavior remain canonical', () => {
 
 test('safe areas and responsive dimensions are preserved', () => {
   for (const source of [nativeViewer, webViewer, editor, sheet]) assert.match(source, /useSafeAreaInsets/);
-  for (const source of [nativeViewer, webViewer, editor, sheet, effect]) assert.match(source, /useWindowDimensions/);
+  for (const source of [nativeViewer, webViewer, sheet, effect]) assert.match(source, /useWindowDimensions/);
+  assert.match(editor, /onLayout=\{handleStageLayout\}/);
+  assert.match(editor, /safeInsets/);
+  assert.doesNotMatch(editor, /screenHeight - headerHeight - toolbarHeight/);
   assert.match(editor, /KeyboardAvoidingView/);
   assert.match(nativeViewer, /KeyboardAvoidingView/);
 });

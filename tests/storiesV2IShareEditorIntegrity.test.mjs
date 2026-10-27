@@ -15,6 +15,8 @@ const migration = read(`supabase/migrations/${migrationName}`);
 const context = read('contexts/StoriesContext.tsx');
 const editor = read('components/feature/StoryEditor.tsx');
 const composition = read('components/feature/storyComposition.tsx');
+const interactiveTypes = read('components/feature/storyInteractiveTypes.ts');
+const geometry = read('components/feature/storyStageGeometry.ts');
 const sharedCard = read('components/feature/StorySharedContentCard.tsx');
 const nativeViewer = read('components/feature/StoryViewer.native.tsx');
 const webViewer = read('components/feature/StoryViewer.tsx');
@@ -140,24 +142,25 @@ test('one editor supports own photo, own video, and shared content', () => {
   assert.equal(readdirSync('components/feature').filter(name => name === 'StoryEditor.tsx').length, 1);
 });
 
-test('editor supports create, edit, drag, pinch-scale, color, size, select and delete', () => {
+test('editor supports create, edit, drag, two-finger transform, color, size, select and delete', () => {
   assert.match(editor, /PanResponder\.create/);
-  assert.match(editor, /gesture\.dx \/ CANVAS_W/);
-  assert.match(editor, /gesture\.dy \/ CANVAS_H/);
-  assert.match(editor, /start\.current\.scale \* pinch \/ start\.current\.pinchDistance/);
-  assert.match(editor, /start\.current\.pinchDistance === 0/);
-  assert.match(editor, /mode: 'drag' as 'drag' \| 'scale'/);
+  assert.match(editor, /deriveStoryGestureTransform/);
+  assert.match(editor, /currentTouches\.length >= 2/);
+  assert.match(geometry, /currentDistance \/ initialDistance/);
+  assert.match(geometry, /pointAngle\(currentTouches\) - pointAngle\(initialTouches\)/);
+  assert.match(geometry, /currentCentroid\.x - initialCentroid\.x/);
   assert.match(editor, /onPanResponderTerminationRequest: \(\) => false/);
   assert.match(editor, /setEditingTextId/);
   assert.match(editor, /STORY_TEXT_COLORS\.indexOf/);
   assert.match(editor, /format-size/);
-  assert.match(editor, /elements\.filter\(item => item\.id !== selected\.id\)/);
+  assert.match(editor, /removeElement\(selected\)/);
 });
 
 test('editor uses normalized composition and safe text cleanup', () => {
-  assert.match(composition, /x: number/);
-  assert.match(composition, /y: number/);
-  assert.match(editor, /clampStoryElementPosition/);
+  assert.match(interactiveTypes, /x: number/);
+  assert.match(interactiveTypes, /y: number/);
+  assert.match(editor, /clampStoryElementTransform/);
+  assert.match(editor, /onLayout=\{handleStageLayout\}/);
   assert.match(editor, /maxLength=\{200\}/);
   assert.match(editor, /multiline/);
   assert.match(editor, /text\.replace\(\/\[<>\]\/g, ''\)/);
@@ -190,21 +193,27 @@ test('one client Story id survives retries and new editor sessions get a new id'
   assert.match(editor, /clientStoryIdRef = useRef<string \| null>/);
   assert.match(editor, /clientStoryIdRef\.current = Crypto\.randomUUID\(\)/);
   assert.match(editor, /if \(!clientStoryIdRef\.current\) clientStoryIdRef\.current = Crypto\.randomUUID\(\)/);
-  assert.match(editor, /onPublish\(source, publishableComposition, clientStoryIdRef\.current\)/);
+  assert.match(editor, /onPublish\(source, publication, clientStoryIdRef\.current\)/);
   assert.doesNotMatch(context.slice(context.indexOf('const addSharedStory'), context.indexOf('const getStorySharedContent')), /randomUUID/);
-  assert.match(feed, /storyUploadAttemptsRef = useRef\(new Map<string, string>\(\)\)/);
+  assert.match(feed, /const storyUploadAttemptsRef = useRef\(new Map<string, \{/);
+  assert.match(feed, /provider: 'r2' \| 'stream'/);
   assert.match(feed, /storyUploadAttemptsRef\.current\.get\(clientStoryId\)/);
-  assert.match(feed, /storyUploadAttemptsRef\.current\.set\(clientStoryId, uploaded\.assetId\)/);
+  assert.match(feed, /storyUploadAttemptsRef\.current\.set\(clientStoryId, \{[\s\S]*assetId: contract\.assetId,[\s\S]*provider: 'stream'/);
+  assert.match(feed, /storyUploadAttemptsRef\.current\.set\(clientStoryId, \{[\s\S]*assetId: uploaded\.assetId,[\s\S]*provider: 'r2'/);
   assert.match(feed, /storyUploadAttemptsRef\.current\.delete\(clientStoryId\)/);
 });
 
 test('own media keeps the canonical upload/finalize and compensating cleanup path', () => {
   assert.match(feed, /uploadMediaFromUri\(/);
-  assert.match(feed, /purpose: isVideo \? 'story_video' : 'story_image'/);
+  assert.match(feed, /createStoryStreamUpload\(/);
+  assert.match(feed, /uploadStoryVideoWithTus\(/);
+  assert.match(feed, /waitForStoryStreamReady\(/);
+  assert.match(feed, /purpose: 'story_image'/);
   assert.match(feed, /visibility: 'private'/);
-  assert.match(feed, /addStory\(uploadedAssetId, composition, clientStoryId\)/);
+  assert.match(feed, /addStory\([\s\S]*uploadedAssetId,[\s\S]*publication\.composition,[\s\S]*clientStoryId,[\s\S]*publication\.interactiveDefinitions/);
   assert.match(feed, /const cancelStoryEditor = useCallback/);
-  assert.match(feed, /deleteMediaAsset\(uploadedAssetId\)/);
+  assert.match(feed, /deleteMediaAsset\(uploadedAttempt\.assetId\)/);
+  assert.match(feed, /deleteStreamVideo\(uploadedAttempt\.assetId\)/);
   assert.match(migration, /private\.create_story_with_media_core/);
 });
 

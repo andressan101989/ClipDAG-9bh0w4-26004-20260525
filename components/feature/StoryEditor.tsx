@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable,
-  StyleSheet, Text, TextInput, View, useWindowDimensions,
+  ActivityIndicator, KeyboardAvoidingView, LayoutChangeEvent, Modal, PanResponder, Platform, Pressable,
+  StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
@@ -10,11 +10,31 @@ import { Avatar } from '@/components/ui/Avatar';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import {
-  clampStoryElementPosition, clampStoryScale, EMPTY_STORY_COMPOSITION,
+  EMPTY_STORY_COMPOSITION,
   STORY_STICKERS, STORY_TEXT_COLORS, StoryCompositionElementContent, storyElementFrame,
-  type StoryComposition, type StoryCompositionElement, type StoryTextElement,
 } from './storyComposition';
 import { StoryEditorVideoPreview } from './StoryEditorVideoPreview';
+import { StoryInteractiveElement } from './StoryInteractiveElement';
+import { StoryInteractiveEditorSheet } from './StoryInteractiveEditorSheet';
+import {
+  buildStoryInteractivePublication,
+  normalizeStoryCompositionVersion,
+  type StoryComposition,
+  type StoryCompositionElement,
+  type StoryEditorPublication,
+  type StoryInteractiveDefinition,
+  type StoryInteractiveDraft,
+  type StoryTextElement,
+} from './storyInteractiveTypes';
+import {
+  clampStoryElementTransform,
+  deriveStoryGestureTransform,
+  projectStoryElementTransform,
+  reorderStoryLayer,
+  type StoryMeasuredElementFrame,
+  type StoryStageFrame,
+  type StoryStagePoint,
+} from './storyStageGeometry';
 
 const STORY_MAX_ELEMENTS = 32;
 const STORY_MAX_TEXT_ELEMENTS = 10;
@@ -28,102 +48,132 @@ export type StoryEditorSource =
       previewUrl?: string; username: string; avatarUrl?: string; caption?: string;
     };
 
-function distance(touches: readonly { pageX: number; pageY: number }[]) {
-  if (touches.length < 2) return 0;
-  return Math.hypot(touches[0].pageX - touches[1].pageX, touches[0].pageY - touches[1].pageY);
-}
-
 function EditableElement({
-  element, selected, onSelect, onChange, canvasWidth, canvasHeight,
+  element, definition, selected, onSelect, onChange, onEdit, onDelete, onReorder, stage,
 }: {
   element: StoryCompositionElement;
+  definition: StoryInteractiveDefinition | null;
   selected: boolean;
   onSelect: () => void;
   onChange: (next: StoryCompositionElement) => void;
-  canvasWidth: number;
-  canvasHeight: number;
+  onEdit: () => void;
+  onDelete: () => void;
+  onReorder: (destination: 'front' | 'back') => void;
+  stage: StoryStageFrame;
 }) {
-  const CANVAS_W = canvasWidth;
-  const CANVAS_H = canvasHeight;
   const elementRef = useRef(element);
   const onChangeRef = useRef(onChange);
   const onSelectRef = useRef(onSelect);
   elementRef.current = element;
   onChangeRef.current = onChange;
   onSelectRef.current = onSelect;
-  const start = useRef({
-    x: element.x,
-    y: element.y,
-    scale: element.scale,
-    pinchDistance: 0,
-    mode: 'drag' as 'drag' | 'scale',
+  const fallback = element.type === 'interactive'
+    ? { width: 260, height: 104 }
+    : (() => { const frame = storyElementFrame(element, stage.width); return { width: frame.width, height: frame.minHeight }; })();
+  const [measuredFrame, setMeasuredFrame] = useState<StoryMeasuredElementFrame>(fallback);
+  const start = useRef<{ transform: StoryCompositionElement; touches: StoryStagePoint[] }>({
+    transform: element,
+    touches: [],
   });
+  const points = (touches: readonly { pageX: number; pageY: number }[]): StoryStagePoint[] => (
+    [...touches].slice(0, 2).map(touch => ({ x: touch.pageX, y: touch.pageY }))
+  );
+  const applyTransform = useCallback((candidate: StoryCompositionElement) => {
+    const clamped = clampStoryElementTransform(candidate, measuredFrame, stage);
+    const next = { ...candidate, ...clamped } as StoryCompositionElement;
+    elementRef.current = next;
+    onChangeRef.current(next);
+  }, [measuredFrame, stage]);
   const responder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderGrant: event => {
       const current = elementRef.current;
-      const pinchDistance = distance(event.nativeEvent.touches);
       onSelectRef.current();
-      start.current = {
-        x: current.x,
-        y: current.y,
-        scale: current.scale,
-        pinchDistance,
-        mode: pinchDistance > 0 ? 'scale' : 'drag',
-      };
+      start.current = { transform: current, touches: points(event.nativeEvent.touches) };
     },
     onPanResponderMove: (event, gesture) => {
-      const pinch = distance(event.nativeEvent.touches);
-      const current = elementRef.current;
-      if (pinch > 0) {
-        if (start.current.mode !== 'scale' || start.current.pinchDistance === 0) {
-          start.current = {
-            x: current.x,
-            y: current.y,
-            scale: current.scale,
-            pinchDistance: pinch,
-            mode: 'scale',
-          };
-          return;
-        }
-        const scale = clampStoryScale(start.current.scale * pinch / start.current.pinchDistance);
-        const scaled = { ...current, scale };
-        const position = clampStoryElementPosition(scaled, CANVAS_W, CANVAS_H, scaled.x, scaled.y);
-        const next = { ...scaled, ...position };
-        elementRef.current = next;
-        onChangeRef.current(next);
+      const currentTouches = points(event.nativeEvent.touches);
+      if (currentTouches.length >= 2 && start.current.touches.length < 2) {
+        start.current = { transform: elementRef.current, touches: currentTouches };
         return;
       }
-      if (start.current.mode === 'scale') return;
-      const position = clampStoryElementPosition(
-        current,
-        CANVAS_W,
-        CANVAS_H,
-        start.current.x + gesture.dx / CANVAS_W,
-        start.current.y + gesture.dy / CANVAS_H,
-      );
-      const next = { ...current, ...position };
-      elementRef.current = next;
-      onChangeRef.current(next);
+      if (currentTouches.length === 1 && start.current.touches.length >= 2) {
+        start.current = { transform: elementRef.current, touches: currentTouches };
+        return;
+      }
+      const initialTouches = start.current.touches.length > 0
+        ? start.current.touches
+        : [{ x: 0, y: 0 }];
+      const gestureTouches = currentTouches.length > 0
+        ? currentTouches
+        : [{ x: gesture.dx, y: gesture.dy }];
+      applyTransform({
+        ...start.current.transform,
+        ...deriveStoryGestureTransform(start.current.transform, initialTouches, gestureTouches, stage),
+      } as StoryCompositionElement);
     },
     onPanResponderTerminationRequest: () => false,
-  }), [CANVAS_H, CANVAS_W]);
-  const frame = storyElementFrame(element, CANVAS_W);
+  }), [applyTransform, stage]);
+  useEffect(() => {
+    if (stage.width <= 0 || stage.height <= 0) return;
+    const current = elementRef.current;
+    const clamped = clampStoryElementTransform(current, measuredFrame, stage);
+    if (Math.abs(current.x - clamped.x) > 0.000001 || Math.abs(current.y - clamped.y) > 0.000001
+      || current.scale !== clamped.scale || current.rotation !== clamped.rotation) {
+      onChangeRef.current({ ...current, ...clamped } as StoryCompositionElement);
+    }
+  }, [measuredFrame, stage]);
+  const projected = projectStoryElementTransform(element, stage);
+  const accessibilityActions = [
+    { name: 'moveUp', label: 'Mover arriba' }, { name: 'moveDown', label: 'Mover abajo' },
+    { name: 'moveLeft', label: 'Mover a la izquierda' }, { name: 'moveRight', label: 'Mover a la derecha' },
+    { name: 'increase', label: 'Aumentar' }, { name: 'decrease', label: 'Reducir' },
+    { name: 'rotate', label: 'Girar' }, { name: 'front', label: 'Traer al frente' },
+    { name: 'back', label: 'Enviar al fondo' }, { name: 'edit', label: 'Editar' },
+    { name: 'delete', label: 'Eliminar' },
+  ];
   return (
     <View
       {...responder.panHandlers}
+      accessible
+      accessibilityRole="adjustable"
+      accessibilityLabel={element.type === 'interactive' ? `Sticker interactivo ${definition?.prompt ?? ''}` : 'Elemento de historia'}
+      accessibilityActions={accessibilityActions}
+      onAccessibilityAction={event => {
+        switch (event.nativeEvent.actionName) {
+          case 'moveUp': applyTransform({ ...elementRef.current, y: elementRef.current.y - 0.03 }); break;
+          case 'moveDown': applyTransform({ ...elementRef.current, y: elementRef.current.y + 0.03 }); break;
+          case 'moveLeft': applyTransform({ ...elementRef.current, x: elementRef.current.x - 0.03 }); break;
+          case 'moveRight': applyTransform({ ...elementRef.current, x: elementRef.current.x + 0.03 }); break;
+          case 'increase': applyTransform({ ...elementRef.current, scale: elementRef.current.scale + 0.1 }); break;
+          case 'decrease': applyTransform({ ...elementRef.current, scale: elementRef.current.scale - 0.1 }); break;
+          case 'rotate': applyTransform({ ...elementRef.current, rotation: elementRef.current.rotation + 15 }); break;
+          case 'front': onReorder('front'); break;
+          case 'back': onReorder('back'); break;
+          case 'edit': onEdit(); break;
+          case 'delete': onDelete(); break;
+        }
+      }}
+      onLayout={event => {
+        const { width, height } = event.nativeEvent.layout;
+        if (width > 0 && height > 0) setMeasuredFrame({ width, height });
+      }}
       style={[
         styles.editable,
         selected && styles.selected,
         {
-          left: element.x * CANVAS_W - frame.width / 2,
-          top: element.y * CANVAS_H - frame.minHeight / 2,
-          transform: [{ scale: element.scale }, { rotate: `${element.rotation}deg` }],
+          left: projected.x - measuredFrame.width / 2,
+          top: projected.y - measuredFrame.height / 2,
+          transform: [{ scale: projected.scale }, { rotate: `${projected.rotation}deg` }],
         },
       ]}
     >
-      <StoryCompositionElementContent element={element} canvasWidth={CANVAS_W} />
+      {element.type === 'interactive' && definition
+        ? <StoryInteractiveElement definition={definition} />
+        : element.type !== 'interactive'
+          ? <StoryCompositionElementContent element={element} canvasWidth={stage.width} />
+          : null}
     </View>
   );
 }
@@ -134,24 +184,37 @@ export function StoryEditor({
   visible: boolean;
   source: StoryEditorSource | null;
   onCancel: (clientStoryId?: string) => void;
-  onPublish: (source: StoryEditorSource, composition: StoryComposition, clientStoryId: string) => Promise<void>;
+  onPublish: (source: StoryEditorSource, publication: StoryEditorPublication, clientStoryId: string) => Promise<void>;
 }) {
   const insets = useSafeAreaInsets();
-  const { width: CANVAS_W, height: screenHeight } = useWindowDimensions();
   const headerHeight = Math.max(92, insets.top + 56);
   const toolbarHeight = Math.max(122, insets.bottom + 88);
-  const CANVAS_H = Math.max(360, screenHeight - headerHeight - toolbarHeight);
+  const [stageFrame, setStageFrame] = useState({ width: 0, height: 0 });
+  const stage = useMemo<StoryStageFrame>(() => ({
+    ...stageFrame,
+    safeInsets: {
+      top: headerHeight + 8,
+      right: Math.max(insets.right, 8),
+      bottom: toolbarHeight + 8,
+      left: Math.max(insets.left, 8),
+    },
+  }), [headerHeight, insets.left, insets.right, stageFrame, toolbarHeight]);
   const [composition, setComposition] = useState<StoryComposition>(EMPTY_STORY_COMPOSITION);
+  const [interactiveDrafts, setInteractiveDrafts] = useState<StoryInteractiveDraft[]>([]);
+  const [interactiveSheetDraft, setInteractiveSheetDraft] = useState<StoryInteractiveDraft | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState(false);
   const clientStoryIdRef = useRef<string | null>(null);
+  const toolSizeStyle = stage.width > 0 && stage.width < 360 ? styles.toolCompact : undefined;
 
   useEffect(() => {
     if (!visible || !source) return;
     setComposition({ version: 1, elements: [] });
+    setInteractiveDrafts([]);
+    setInteractiveSheetDraft(null);
     setSelectedId(null);
     setEditingTextId(null);
     setShowStickerPicker(false);
@@ -160,12 +223,13 @@ export function StoryEditor({
   }, [source, visible]);
 
   const updateElement = (next: StoryCompositionElement) => {
-    const position = clampStoryElementPosition(next, CANVAS_W, CANVAS_H, next.x, next.y);
-    const normalized = { ...next, ...position } as StoryCompositionElement;
-    setComposition(current => ({
-      ...current,
-      elements: current.elements.map(item => item.id === normalized.id ? normalized : item),
+    setComposition(current => normalizeStoryCompositionVersion({
+      version: current.version,
+      elements: current.elements.map(item => item.id === next.id ? next : item),
     }));
+  };
+  const setElements = (elements: StoryCompositionElement[]) => {
+    setComposition(current => normalizeStoryCompositionVersion({ version: current.version, elements }));
   };
   const addText = () => {
     if (composition.elements.length >= STORY_MAX_ELEMENTS
@@ -174,7 +238,7 @@ export function StoryEditor({
       id: Crypto.randomUUID(), type: 'text', text: 'Texto', x: 0.5, y: 0.35,
       scale: 1, rotation: 0, color: '#FFFFFF', align: 'center', size: 'medium',
     };
-    setComposition(current => ({ ...current, elements: [...current.elements, element] }));
+    setComposition(current => normalizeStoryCompositionVersion({ version: current.version, elements: [...current.elements, element] }));
     setSelectedId(element.id);
     setShowStickerPicker(false);
     setEditingTextId(element.id);
@@ -183,29 +247,86 @@ export function StoryEditor({
     if (composition.elements.length >= STORY_MAX_ELEMENTS
       || composition.elements.filter(item => item.type === 'sticker').length >= STORY_MAX_STICKER_ELEMENTS) return;
     const element = { id: Crypto.randomUUID(), type: 'sticker' as const, value, x: 0.5, y: 0.5, scale: 1, rotation: 0 };
-    setComposition(current => ({ ...current, elements: [...current.elements, element] }));
+    setComposition(current => normalizeStoryCompositionVersion({ version: current.version, elements: [...current.elements, element] }));
     setSelectedId(element.id);
+  };
+  const openNewInteractive = () => {
+    if (composition.elements.length >= STORY_MAX_ELEMENTS) return;
+    const elementId = Crypto.randomUUID();
+    setInteractiveSheetDraft({
+      definition: {
+        version: 1,
+        element_id: elementId,
+        type: 'poll',
+        prompt: 'Haz una pregunta',
+        options: [
+          { id: `option-${Crypto.randomUUID()}`, label: 'Opción 1' },
+          { id: `option-${Crypto.randomUUID()}`, label: 'Opción 2' },
+        ],
+      },
+      correctOptionId: null,
+    });
+    setShowStickerPicker(false);
+  };
+  const saveInteractiveDraft = (draft: StoryInteractiveDraft) => {
+    const existing = interactiveDrafts.some(item => item.definition.element_id === draft.definition.element_id);
+    setInteractiveDrafts(current => existing
+      ? current.map(item => item.definition.element_id === draft.definition.element_id ? draft : item)
+      : [...current, draft]);
+    if (!existing) {
+      const placement = {
+        id: Crypto.randomUUID(),
+        type: 'interactive' as const,
+        element_id: draft.definition.element_id,
+        x: 0.5,
+        y: 0.5,
+        scale: 1,
+        rotation: 0,
+      };
+      setComposition(current => normalizeStoryCompositionVersion({
+        version: current.version,
+        elements: [...current.elements, placement],
+      }));
+      setSelectedId(placement.id);
+    }
+    setInteractiveSheetDraft(null);
+  };
+  const removeElement = (element: StoryCompositionElement) => {
+    setElements(composition.elements.filter(item => item.id !== element.id));
+    if (element.type === 'interactive') {
+      setInteractiveDrafts(current => current.filter(item => item.definition.element_id !== element.element_id));
+    }
+    setSelectedId(null);
+    setEditingTextId(null);
   };
   const selected = composition.elements.find(item => item.id === selectedId) ?? null;
   const finishTextEditing = () => {
     if (editingTextId && selected?.type === 'text' && selected.id === editingTextId
       && selected.text.trim().length === 0) {
       setComposition(current => ({
-        ...current,
-        elements: current.elements.filter(item => item.id !== editingTextId),
+        ...normalizeStoryCompositionVersion({
+          version: current.version,
+          elements: current.elements.filter(item => item.id !== editingTextId),
+        }),
       }));
       setSelectedId(null);
     }
     setEditingTextId(null);
   };
   const cancel = () => { if (!publishing) onCancel(clientStoryIdRef.current ?? undefined); };
+  const handleStageLayout = (event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    if (width > 0 && height > 0) setStageFrame(current => (
+      current.width === width && current.height === height ? current : { width, height }
+    ));
+  };
   const submit = async () => {
     if (!source || publishing) return;
     if (!clientStoryIdRef.current) clientStoryIdRef.current = Crypto.randomUUID();
-    const publishableComposition: StoryComposition = {
-      ...composition,
+    const publishableComposition = normalizeStoryCompositionVersion({
+      version: composition.version,
       elements: composition.elements.filter(element => element.type !== 'text' || element.text.trim().length > 0),
-    };
+    });
     if (publishableComposition.elements.length !== composition.elements.length) {
       setComposition(publishableComposition);
       setEditingTextId(null);
@@ -214,7 +335,9 @@ export function StoryEditor({
     setPublishing(true);
     setError(false);
     try {
-      await onPublish(source, publishableComposition, clientStoryIdRef.current);
+      const publication = buildStoryInteractivePublication(publishableComposition, interactiveDrafts);
+      if (!publication) throw new Error('invalid_story_interactive_publication');
+      await onPublish(source, publication, clientStoryIdRef.current);
     } catch {
       setError(true);
     } finally {
@@ -255,7 +378,8 @@ export function StoryEditor({
 
         <Pressable
           accessibilityLabel="Lienzo de historia"
-          style={[styles.canvas, { height: CANVAS_H }]}
+          style={[styles.canvas, StyleSheet.absoluteFill]}
+          onLayout={handleStageLayout}
           onPress={() => { finishTextEditing(); setSelectedId(null); }}
         >
           {source.kind === 'media' && source.mediaType === 'photo' ? (
@@ -275,17 +399,28 @@ export function StoryEditor({
               </View>
             </View>
           )}
-          {composition.elements.map(element => (
-            <EditableElement
-              key={element.id}
-              element={element}
-              selected={selectedId === element.id}
-              onSelect={() => setSelectedId(element.id)}
-              onChange={updateElement}
-              canvasWidth={CANVAS_W}
-              canvasHeight={CANVAS_H}
-            />
-          ))}
+          {stage.width > 0 && stage.height > 0 ? composition.elements.map(element => {
+            const interactiveDraft = element.type === 'interactive'
+              ? interactiveDrafts.find(item => item.definition.element_id === element.element_id) ?? null
+              : null;
+            return (
+              <EditableElement
+                key={element.id}
+                element={element}
+                definition={interactiveDraft?.definition ?? null}
+                selected={selectedId === element.id}
+                onSelect={() => setSelectedId(element.id)}
+                onChange={updateElement}
+                onEdit={() => {
+                  if (element.type === 'text') setEditingTextId(element.id);
+                  if (interactiveDraft) setInteractiveSheetDraft(interactiveDraft);
+                }}
+                onDelete={() => removeElement(element)}
+                onReorder={destination => setElements(reorderStoryLayer(composition.elements, element.id, destination))}
+                stage={stage}
+              />
+            );
+          }) : null}
         </Pressable>
 
         {editingTextId && selected?.type === 'text' ? (
@@ -300,6 +435,29 @@ export function StoryEditor({
             textAlignVertical="top"
             style={[styles.textInput, { bottom: toolbarHeight + 12, textAlign: selected.align }]}
           />
+        ) : null}
+
+        {selected ? (
+          <View style={[styles.layerControls, { bottom: toolbarHeight + 12 }]}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Enviar elemento al fondo"
+              onPress={() => setElements(reorderStoryLayer(composition.elements, selected.id, 'back'))}
+              style={styles.layerAction}
+            >
+              <MaterialIcons name="vertical-align-bottom" color="#fff" size={19} />
+              <Text style={styles.layerActionText}>Fondo</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Traer elemento al frente"
+              onPress={() => setElements(reorderStoryLayer(composition.elements, selected.id, 'front'))}
+              style={styles.layerAction}
+            >
+              <MaterialIcons name="vertical-align-top" color="#fff" size={19} />
+              <Text style={styles.layerActionText}>Frente</Text>
+            </Pressable>
+          </View>
         ) : null}
 
         {showStickerPicker ? (
@@ -318,15 +476,32 @@ export function StoryEditor({
             accessibilityLabel="Añadir texto"
             accessibilityHint={selected?.type === 'text' ? 'Edita el texto seleccionado' : 'Añade texto a la historia'}
             onPress={() => selected?.type === 'text' ? setEditingTextId(selected.id) : addText()}
-            style={[styles.tool, editingTextId && styles.toolSelected]}
+            style={[styles.tool, toolSizeStyle, editingTextId && styles.toolSelected]}
           ><Text style={styles.toolText}>Aa</Text></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Elegir sticker" onPress={() => setShowStickerPicker(value => !value)} style={[styles.tool, showStickerPicker && styles.toolSelected]}><Text style={styles.stickerToolIcon}>☺</Text></Pressable>
-          <Pressable disabled={selected?.type !== 'text'} accessibilityRole="button" accessibilityLabel="Cambiar color" onPress={() => selected?.type === 'text' && updateElement({ ...selected, color: STORY_TEXT_COLORS[(STORY_TEXT_COLORS.indexOf(selected.color) + 1) % STORY_TEXT_COLORS.length] })} style={[styles.tool, selected?.type !== 'text' && styles.toolDisabled]}><View style={[styles.color, { backgroundColor: selected?.type === 'text' ? selected.color : '#FFFFFF' }]} /></Pressable>
-          <Pressable disabled={selected?.type !== 'text'} accessibilityRole="button" accessibilityLabel="Cambiar tamaño" style={[styles.tool, selected?.type !== 'text' && styles.toolDisabled]} onPress={() => selected?.type === 'text' && updateElement({ ...selected, size: selected.size === 'small' ? 'medium' : selected.size === 'medium' ? 'large' : 'small' })}><MaterialIcons name="format-size" color="#fff" size={20} /></Pressable>
-          <Pressable disabled={!selected} accessibilityRole="button" accessibilityLabel="Eliminar elemento" style={[styles.tool, !selected && styles.toolDisabled, selected && styles.deleteTool]} onPress={() => { if (!selected) return; setComposition(current => ({ ...current, elements: current.elements.filter(item => item.id !== selected.id) })); setSelectedId(null); }}><MaterialIcons name="backspace" color="#fff" size={20} /></Pressable>
-          <Text pointerEvents="none" style={styles.toolbarHint}>Arrastra · pellizca · edita</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Elegir sticker" onPress={() => setShowStickerPicker(value => !value)} style={[styles.tool, toolSizeStyle, showStickerPicker && styles.toolSelected]}><Text style={styles.stickerToolIcon}>☺</Text></Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={selected?.type === 'interactive' ? 'Editar interacción' : 'Añadir interacción'}
+            onPress={() => {
+              if (selected?.type === 'interactive') {
+                const draft = interactiveDrafts.find(item => item.definition.element_id === selected.element_id);
+                if (draft) setInteractiveSheetDraft(draft);
+              } else openNewInteractive();
+            }}
+            style={[styles.tool, toolSizeStyle]}
+          ><MaterialIcons name="poll" color="#fff" size={21} /></Pressable>
+          <Pressable disabled={selected?.type !== 'text'} accessibilityRole="button" accessibilityLabel="Cambiar color" onPress={() => selected?.type === 'text' && updateElement({ ...selected, color: STORY_TEXT_COLORS[(STORY_TEXT_COLORS.indexOf(selected.color) + 1) % STORY_TEXT_COLORS.length] })} style={[styles.tool, toolSizeStyle, selected?.type !== 'text' && styles.toolDisabled]}><View style={[styles.color, { backgroundColor: selected?.type === 'text' ? selected.color : '#FFFFFF' }]} /></Pressable>
+          <Pressable disabled={selected?.type !== 'text'} accessibilityRole="button" accessibilityLabel="Cambiar tamaño" style={[styles.tool, toolSizeStyle, selected?.type !== 'text' && styles.toolDisabled]} onPress={() => selected?.type === 'text' && updateElement({ ...selected, size: selected.size === 'small' ? 'medium' : selected.size === 'medium' ? 'large' : 'small' })}><MaterialIcons name="format-size" color="#fff" size={20} /></Pressable>
+          <Pressable disabled={!selected} accessibilityRole="button" accessibilityLabel="Eliminar elemento" style={[styles.tool, toolSizeStyle, !selected && styles.toolDisabled, selected && styles.deleteTool]} onPress={() => selected && removeElement(selected)}><MaterialIcons name="backspace" color="#fff" size={20} /></Pressable>
+          <Text pointerEvents="none" style={styles.toolbarHint}>Arrastra · pellizca · gira · edita</Text>
         </View>
         {error ? <Text style={styles.error}>No se pudo publicar. Tu edición sigue aquí.</Text> : null}
+        <StoryInteractiveEditorSheet
+          visible={interactiveSheetDraft !== null}
+          draft={interactiveSheetDraft}
+          onCancel={() => setInteractiveSheetDraft(null)}
+          onSave={saveInteractiveDraft}
+        />
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -334,14 +509,14 @@ export function StoryEditor({
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#050507' },
-  header: { paddingHorizontal: 17, paddingBottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(8,8,13,0.72)' },
+  header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 20, paddingHorizontal: 17, paddingBottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(8,8,13,0.72)' },
   headerButton: { width: 44, height: 44, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent', zIndex: 2 },
   title: { position: 'absolute', left: 0, right: 0, color: '#fff', fontSize: 16, fontWeight: '600', textAlign: 'center' },
   publish: { height: 38, backgroundColor: '#7C5CFF', borderRadius: 19, paddingHorizontal: 16, justifyContent: 'center', width: 88, alignItems: 'center', zIndex: 2 },
   pressed: { opacity: 0.8, transform: [{ scale: 0.97 }] },
   disabled: { opacity: 0.58 },
   publishText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  canvas: { overflow: 'hidden', backgroundColor: Colors.surface, position: 'relative' },
+  canvas: { overflow: 'hidden', backgroundColor: Colors.surface },
   editable: { position: 'absolute', alignItems: 'center', justifyContent: 'center', zIndex: 5 },
   selected: { borderWidth: 2, borderColor: Colors.primaryLight, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.28)' },
   sharedPreview: { width: '84%', maxWidth: 430, alignSelf: 'center', marginTop: '18%', borderRadius: Radius.xl, overflow: 'hidden', backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.borderHighlight },
@@ -351,8 +526,9 @@ const styles = StyleSheet.create({
   sharedCreator: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 7 },
   sharedUser: { color: '#fff', fontWeight: '800' },
   sharedCaption: { color: '#ddd', marginTop: 5 },
-  toolbar: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: 19, paddingTop: 28, backgroundColor: 'rgba(11,11,16,0.94)' },
+  toolbar: { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20, flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: 19, paddingTop: 28, backgroundColor: 'rgba(11,11,16,0.94)' },
   tool: { width: 52, height: 52, borderRadius: 26, borderWidth: 1, borderColor: 'transparent', backgroundColor: '#23232D', alignItems: 'center', justifyContent: 'center' },
+  toolCompact: { width: 44, height: 44, borderRadius: 22 },
   toolSelected: { borderWidth: 2, borderColor: '#7C5CFF', backgroundColor: '#181820' },
   toolDisabled: { opacity: 0.42 },
   toolText: { color: '#fff', fontSize: 17, fontWeight: '700' },
@@ -363,6 +539,9 @@ const styles = StyleSheet.create({
   color: { width: 18, height: 18, borderRadius: 9, borderWidth: 1, borderColor: '#fff' },
   deleteTool: { backgroundColor: '#23232D' },
   toolbarHint: { position: 'absolute', left: 0, right: 0, bottom: 8, color: '#6F7080', fontSize: 11, fontWeight: '500', textAlign: 'center' },
+  layerControls: { position: 'absolute', right: 12, zIndex: 30, flexDirection: 'row', gap: 8 },
+  layerAction: { minWidth: 44, height: 44, paddingHorizontal: 8, borderRadius: 22, flexDirection: 'row', gap: 4, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(17,17,24,0.9)', borderWidth: 1, borderColor: Colors.borderHighlight },
+  layerActionText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   textInput: { position: 'absolute', left: Spacing.md, right: Spacing.md, minHeight: 96, maxHeight: 180, backgroundColor: Colors.textPrimary, color: Colors.textInverse, borderRadius: Radius.lg, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, fontSize: 20, lineHeight: 26, zIndex: 20 },
-  error: { color: '#ff7b91', textAlign: 'center', paddingBottom: 8 },
+  error: { position: 'absolute', left: 16, right: 16, bottom: 4, zIndex: 40, color: '#ff7b91', textAlign: 'center', paddingBottom: 8 },
 });

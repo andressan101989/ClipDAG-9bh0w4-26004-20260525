@@ -1,7 +1,29 @@
-import type { StoryStickerElement, StoryTextElement } from './storyComposition';
-
 export type StoryInteractiveKind = 'poll' | 'slider' | 'quiz' | 'question' | 'reaction';
+export type StoryTextSize = 'small' | 'medium' | 'large';
+export type StoryTextColor = '#FFFFFF' | '#111111' | '#FF2D78' | '#7C5CFF' | '#00D4FF' | '#FFD60A';
+export type StoryStickerValue = '❤️' | '😂' | '😮' | '😢' | '🔥' | '👏' | '✨' | '⭐' | '💯' | '🎉' | '😍';
 export interface StoryInteractiveOption { id: string; label: string }
+
+export interface StoryElementBase {
+  id: string;
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+}
+
+export interface StoryTextElement extends StoryElementBase {
+  type: 'text';
+  text: string;
+  color: StoryTextColor;
+  align: 'left' | 'center' | 'right';
+  size: StoryTextSize;
+}
+
+export interface StoryStickerElement extends StoryElementBase {
+  type: 'sticker';
+  value: StoryStickerValue;
+}
 
 interface StoryInteractiveDefinitionBase {
   version: 1;
@@ -12,18 +34,13 @@ interface StoryInteractiveDefinitionBase {
 // Public configuration only. Answers, responses and aggregates come from authorized RPCs.
 export type StoryInteractiveDefinition = StoryInteractiveDefinitionBase & (
   | { type: 'poll' | 'quiz'; options: StoryInteractiveOption[] }
-  | { type: 'slider' | 'reaction'; emoji: string }
+  | { type: 'slider' | 'reaction'; emoji: StoryStickerValue }
   | { type: 'question' }
 );
 
-export interface StoryInteractivePlacement {
-  id: string;
+export interface StoryInteractivePlacement extends StoryElementBase {
   type: 'interactive';
   element_id: string;
-  x: number;
-  y: number;
-  scale: number;
-  rotation: number;
 }
 
 export type StoryStaticElement = StoryTextElement | StoryStickerElement;
@@ -32,6 +49,23 @@ export type StoryComposition =
   | { version: 1; elements: StoryStaticElement[] }
   | { version: 2; elements: StoryCompositionElement[] };
 
+/** Private editor state. Never render or persist correctOptionId in public composition/config. */
+export interface StoryInteractiveDraft {
+  definition: StoryInteractiveDefinition;
+  correctOptionId: string | null;
+}
+
+export type StoryInteractiveSubmissionDefinition =
+  | (StoryInteractiveDefinitionBase & { type: 'poll'; options: StoryInteractiveOption[] })
+  | (StoryInteractiveDefinitionBase & { type: 'quiz'; options: StoryInteractiveOption[]; correct_option_id?: string })
+  | (StoryInteractiveDefinitionBase & { type: 'slider' | 'reaction'; emoji: StoryStickerValue })
+  | (StoryInteractiveDefinitionBase & { type: 'question' });
+
+export interface StoryEditorPublication {
+  composition: StoryComposition;
+  interactiveDefinitions: StoryInteractiveSubmissionDefinition[];
+}
+
 export const STORY_INTERACTIVE_MAX_OPTIONS = 6;
 export const STORY_INTERACTIVE_MAX_PROMPT_LENGTH = 200;
 export const STORY_INTERACTIVE_MAX_OPTION_LENGTH = 80;
@@ -39,8 +73,8 @@ export const STORY_INTERACTIVE_MAX_OPTION_LENGTH = 80;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const OPTION_ID = /^[a-z0-9_-]{1,64}$/i;
 const URL = /(?:\b[a-z][a-z0-9+.-]*:\/\/|\b(?:javascript|data):|\bwww\.)/i;
-const STICKERS = ['❤️', '😂', '😮', '😢', '🔥', '👏', '✨', '⭐', '💯', '🎉', '😍'];
-const COLORS = ['#FFFFFF', '#111111', '#FF2D78', '#7C5CFF', '#00D4FF', '#FFD60A'];
+const STICKERS: readonly StoryStickerValue[] = ['❤️', '😂', '😮', '😢', '🔥', '👏', '✨', '⭐', '💯', '🎉', '😍'];
+const COLORS: readonly StoryTextColor[] = ['#FFFFFF', '#111111', '#FF2D78', '#7C5CFF', '#00D4FF', '#FFD60A'];
 const GEOMETRY_KEYS = ['id', 'type', 'x', 'y', 'scale', 'rotation'];
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -92,8 +126,9 @@ export function parseStoryInteractiveDefinition(value: unknown): StoryInteractiv
     return { ...base, type: value.type, options };
   }
   if (value.type === 'slider' || value.type === 'reaction') {
-    if (!keys(value, [...allowed, 'emoji']) || typeof value.emoji !== 'string' || !STICKERS.includes(value.emoji)) return null;
-    return { ...base, type: value.type, emoji: value.emoji };
+    if (!keys(value, [...allowed, 'emoji']) || typeof value.emoji !== 'string'
+      || !STICKERS.includes(value.emoji as StoryStickerValue)) return null;
+    return { ...base, type: value.type, emoji: value.emoji as StoryStickerValue };
   }
   if (value.type === 'question' && keys(value, allowed)) return { ...base, type: 'question' };
   return null;
@@ -112,15 +147,15 @@ function parseElement(value: unknown, version: 1 | 2): StoryCompositionElement |
   if (value.type === 'text' && keys(value, [...GEOMETRY_KEYS, 'text', 'color', 'align', 'size'])) {
     // Preserve v1's plain-text contract; URL-bearing object keys remain forbidden.
     const normalized = text(value.text, 200, false);
-    if (normalized === null || typeof value.color !== 'string' || !COLORS.includes(value.color)
+    if (normalized === null || typeof value.color !== 'string' || !COLORS.includes(value.color as StoryTextColor)
       || (value.align !== 'left' && value.align !== 'center' && value.align !== 'right')
       || (value.size !== 'small' && value.size !== 'medium' && value.size !== 'large')) return null;
-    return { ...base, type: 'text', text: normalized, color: value.color as StoryTextElement['color'],
+    return { ...base, type: 'text', text: normalized, color: value.color as StoryTextColor,
       align: value.align, size: value.size };
   }
   if (value.type === 'sticker' && keys(value, [...GEOMETRY_KEYS, 'value'])
-    && typeof value.value === 'string' && STICKERS.includes(value.value)) {
-    return { ...base, type: 'sticker', value: value.value as StoryStickerElement['value'] };
+    && typeof value.value === 'string' && STICKERS.includes(value.value as StoryStickerValue)) {
+    return { ...base, type: 'sticker', value: value.value as StoryStickerValue };
   }
   return null;
 }
@@ -150,4 +185,56 @@ export function parseStoryComposition(value: unknown): StoryComposition | null {
   return value.version === 1
     ? { version: 1, elements: elements as StoryStaticElement[] }
     : { version: 2, elements };
+}
+
+/** v1 remains the wire format for static-only Stories; interactive placement requires v2. */
+export function normalizeStoryCompositionVersion(
+  composition: { version: 1 | 2; elements: StoryCompositionElement[] },
+): StoryComposition {
+  return composition.elements.some(element => element.type === 'interactive')
+    ? { version: 2, elements: composition.elements }
+    : { version: 1, elements: composition.elements as StoryStaticElement[] };
+}
+
+/**
+ * Builds the sole publication envelope. Its definition IDs must exactly equal the placement set.
+ * Quiz answers are emitted only into the private RPC envelope, never public config/composition.
+ */
+export function buildStoryInteractivePublication(
+  compositionInput: { version: 1 | 2; elements: StoryCompositionElement[] },
+  drafts: StoryInteractiveDraft[],
+): StoryEditorPublication | null {
+  const composition = parseStoryComposition(normalizeStoryCompositionVersion(compositionInput));
+  if (!composition) return null;
+  const compositionElements: StoryCompositionElement[] = composition.elements;
+  const placements = compositionElements.filter(
+    (element): element is StoryInteractivePlacement => element.type === 'interactive',
+  );
+  if (placements.length !== drafts.length) return null;
+
+  const byId = new Map<string, StoryInteractiveSubmissionDefinition>();
+  for (const draft of drafts) {
+    const definition = parseStoryInteractiveDefinition(draft.definition);
+    if (!definition || byId.has(definition.element_id)) return null;
+    if (definition.type === 'quiz') {
+      if (draft.correctOptionId !== null
+        && !definition.options.some(option => option.id === draft.correctOptionId)) return null;
+      byId.set(definition.element_id, draft.correctOptionId === null
+        ? definition
+        : { ...definition, correct_option_id: draft.correctOptionId });
+    } else {
+      if (draft.correctOptionId !== null) return null;
+      byId.set(definition.element_id, definition);
+    }
+  }
+
+  const interactiveDefinitions: StoryInteractiveSubmissionDefinition[] = [];
+  for (const placement of placements) {
+    const definition = byId.get(placement.element_id);
+    if (!definition) return null;
+    interactiveDefinitions.push(definition);
+    byId.delete(placement.element_id);
+  }
+  if (byId.size !== 0) return null;
+  return { composition, interactiveDefinitions };
 }

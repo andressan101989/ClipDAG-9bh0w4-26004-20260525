@@ -39,7 +39,8 @@ import {
   type MarketplaceCreatorContentType,
 } from '@/services/marketplaceCreatorContentTagService';
 import { StoryEditor, type StoryEditorSource } from '@/components/feature/StoryEditor';
-import { EMPTY_STORY_COMPOSITION, type StoryComposition } from '@/components/feature/storyComposition';
+import { EMPTY_STORY_COMPOSITION } from '@/components/feature/storyComposition';
+import type { StoryEditorPublication } from '@/components/feature/storyInteractiveTypes';
 import { SponsoredFeedCard } from '@/components/marketplace/SponsoredFeedCard';
 import {
   fetchSponsoredProducts,
@@ -381,12 +382,17 @@ export default function FeedScreen() {
 
   const publishStory = useCallback(async (
     source: StoryEditorSource,
-    composition: StoryComposition,
+    publication: StoryEditorPublication,
     clientStoryId: string,
   ) => {
     if (!user) throw new Error('STORY_PUBLISH_NOT_AUTHENTICATED');
     if (source.kind === 'shared') {
-      await addSharedStory(source.videoId, composition, clientStoryId);
+      await addSharedStory(
+        source.videoId,
+        publication.composition,
+        clientStoryId,
+        publication.interactiveDefinitions,
+      );
       setStoryEditorSource(null);
       showAlert('Historia publicada!', 'Tu historia estará visible por 24 horas');
       return;
@@ -444,7 +450,12 @@ export default function FeedScreen() {
         }
       }
       failureStage = 'STORY_CREATE_RPC';
-      const persistedStoryId = await addStory(uploadedAssetId, composition, clientStoryId);
+      const persistedStoryId = await addStory(
+        uploadedAssetId,
+        publication.composition,
+        clientStoryId,
+        publication.interactiveDefinitions,
+      );
       if (!persistedStoryId) throw new Error('STORY_INSERT_FAILED');
       storyUploadAttemptsRef.current.delete(clientStoryId);
       setStoryEditorSource(null);
