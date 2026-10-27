@@ -371,7 +371,8 @@ test('Stories Safety C1 policy adds an exact inactive one-migration zero-Edge tr
 });
 
 test('Stories Safety C1 Git attestation binds reviewed migration and policy artifact bytes', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const { gate, policy: installedPolicy } = await loadGateAndPolicy();
+  const policy = asStoriesSafetyC1TransitionPolicy(installedPolicy);
   const transition = policy.stories_safety_c1_transition;
   const root = new URL('..', import.meta.url);
   const runGit = args => execFileSync('git', args, {
@@ -406,7 +407,8 @@ test('Stories Safety C1 Git attestation binds reviewed migration and policy arti
 });
 
 test('Stories Safety C1 manifest accepts only the attested migration and no Edge or config changes', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const { gate, policy: installedPolicy } = await loadGateAndPolicy();
+  const policy = asStoriesSafetyC1TransitionPolicy(installedPolicy);
   const transition = policy.stories_safety_c1_transition;
   const approvedSha = 'b'.repeat(40);
   const changes = [{ status: 'A', path: transition.migration_path, fileType: 'file' }];
@@ -442,6 +444,33 @@ test('Stories Safety C1 manifest accepts only the attested migration and no Edge
   assertDenied(() => gate.buildManifest({
     ...input,
     storiesSafetyC1Transition: { ...attestation, migration_sha256: '0'.repeat(64) },
+  }), 'INVALID_STORIES_SAFETY_C1_TRANSITION');
+});
+
+test('Stories Safety C1 transition retires after baseline promotion and cannot reactivate', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.stories_safety_c1_transition;
+  const result = gate.attestStoriesSafetyC1Transition({
+    cwd: new URL('..', import.meta.url),
+    policy,
+    mode: 'plan_only',
+    approvedSha: MAIN_SHA,
+    changes: [{ path: transition.migration_path, status: 'A' }],
+    migrations: [],
+    affectedFunctions: [],
+    runGit: () => { throw new Error('promoted Stories Safety C1 attestation must not run'); },
+  });
+  assert.deepEqual(result, { migrations: [], attestation: null });
+
+  assertDenied(() => gate.attestStoriesSafetyC1Transition({
+    cwd: new URL('..', import.meta.url),
+    policy,
+    mode: 'plan_only',
+    approvedSha: MAIN_SHA,
+    changes: [{ path: transition.migration_path, status: 'A' }],
+    migrations: [{ path: transition.migration_path, version: '20261027120000' }],
+    affectedFunctions: [],
+    runGit: () => { throw new Error('retired Stories Safety C1 transition must reject replay before Git'); },
   }), 'INVALID_STORIES_SAFETY_C1_TRANSITION');
 });
 
@@ -489,9 +518,44 @@ const STORIES_B1_PRE_RELEASE_BASELINE = Object.freeze({
   verified_by: OWNER,
 });
 
+const STORIES_SAFETY_C1_PRE_RELEASE_BASELINE = Object.freeze({
+  authority_source: 'owner-control-plane',
+  blocked_resources: [],
+  evidence: 'cf02b715a2b828002ca8ab8e796e1b9c273f5b8563b6b99440f777d9d15a0c59',
+  evidence_digests: {
+    migrations: '785aa20ab32cddd324546facf872e08278ef1b3dd51f3a7f7dcbd406ede7ca24',
+    managed_functions: '9f2d00de4c48cedc96edb09ee654a1c43679e1168dbb17273207d4273de8320b',
+    unmanaged_functions: '26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc',
+    function_source_parity: 'f9b9e191f6d70e2e0c33ac54cb1af5592afe4eaff6c7eb85dc20d07b50c273c1',
+    config_verify_jwt: '703749fce46f724c7c4e791f7a222915b166af0ded38f00f34f983798355ba15',
+    cron_security: '7abbb7c306dc044e6228a9fdc1e00fa2dbcec6936e433ea3c5b6123611cc2ae1',
+    finance: 'f94d54264c5d7658dc04aba34b028c815e99d7eb8ccf2490410817d47566754f',
+  },
+  latest_migration: '20261027042552_stories_v2_interactive_b1',
+  migration_count: 358,
+  prior_release: {
+    kind: 'post-release',
+    release_id: 'nelyon-stories-b1-recovery-release-20261027T082425Z',
+    manifest_sha256: '4c3435b1cd87ffd416c02b9f720cf4d3e3dd193fa8982e613dafa48fd036bcdf',
+    postcheck_evidence_sha256: '91539f307047110f8c2b1c9a6abe9aaa6b8c7b83ae3751ba06a03f928d828b2e',
+  },
+  requires_separate_policy_commit: true,
+  reviewed_policy_sha256: '65ea15b0f6b681e88c62965f2e79fb2e502e3dfd3d190f77899c76f8f31e0eec',
+  sha: '01dd6467484d11ad11aeb611374437e212fb7401',
+  state: 'verified',
+  verified_at: '2026-10-27T12:53:56.726Z',
+  verified_by: OWNER,
+});
+
 function asStoriesB1TransitionPolicy(policy) {
   const transitionPolicy = structuredClone(policy);
   transitionPolicy.baseline = structuredClone(STORIES_B1_PRE_RELEASE_BASELINE);
+  return transitionPolicy;
+}
+
+function asStoriesSafetyC1TransitionPolicy(policy) {
+  const transitionPolicy = structuredClone(policy);
+  transitionPolicy.baseline = structuredClone(STORIES_SAFETY_C1_PRE_RELEASE_BASELINE);
   return transitionPolicy;
 }
 
@@ -2407,35 +2471,35 @@ test('expanded managed scope has a verified static cutover control', async () =>
   }), policy).mode, 'release');
 });
 
-test('Stories B1 production baseline is promoted from independently verified owner evidence', async () => {
+test('Stories Safety C1 production baseline is promoted from independently verified owner evidence', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(gate.validatePolicy(policy), true);
   assert.deepEqual(policy.baseline, {
     authority_source: 'owner-control-plane',
     blocked_resources: [],
-    evidence: 'cf02b715a2b828002ca8ab8e796e1b9c273f5b8563b6b99440f777d9d15a0c59',
+    evidence: '387bb459080f16930c86fd91bd460d74c2834e2ffc775d9328436c8f23889c16',
     evidence_digests: {
-      migrations: '785aa20ab32cddd324546facf872e08278ef1b3dd51f3a7f7dcbd406ede7ca24',
+      migrations: '3af16fcabb74471c818c52da1777287ea5ac81d574154cca319a75de86624055',
       managed_functions: '9f2d00de4c48cedc96edb09ee654a1c43679e1168dbb17273207d4273de8320b',
       unmanaged_functions: '26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc',
       function_source_parity: 'f9b9e191f6d70e2e0c33ac54cb1af5592afe4eaff6c7eb85dc20d07b50c273c1',
       config_verify_jwt: '703749fce46f724c7c4e791f7a222915b166af0ded38f00f34f983798355ba15',
-      cron_security: '7abbb7c306dc044e6228a9fdc1e00fa2dbcec6936e433ea3c5b6123611cc2ae1',
+      cron_security: 'c53f873e7ccd690b6d1abd7c52b3bff94789ccc86f75d78efe57205eee6c6b76',
       finance: 'f94d54264c5d7658dc04aba34b028c815e99d7eb8ccf2490410817d47566754f',
     },
-    latest_migration: '20261027042552_stories_v2_interactive_b1',
-    migration_count: 358,
+    latest_migration: '20261027120000_stories_v2_safety_c1_technical_policy_prep',
+    migration_count: 359,
     prior_release: {
       kind: 'post-release',
-      release_id: 'nelyon-stories-b1-recovery-release-20261027T082425Z',
-      manifest_sha256: '4c3435b1cd87ffd416c02b9f720cf4d3e3dd193fa8982e613dafa48fd036bcdf',
-      postcheck_evidence_sha256: '91539f307047110f8c2b1c9a6abe9aaa6b8c7b83ae3751ba06a03f928d828b2e',
+      release_id: 'nelyon-stories-safety-c1-technical-release-20261027T155603Z',
+      manifest_sha256: '5819e1d8bb4d718028028b2ca0a401f37e50d59a884ffb6919006d59f93d8917',
+      postcheck_evidence_sha256: '645f30a2f72e07d1e23ced7258d849095d301f7a79ec98fe7c1a734fa99405e0',
     },
     requires_separate_policy_commit: true,
-    reviewed_policy_sha256: '65ea15b0f6b681e88c62965f2e79fb2e502e3dfd3d190f77899c76f8f31e0eec',
-    sha: '01dd6467484d11ad11aeb611374437e212fb7401',
+    reviewed_policy_sha256: 'c518d78340f9a3d30f1aecaec6537f46a94859eff9f5ac12d4cfeb0631028243',
+    sha: 'e4c7199da157446f455822ea96e812784354b1db',
     state: 'verified',
-    verified_at: '2026-10-27T12:53:56.726Z',
+    verified_at: '2026-10-27T17:50:56.534Z',
     verified_by: OWNER,
   });
 
