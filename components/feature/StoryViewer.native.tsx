@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet, useWindowDimensions,
   ActivityIndicator, Animated, PanResponder, AppState, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
+import { randomUUID } from 'expo-crypto';
 import { AdvertisingFeedCardV2 } from '@/components/advertising/AdvertisingFeedCardV2';
 // expo-video — lazy-loaded to prevent Hermes crash from dynamic import() syntax
 // bundled into main.jsbundle. Static import of expo-video causes:
@@ -26,6 +27,12 @@ import { useStoryMediaUrl } from './useStoryMediaUrl';
 import { StoryViewersSheet } from './StoryViewersSheet';
 import { StoryInteractions } from './StoryInteractions';
 import { StoryCompositionOverlay } from './storyComposition';
+import { StoryInteractiveLayer } from './StoryInteractiveLayer';
+import {
+  resolveStoryAnchor,
+  shouldNavigateStory,
+  storyNavigationTarget,
+} from './storyViewerRuntime';
 import { StorySharedContentCard } from './StorySharedContentCard';
 import { StoryReactionEffect } from './StoryReactionEffect';
 import type { StoryReactionKey } from './storyReactions';
@@ -38,6 +45,11 @@ import type {
   StoryViewerRecord,
   StoryViewersPage,
   StorySharedContent,
+  StoryAnalyticsEventType,
+  StoryInteractivePayload,
+  StoryInteractiveResultsCursor,
+  StoryInteractiveResultsPage,
+  StoryInteractiveState,
 } from '@/contexts/StoriesContext';
 
 const PHOTO_DURATION_MS = 15000;
@@ -63,6 +75,31 @@ interface StoryViewerProps {
     limit?: number,
   ) => Promise<StoryReactionsPage>;
   onReplyToStory?: (storyId: string, text: string, clientMessageId: string) => Promise<void>;
+  onGetInteractiveState?: (storyId: string) => Promise<StoryInteractiveState>;
+  onRespondToInteractiveElement?: (
+    storyId: string,
+    elementId: string,
+    idempotencyKey: string,
+    payload: StoryInteractivePayload,
+  ) => Promise<void>;
+  onGetInteractiveResults?: (
+    storyId: string,
+    elementId: string,
+    cursor?: StoryInteractiveResultsCursor,
+    limit?: number,
+  ) => Promise<StoryInteractiveResultsPage>;
+  onModerateInteractiveQuestion?: (
+    storyId: string,
+    elementId: string,
+    respondentId: string,
+    action: 'hide',
+  ) => Promise<'hidden' | 'blocked'>;
+  onRecordStoryEvent?: (
+    storyId: string,
+    eventType: StoryAnalyticsEventType,
+    eventId: string,
+  ) => Promise<void>;
+  interactiveRevision?: number;
   onGetSharedContent?: (storyId: string) => Promise<StorySharedContent>;
   onAdvertisingActiveChange?: (story: StoryItem, active: boolean) => void;
   onAdvertisingMediaReady?: (story: StoryItem) => void;
@@ -266,12 +303,17 @@ export function StoryViewer({
   storyGroup,
   currentUserId,
   onClose,
-  onMarkViewed,
   onGetViewers,
   onDeleteStory,
   onSetReaction,
   onGetReactions,
   onReplyToStory,
+  onGetInteractiveState,
+  onRespondToInteractiveElement,
+  onGetInteractiveResults,
+  onModerateInteractiveQuestion,
+  onRecordStoryEvent,
+  interactiveRevision = 0,
   onGetSharedContent,
   onAdvertisingActiveChange,
   onAdvertisingMediaReady,
@@ -281,7 +323,8 @@ export function StoryViewer({
   const insets = useSafeAreaInsets();
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const router = useRouter();
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [currentStoryId, setCurrentStoryId] = useState<string | null>(null);
+  const [currentIndexHint, setCurrentIndexHint] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [mediaReady, setMediaReady] = useState(false);
   const [manualHold, setManualHold] = useState(false);
@@ -317,17 +360,25 @@ export function StoryViewer({
   const playbackGeneration = useRef(0);
   const transitionLock = useRef(false);
   const holdTriggered = useRef(false);
+  const interactionFocusedRef = useRef(false);
+  const eventAttemptIdsRef = useRef(new Map<string, string>());
+  const recordedEventKeysRef = useRef(new Set<string>());
+  const eventSequenceRef = useRef(0);
   const viewportHeightRef = useRef(viewportHeight);
   viewportHeightRef.current = viewportHeight;
 
-  const stories = storyGroup?.stories || [];
-  const currentStory = stories[currentIndex] || null;
-  const currentStoryId = currentStory?.id;
+  const stories = useMemo(() => storyGroup?.stories ?? [], [storyGroup]);
+  const storyAnchor = resolveStoryAnchor(stories, currentStoryId, currentIndexHint);
+  const anchoredStoryId = storyAnchor?.id;
+  const currentIndex = storyAnchor?.index ?? 0;
+  const currentStory = storyAnchor ? stories[storyAnchor.index] : null;
+  const resolvedStoryId = currentStory?.id;
   const currentMediaType = currentStory?.mediaType;
   const isAdvertisingStory = Boolean(currentStory?.advertisingV2);
   const isOwnStory = Boolean(currentStory && currentStory.userId === currentUserId);
   const currentStoryIdRef = useRef<string | null>(null);
-  currentStoryIdRef.current = currentStoryId ?? null;
+  currentStoryIdRef.current = resolvedStoryId ?? null;
+  interactionFocusedRef.current = interactionFocused;
   const shouldPausePlayback = !visible
     || manualHold
     || viewersVisible
@@ -338,9 +389,19 @@ export function StoryViewer({
     || appState !== 'active'
     || !mediaReady;
 
+  const handleInteractionFocus = useCallback((focused: boolean) => {
+    interactionFocusedRef.current = focused;
+    setInteractionFocused(focused);
+  }, []);
+
   useEffect(() => {
-    if (visible && storyGroup && currentIndex >= stories.length) onClose();
-  }, [currentIndex, onClose, stories.length, storyGroup, visible]);
+    if (!visible || !storyGroup) return;
+    if (!anchoredStoryId) {
+      onClose();
+      return;
+    }
+    if (currentStoryId !== anchoredStoryId) setCurrentStoryId(anchoredStoryId);
+  }, [anchoredStoryId, currentStoryId, onClose, storyGroup, visible]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', setAppState);
@@ -424,13 +485,13 @@ export function StoryViewer({
     setReactionCount(0);
     setReactionCursor(null);
     setReactionsError(false);
-    if (visible && currentStoryId && isOwnStory && onGetViewers) {
-      void loadViewers(currentStoryId);
+    if (visible && resolvedStoryId && isOwnStory && onGetViewers) {
+      void loadViewers(resolvedStoryId);
     }
-    if (visible && currentStoryId && isOwnStory && onGetReactions) {
-      void loadReactions(currentStoryId);
+    if (visible && resolvedStoryId && isOwnStory && onGetReactions) {
+      void loadReactions(resolvedStoryId);
     }
-  }, [visible, currentStoryId, isOwnStory, onGetViewers, onGetReactions, loadViewers, loadReactions]);
+  }, [visible, resolvedStoryId, isOwnStory, onGetViewers, onGetReactions, loadViewers, loadReactions]);
 
   const stopPhotoProgress = useCallback((capture = true) => {
     progressAnim.stopAnimation(value => {
@@ -446,25 +507,61 @@ export function StoryViewer({
     progressAnim.setValue(0);
   }, [progressAnim, stopPhotoProgress]);
 
+  const recordViewerEvent = useCallback((
+    eventType: StoryAnalyticsEventType,
+    storyId: string | null | undefined,
+    logicalKey: string,
+  ) => {
+    if (!storyId || !onRecordStoryEvent || isAdvertisingStory) return;
+    const key = `${storyId}:${eventType}:${logicalKey}`;
+    if (recordedEventKeysRef.current.has(key)) return;
+    const eventId = eventAttemptIdsRef.current.get(key) ?? randomUUID();
+    eventAttemptIdsRef.current.set(key, eventId);
+    const persist = (retry: boolean) => {
+      void onRecordStoryEvent(storyId, eventType, eventId).then(() => {
+        eventAttemptIdsRef.current.delete(key);
+        recordedEventKeysRef.current.add(key);
+      }).catch(() => {
+        if (!retry) setTimeout(() => persist(true), 750);
+      });
+    };
+    persist(false);
+  }, [isAdvertisingStory, onRecordStoryEvent]);
+  const recordStoryEvent = recordViewerEvent;
+
   const closeViewer = useCallback(() => {
     if (transitionLock.current) return;
     transitionLock.current = true;
     stopPhotoProgress();
+    recordViewerEvent('exit', currentStoryIdRef.current, 'close');
     onClose();
-  }, [onClose, stopPhotoProgress]);
+  }, [onClose, recordViewerEvent, stopPhotoProgress]);
 
-  const goNext = useCallback((sourceStoryId?: string, sourceGeneration?: number) => {
+  const goNext = useCallback((
+    sourceStoryId?: string,
+    sourceGeneration?: number,
+    reason: 'completion' | 'forward' = 'forward',
+  ) => {
     if (sourceStoryId && sourceStoryId !== currentStoryIdRef.current) return;
     if (sourceGeneration !== undefined && sourceGeneration !== playbackGeneration.current) return;
     if (transitionLock.current) return;
+    const activeStoryId = currentStoryIdRef.current;
+    if (!activeStoryId) return;
     transitionLock.current = true;
+    if (reason === 'completion') {
+      recordViewerEvent('completion', activeStoryId, 'playback');
+    } else {
+      recordViewerEvent('forward', activeStoryId, `nav-${eventSequenceRef.current++}`);
+    }
     resetProgress();
-    if (currentIndex < stories.length - 1) {
-      setCurrentIndex(index => index + 1);
+    const targetId = storyNavigationTarget(stories, activeStoryId, 'next');
+    if (targetId) {
+      setCurrentIndexHint(stories.findIndex(story => story.id === targetId));
+      setCurrentStoryId(targetId);
     } else {
       onClose();
     }
-  }, [currentIndex, onClose, resetProgress, stories.length]);
+  }, [onClose, recordViewerEvent, resetProgress, stories]);
 
   const restartCurrentStory = useCallback(() => {
     resetProgress();
@@ -474,14 +571,20 @@ export function StoryViewer({
 
   const goPrev = useCallback(() => {
     if (transitionLock.current) return;
+    const activeStoryId = currentStoryIdRef.current;
+    if (!activeStoryId) return;
     transitionLock.current = true;
     resetProgress();
-    if (currentIndex > 0) {
-      setCurrentIndex(index => index - 1);
+    const targetId = storyNavigationTarget(stories, activeStoryId, 'previous');
+    if (targetId) {
+      recordViewerEvent('back', activeStoryId, `nav-${eventSequenceRef.current++}`);
+      setCurrentIndexHint(stories.findIndex(story => story.id === targetId));
+      setCurrentStoryId(targetId);
     } else {
+      recordViewerEvent('replay', activeStoryId, `replay-${eventSequenceRef.current++}`);
       restartCurrentStory();
     }
-  }, [currentIndex, resetProgress, restartCurrentStory]);
+  }, [recordViewerEvent, resetProgress, restartCurrentStory, stories]);
 
   const handleMediaReadyChange = useCallback((storyId: string, ready: boolean) => {
     if (currentStoryIdRef.current === storyId) setMediaReady(ready);
@@ -493,7 +596,7 @@ export function StoryViewer({
   }, [progressAnim]);
 
   const handleVideoEnd = useCallback((storyId: string) => {
-    goNext(storyId, playbackGeneration.current);
+    goNext(storyId, playbackGeneration.current, 'completion');
   }, [goNext]);
 
   const handleMediaReset = useCallback(() => {
@@ -502,16 +605,17 @@ export function StoryViewer({
   }, [resetProgress]);
 
   const handleSharedReadyChange = useCallback((ready: boolean) => {
-    if (currentStoryId) handleMediaReadyChange(currentStoryId, ready);
-  }, [currentStoryId, handleMediaReadyChange]);
+    if (resolvedStoryId) handleMediaReadyChange(resolvedStoryId, ready);
+  }, [resolvedStoryId, handleMediaReadyChange]);
 
   const openSharedContent = useCallback((videoId: string) => {
     if (transitionLock.current) return;
     transitionLock.current = true;
     stopPhotoProgress();
+    recordViewerEvent('exit', currentStoryIdRef.current, 'open-shared');
     onClose();
     router.push(`/video/${videoId}` as never);
-  }, [onClose, router, stopPhotoProgress]);
+  }, [onClose, recordViewerEvent, router, stopPhotoProgress]);
 
   useLayoutEffect(() => {
     playbackGeneration.current += 1;
@@ -522,11 +626,14 @@ export function StoryViewer({
     setReactionEffect(current => ({ reaction: null, token: current.token + 1 }));
     resetProgress();
     return () => stopPhotoProgress(false);
-  }, [currentStoryId, resetProgress, stopPhotoProgress, visible]);
+  }, [resolvedStoryId, resetProgress, stopPhotoProgress, visible]);
 
   useEffect(() => {
-    if (visible && currentStoryId && !isAdvertisingStory && onMarkViewed) void onMarkViewed(currentStoryId);
-  }, [currentStoryId, isAdvertisingStory, onMarkViewed, visible]);
+    if (!visible || !mediaReady || !resolvedStoryId || isAdvertisingStory) return;
+    // record_story_event(impression) is the sole viewer authority and performs
+    // mark_story_viewed server-side after the organic media is actually ready.
+    recordStoryEvent('impression', resolvedStoryId, 'media-ready');
+  }, [isAdvertisingStory, mediaReady, recordStoryEvent, resolvedStoryId, visible]);
 
   useEffect(() => {
     if (!currentStory?.advertisingV2 || !onAdvertisingActiveChange) return;
@@ -535,11 +642,11 @@ export function StoryViewer({
   }, [currentStory, onAdvertisingActiveChange, visible]);
 
   useEffect(() => {
-    if (!currentStoryId || currentMediaType !== 'photo' || shouldPausePlayback) {
+    if (!resolvedStoryId || currentMediaType !== 'photo' || shouldPausePlayback) {
       stopPhotoProgress();
       return;
     }
-    const storyId = currentStoryId;
+    const storyId = resolvedStoryId;
     const generation = playbackGeneration.current;
     const currentProgress = photoProgressRef.current;
     progressAnim.setValue(currentProgress);
@@ -548,14 +655,15 @@ export function StoryViewer({
       duration: Math.max(0, PHOTO_DURATION_MS * (1 - currentProgress)),
       useNativeDriver: false,
     }).start(({ finished }) => {
-      if (finished) goNext(storyId, generation);
+      if (finished) goNext(storyId, generation, 'completion');
     });
     return () => stopPhotoProgress();
-  }, [currentMediaType, currentStoryId, goNext, progressAnim, restartToken, shouldPausePlayback, stopPhotoProgress]);
+  }, [currentMediaType, goNext, progressAnim, resolvedStoryId, restartToken, shouldPausePlayback, stopPhotoProgress]);
 
   useEffect(() => {
     if (!visible) {
-      setCurrentIndex(0);
+      setCurrentStoryId(null);
+      setCurrentIndexHint(0);
       setIsMuted(false);
       setManualHold(false);
       setInteractionFocused(false);
@@ -563,6 +671,9 @@ export function StoryViewer({
       setDeleteConfirmVisible(false);
       resetProgress();
       transitionLock.current = false;
+      eventAttemptIdsRef.current.clear();
+      recordedEventKeysRef.current.clear();
+      eventSequenceRef.current = 0;
     }
   }, [resetProgress, visible]);
 
@@ -631,7 +742,10 @@ export function StoryViewer({
   }, []);
 
   const handleZonePress = useCallback((direction: 'prev' | 'next') => {
-    if (holdTriggered.current) {
+    if (!shouldNavigateStory({
+      interactionFocused: interactionFocusedRef.current,
+      holdTriggered: holdTriggered.current,
+    })) {
       holdTriggered.current = false;
       return;
     }
@@ -642,7 +756,9 @@ export function StoryViewer({
   // Swipe down to close
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 10 && Math.abs(g.dy) > Math.abs(g.dx),
+      onMoveShouldSetPanResponder: (_, g) => !interactionFocusedRef.current
+        && Math.abs(g.dy) > 10
+        && Math.abs(g.dy) > Math.abs(g.dx),
       onPanResponderMove: (_, g) => {
         if (g.dy > 0) translateY.setValue(g.dy);
       },
@@ -706,6 +822,26 @@ export function StoryViewer({
           />
         )}
         {!isAdvertisingStory && <StoryCompositionOverlay composition={currentStory.composition} width={viewportWidth} height={viewportHeight} />}
+        {!isAdvertisingStory
+          && onGetInteractiveState
+          && onRespondToInteractiveElement
+          && onGetInteractiveResults
+          && onModerateInteractiveQuestion ? (
+            <StoryInteractiveLayer
+              key={currentStory.id}
+              storyId={currentStory.id}
+              composition={currentStory.composition}
+              width={viewportWidth}
+              height={viewportHeight}
+              isOwner={isOwnStory}
+              revision={interactiveRevision}
+              onInteractionFocus={handleInteractionFocus}
+              onLoadState={onGetInteractiveState}
+              onRespond={onRespondToInteractiveElement}
+              onLoadResults={onGetInteractiveResults}
+              onModerateQuestion={onModerateInteractiveQuestion}
+            />
+          ) : null}
 
         <StoryReactionEffect
           reaction={reactionEffect.reaction}
@@ -792,7 +928,10 @@ export function StoryViewer({
         </View>
 
         {/* Tap zones: left = prev, right = next */}
-        <View style={styles.tapZones} pointerEvents={deleteConfirmVisible || viewersVisible ? 'none' : 'box-none'}>
+        <View
+          style={styles.tapZones}
+          pointerEvents={deleteConfirmVisible || viewersVisible || interactionFocused ? 'none' : 'box-none'}
+        >
           <Pressable
             style={styles.tapLeft}
             delayLongPress={HOLD_DELAY_MS}
@@ -825,7 +964,7 @@ export function StoryViewer({
               onReaction={selectReaction}
               onReactionEffect={triggerReactionEffect}
               onReply={sendReply}
-              onFocusChange={setInteractionFocused}
+              onFocusChange={handleInteractionFocus}
             />
           </KeyboardAvoidingView>
         ) : null}

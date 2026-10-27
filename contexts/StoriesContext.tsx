@@ -10,6 +10,29 @@ import {
   type StoryComposition,
 } from '@/components/feature/storyComposition';
 import type { StoryInteractiveSubmissionDefinition } from '@/components/feature/storyInteractiveTypes';
+import {
+  getStoryInteractiveResults,
+  getStoryInteractiveState,
+  moderateStoryQuestion,
+  recordStoryEvent,
+  respondToStoryElement,
+  type StoryInteractiveResultsCursor,
+  type StoryInteractiveResultsPage,
+  type StoryInteractiveState,
+  type StoryInteractivePayload,
+  type StoryAnalyticsEventType,
+} from '@/services/storyInteractiveClient';
+export type {
+  StoryAnalyticsEventType,
+  StoryInteractivePayload,
+  StoryInteractiveResultsCursor,
+  StoryInteractiveResultsPage,
+  StoryInteractiveState,
+} from '@/services/storyInteractiveClient';
+import {
+  isRealtimeRecoveryStatus,
+  realtimeRetryDelay,
+} from '@/components/feature/storyViewerRuntime';
 
 export type StorySharedContent =
   | { status: 'unavailable' }
@@ -54,6 +77,31 @@ interface StoriesContextType {
     limit?: number,
   ) => Promise<StoryReactionsPage>;
   replyToStory: (storyId: string, text: string, clientMessageId: string) => Promise<void>;
+  getInteractiveState: (storyId: string) => Promise<StoryInteractiveState>;
+  respondToInteractiveElement: (
+    storyId: string,
+    elementId: string,
+    idempotencyKey: string,
+    payload: StoryInteractivePayload,
+  ) => Promise<void>;
+  getInteractiveResults: (
+    storyId: string,
+    elementId: string,
+    cursor?: StoryInteractiveResultsCursor,
+    limit?: number,
+  ) => Promise<StoryInteractiveResultsPage>;
+  moderateInteractiveQuestion: (
+    storyId: string,
+    elementId: string,
+    respondentId: string,
+    action: 'hide',
+  ) => Promise<'hidden' | 'blocked'>;
+  recordStoryAnalyticsEvent: (
+    storyId: string,
+    eventType: StoryAnalyticsEventType,
+    eventId: string,
+  ) => Promise<void>;
+  realtimeRevision: number;
   refreshStories: () => Promise<void>;
   getStoryGroupForUser: (userId: string | undefined) => StoryGroup | null;
   viewedStoryIds: Set<string>;
@@ -160,12 +208,15 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
   storyGroupsRef.current = storyGroups;
   const [isLoadingStories, setIsLoadingStories] = useState(false);
   const [viewedStoryIds, setViewedStoryIds] = useState<Set<string>>(new Set());
+  const [realtimeRevision, setRealtimeRevision] = useState(0);
+  const [realtimeEpoch, setRealtimeEpoch] = useState(0);
   const viewedStoryIdsRef = useRef<Set<string>>(new Set());
   const viewFlightsRef = useRef<Map<string, Promise<void>>>(new Map());
   const deleteFlightsRef = useRef<Map<string, Promise<StoryDeleteResult>>>(new Map());
   const reactionFlightsRef = useRef<Map<string, Promise<void>>>(new Map());
   const refreshFlightRef = useRef<Promise<void> | null>(null);
   const refreshPendingRef = useRef(false);
+  const realtimeGenerationRef = useRef(0);
   const storySessionRef = useRef<string | undefined>(user?.id);
   storySessionRef.current = user?.id;
 
@@ -184,7 +235,8 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
           user_profiles!stories_user_id_fkey(id, username, avatar_url)
         `)
         .gt('expires_at', new Date().toISOString())
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false });
 
       if (error) {
         console.log('Stories load error:', error.message);
@@ -337,14 +389,42 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     }
   }, [user?.id, loadStories]);
 
-  // One provider-owned channel per authenticated session. Its payload is never
-  // merged into state; it only triggers the RLS-authorized canonical query.
+  // One provider-owned channel per authenticated session. Payloads are never
+  // merged into state: they only invalidate RLS-authorized queries. A fenced
+  // generation prevents late callbacks from a replaced channel.
   useEffect(() => {
     const actorId = user?.id;
     const supabase = supabaseRef.current;
     if (!actorId || !supabase || !supabaseOk.current) return;
 
     let active = true;
+    let retryAttempt = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let fallbackTimer: ReturnType<typeof setInterval> | undefined;
+    let revisionTimer: ReturnType<typeof setTimeout> | undefined;
+    const generation = ++realtimeGenerationRef.current;
+    const isCurrent = () => active
+      && realtimeGenerationRef.current === generation
+      && storySessionRef.current === actorId;
+    const stopFallback = () => {
+      if (fallbackTimer) clearInterval(fallbackTimer);
+      fallbackTimer = undefined;
+    };
+    const startFallback = () => {
+      if (fallbackTimer) return;
+      fallbackTimer = setInterval(() => {
+        if (!isCurrent()) return;
+        void loadStories();
+        setRealtimeRevision(value => value + 1);
+      }, 30_000);
+    };
+    const invalidateInteractiveState = () => {
+      if (revisionTimer) return;
+      revisionTimer = setTimeout(() => {
+        revisionTimer = undefined;
+        if (isCurrent()) setRealtimeRevision(value => value + 1);
+      }, 50);
+    };
     const channel = supabase
       .channel(`stories-v2:${actorId}`)
       .on('postgres_changes', {
@@ -352,19 +432,46 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
         schema: 'public',
         table: 'stories',
       }, () => {
-        if (active && storySessionRef.current === actorId) void loadStories();
+        if (isCurrent()) void loadStories();
+      })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'story_interactive_revisions',
+      }, () => {
+        if (!isCurrent()) return;
+        // Payloads only invalidate an authorized re-query; response identities
+        // and private question bodies never enter provider state.
+        invalidateInteractiveState();
       })
       .subscribe(status => {
-        if (active && status === 'SUBSCRIBED' && storySessionRef.current === actorId) {
+        if (!isCurrent()) return;
+        if (status === 'SUBSCRIBED') {
+          retryAttempt = 0;
+          stopFallback();
           void loadStories();
+          invalidateInteractiveState();
+        // Supabase Realtime recovery states: CHANNEL_ERROR, TIMED_OUT, CLOSED.
+        } else if (isRealtimeRecoveryStatus(status)) {
+          startFallback();
+          if (!retryTimer) {
+            const delay = realtimeRetryDelay(retryAttempt++);
+            retryTimer = setTimeout(() => {
+              retryTimer = undefined;
+              if (isCurrent()) setRealtimeEpoch(value => value + 1);
+            }, delay);
+          }
         }
       });
 
     return () => {
       active = false;
+      if (retryTimer) clearTimeout(retryTimer);
+      if (revisionTimer) clearTimeout(revisionTimer);
+      stopFallback();
       void supabase.removeChannel(channel);
     };
-  }, [user?.id, loadStories]);
+  }, [user?.id, loadStories, realtimeEpoch]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -730,6 +837,62 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     }
   }, [user]);
 
+  const loadInteractiveState = useCallback(async (storyId: string) => {
+    if (!user) throw new Error('STORY_INTERACTIVE_NOT_AUTHENTICATED');
+    return getStoryInteractiveState(storyId);
+  }, [user]);
+
+  const respondToInteractiveElement = useCallback(async (
+    storyId: string,
+    elementId: string,
+    idempotencyKey: string,
+    payload: StoryInteractivePayload,
+  ) => {
+    if (!user) throw new Error('STORY_INTERACTIVE_NOT_AUTHENTICATED');
+    await respondToStoryElement({ storyId, elementId, idempotencyKey, payload });
+  }, [user]);
+
+  const loadInteractiveResults = useCallback(async (
+    storyId: string,
+    elementId: string,
+    cursor?: StoryInteractiveResultsCursor,
+    limit = 50,
+  ) => {
+    if (!user) throw new Error('STORY_INTERACTIVE_NOT_AUTHENTICATED');
+    return getStoryInteractiveResults({ storyId, elementId, cursor, limit });
+  }, [user]);
+
+  const moderateInteractiveQuestion = useCallback(async (
+    storyId: string,
+    elementId: string,
+    respondentId: string,
+    action: 'hide',
+  ) => {
+    if (!user) throw new Error('STORY_INTERACTIVE_NOT_AUTHENTICATED');
+    const status = await moderateStoryQuestion({ storyId, elementId, respondentId, action });
+    if (status !== 'hidden' && status !== 'blocked') throw new Error('STORY_INTERACTIVE_INVALID_MODERATION');
+    return status;
+  }, [user]);
+
+  const recordStoryAnalyticsEvent = useCallback(async (
+    storyId: string,
+    eventType: StoryAnalyticsEventType,
+    eventId: string,
+  ) => {
+    if (!user) throw new Error('STORY_ANALYTICS_NOT_AUTHENTICATED');
+    await recordStoryEvent(storyId, eventType, eventId);
+    if (eventType === 'impression' && storySessionRef.current === user.id) {
+      const nextViewed = new Set(viewedStoryIdsRef.current);
+      nextViewed.add(storyId);
+      viewedStoryIdsRef.current = nextViewed;
+      setViewedStoryIds(nextViewed);
+      setStoryGroups(groups => groups.map(group => ({
+        ...group,
+        hasUnseen: group.stories.some(story => !nextViewed.has(story.id)),
+      })));
+    }
+  }, [user]);
+
   const getStoryGroupForUser = useCallback((userId: string | undefined) => {
     if (!userId) return null;
     return storyGroupsRef.current.find(group => group.userId === userId) ?? null;
@@ -748,6 +911,12 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
       setStoryReaction,
       getStoryReactions,
       replyToStory,
+      getInteractiveState: loadInteractiveState,
+      respondToInteractiveElement,
+      getInteractiveResults: loadInteractiveResults,
+      moderateInteractiveQuestion,
+      recordStoryAnalyticsEvent,
+      realtimeRevision,
       refreshStories: loadStories,
       getStoryGroupForUser,
       viewedStoryIds,
