@@ -40,8 +40,10 @@ returns jsonb language sql immutable security definer set search_path='' as $$
     "story_video": true,
     "story_audio": true,
     "story_text": true,
+    "story_stickers": true,
     "interactive_prompts": true,
     "interactive_options": true,
+    "interactive_reaction_stickers": true,
     "viewer_question_responses": true,
     "creator_premium_policy_changed": false,
     "live_battles_policy_changed": false,
@@ -113,10 +115,18 @@ returns jsonb language sql immutable security definer set search_path='' as $$
         "story_author_text_bundle"
       ]
     },
+    "story_sticker": {
+      "required": [
+        "allowlisted_local_preset",
+        "composition_identity",
+        "display_value"
+      ]
+    },
     "interactive_definition": {
       "required": [
         "prompt_text",
         "option_labels",
+        "allowlisted_reaction_emoji_when_applicable",
         "definition_digest"
       ],
       "private_quiz_answer_is_not_classifier_input": true
@@ -200,7 +210,7 @@ returns jsonb language sql immutable security definer set search_path='' as $$
     "activation_strategy": "forward_only_migration_after_exact_owner_approval_and_green_evidence",
     "rollback_strategy": "forward_only_deactivation_to_fail_closed_review"
   },
-  "artifact_sha256": "90961e8f5c4859bfdc38e851c0b5518b69e114c53896b740b30e4da491291ee4"
+  "artifact_sha256": "c294071c22de46ad66fb73b578b190912b3f21a1e1dfa5e0b15387896a34e9f1"
 }
   $policy$::jsonb;
 $$;
@@ -211,7 +221,7 @@ create function private.story_content_safety_control_c1_v1()
 returns jsonb language sql immutable security definer set search_path='' as $$
   select $control$
   {
-    "policy_artifact_sha256": "90961e8f5c4859bfdc38e851c0b5518b69e114c53896b740b30e4da491291ee4",
+    "policy_artifact_sha256": "c294071c22de46ad66fb73b578b190912b3f21a1e1dfa5e0b15387896a34e9f1",
     "activation": false,
     "owner_approved_policy": false,
     "auto_publish_enabled": false,
@@ -240,10 +250,19 @@ returns text language sql stable security definer set search_path='' as $$
       with ordinality x(element,ordinality)
     where s.id=p_story_id and x.element->>'type'='text'
     union all
+    select 0 section,x.ordinality element_order,0::bigint option_order,x.element->>'value'
+    from public.stories s
+    cross join lateral pg_catalog.jsonb_array_elements(coalesce(s.story_composition->'elements','[]'::jsonb))
+      with ordinality x(element,ordinality)
+    where s.id=p_story_id and x.element->>'type'='sticker'
+    union all
     select 1,e.element_order,0::bigint,e.public_config->>'prompt'
     from definitions e
     union all
-    select 1,e.element_order,o.ordinality,o.option->>'label'
+    select 1,e.element_order,1::bigint,e.public_config->>'emoji'
+    from definitions e where e.public_config->>'type' in('slider','reaction')
+    union all
+    select 1,e.element_order,o.ordinality+1,o.option->>'label'
     from definitions e
     cross join lateral pg_catalog.jsonb_array_elements(coalesce(e.public_config->'options','[]'::jsonb))
       with ordinality o(option,ordinality)
@@ -382,7 +401,9 @@ begin
   where state.story_id=p_target_id and state.evidence_fingerprint=v_fingerprint
     and scan.target_type='story' and scan.target_id=p_target_id
     and scan.content_fingerprint=private.content_safety_sha256('story|'||p_target_id::text||'|'||v_fingerprint);
-  if p_requested_reason<>'retry' and v_scan_id is not null then return v_scan_id;end if;
+  if p_requested_reason in('content_created','content_updated') and v_scan_id is not null then
+    return v_scan_id;
+  end if;
   v_scan_id:=private.enqueue_content_safety_scan_b1_core(p_target_type,p_target_id,p_requested_reason);
   if v_scan_id is null then return null;end if;
   v_audio:=private.content_safety_audio_source('story',p_target_id);
@@ -508,6 +529,8 @@ begin
         coalesce(private.content_safety_target_snapshot(source_scan.target_type,source_scan.target_id)->>'content_version',''))
       and transcript.rule_eval_status='completed'
       and transcript.rule_eval_ruleset_fingerprint=private.content_safety_transcript_ruleset_fingerprint()
+      and ((transcript.no_speech and pg_catalog.btrim(transcript.transcript_text)='' and transcript.word_count=0)
+        or (not transcript.no_speech and pg_catalog.btrim(transcript.transcript_text)<>'' and transcript.word_count>0))
       and (select count(*) from private.content_safety_audio_transcripts current_transcript
         where current_transcript.source_scan_id=source_scan.id
           and current_transcript.source_content_fingerprint=source_scan.content_fingerprint)=1

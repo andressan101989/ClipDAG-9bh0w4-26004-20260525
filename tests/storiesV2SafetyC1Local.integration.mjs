@@ -18,7 +18,7 @@ const db = `stories_c1_${randomUUID().replaceAll('-', '')}`;
 const owner = '11111111-1111-4111-8111-111111111111';
 const follower = '22222222-2222-4222-8222-222222222222';
 const historical = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const pinnedPolicyDigest = '90961e8f5c4859bfdc38e851c0b5518b69e114c53896b740b30e4da491291ee4';
+const pinnedPolicyDigest = 'c294071c22de46ad66fb73b578b190912b3f21a1e1dfa5e0b15387896a34e9f1';
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
 const quote = value => `'${String(value).replaceAll("'", "''")}'`;
 const jsonSql = value => `${quote(JSON.stringify(value))}::jsonb`;
@@ -219,14 +219,19 @@ test('C1 disposable PostgreSQL fail-closed behavior and isolation', { skip: !ena
           options: [{ id: 'poll_hidden_id', label: 'Spring' }, { id: 'other_hidden_id', label: 'Summer' }] },
         { version: 1, element_id: quiz, type: 'quiz', prompt: 'Which color?',
           options: [{ id: 'answer_private_alpha', label: 'Blue' }, { id: 'answer_private_beta', label: 'Gold' }], correct_option_id: 'answer_private_beta' },
+        { version: 1, element_id: '00000000-0000-4000-8000-000000000030', type: 'reaction',
+          prompt: 'React here', emoji: '🔥' },
       ];
       const composition = { version: 2, elements: [
         { id: randomUUID(), type: 'text', text: 'Author composition', color: '#FFFFFF', align: 'center', size: 'medium', ...position },
+        { id: randomUUID(), type: 'sticker', value: '🎉', ...position },
         { id: poll, type: 'interactive', element_id: poll, ...position },
         { id: quiz, type: 'interactive', element_id: quiz, ...position },
+        { id: '00000000-0000-4000-8000-000000000030', type: 'interactive',
+          element_id: '00000000-0000-4000-8000-000000000030', ...position },
       ] };
       image = createImage({ composition, definitions });
-      const expected = 'Author composition\nWhich color?\nBlue\nGold\nPick a season\nSpring\nSummer';
+      const expected = 'Author composition\n🎉\nWhich color?\nBlue\nGold\nPick a season\nSpring\nSummer\nReact here\n🔥';
       assert.equal(query(`select to_jsonb(private.story_author_text_bundle_c1_v1('${image.id}'))`), expected);
       const snapshot = query(`select private.content_safety_target_snapshot('story','${image.id}')`);
       assert.equal(snapshot.text, expected);
@@ -325,6 +330,20 @@ test('C1 disposable PostgreSQL fail-closed behavior and isolation', { skip: !ena
       assert.equal(safety(image.id).state, 'pending');
     });
 
+    await t.test('a new report signal requeues the current Story scan instead of being treated as a create replay', () => {
+      const scan = scanId(image.id);
+      run(`update private.content_safety_scans set requested_reason='content_updated',
+        text_status='analyzed',reports_status='analyzed',updated_at=clock_timestamp()-interval '1 minute'
+        where id='${scan}'`);
+      const before = query(`select jsonb_build_object('requested_reason',requested_reason,
+        'updated_at',updated_at) from private.content_safety_scans where id='${scan}'`);
+      assert.equal(run(`select private.enqueue_content_safety_scan('story','${image.id}','report_signal')`), scan);
+      const after = query(`select jsonb_build_object('requested_reason',requested_reason,
+        'updated_at',updated_at) from private.content_safety_scans where id='${scan}'`);
+      assert.equal(after.requested_reason, 'report_signal');
+      assert.ok(Date.parse(after.updated_at) > Date.parse(before.updated_at));
+    });
+
     await t.test('audio needs a unique current transcript and completed current rules; transcript writes refresh safety', () => {
       const video = createVideo(), scan = scanId(video.id);
       attachVisual(video.id, video.asset, true);
@@ -344,6 +363,14 @@ test('C1 disposable PostgreSQL fail-closed behavior and isolation', { skip: !ena
         rule_eval_ruleset_fingerprint=private.content_safety_transcript_ruleset_fingerprint() where id='${transcript}'`);
       assert.equal(safety(video.id).state, 'review', 'no scan touch: the transcript trigger must refresh safety');
       assert.equal(safety(video.id).audio_complete, true);
+      run(`update private.content_safety_audio_transcripts set no_speech=true where id='${transcript}'`);
+      assert.equal(safety(video.id).audio_complete, false, 'no-speech cannot contradict a populated transcript');
+      run(`update private.content_safety_audio_transcripts set transcript_text='',word_count=0 where id='${transcript}'`);
+      assert.equal(safety(video.id).audio_complete, true, 'explicit consistent no-speech is complete evidence');
+      run(`update private.content_safety_audio_transcripts set no_speech=false where id='${transcript}'`);
+      assert.equal(safety(video.id).audio_complete, false, 'empty speech without explicit no-speech is incomplete');
+      run(`update private.content_safety_audio_transcripts set transcript_text='Disposable transcript',word_count=2 where id='${transcript}'`);
+      assert.equal(safety(video.id).audio_complete, true, 'a populated speech transcript is complete evidence');
       assert.equal(candidate(video.id).decision, 'review');
       assert.equal(candidate(video.id).activation_effect, false);
       for (const mutation of [`source_content_fingerprint=repeat('0',64)`,
@@ -409,11 +436,13 @@ test('C1 disposable PostgreSQL fail-closed behavior and isolation', { skip: !ena
     await t.test('every C1 private helper has locked ACL, postgres owner and empty search_path', () => {
       const names = ['story_content_safety_policy_c1_v1', 'story_content_safety_control_c1_v1',
         'story_content_safety_candidate_c1_v1', 'story_author_text_bundle_c1_v1',
-        'story_refresh_safety_from_transcript_c1_v1', 'story_current_fingerprint',
+        'story_refresh_safety_from_transcript_c1_v1', 'story_current_fingerprint', 'story_can_access',
         'content_safety_target_snapshot', 'content_safety_visual_source', 'enqueue_content_safety_scan',
         'story_enqueue_media_safety_v1', 'story_sync_safety_from_scan_v1'];
-      const rows = query(`select jsonb_agg(jsonb_build_object('name',p.proname,'owner',r.rolname,
-        'definer',p.prosecdef,'config',p.proconfig,'oid',p.oid) order by p.proname)
+      const rows = query(`select jsonb_agg(jsonb_build_object('name',p.proname,
+        'identity',n.nspname||'.'||p.proname||'('||replace(oidvectortypes(p.proargtypes),' ','')||')',
+        'owner',r.rolname,'definer',p.prosecdef,'config',p.proconfig,'oid',p.oid,
+        'definition_sha256',encode(sha256(convert_to(pg_get_functiondef(p.oid),'UTF8')),'hex')) order by p.proname)
         from pg_proc p join pg_namespace n on n.oid=p.pronamespace join pg_roles r on r.oid=p.proowner
         where n.nspname='private' and p.proname=any(array[${names.map(quote).join(',')}])`);
       assert.equal(rows.length, names.length);
@@ -422,11 +451,22 @@ test('C1 disposable PostgreSQL fail-closed behavior and isolation', { skip: !ena
         assert.equal(row.definer, true, row.name);
         assert.deepEqual(row.config, ['search_path=""'], row.name);
         for (const role of ['anon', 'authenticated', 'service_role']) {
-          assert.equal(run(`select has_function_privilege('${role}',${row.oid},'EXECUTE')`), 'f', `${role}: ${row.name}`);
+          const expected = row.name === 'story_can_access' && role === 'authenticated' ? 't' : 'f';
+          assert.equal(run(`select has_function_privilege('${role}',${row.oid},'EXECUTE')`), expected,
+            `${role}: ${row.name}`);
         }
         assert.equal(run(`select count(*) from pg_proc p cross join lateral aclexplode(coalesce(p.proacl,
           acldefault('f',p.proowner))) a where p.oid=${row.oid} and a.grantee=0 and a.privilege_type='EXECUTE'`), '0');
       }
+      const expectedHelpers = JSON.parse(read('../.github/nelyon-production-release-policy.json'))
+        .stories_safety_c1_transition.helper_attestations
+        .map(({ identity, definition_sha256 }) => ({ identity, definition_sha256 }))
+        .sort((left, right) => left.identity.localeCompare(right.identity));
+      const installedHelpers = rows
+        .map(({ identity, definition_sha256 }) => ({ identity, definition_sha256 }))
+        .sort((left, right) => left.identity.localeCompare(right.identity));
+      assert.deepEqual(installedHelpers, expectedHelpers,
+        'release governance must attest the exact PostgreSQL helper definitions installed by C1');
       for (const role of ['anon', 'authenticated', 'service_role']) {
         fails(`begin; set local role ${role}; select private.story_content_safety_policy_c1_v1(); rollback;`, /permission denied/);
       }

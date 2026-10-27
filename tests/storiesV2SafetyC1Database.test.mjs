@@ -6,7 +6,7 @@ import test from 'node:test';
 // Like the B1 and P3 database suites, this checks the emitted SQL contract.
 // The separate disposable-PostgreSQL suite proves execution and isolation.
 const migrationName = '20261027120000_stories_v2_safety_c1_technical_policy_prep.sql';
-const policySha256 = '90961e8f5c4859bfdc38e851c0b5518b69e114c53896b740b30e4da491291ee4';
+const policySha256 = 'c294071c22de46ad66fb73b578b190912b3f21a1e1dfa5e0b15387896a34e9f1';
 const migrations = new URL('../supabase/migrations/', import.meta.url);
 const matches = readdirSync(migrations).filter(name => /_stories_v2_safety_c1_.*\.sql$/.test(name));
 const sql = matches.includes(migrationName) ? readFileSync(new URL(migrationName, migrations), 'utf8') : '';
@@ -85,9 +85,22 @@ test('interactive prompts or option labels cannot evade the scanner author-text 
   assert.match(bundle, /public_config\s*->>\s*'prompt'/i);
   assert.match(bundle, /public_config\s*->\s*'options'/i);
   assert.match(bundle, /->>\s*'label'/i);
+  assert.match(bundle, /->>\s*'value'/i, 'allowlisted decorative sticker values are explicit evidence');
+  assert.match(bundle, /public_config\s*->>\s*'emoji'/i, 'interactive sticker emoji is explicit evidence');
   assert.match(bundle, /order\s+by/i, 'bundle ordering must be deterministic');
   assert.doesNotMatch(bundle, /private_answer|correct_option_id|story_interactive_responses/i, 'private quiz answers and viewer replies are separate private evidence');
   assert.match(snapshot, /'text'\s*,\s*private\.story_author_text_bundle_c1_v1\s*\(\s*p_target_id\s*\)/i);
+});
+
+test('the exact candidate policy covers decorative and interactive Story stickers', () => {
+  assert.equal(artifact.scope.story_stickers, true);
+  assert.equal(artifact.scope.interactive_reaction_stickers, true);
+  assert.deepEqual(artifact.evidence_contract.story_sticker.required, [
+    'allowlisted_local_preset', 'composition_identity', 'display_value',
+  ]);
+  assert.ok(artifact.evidence_contract.interactive_definition.required.includes(
+    'allowlisted_reaction_emoji_when_applicable',
+  ));
 });
 
 test('historical fingerprints cannot claim the expanded C1 author-text evidence coverage', () => {
@@ -109,6 +122,8 @@ test('an analyzed audio transcript cannot count as complete before its current r
   assert.match(sync, /source_content_fingerprint\s*=\s*(?:source_scan\.)?content_fingerprint/i);
   assert.match(sync, /rule_eval_status\s*=\s*'completed'/i);
   assert.match(sync, /rule_eval_ruleset_fingerprint\s*=\s*private\.content_safety_transcript_ruleset_fingerprint\s*\(/i);
+  assert.match(sync, /transcript\.no_speech[\s\S]*transcript\.transcript_text[\s\S]*transcript\.word_count/i,
+    'audio completion must distinguish a real transcript from explicit no-speech evidence');
   assert.doesNotMatch(sync, /v_audio\s*:=\s*new\.audio_status\s+in\s*\(\s*'analyzed'\s*,\s*'not_applicable'\s*\)/i);
 });
 
@@ -138,8 +153,9 @@ test('same-identity create replay cannot reset completed audio or visual evidenc
     assert.match(guard, /content_fingerprint\s*=/i);
     assert.match(guard, /return\s+\w+\s*;/i, 'identity replay must return before evidence writes');
   }
-  assert.match(sharedEnqueue, /p_requested_reason\s*<>\s*'retry'\s+and\s+v_scan_id\s+is\s+not\s+null\s+then\s+return/i,
-    'an explicit bounded retry must be able to bypass replay preservation');
+  assert.match(sharedEnqueue,
+    /p_requested_reason\s+in\s*\(\s*'content_created'\s*,\s*'content_updated'\s*\)\s+and\s+v_scan_id\s+is\s+not\s+null\s+then/i,
+    'only create/update replay may preserve evidence; reports, backfill and retry must reach the core');
 });
 
 test('a fabricated passed row cannot expose a Story under an inactive or different policy', () => {
