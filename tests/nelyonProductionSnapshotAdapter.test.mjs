@@ -161,6 +161,8 @@ test('Stories B1 snapshot contract is fail-closed and rejects policy activation 
     direct_story_count: 0,
     safety_state_counts: { blocked: 0, passed: 0, pending: 0, review: 0 },
     complete_evidence_count: 0,
+    complete_evidence_non_review_count: 0,
+    incomplete_evidence_non_pending_count: 0,
     complete_evidence_pass_count: 0,
     fabricated_pass_count: 0,
   });
@@ -175,6 +177,8 @@ test('Stories B1 snapshot contract is fail-closed and rejects policy activation 
     direct_story_count: 0,
     safety_state_counts: { blocked: 0, passed: 0, pending: 0, review: 0 },
     complete_evidence_count: 0,
+    complete_evidence_non_review_count: 0,
+    incomplete_evidence_non_pending_count: 0,
     complete_evidence_pass_count: 0,
     fabricated_pass_count: 0,
   });
@@ -191,6 +195,34 @@ test('Stories B1 snapshot contract is fail-closed and rejects policy activation 
     mutate(hostile);
     assert.throws(() => adapter.validateStoriesB1StateTransition(
       pre,
+      adapter.normalizeStoriesB1State(hostile),
+      installedPolicy.stories_b1_transition,
+    ), /STORIES_B1_POSTCHECK_FAILED/);
+  }
+
+  const preWithStory = structuredClone(pre);
+  delete preWithStory.sha256;
+  preWithStory.story_count = 1;
+  preWithStory.direct_story_count = 1;
+  for (const mutate of [
+    state => {
+      state.safety_state_counts.pending = 1;
+      state.complete_evidence_count = 1;
+      state.complete_evidence_non_review_count = 1;
+    },
+    state => {
+      state.safety_state_counts.review = 1;
+      state.incomplete_evidence_non_pending_count = 1;
+    },
+    state => { state.safety_state_counts.blocked = 1; },
+  ]) {
+    const hostile = structuredClone(post);
+    delete hostile.sha256;
+    hostile.story_count = 1;
+    hostile.direct_story_count = 1;
+    mutate(hostile);
+    assert.throws(() => adapter.validateStoriesB1StateTransition(
+      adapter.normalizeStoriesB1State(preWithStory),
       adapter.normalizeStoriesB1State(hostile),
       installedPolicy.stories_b1_transition,
     ), /STORIES_B1_POSTCHECK_FAILED/);

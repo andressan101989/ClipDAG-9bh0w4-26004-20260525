@@ -984,6 +984,8 @@ export const STORIES_B1_PRE_STATE_SQL = `select pg_catalog.jsonb_build_object(
   'direct_story_count',(select pg_catalog.count(*)::integer from public.stories where story_kind='media'),
   'safety_state_counts',pg_catalog.jsonb_build_object('blocked',0,'passed',0,'pending',0,'review',0),
   'complete_evidence_count',0,
+  'complete_evidence_non_review_count',0,
+  'incomplete_evidence_non_pending_count',0,
   'complete_evidence_pass_count',0,
   'fabricated_pass_count',0
 ) snapshot;`;
@@ -996,6 +998,12 @@ export const STORIES_B1_POST_STATE_SQL = `with counts as (
     pg_catalog.count(*) filter(where state='review')::integer review,
     pg_catalog.count(*) filter(where visual_complete and audio_complete and text_complete
       and evidence_generation=generation)::integer complete_evidence,
+    pg_catalog.count(*) filter(where
+      (visual_complete and audio_complete and text_complete and evidence_generation=generation) is true
+      and state is distinct from 'review')::integer complete_evidence_non_review,
+    pg_catalog.count(*) filter(where
+      (visual_complete and audio_complete and text_complete and evidence_generation=generation) is not true
+      and state is distinct from 'pending')::integer incomplete_evidence_non_pending,
     pg_catalog.count(*) filter(where state='passed' and visual_complete and audio_complete and text_complete
       and evidence_generation=generation)::integer complete_evidence_pass,
     pg_catalog.count(*) filter(where state='passed' and (not visual_complete or not audio_complete
@@ -1025,6 +1033,8 @@ select pg_catalog.jsonb_build_object(
     'blocked',counts.blocked,'passed',counts.passed,'pending',counts.pending,'review',counts.review
   ),
   'complete_evidence_count',counts.complete_evidence,
+  'complete_evidence_non_review_count',counts.complete_evidence_non_review,
+  'incomplete_evidence_non_pending_count',counts.incomplete_evidence_non_pending,
   'complete_evidence_pass_count',counts.complete_evidence_pass,
   'fabricated_pass_count',counts.fabricated_pass
 ) snapshot from counts;`;
@@ -1103,7 +1113,8 @@ export function normalizeStoriesB1State(snapshot) {
   exactKeys(snapshot, [
     'schema_version', 'complete', 'infrastructure_installed', 'owner_approved_policy',
     'activation', 'mode', 'story_count', 'direct_story_count', 'safety_state_counts',
-    'complete_evidence_count', 'complete_evidence_pass_count', 'fabricated_pass_count',
+    'complete_evidence_count', 'complete_evidence_non_review_count',
+    'incomplete_evidence_non_pending_count', 'complete_evidence_pass_count', 'fabricated_pass_count',
     ...(withDigest ? ['sha256'] : []),
   ], 'STORIES_B1_POSTCHECK_FAILED');
   exactKeys(snapshot.safety_state_counts, ['blocked', 'passed', 'pending', 'review'],
@@ -1112,6 +1123,8 @@ export function normalizeStoriesB1State(snapshot) {
     snapshot.story_count,
     snapshot.direct_story_count,
     snapshot.complete_evidence_count,
+    snapshot.complete_evidence_non_review_count,
+    snapshot.incomplete_evidence_non_pending_count,
     snapshot.complete_evidence_pass_count,
     snapshot.fabricated_pass_count,
     ...Object.values(snapshot.safety_state_counts),
@@ -1123,6 +1136,9 @@ export function normalizeStoriesB1State(snapshot) {
     || snapshot.mode !== 'fail_closed_review'
     || integerFields.some(value => !Number.isInteger(value) || value < 0)
     || snapshot.direct_story_count > snapshot.story_count
+    || snapshot.complete_evidence_count > snapshot.story_count
+    || snapshot.complete_evidence_non_review_count > snapshot.complete_evidence_count
+    || snapshot.incomplete_evidence_non_pending_count > snapshot.story_count - snapshot.complete_evidence_count
     || snapshot.complete_evidence_pass_count > snapshot.complete_evidence_count
     || snapshot.fabricated_pass_count > snapshot.safety_state_counts.passed) {
     fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 snapshot has an invalid shape or count');
@@ -1153,7 +1169,10 @@ export function validateStoriesB1StateTransition(preSnapshot, postSnapshot, tran
     || pre.infrastructure_installed !== false || post.infrastructure_installed !== true
     || pre.owner_approved_policy !== false || post.owner_approved_policy !== false
     || pre.activation !== false || post.activation !== false
+    || post.safety_state_counts.blocked !== 0
     || post.safety_state_counts.passed !== 0
+    || post.complete_evidence_non_review_count !== 0
+    || post.incomplete_evidence_non_pending_count !== 0
     || post.complete_evidence_pass_count !== 0 || post.fabricated_pass_count !== 0
     || Object.values(pre.safety_state_counts).some(value => value !== 0)
     || Object.values(post.safety_state_counts).reduce((sum, value) => sum + value, 0) !== post.story_count
@@ -1921,6 +1940,8 @@ export function verifyProductionPreSnapshot({ pre, policy, request, manifest, ad
     const stories = normalizeStoriesB1State(pre.stories_b1_state);
     if (stories.infrastructure_installed !== false || stories.owner_approved_policy !== false
       || stories.activation !== false || stories.complete_evidence_count !== 0
+      || stories.complete_evidence_non_review_count !== 0
+      || stories.incomplete_evidence_non_pending_count !== 0
       || stories.complete_evidence_pass_count !== 0 || stories.fabricated_pass_count !== 0
       || Object.values(stories.safety_state_counts).some(value => value !== 0)) {
       fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 pre-snapshot is not the exact fail-closed predecessor');
