@@ -160,7 +160,8 @@ test('Stories B1 policy binds one migration, six Edge contracts, and fail-closed
 });
 
 test('Stories B1 manifest accepts only the exact migration and six graph-derived Edge contracts', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const { gate, policy: installedPolicy } = await loadGateAndPolicy();
+  const policy = asStoriesB1TransitionPolicy(installedPolicy);
   const transition = policy.stories_b1_transition;
   const approvedSha = MAIN_SHA;
   const changes = transition.productive_paths.map(path => ({
@@ -216,7 +217,8 @@ test('Stories B1 manifest accepts only the exact migration and six graph-derived
 });
 
 test('Stories B1 Git attestation rejects altered migration, Edge, config, or Supabase closure', async () => {
-  const { gate, policy } = await loadGateAndPolicy();
+  const { gate, policy: installedPolicy } = await loadGateAndPolicy();
+  const policy = asStoriesB1TransitionPolicy(installedPolicy);
   const transition = policy.stories_b1_transition;
   const root = new URL('..', import.meta.url);
   const runGit = args => execFileSync('git', args, {
@@ -280,9 +282,10 @@ test('Stories B1 phase gate does not reactivate after baseline promotion for an 
     path,
     status: path === transition.migration_path ? 'A' : 'M',
   }));
+  const transitionPolicy = asStoriesB1TransitionPolicy(policy);
   assertDenied(() => gate.attestStoriesB1Transition({
     cwd: new URL('..', import.meta.url),
-    policy,
+    policy: transitionPolicy,
     mode: 'plan_only',
     approvedSha: MAIN_SHA,
     changes: fullScopeWithoutParsedMigration,
@@ -306,6 +309,41 @@ const FINANCE_OFF_POLICY = Object.freeze({
   refunds_enabled: false,
   subscription_enabled: false,
 });
+
+const STORIES_B1_PRE_RELEASE_BASELINE = Object.freeze({
+  authority_source: 'owner-control-plane',
+  blocked_resources: [],
+  evidence: '726b9619cd7a10c6e489b3ddfd98724d78f1bd253f6bfdf88c7e476ed4cc6292',
+  evidence_digests: {
+    migrations: '0f7f653511093bf9a17e4beb5f0d4b94462691870ddc0df1c9f2beb89a0e9fd6',
+    managed_functions: '9851a1d192f523bd326213e77de5f7c2e691fb5cd2928a569fdf1086b187a131',
+    unmanaged_functions: '26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc',
+    function_source_parity: '6fdd9e7abfe3e7695508908129f91762546aac8cea7e2eb00555d794d2b7dd58',
+    config_verify_jwt: '703749fce46f724c7c4e791f7a222915b166af0ded38f00f34f983798355ba15',
+    cron_security: '7abbb7c306dc044e6228a9fdc1e00fa2dbcec6936e433ea3c5b6123611cc2ae1',
+    finance: 'f94d54264c5d7658dc04aba34b028c815e99d7eb8ccf2490410817d47566754f',
+  },
+  latest_migration: '20261026120000_live_battles_final_c1',
+  migration_count: 357,
+  prior_release: {
+    kind: 'post-release',
+    release_id: 'nelyon-live-battles-c1-release-20261027T001044Z',
+    manifest_sha256: '6bec1582371ca87fe45b2cc7f15f0964811f1c298b676a0725b051405dec157f',
+    postcheck_evidence_sha256: '26b6b5e1a589e900f50d3e02c515de7092a509784a7e084dcebdfdbd5799292b',
+  },
+  requires_separate_policy_commit: true,
+  reviewed_policy_sha256: '424f9d76b34f5fcff1d6055f618ec01ce8d716ae2c017534f35eddfd033f9154',
+  sha: 'd8c3847b14486f249d9d8fa83aa74c8cff37bf6b',
+  state: 'verified',
+  verified_at: '2026-10-27T00:47:20.875Z',
+  verified_by: OWNER,
+});
+
+function asStoriesB1TransitionPolicy(policy) {
+  const transitionPolicy = structuredClone(policy);
+  transitionPolicy.baseline = structuredClone(STORIES_B1_PRE_RELEASE_BASELINE);
+  return transitionPolicy;
+}
 
 function asF3TransitionPolicy(policy) {
   const transitionPolicy = structuredClone(policy);
@@ -1074,7 +1112,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
   const isStoriesRecovery = requestedSource.run_id === '40473092474';
   const isPostF5Recovery = isF5Recovery || isStoriesRecovery;
   const controlledPolicy = isStoriesRecovery
-    ? structuredClone(policy)
+    ? asStoriesB1TransitionPolicy(policy)
     : isF5Recovery
     ? asF5TransitionPolicy(policy)
     : isF4Recovery
@@ -2219,35 +2257,35 @@ test('expanded managed scope has a verified static cutover control', async () =>
   }), policy).mode, 'release');
 });
 
-test('LIVE Battles C1 production baseline is promoted from independently verified owner evidence', async () => {
+test('Stories B1 production baseline is promoted from independently verified owner evidence', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(gate.validatePolicy(policy), true);
   assert.deepEqual(policy.baseline, {
     authority_source: 'owner-control-plane',
     blocked_resources: [],
-    evidence: '726b9619cd7a10c6e489b3ddfd98724d78f1bd253f6bfdf88c7e476ed4cc6292',
+    evidence: 'cf02b715a2b828002ca8ab8e796e1b9c273f5b8563b6b99440f777d9d15a0c59',
     evidence_digests: {
-      migrations: '0f7f653511093bf9a17e4beb5f0d4b94462691870ddc0df1c9f2beb89a0e9fd6',
-      managed_functions: '9851a1d192f523bd326213e77de5f7c2e691fb5cd2928a569fdf1086b187a131',
+      migrations: '785aa20ab32cddd324546facf872e08278ef1b3dd51f3a7f7dcbd406ede7ca24',
+      managed_functions: '9f2d00de4c48cedc96edb09ee654a1c43679e1168dbb17273207d4273de8320b',
       unmanaged_functions: '26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc',
-      function_source_parity: '6fdd9e7abfe3e7695508908129f91762546aac8cea7e2eb00555d794d2b7dd58',
+      function_source_parity: 'f9b9e191f6d70e2e0c33ac54cb1af5592afe4eaff6c7eb85dc20d07b50c273c1',
       config_verify_jwt: '703749fce46f724c7c4e791f7a222915b166af0ded38f00f34f983798355ba15',
       cron_security: '7abbb7c306dc044e6228a9fdc1e00fa2dbcec6936e433ea3c5b6123611cc2ae1',
       finance: 'f94d54264c5d7658dc04aba34b028c815e99d7eb8ccf2490410817d47566754f',
     },
-    latest_migration: '20261026120000_live_battles_final_c1',
-    migration_count: 357,
+    latest_migration: '20261027042552_stories_v2_interactive_b1',
+    migration_count: 358,
     prior_release: {
       kind: 'post-release',
-      release_id: 'nelyon-live-battles-c1-release-20261027T001044Z',
-      manifest_sha256: '6bec1582371ca87fe45b2cc7f15f0964811f1c298b676a0725b051405dec157f',
-      postcheck_evidence_sha256: '26b6b5e1a589e900f50d3e02c515de7092a509784a7e084dcebdfdbd5799292b',
+      release_id: 'nelyon-stories-b1-recovery-release-20261027T082425Z',
+      manifest_sha256: '4c3435b1cd87ffd416c02b9f720cf4d3e3dd193fa8982e613dafa48fd036bcdf',
+      postcheck_evidence_sha256: '91539f307047110f8c2b1c9a6abe9aaa6b8c7b83ae3751ba06a03f928d828b2e',
     },
     requires_separate_policy_commit: true,
-    reviewed_policy_sha256: '424f9d76b34f5fcff1d6055f618ec01ce8d716ae2c017534f35eddfd033f9154',
-    sha: 'd8c3847b14486f249d9d8fa83aa74c8cff37bf6b',
+    reviewed_policy_sha256: '65ea15b0f6b681e88c62965f2e79fb2e502e3dfd3d190f77899c76f8f31e0eec',
+    sha: '01dd6467484d11ad11aeb611374437e212fb7401',
     state: 'verified',
-    verified_at: '2026-10-27T00:47:20.875Z',
+    verified_at: '2026-10-27T12:53:56.726Z',
     verified_by: OWNER,
   });
 
