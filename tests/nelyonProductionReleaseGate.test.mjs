@@ -2589,14 +2589,14 @@ test('Stories Safety C1 production baseline is promoted from independently verif
   assert.deepEqual(policy.baseline, {
     authority_source: 'owner-control-plane',
     blocked_resources: [],
-    evidence: '387bb459080f16930c86fd91bd460d74c2834e2ffc775d9328436c8f23889c16',
+    evidence: 'b38b84ef2a72eb4be889bb7cea88965f191c6c37be84ce85446e0bc769b45cff',
     evidence_digests: {
       migrations: '3af16fcabb74471c818c52da1777287ea5ac81d574154cca319a75de86624055',
       managed_functions: '9f2d00de4c48cedc96edb09ee654a1c43679e1168dbb17273207d4273de8320b',
       unmanaged_functions: '26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc',
       function_source_parity: 'f9b9e191f6d70e2e0c33ac54cb1af5592afe4eaff6c7eb85dc20d07b50c273c1',
       config_verify_jwt: '703749fce46f724c7c4e791f7a222915b166af0ded38f00f34f983798355ba15',
-      cron_security: 'c53f873e7ccd690b6d1abd7c52b3bff94789ccc86f75d78efe57205eee6c6b76',
+      cron_security: '83fe49cce6d9d0d69232f4afdcc1fab3665fbd5c8bf27aa8d4f626fd37b7dbf9',
       finance: 'f94d54264c5d7658dc04aba34b028c815e99d7eb8ccf2490410817d47566754f',
     },
     latest_migration: '20261027120000_stories_v2_safety_c1_technical_policy_prep',
@@ -2608,10 +2608,10 @@ test('Stories Safety C1 production baseline is promoted from independently verif
       postcheck_evidence_sha256: '645f30a2f72e07d1e23ced7258d849095d301f7a79ec98fe7c1a734fa99405e0',
     },
     requires_separate_policy_commit: true,
-    reviewed_policy_sha256: 'c518d78340f9a3d30f1aecaec6537f46a94859eff9f5ac12d4cfeb0631028243',
+    reviewed_policy_sha256: 'f26b1794df10f25379904b2e9e41a23b3b35854ffc59351cc731a45662ab7d5f',
     sha: 'e4c7199da157446f455822ea96e812784354b1db',
     state: 'verified',
-    verified_at: '2026-10-27T17:50:56.534Z',
+    verified_at: '2026-10-28T05:09:16.383Z',
     verified_by: OWNER,
   });
 
