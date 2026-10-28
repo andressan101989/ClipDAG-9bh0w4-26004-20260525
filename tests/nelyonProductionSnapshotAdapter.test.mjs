@@ -515,6 +515,10 @@ test('Stories Safety C1 snapshot attests inactive controls, private helpers, and
 test('Stories B1 advisor transition is phase-bound to exact introduced and replaced findings', async () => {
   const adapter = await loadAdapter();
   const transition = installedPolicy.stories_b1_transition;
+  const phasePolicy = structuredClone(installedPolicy);
+  phasePolicy.baseline.sha = transition.baseline_sha;
+  phasePolicy.baseline.migration_count = 357;
+  phasePolicy.baseline.latest_migration = '20261026120000_live_battles_final_c1';
   const storiesManifest = manifest();
   storiesManifest.identity.approved_sha = 'b'.repeat(40);
   storiesManifest.resources.stories_b1_transition = {
@@ -540,8 +544,8 @@ test('Stories B1 advisor transition is phase-bound to exact introduced and repla
     source_files: [],
     source_sha256: item.source_sha256,
   }));
-  const pre = adapter.advisorExceptionsForPhase(installedPolicy, storiesManifest, 'pre');
-  const post = adapter.advisorExceptionsForPhase(installedPolicy, storiesManifest, 'post');
+  const pre = adapter.advisorExceptionsForPhase(phasePolicy, storiesManifest, 'pre');
+  const post = adapter.advisorExceptionsForPhase(phasePolicy, storiesManifest, 'post');
   const preFingerprints = new Set(pre.map(item => item.advisor_fingerprint));
   const introduced = post.filter(item => !preFingerprints.has(item.advisor_fingerprint));
   assert.deepEqual(introduced, transition.security_advisor.introduced_exceptions);
