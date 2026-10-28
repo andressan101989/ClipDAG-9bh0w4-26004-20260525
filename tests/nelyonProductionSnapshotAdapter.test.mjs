@@ -3605,6 +3605,176 @@ test('security advisor fingerprints bind semantic object identity, not mutable a
   );
 });
 
+function canonicalAdvisorLints() {
+  return [
+    ...['anon', 'authenticated'].map(role => ({
+      name: `${role}_security_definer_function_executable`,
+      level: 'WARN', facing: 'EXTERNAL', categories: ['SECURITY'],
+      metadata: { schema: 'public', name: 'ensure_my_ledger_account',
+        arguments: '', language: 'plpgsql', security_definer: true },
+      cache_key: `${role}_security_definer_function_executable_public_ensure_my_ledger_account_`,
+    })),
+    { name: 'rls_enabled_no_policy', level: 'INFO', facing: 'EXTERNAL', categories: ['SECURITY'],
+      metadata: { schema: 'private', name: 'creator_premium_auto_renewal_attempts', type: 'table' },
+      cache_key: 'rls_enabled_no_policy_private_creator_premium_auto_renewal_attempts' },
+    { name: 'auth_leaked_password_protection', level: 'WARN', facing: 'EXTERNAL', categories: ['SECURITY'],
+      metadata: { entity: 'Auth', type: 'auth' }, cache_key: 'auth_leaked_password_protection' },
+  ];
+}
+
+function groupedAdvisorLints(lints) {
+  return { lints: lints.map(({ cache_key: ignored, metadata, ...group }) => ({
+    ...group, count: 1, findings: [{ metadata }],
+  })) };
+}
+
+test('Security Advisor raw and grouped inventories have identical historical fingerprints', async () => {
+  const adapter = await loadAdapter();
+  const lints = canonicalAdvisorLints();
+  const raw = adapter.normalizeSecurityAdvisors({ lints });
+  assert.equal(raw.count, 4);
+  assert.ok(raw.items.some(item => item.fingerprint === 'acc6db2023e39518a9407ac3dada47063023550ae9f275eb058b6f6aff32753e'));
+  assert.ok(raw.items.some(item => item.fingerprint === '70d2706125a8861824f9c876848c472a28bde6db0813543ba97ec3409516967f'));
+  assert.deepEqual(adapter.normalizeSecurityAdvisors(groupedAdvisorLints(lints)), raw);
+});
+
+test('Security Advisor transport cache keys cannot change semantic identity', async () => {
+  const adapter = await loadAdapter();
+  const lints = canonicalAdvisorLints();
+  const raw = adapter.normalizeSecurityAdvisors({ lints });
+  for (const replacement of [undefined, 'untrusted-provider-key', null, { forged: true }]) {
+    const changed = lints.map(({ cache_key: ignored, ...lint }) => ({
+      ...lint, ...(replacement === undefined ? {} : { cache_key: replacement }),
+    }));
+    assert.deepEqual(adapter.normalizeSecurityAdvisors({ lints: changed }), raw);
+  }
+});
+
+test('Security Advisor semantic metadata and severity remain normative', async () => {
+  const adapter = await loadAdapter();
+  const lint = canonicalAdvisorLints()[1];
+  const fingerprint = value => adapter.normalizeSecurityAdvisors({ lints: [value] }).items[0].fingerprint;
+  for (const change of [
+    { name: 'anon_security_definer_function_executable' }, { level: 'ERROR' },
+    { facing: 'INTERNAL' }, { categories: ['PERFORMANCE', 'SECURITY'] },
+    ...[{ schema: 'private' }, { name: 'other_function' }, { arguments: 'p_id uuid' },
+      { language: 'sql' }, { security_definer: false }].map(metadata => ({ metadata: { ...lint.metadata, ...metadata } })),
+  ]) assert.notEqual(fingerprint({ ...lint, ...change }), fingerprint(lint));
+  const multiCategory = { ...lint, categories: ['SECURITY', 'PERFORMANCE'] };
+  assert.equal(fingerprint(multiCategory), fingerprint({ ...multiCategory, categories: ['PERFORMANCE', 'SECURITY'] }));
+  assert.equal(fingerprint(lint), fingerprint({ ...lint, title: 'New prose', observed_at: 'later',
+    metadata: { ...lint.metadata, last_seen_at: 'later' } }));
+});
+
+test('Security Advisor malformed groups and findings fail closed', async () => {
+  const adapter = await loadAdapter();
+  const grouped = groupedAdvisorLints(canonicalAdvisorLints()).lints[0];
+  for (const lint of [
+    { ...grouped, count: 2 }, { ...grouped, count: -1 }, { ...grouped, count: '1' },
+    { ...grouped, count: undefined }, { ...grouped, findings: null },
+    { ...grouped, findings: [null] }, { ...grouped, findings: [{ metadata: [] }] },
+    { ...grouped, findings: [{ findings: [], count: 0 }] }, null, {},
+  ]) assert.throws(() => adapter.normalizeSecurityAdvisors({ lints: [lint] }), /INVALID_REMOTE_INVENTORY/);
+});
+
+test('Security Advisor duplicate semantic identities fail closed across raw and grouped records', async () => {
+  const adapter = await loadAdapter();
+  const lint = canonicalAdvisorLints()[1];
+  for (const duplicate of [
+    { ...lint }, { ...lint, cache_key: 'different-transport-key' },
+    { ...lint, level: 'ERROR', metadata: { ...lint.metadata, observed_at: 'later' } },
+    groupedAdvisorLints([lint]).lints[0],
+  ]) assert.throws(() => adapter.normalizeSecurityAdvisors({ lints: [lint, duplicate] }), /INVALID_REMOTE_INVENTORY/);
+});
+
+test('baseline phase-effective exceptions replace both historical F2 predecessor fingerprints', async () => {
+  const adapter = await loadAdapter();
+  const controlled = structuredClone(installedPolicy);
+  controlled.baseline.latest_migration = '20261026072512_creator_premium_f5_autonomous_subscriptions';
+  controlled.supabase.managed_functions = [];
+  const exceptions = adapter.advisorExceptionsForPhase(controlled, null, 'post');
+  const names = ['get_creator_premium_commerce_v1', 'get_my_creator_premium_subscriptions_v1'];
+  const predecessors = controlled.security_advisor.exceptions.filter(item => names.includes(item.object.name));
+  const successors = exceptions.filter(item => names.includes(item.object.name));
+  assert.deepEqual(predecessors.map(item => item.advisor_fingerprint), [
+    'f9c25bdf8e5c7f7ff7385410370dac9fe2ded1a0468f76d8bd2d265186718f32',
+    'cf4b6520e9c96170ea5a5125f287b991d15c377e80cf3394f879dc1cbad0e6ae',
+  ]);
+  assert.deepEqual(successors.map(item => item.advisor_fingerprint), [
+    '339d435525f93706824b968958882e6616e3b4cb19728a5c1c425e8503f4df2e',
+    'f8947b5a77fa93ff7dc019508d54eb859dffe9fcc0526d925e2d85d05a37f284',
+  ]);
+  const inventory = items => ({ complete: true, count: items.length, items, sha256: sha256(canonicalJson(items)) });
+  // Include historical fingerprints to prove they no longer suppress findings.
+  const retained = predecessors.map(item => ({ fingerprint: item.advisor_fingerprint,
+    level: item.advisor_severity, resource_kind: item.advisor_type }));
+  const advisors = [...retained, ...exceptions.map(item => ({ fingerprint: item.advisor_fingerprint,
+    level: item.advisor_severity, resource_kind: item.advisor_type }))]
+    .sort((a, b) => a.fingerprint.localeCompare(b.fingerprint));
+  const evidence = {
+    migrations: { ...inventory([]), latest: null }, functions: inventory([]),
+    cron_security: { cron: cronSnapshot(), advisors: inventory(advisors) }, finance: financeSnapshot(),
+  };
+  bindRpcSecurityEvidence(evidence, exceptions);
+  assert.equal(adapter.buildProductionBaselineDigests({ evidence, policy: controlled }).cron_security,
+    sha256(canonicalJson({ complete: true, cron: [], security_findings: retained.sort((a, b) => a.fingerprint.localeCompare(b.fingerprint)) })));
+  assert.deepEqual(controlled.security_advisor.exceptions.filter(item => names.includes(item.object.name)), predecessors);
+});
+
+test('current successor RPC attestations require exact definition ACL owner and search_path', async () => {
+  const adapter = await loadAdapter();
+  const exceptions = adapter.advisorExceptionsForPhase(installedPolicy, null, 'post');
+  const evidence = {};
+  bindRpcSecurityEvidence(evidence, exceptions);
+  assert.equal(adapter.validateRpcSecurityAttestations(evidence.rpc_security, exceptions), true);
+  for (const name of ['get_creator_premium_commerce_v1', 'get_my_creator_premium_subscriptions_v1']) {
+    for (const change of [
+      { definition_sha256: '0'.repeat(64) }, { acl: [] }, { owner: 'other_owner' },
+      { search_path: ['search_path=public'] }, { security_definer: false },
+      { execute: { anon: false, authenticated: true, public: false, service_role: true } },
+    ]) {
+      const hostile = structuredClone(evidence.rpc_security);
+      Object.assign(hostile.items.find(item => item.name === name), change);
+      hostile.sha256 = sha256(canonicalJson(hostile.items));
+      assert.throws(() => adapter.validateRpcSecurityAttestations(hostile, exceptions), /RPC_SECURITY_ATTESTATION_FAILED/);
+    }
+  }
+});
+
+test('Stories Safety C2 observed complete inventory selects helper attestations before baseline promotion', async () => {
+  const adapter = await loadAdapter();
+  const controlled = structuredClone(installedPolicy);
+  controlled.baseline.latest_migration = '20261027120000_stories_v2_safety_c1_technical_policy_prep';
+  controlled.baseline.migration_count = 1;
+  const before = [{ version: '20261027120000', name: 'stories_v2_safety_c1_technical_policy_prep' }];
+  controlled.baseline.evidence_digests.migrations = sha256(canonicalJson(before.map(item => `${item.version}_${item.name}`)));
+  const items = [...before, { version: '20261027191918', name: 'stories_v2_safety_c2_publish_first_async_review' }];
+  const inventory = values => ({ complete: true, count: values.length, items: values,
+    latest: values.at(-1), sha256: sha256(canonicalJson(values)) });
+  const migrations = inventory(items);
+  const requirement = adapter.storiesSafetyC2StateRequirement(controlled, null, 'post', { migrations });
+  assert.equal(requirement.installed, true);
+  assert.equal(requirement.required, true);
+  assert.equal(requirement.recovery, false);
+  const beforeExceptions = adapter.advisorExceptionsForPhase(controlled, null, 'post', { migrations: inventory(before) });
+  const afterExceptions = adapter.advisorExceptionsForPhase(controlled, null, 'post', { migrations });
+  for (const helper of controlled.stories_safety_c2_transition.helper_attestations) {
+    const find = values => values.find(item => item.object?.argument_types
+      && `${item.object.schema}.${item.object.name}(${item.object.argument_types.join(',')})`.replaceAll(' ', '') === helper.identity.replaceAll(' ', ''));
+    if (!find(afterExceptions)) continue;
+    assert.equal(find(afterExceptions).attestation.definition_sha256, helper.definition_sha256);
+  }
+  const create = values => values.find(item => item.object?.name === 'create_story_with_media' && item.object.argument_types?.length === 4);
+  assert.notEqual(create(beforeExceptions).attestation.definition_sha256, create(afterExceptions).attestation.definition_sha256);
+  for (const hostile of [
+    { ...migrations, complete: false }, { ...migrations, count: 3 }, { ...migrations, sha256: '0'.repeat(64) },
+    inventory([...before, { ...items[1], name: 'different_c2' }]),
+  ]) assert.equal(adapter.storiesSafetyC2StateRequirement(controlled, null, 'post', { migrations: hostile }).installed, false);
+  assert.equal(adapter.storiesSafetyC2StateRequirement(controlled, null, 'post', {
+    migrations: inventory([...items, { version: '20261028120000', name: 'later_migration' }]),
+  }).installed, true, 'installed state is distinct from exact recovery append authorization');
+});
+
 test('phase-bound RPC attestations keep successor authorities stable for an older F1 manifest', async () => {
   const adapter = await loadAdapter();
   const controlledPolicy = structuredClone(policy);
