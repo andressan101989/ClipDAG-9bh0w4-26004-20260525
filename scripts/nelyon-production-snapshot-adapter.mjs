@@ -1562,7 +1562,17 @@ export function storiesSafetyC2StateRequirement(policy, manifest, phase, { reque
   const authority = policy?.stories_safety_c2_transition;
   const migration = authority?.migration_path?.split('/').at(-1)?.replace(/\.sql$/, '');
   const transition = storiesSafetyC2Transition(policy, manifest);
-  const installed = Boolean(migration) && String(policy?.baseline?.latest_migration ?? '') >= migration;
+  let observedInstalled = false;
+  if (migration && migrations) {
+    try {
+      validateNormalizedMigrations(migrations);
+      observedInstalled = migrations.items.some(item => baselineMigrationName(item) === migration);
+    } catch {
+      // Incomplete or malformed observations cannot establish installed authority.
+    }
+  }
+  const installed = Boolean(migration)
+    && (String(policy?.baseline?.latest_migration ?? '') >= migration || observedInstalled);
   const source = phase === 'recovery' && request?.mode === 'postcheck_recovery'
     && request?.scopeConfirmation === 'POSTCHECK_RECOVERY_READ_ONLY'
     && manifest?.identity?.mode === 'postcheck_recovery'
@@ -2791,10 +2801,9 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
       fail('REMOTE_BASELINE_MISMATCH', 'Stories B1 RPC authority evidence is incomplete');
     }
   }
-  const effectiveExceptions = [
-    ...(policy?.security_advisor?.exceptions ?? []),
-    ...(storiesB1Installed ? storiesAdvisor.introduced_exceptions : []),
-  ];
+  const effectiveExceptions = advisorExceptionsForPhase(policy, null, 'post', {
+    migrations: evidence.migrations,
+  });
   const deployedExceptionFingerprints = new Set(effectiveExceptions
     .filter(exception => !Array.isArray(exception?.object?.argument_types)
       || attestedRpcIdentities.has(rpcIdentity(exception.object)))
@@ -3347,16 +3356,56 @@ function stableAdvisorMetadata(value) {
 
 function stableAdvisorValue(lint) {
   const stable = {};
-  for (const key of ['cache_key', 'categories', 'facing', 'level', 'metadata', 'name']) {
+  for (const key of ['categories', 'facing', 'level', 'metadata', 'name']) {
     if (Object.hasOwn(lint ?? {}, key)) stable[key] = stableAdvisorMetadata(lint[key]);
   }
+  if (stable.categories) stable.categories.sort();
+  // Match the provider's current cache format, but derive it from semantic
+  // identity so missing or changed transport cache keys have no authority.
+  const metadata = stable.metadata;
+  stable.cache_key = metadata.type === 'auth' ? stable.name
+    : `${stable.name}_${metadata.schema}_${metadata.name ?? metadata.table}`
+      + (Object.hasOwn(metadata, 'arguments') ? `_${metadata.arguments}` : '');
   return stable;
 }
 
 export function normalizeSecurityAdvisors(body) {
   const lints = body?.lints;
   if (!Array.isArray(lints)) fail('INVALID_REMOTE_INVENTORY', 'security advisor inventory is invalid');
-  const items = lints.map(lint => {
+  const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const validFields = lint => isRecord(lint) && typeof lint.name === 'string' && lint.name.length > 0
+    && typeof lint.level === 'string' && lint.level.length > 0
+    && (!Object.hasOwn(lint, 'facing') || (typeof lint.facing === 'string' && lint.facing.length > 0))
+    && (!Object.hasOwn(lint, 'categories') || (Array.isArray(lint.categories)
+      && lint.categories.every(category => typeof category === 'string' && category.length > 0)));
+  const findings = lints.flatMap(lint => {
+    if (!isRecord(lint)) fail('INVALID_REMOTE_INVENTORY', 'security advisor finding is malformed');
+    if (!Object.hasOwn(lint, 'findings') && !Object.hasOwn(lint, 'count')) return [lint];
+    if (!validFields(lint) || !Number.isInteger(lint.count) || lint.count < 0
+      || !Array.isArray(lint.findings) || lint.count !== lint.findings.length) {
+      fail('INVALID_REMOTE_INVENTORY', 'security advisor group count or findings are invalid');
+    }
+    const { count: ignoredCount, findings: grouped, ...fields } = lint;
+    return grouped.map(finding => {
+      if (!isRecord(finding) || Object.hasOwn(finding, 'findings') || Object.hasOwn(finding, 'count')) {
+        fail('INVALID_REMOTE_INVENTORY', 'security advisor grouped finding is malformed');
+      }
+      return { ...fields, ...finding };
+    });
+  });
+  const identities = new Set();
+  const items = findings.map(lint => {
+    const metadata = lint.metadata;
+    if (!validFields(lint) || !isRecord(metadata)
+      || (metadata.type !== 'auth' && (typeof metadata.schema !== 'string' || metadata.schema.length === 0
+        || typeof (metadata.name ?? metadata.table) !== 'string' || (metadata.name ?? metadata.table).length === 0))
+      || (Object.hasOwn(metadata, 'arguments') && typeof metadata.arguments !== 'string')) {
+      fail('INVALID_REMOTE_INVENTORY', 'security advisor semantic identity is malformed');
+    }
+    const identity = canonicalJson([lint.name, metadata.schema ?? null, metadata.name ?? metadata.table ?? null,
+      metadata.arguments ?? null]);
+    if (identities.has(identity)) fail('INVALID_REMOTE_INVENTORY', 'security advisor semantic identities are duplicate');
+    identities.add(identity);
     const stable = stableAdvisorValue(lint);
     return {
       fingerprint: sha256(canonicalJson(stable)),
