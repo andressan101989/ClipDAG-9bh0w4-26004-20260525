@@ -11,6 +11,11 @@ import {
 } from '@/components/feature/storyComposition';
 import type { StoryInteractiveSubmissionDefinition } from '@/components/feature/storyInteractiveTypes';
 import {
+  prepareStoryQuestionAnswerWithClient, createStoryQuestionAnswerWithClient,
+  type StoryQuestionAnswerInput, type PreparedStoryQuestionAnswer,
+} from '@/services/storyQuestionAnswerClient';
+import type { StoryQuestionReplySource } from '@/services/storyQuestionHandoff';
+import {
   getStoryInteractiveResults,
   getStoryInteractiveState,
   moderateStoryQuestion,
@@ -50,6 +55,8 @@ export type StorySharedContent =
 interface StoriesContextType {
   storyGroups: StoryGroup[];
   isLoadingStories: boolean;
+  prepareStoryQuestionAnswer: (source: StoryQuestionReplySource) => Promise<PreparedStoryQuestionAnswer>;
+  addQuestionAnswerStory: (input: StoryQuestionAnswerInput) => Promise<string>;
   addStory: (
     mediaAssetId: string,
     composition: StoryComposition,
@@ -539,6 +546,27 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     return data;
   }, [user, loadStories]);
 
+  const prepareStoryQuestionAnswer = useCallback(async (source: StoryQuestionReplySource) => {
+    if (!user?.id) throw new Error('STORY_QA_NOT_AUTHENTICATED');
+    const actorId = user.id;
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) throw new Error('STORY_QA_CLIENT_UNAVAILABLE');
+    const prepared = await prepareStoryQuestionAnswerWithClient(supabase, source);
+    if (storySessionRef.current !== actorId) throw new Error('STORY_QA_SESSION_CHANGED');
+    return prepared;
+  }, [user?.id]);
+
+  const addQuestionAnswerStory = useCallback(async (input: StoryQuestionAnswerInput) => {
+    if (!user?.id) throw new Error('STORY_QA_NOT_AUTHENTICATED');
+    const actorId = user.id;
+    const supabase = supabaseRef.current;
+    if (!supabase || !supabaseOk.current) throw new Error('STORY_QA_CLIENT_UNAVAILABLE');
+    const storyId = await createStoryQuestionAnswerWithClient(supabase, input);
+    // Preserve a confirmed commit even after navigation/auth changes; Feed must not clean linked media.
+    if (storySessionRef.current === actorId) await loadStories();
+    return storyId;
+  }, [user?.id, loadStories]);
+
   const markStoryViewed = useCallback(async (storyId: string) => {
     if (!user || viewedStoryIdsRef.current.has(storyId)) return;
     const actorId = user.id;
@@ -913,6 +941,8 @@ export function StoriesProvider({ children }: { children: ReactNode }) {
     <StoriesContext.Provider value={{
       storyGroups,
       isLoadingStories,
+      prepareStoryQuestionAnswer,
+      addQuestionAnswerStory,
       addStory,
       addSharedStory,
       getStorySharedContent,

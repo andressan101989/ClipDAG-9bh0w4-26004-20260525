@@ -21,7 +21,9 @@ import { PostCardSkeleton, FadeIn } from '@/components/ui/SkeletonLoader';
 import { NelyonLogo } from '@/components/ui/NelyonLogo';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Audio } from 'expo-av';
-import { useScrollToTop } from '@react-navigation/native';
+import { useScrollToTop, useIsFocused } from '@react-navigation/native';
+import { storyQuestionHandoffs, type StoryQuestionAnswerCard } from '@/services/storyQuestionHandoff';
+import { StoryQuestionFeedSession, type StoryQuestionMediaTicket } from '@/services/storyQuestionIntegrationRuntime';
 import type { StoryGroup, StoryItem } from '@/components/feature/StoriesBar';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
 import type { FinalizedVideoView } from '@/services/videoPlaybackSession';
@@ -79,11 +81,19 @@ import {
 
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 75 };
 type FeedItem = SocialFeedItem<VideoWithMeta, SponsoredProduct> | AdvertisingV2FeedItem<AdvertisingDeliveryAdV2>;
+type StoryUploadAttempt = {
+  assetId: string;
+  provider: 'r2' | 'stream';
+  actorId: string;
+  inFlight: boolean;
+  retired: boolean;
+};
 
 export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { videoId: requestedVideoId } = useLocalSearchParams<{ videoId?: string }>();
+  const { videoId: requestedVideoId, handoffToken } = useLocalSearchParams<{ videoId?: string; handoffToken?: string }>();
+  const isFocused = useIsFocused();
   const { user, toggleFollow, isFollowing } = useAuth();
   const {
     videos, isLiked, isSaved, toggleLike, toggleSave,
@@ -92,7 +102,7 @@ export default function FeedScreen() {
     sendGift, ensureVideoLoadedById,
   } = useFeed();
   const {
-    storyGroups, addStory, addSharedStory, getStorySharedContent,
+    storyGroups, addStory, addSharedStory, addQuestionAnswerStory, getStorySharedContent,
     getStoryViewers, deleteStory,
     setStoryReaction, getStoryReactions, replyToStory,
     getInteractiveState, respondToInteractiveElement, getInteractiveResults,
@@ -115,12 +125,52 @@ export default function FeedScreen() {
     creatorDisplayName: string;
   } | null>(null);
   const [storyEditorSource, setStoryEditorSource] = useState<StoryEditorSource | null>(null);
+  const [questionAnswerSeed, setQuestionAnswerSeed] = useState<StoryQuestionAnswerCard | null>(null);
+  const [storyMediaChoiceActive, setStoryMediaChoiceActive] = useState(false);
+  const storyQuestionSessionRef = useRef<StoryQuestionFeedSession | null>(null);
+  if (!storyQuestionSessionRef.current) storyQuestionSessionRef.current = new StoryQuestionFeedSession(storyQuestionHandoffs, randomUUID);
+  const storyActorRef = useRef(user?.id ?? null);
+  storyActorRef.current = user?.id ?? null;
+  const storyLifecycleRef = useRef(0);
+  const isStoryLifecycleCurrent = useCallback((lifecycle: number) => storyLifecycleRef.current === lifecycle, []);
+  const initializedStoryActorRef = useRef<string | null | undefined>(undefined);
+  const storyUploadAttemptsRef = useRef(new Map<string, StoryUploadAttempt>());
+  const cleanupStoryUploadAttempt = useCallback(async (clientStoryId: string, attempt: StoryUploadAttempt) => {
+    if (storyUploadAttemptsRef.current.get(clientStoryId) !== attempt) return;
+    attempt.retired = true;
+    // A publication may still commit; its continuation owns cleanup after the outcome.
+    if (attempt.inFlight) return;
+    storyUploadAttemptsRef.current.delete(clientStoryId);
+    if (attempt.provider === 'stream') await deleteStreamVideo(attempt.assetId).catch(() => {});
+    else await deleteMediaAsset(attempt.assetId).catch(() => {});
+  }, []);
+  const retireStoryUploads = useCallback((actorId: string | null) => {
+    if (!actorId) return;
+    for (const [clientStoryId, attempt] of storyUploadAttemptsRef.current) {
+      if (attempt.actorId === actorId) void cleanupStoryUploadAttempt(clientStoryId, attempt);
+    }
+  }, [cleanupStoryUploadAttempt]);
+
+  useEffect(() => {
+    const lifecycle = ++storyLifecycleRef.current;
+    storyQuestionSessionRef.current!.setActor(user?.id ?? null);
+    if (initializedStoryActorRef.current !== (user?.id ?? null)) {
+      retireStoryUploads(initializedStoryActorRef.current ?? null);
+      initializedStoryActorRef.current = user?.id ?? null;
+      setQuestionAnswerSeed(null);
+      setStoryEditorSource(null);
+      setStoryMediaChoiceActive(false);
+    }
+    // StrictMode replays effects synchronously; retire only a genuinely abandoned mount.
+    return () => { void Promise.resolve().then(() => {
+      if (isStoryLifecycleCurrent(lifecycle)) {
+        storyQuestionSessionRef.current!.clear();
+        retireStoryUploads(user?.id ?? null);
+      }
+    }); };
+  }, [isStoryLifecycleCurrent, retireStoryUploads, user?.id]);
   const [sponsoredProducts, setSponsoredProducts] = useState<SponsoredProduct[]>([]);
   const [advertisingV2Opportunities, setAdvertisingV2Opportunities] = useState<{ viewerUserId: string; placement: "social_feed" | "clips" | "stories"; ad: AdvertisingDeliveryAdV2; eventKey: string }[]>([]);
-  const storyUploadAttemptsRef = useRef(new Map<string, {
-    assetId: string;
-    provider: 'r2' | 'stream';
-  }>());
   const sponsoredImpressionsRef = useRef(new Set<string>());
 
   const loadSponsoredProducts = useCallback(async () => {
@@ -388,6 +438,11 @@ export default function FeedScreen() {
     clientStoryId: string,
   ) => {
     if (!user) throw new Error('STORY_PUBLISH_NOT_AUTHENTICATED');
+    const actorId = user.id;
+    const reply = storyQuestionSessionRef.current!.reply;
+    const ticket = storyQuestionSessionRef.current!.beginMedia();
+    const currentSession = () => storyActorRef.current === actorId && storyQuestionSessionRef.current!.isCurrent(ticket);
+    if (reply && source.kind !== 'media') throw new Error('STORY_QA_MEDIA_REQUIRED');
     if (source.kind === 'shared') {
       await addSharedStory(
         source.videoId,
@@ -404,6 +459,8 @@ export default function FeedScreen() {
     const isVideo = source.mediaType === 'video';
     const mimeType = asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg');
     const uploadedAttempt = storyUploadAttemptsRef.current.get(clientStoryId);
+    if (uploadedAttempt && (uploadedAttempt.actorId !== actorId || uploadedAttempt.retired)) throw new Error('STORY_PUBLISH_SESSION_CHANGED');
+    if (uploadedAttempt) uploadedAttempt.inFlight = true;
     let uploadedAssetId = uploadedAttempt?.assetId;
     let failureStage = 'STORY_UPLOAD';
 
@@ -419,8 +476,10 @@ export default function FeedScreen() {
           storyUploadAttemptsRef.current.set(clientStoryId, {
             assetId: contract.assetId,
             provider: 'stream',
+            actorId, inFlight: true, retired: false,
           });
           try {
+            if (!currentSession()) throw new Error('STORY_PUBLISH_SESSION_CHANGED');
             await uploadStoryVideoWithTus({
               uri: asset.uri,
               fileName: asset.fileName || 'story-video',
@@ -447,12 +506,20 @@ export default function FeedScreen() {
           storyUploadAttemptsRef.current.set(clientStoryId, {
             assetId: uploaded.assetId,
             provider: 'r2',
+            actorId, inFlight: true, retired: false,
           });
           if (uploaded.url) throw new Error('Private Story upload returned a persistent URL');
         }
       }
       failureStage = 'STORY_CREATE_RPC';
-      const persistedStoryId = await addStory(
+      if (!currentSession()) throw new Error('STORY_PUBLISH_SESSION_CHANGED');
+      const persistedStoryId = reply ? await addQuestionAnswerStory({
+        source: reply.source,
+        mediaAssetId: uploadedAssetId,
+        composition: publication.composition,
+        clientStoryId,
+        interactiveDefinitions: publication.interactiveDefinitions,
+      }) : await addStory(
         uploadedAssetId,
         publication.composition,
         clientStoryId,
@@ -460,59 +527,96 @@ export default function FeedScreen() {
       );
       if (!persistedStoryId) throw new Error('STORY_INSERT_FAILED');
       storyUploadAttemptsRef.current.delete(clientStoryId);
+      if (!currentSession()) return;
+      storyQuestionSessionRef.current!.clear();
+      setQuestionAnswerSeed(null);
       setStoryEditorSource(null);
       showAlert('Historia publicada!', 'Tu historia estará visible por 24 horas');
     } catch (error) {
+      const attempt = storyUploadAttemptsRef.current.get(clientStoryId);
+      if (attempt && attempt.actorId === actorId) {
+        attempt.inFlight = false;
+        if (attempt.retired || !currentSession()) await cleanupStoryUploadAttempt(clientStoryId, attempt);
+      }
+      if (!currentSession()) throw new Error('STORY_PUBLISH_SESSION_CHANGED');
       console.warn('[Feed] story publish failed', {
         stage: failureStage,
-        code: error instanceof Error ? error.message : 'unknown',
+        code: 'STORY_PUBLISH_FAILED',
       });
       showAlert('Error', 'No se pudo publicar la historia');
       throw error;
     }
-  }, [user, addSharedStory, addStory, showAlert]);
+  }, [user, addSharedStory, addStory, addQuestionAnswerStory, cleanupStoryUploadAttempt, showAlert]);
 
   const cancelStoryEditor = useCallback((clientStoryId?: string) => {
+    storyQuestionSessionRef.current!.clear();
+    setQuestionAnswerSeed(null);
+    setStoryMediaChoiceActive(false);
     setStoryEditorSource(null);
     if (!clientStoryId) return;
     const uploadedAttempt = storyUploadAttemptsRef.current.get(clientStoryId);
-    storyUploadAttemptsRef.current.delete(clientStoryId);
-    if (uploadedAttempt?.provider === 'stream') {
-      void deleteStreamVideo(uploadedAttempt.assetId).catch(() => {});
-    } else if (uploadedAttempt) {
-      void deleteMediaAsset(uploadedAttempt.assetId).catch(() => {});
-    }
-  }, []);
+    if (uploadedAttempt) void cleanupStoryUploadAttempt(clientStoryId, uploadedAttempt);
+  }, [cleanupStoryUploadAttempt]);
 
-  const handleAddStory = useCallback(() => {
+  const openStoryMediaChoice = useCallback((ticket: StoryQuestionMediaTicket) => {
+    setStoryMediaChoiceActive(true);
+    const isCurrent = () => storyActorRef.current === ticket.actorId && storyQuestionSessionRef.current!.isCurrent(ticket);
+    const abandon = () => {
+      if (!isCurrent()) return;
+      storyQuestionSessionRef.current!.clear();
+      setQuestionAnswerSeed(null);
+      setStoryMediaChoiceActive(false);
+    };
+    const pick = async (camera: boolean) => {
+      if (!isCurrent()) return;
+      try {
+        const perm = camera ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!isCurrent()) return;
+        if (!perm.granted) {
+          abandon();
+          showAlert('Permiso denegado', camera ? 'Habilita la cámara en ajustes' : 'Habilita la galería en ajustes');
+          return;
+        }
+        const options = { mediaTypes: ImagePicker.MediaTypeOptions.All, allowsEditing: true, aspect: [9, 16] as [number, number], quality: 0.8, base64: true, videoMaxDuration: 15 };
+        const result = camera ? await ImagePicker.launchCameraAsync(options) : await ImagePicker.launchImageLibraryAsync(options);
+        if (!isCurrent()) return;
+        if (result.canceled || !result.assets[0]) { abandon(); return; }
+        const asset = result.assets[0];
+        setQuestionAnswerSeed(storyQuestionSessionRef.current!.reply?.seed ?? null);
+        setStoryEditorSource({ kind: 'media', uri: asset.uri, mediaType: asset.type === 'video' ? 'video' : 'photo', asset });
+        setStoryMediaChoiceActive(false);
+      } catch {
+        if (!isCurrent()) return;
+        abandon();
+        showAlert('Error', 'No se pudo abrir el contenido. Vuelve a intentarlo.');
+      }
+    };
     showAlert('Agregar Historia', 'Cómo quieres crear tu historia?', [
       {
         text: 'Cámara',
-        onPress: async () => {
-          const perm = await ImagePicker.requestCameraPermissionsAsync();
-          if (!perm.granted) { showAlert('Permiso denegado', 'Habilita la cámara en ajustes'); return; }
-          const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, allowsEditing: true, aspect: [9, 16], quality: 0.8, base64: true, videoMaxDuration: 15 });
-          if (!result.canceled && result.assets[0]) {
-            const asset = result.assets[0];
-            setStoryEditorSource({ kind: 'media', uri: asset.uri, mediaType: asset.type === 'video' ? 'video' : 'photo', asset });
-          }
-        },
+        onPress: () => { void pick(true); },
       },
       {
         text: 'Galería',
-        onPress: async () => {
-          const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-          if (!perm.granted) { showAlert('Permiso denegado', 'Habilita la galería en ajustes'); return; }
-          const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, allowsEditing: true, aspect: [9, 16], quality: 0.8, base64: true, videoMaxDuration: 15 });
-          if (!result.canceled && result.assets[0]) {
-            const asset = result.assets[0];
-            setStoryEditorSource({ kind: 'media', uri: asset.uri, mediaType: asset.type === 'video' ? 'video' : 'photo', asset });
-          }
-        },
+        onPress: () => { void pick(false); },
       },
-      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Cancelar', style: 'cancel', onPress: abandon },
     ]);
   }, [showAlert]);
+
+  const handleAddStory = useCallback(() => {
+    if (!user?.id || storyEditorSource || storyMediaChoiceActive) return;
+    openStoryMediaChoice(storyQuestionSessionRef.current!.beginMedia());
+  }, [openStoryMediaChoice, storyEditorSource, storyMediaChoiceActive, user?.id]);
+
+  useEffect(() => {
+    if (handoffToken === undefined) return;
+    const result = storyQuestionSessionRef.current!.receive(handoffToken, user?.id ?? null, isFocused, Boolean(storyEditorSource) || storyMediaChoiceActive);
+    if (result.status === 'waiting' || result.status === 'occupied') return;
+    router.setParams({ handoffToken: undefined });
+    if (result.status === 'ready') openStoryMediaChoice(result.ticket);
+    else if (result.status === 'invalid') showAlert('Respuesta no disponible', 'La solicitud venció. Abre de nuevo la pregunta para responder.');
+  }, [handoffToken, isFocused, openStoryMediaChoice, router, showAlert, storyEditorSource, storyMediaChoiceActive, user?.id]);
 
   const handleViewStory = useCallback((group: StoryGroup) => {
     setViewingStoryUserId(group.userId);
@@ -633,7 +737,11 @@ export default function FeedScreen() {
               contentType: marketplaceContentTypeForMedia(item.video.videoUrl, item.video.mediaUrls),
               creatorDisplayName: item.video.username,
             })}
-            onAddToStory={() => setStoryEditorSource({
+            onAddToStory={() => {
+              if (storyEditorSource || storyMediaChoiceActive) return;
+              storyQuestionSessionRef.current!.clear();
+              setQuestionAnswerSeed(null);
+              setStoryEditorSource({
               kind: 'shared',
               videoId: item.video.id,
               contentType: marketplaceContentTypeForMedia(item.video.videoUrl, item.video.mediaUrls),
@@ -641,7 +749,8 @@ export default function FeedScreen() {
               username: item.video.username,
               avatarUrl: item.video.userAvatar,
               caption: item.video.caption,
-            })}
+              });
+            }}
           />
         )}
         showsVerticalScrollIndicator={false}
@@ -724,6 +833,7 @@ export default function FeedScreen() {
       <StoryEditor
         visible={Boolean(storyEditorSource)}
         source={storyEditorSource}
+        questionAnswerSeed={questionAnswerSeed}
         onCancel={cancelStoryEditor}
         onPublish={publishStory}
       />

@@ -84,8 +84,9 @@ test('photo uses canonical private R2 and video uses canonical private Stream wi
   assert.match(feed, /uploadStoryVideoWithTus\(/);
   assert.match(feed, /waitForStoryStreamReady\(/);
   assert.match(feed, /addStory\([\s\S]*uploadedAssetId,[\s\S]*publication\.composition,[\s\S]*clientStoryId,[\s\S]*publication\.interactiveDefinitions/);
-  assert.match(feed, /deleteMediaAsset\(uploadedAttempt\.assetId\)/);
-  assert.match(feed, /deleteStreamVideo\(uploadedAttempt\.assetId\)/);
+  assert.match(feed, /deleteMediaAsset\(attempt\.assetId\)/);
+  assert.match(feed, /deleteStreamVideo\(attempt\.assetId\)/);
+  assert.match(feed, /cleanupStoryUploadAttempt\(clientStoryId, uploadedAttempt\)/);
   assert.doesNotMatch(feed, /uploadFileFromUri/);
   assert.doesNotMatch(feed, /storage\.from/);
   assert.doesNotMatch(context, /Date\.now\(\) \+ 24 \* 60 \* 60|expires_at:\s*expires/i);

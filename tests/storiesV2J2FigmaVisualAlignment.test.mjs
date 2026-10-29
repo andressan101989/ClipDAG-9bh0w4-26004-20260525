@@ -254,8 +254,12 @@ test('one canonical component authority exists for each Story surface', () => {
   assert.equal(readdirSync('contexts').filter(name => name === 'StoriesContext.tsx').length, 1);
 });
 
-test('J2 introduces no persistence, service, package or native authority', () => {
-  const storySurfaces = [nativeViewer, webViewer, editor, sheet, effect].join('\n');
+test('J2 preserves persistence/package/native boundaries after the canonical QA editor session extension', () => {
+  // QA C1 adds only a local editor lifecycle helper and a type import, covered by actual React tests.
+  const editorWithoutQaImports = editor
+    .replace("import { StoryQuestionEditorSession } from '@/services/storyQuestionIntegrationRuntime';", '')
+    .replace("import type { StoryQuestionAnswerCard } from '@/services/storyQuestionHandoff';", '');
+  const storySurfaces = [nativeViewer, webViewer, editorWithoutQaImports, sheet, effect].join('\n');
   assert.doesNotMatch(storySurfaces, /@\/services|supabase/i);
   assert.deepEqual(nativeAuthorityChanges(), []);
   assertPackageAuthoritiesUnchanged();

@@ -22,6 +22,7 @@ export type {
   StoryStaticElement,
   StoryStickerElement,
   StoryTextElement,
+  StoryQuestionAnswerCard,
   StoryTextSize,
 } from './storyInteractiveTypes';
 
@@ -32,6 +33,7 @@ export const EMPTY_STORY_COMPOSITION: StoryComposition = { version: 1, elements:
 const TEXT_SIZE: Record<StoryTextSize, number> = { small: 22, medium: 32, large: 44 };
 export function storyElementFrame(element: StoryStaticElement, canvasWidth: number) {
   if (element.type === 'sticker') return { width: 88, minHeight: 88 };
+  if (element.type === 'question_answer') return { width: Math.min(300, Math.max(160, canvasWidth - 48)), minHeight: 140 };
   return {
     width: Math.min(300, Math.max(220, canvasWidth - 48)),
     minHeight: 88,
@@ -78,7 +80,12 @@ export function StoryCompositionElementContent({
         ]}>
           {element.text}
         </Text>
-      ) : <Text style={styles.sticker}>{element.value}</Text>}
+      ) : element.type === 'sticker' ? <Text style={styles.sticker}>{element.value}</Text> : (
+        <View style={styles.answerCard}>
+          <Text style={styles.question}>{element.question}</Text>
+          <Text style={styles.answer}>{element.answer || 'Escribe tu respuesta'}</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -167,4 +174,7 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
   },
   sticker: { fontSize: 48 },
+  answerCard: { width: '100%', borderRadius: 18, overflow: 'hidden', backgroundColor: '#fff' },
+  question: { padding: 14, backgroundColor: '#7C5CFF', color: '#fff', fontSize: 17, fontWeight: '700' },
+  answer: { padding: 14, color: '#111111', fontSize: 18, fontWeight: '600' },
 });

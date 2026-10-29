@@ -200,7 +200,7 @@ test('one client Story id survives retries and new editor sessions get a new id'
   assert.match(editor, /if \(!clientStoryIdRef\.current\) clientStoryIdRef\.current = Crypto\.randomUUID\(\)/);
   assert.match(editor, /onPublish\(source, publication, clientStoryIdRef\.current\)/);
   assert.doesNotMatch(context.slice(context.indexOf('const addSharedStory'), context.indexOf('const getStorySharedContent')), /randomUUID/);
-  assert.match(feed, /const storyUploadAttemptsRef = useRef\(new Map<string, \{/);
+  assert.match(feed, /const storyUploadAttemptsRef = useRef\(new Map<string, StoryUploadAttempt>/);
   assert.match(feed, /provider: 'r2' \| 'stream'/);
   assert.match(feed, /storyUploadAttemptsRef\.current\.get\(clientStoryId\)/);
   assert.match(feed, /storyUploadAttemptsRef\.current\.set\(clientStoryId, \{[\s\S]*assetId: contract\.assetId,[\s\S]*provider: 'stream'/);
@@ -217,8 +217,9 @@ test('own media keeps the canonical upload/finalize and compensating cleanup pat
   assert.match(feed, /visibility: 'private'/);
   assert.match(feed, /addStory\([\s\S]*uploadedAssetId,[\s\S]*publication\.composition,[\s\S]*clientStoryId,[\s\S]*publication\.interactiveDefinitions/);
   assert.match(feed, /const cancelStoryEditor = useCallback/);
-  assert.match(feed, /deleteMediaAsset\(uploadedAttempt\.assetId\)/);
-  assert.match(feed, /deleteStreamVideo\(uploadedAttempt\.assetId\)/);
+  assert.match(feed, /cleanupStoryUploadAttempt\(clientStoryId, uploadedAttempt\)/);
+  assert.match(feed, /deleteMediaAsset\(attempt\.assetId\)/);
+  assert.match(feed, /deleteStreamVideo\(attempt\.assetId\)/);
   assert.match(migration, /private\.create_story_with_media_core/);
 });
 
@@ -254,10 +255,10 @@ test('shared preview opens only the canonical original ID route', () => {
 test('Feed share UI enters the same StoryEditor for Feed and Reel content', () => {
   assert.match(nativeVideoCard, /Añadir a historia/);
   assert.match(webVideoCard, /Añadir a historia/);
-  assert.match(feed, /onAddToStory=\{\(\) => setStoryEditorSource/);
+  assert.match(feed, /onAddToStory=\{\(\) => \{[\s\S]*setStoryEditorSource/);
   const render = feed.slice(feed.indexOf('renderItem='), feed.indexOf('showsVerticalScrollIndicator'));
   assert.match(render, /item\.kind === 'sponsored'[\s\S]*<SponsoredFeedCard[\s\S]*item\.kind === 'advertising_v2'[\s\S]*<AdvertisingFeedCardV2[\s\S]*<VideoCard[\s\S]*video=\{item\.video\}/);
-  assert.match(render, /onAddToStory=\{\(\) => setStoryEditorSource\(\{[\s\S]*videoId: item\.video\.id,[\s\S]*contentType: marketplaceContentTypeForMedia\(item\.video\.videoUrl, item\.video\.mediaUrls\)/);
+  assert.match(render, /onAddToStory=\{\(\) => \{[\s\S]*setStoryEditorSource\(\{[\s\S]*videoId: item\.video\.id,[\s\S]*contentType: marketplaceContentTypeForMedia\(item\.video\.videoUrl, item\.video\.mediaUrls\)/);
   assert.doesNotMatch(render, /item\.(?:videoUrl|mediaUrls|thumbnailUrl)\b/);
   assert.match(feed, /<StoryEditor/);
   assert.equal((feed.match(/\n\s*<StoryEditor\s/g) ?? []).length, 1);

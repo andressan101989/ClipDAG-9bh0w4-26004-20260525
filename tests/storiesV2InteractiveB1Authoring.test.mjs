@@ -6,7 +6,7 @@ import ts from 'typescript';
 const contractPath = new URL('../components/feature/storyInteractiveTypes.ts', import.meta.url);
 const contract = await import(`data:text/javascript;base64,${Buffer.from(ts.transpileModule(readFileSync(contractPath, 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText).toString('base64')}`);
+}).outputText.replace('../../services/storyQuestionHandoffRuntime.mjs', new URL('../services/storyQuestionHandoffRuntime.mjs', import.meta.url).href)).toString('base64')}`);
 const placementId = '12345678-1234-4123-8123-123456789aba';
 const elementId = '12345678-1234-4123-8123-123456789abc';
 const secondId = '12345678-1234-4123-8123-123456789abd';
