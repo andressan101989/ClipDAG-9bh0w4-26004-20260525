@@ -434,7 +434,7 @@ test('Stories QA C1 policy adds one exact migration-only successor without weake
     from_phase: 'stories_v2_safety_c2_publish_first_async_review',
     to_phase: 'stories_v2_qa_c1_question_answer',
     baseline_sha: 'c1c3043b24abe898a4400f858d646a2f788ee201',
-    reviewed_source_sha: '351be882a7939be86cd9a758a78e8d514e9c5e2f',
+    reviewed_source_sha: '3b7652e9ae7d9c66ce3f06286f738a724f3a9cd5',
     integration_base_sha: '10c549ac0dd84d28ccd832264184619ec56ba97f',
     migration_path: STORIES_QA_C1_MIGRATION_PATH,
     migration_blob: 'b1f025b12f6d4e9fadf178630ee0e46c283bbd1c',
