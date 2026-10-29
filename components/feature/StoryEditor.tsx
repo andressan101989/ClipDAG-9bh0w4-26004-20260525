@@ -452,9 +452,9 @@ export function StoryEditor({
         ) : null}
 
         {editingTextId && selected?.type === 'question_answer' ? (
-          <TextInput autoFocus accessibilityLabel="Tu respuesta" multiline maxLength={1000}
+          <TextInput autoFocus accessibilityLabel="Tu respuesta" multiline
             value={selected.answer} placeholder="Escribe tu respuesta (máximo 500 caracteres)"
-            onChangeText={answer => updateElement({ ...selected, answer })}
+            onChangeText={answer => updateElement({ ...selected, answer: [...answer].slice(0, 500).join('') })}
             onBlur={finishTextEditing} textAlignVertical="top"
             style={[styles.textInput, { bottom: toolbarHeight + 64 }]} />
         ) : null}
