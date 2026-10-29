@@ -74,10 +74,12 @@ async function feedHarness(options = {}) {
   const route = store.issueStoryReply({ actorId: actor, source, question: card.question, answer: '' });
   const state = { user: options.auth ? { id: actor } : null, focused: true, params: { handoffToken: route.handoffToken }, alerts: [], ordinary: [], qa: [], uploads: [], deletes: [],
     permission: true, picker: { canceled: false, assets: [{ uri: 'file://photo', type: 'image', mimeType: 'image/jpeg' }] } };
+  state.preflights = [];
+  const prepareStoryQuestionAnswer = async source => { state.preflights.push(source); return { question: card.question, respondentId: recipient }; };
   Object.assign(fixture, {
     useAuth: () => ({ user: state.user, isFollowing: () => false }),
     useFeed: () => ({ videos: [], isLoadingFeed: false, isLiked: () => false, isSaved: () => false, ensureVideoLoadedById: async () => ({ status: 'unavailable' }) }),
-    useStories: () => ({ storyGroups: [], addStory: async (...args) => { state.ordinary.push(args); return actor; },
+    useStories: () => ({ storyGroups: [], prepareStoryQuestionAnswer, addStory: async (...args) => { state.ordinary.push(args); return actor; },
       addSharedStory: async (...args) => { (state.shared ??= []).push(args); return actor; },
       addQuestionAnswerStory: async input => { state.qa.push(input); if (state.failQa) throw new Error('private database message'); return state.qaResult ?? actor; } }),
     useNotifications() {}, useScrollToTop() {}, useIsFocused: () => state.focused,
@@ -113,10 +115,24 @@ async function feedHarness(options = {}) {
   const app = await mount(Root, {}, { strict: options.strict });
   const findElement = (node, predicate) => !node ? undefined : predicate(node) ? node
     : React.Children.toArray(node.props?.children).map(child => findElement(child, predicate)).find(Boolean);
-  return { app, state, store, editor: () => app.find(node => node.type === 'StoryEditor'),
+  return { app, state, store, prepareStoryQuestionAnswer, editor: () => app.find(node => node.type === 'StoryEditor'),
     choice: () => state.alerts.filter(args => args[0] === 'Agregar Historia').at(-1)?.[2],
     addOrdinary: () => findElement(app.find(node => node.type === 'FlatList').props.ListHeaderComponent, node => node.type === 'StoriesBar').props.onAddStory() };
 }
+
+test('actual Feed forwards the canonical preflight callback/current actor without invoking it on render', async () => {
+  const { app, state, prepareStoryQuestionAnswer } = await feedHarness({ auth: true });
+  try {
+    const viewer = app.find(node => node.type === 'StoryViewer');
+    assert.equal(viewer.props.onPrepareStoryQuestionAnswer, prepareStoryQuestionAnswer);
+    assert.equal(viewer.props.currentUserId, actor);
+    assert.deepEqual(state.preflights, []);
+    assert.equal(state.qa.length, 0);
+    assert.equal(state.ordinary.length, 0);
+    assert.deepEqual(await viewer.props.onPrepareStoryQuestionAnswer(source), { question: card.question, respondentId: recipient });
+    assert.deepEqual(state.preflights, [source]);
+  } finally { await app.unmount(); }
+});
 
 test('actual Feed waits for auth/focus, opens media choice once, uses QA RPC on explicit publish and reuses upload on uncertainty', async () => {
   const { app, state, editor, choice } = await feedHarness();
