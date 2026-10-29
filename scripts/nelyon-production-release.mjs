@@ -932,6 +932,8 @@ export const STORIES_SAFETY_C2_RELEASE_TRANSITION = Object.freeze({
   "requires_separate_baseline_promotion": true
 });
 
+export const STORIES_QA_C1_RELEASE_TRANSITION = Object.freeze({"id":"stories-v2-qa-c1-question-answer-v1","from_phase":"stories_v2_safety_c2_publish_first_async_review","to_phase":"stories_v2_qa_c1_question_answer","baseline_sha":"c1c3043b24abe898a4400f858d646a2f788ee201","reviewed_source_sha":"351be882a7939be86cd9a758a78e8d514e9c5e2f","integration_base_sha":"10c549ac0dd84d28ccd832264184619ec56ba97f","approved_sha_ancestry":"verified_integration_base","migration_path":"supabase/migrations/20261029042807_stories_v2_qa_c1_question_answer_authority.sql","migration_blob":"b1f025b12f6d4e9fadf178630ee0e46c283bbd1c","migration_sha256":"7bd4afded4f6e0b36fa702c1eb83eedfed42f7b502ee9e2f97ada7121a1cf73c","migration_byte_length":24537,"productive_paths":["supabase/migrations/20261029042807_stories_v2_qa_c1_question_answer_authority.sql"],"functions":[],"config_changed":false,"helper_attestations":[{"identity":"private.story_validate_composition(jsonb)","definition_sha256":"2d16a92c6a3dd33fe85d96e14578917922be5ab68f5fe0e9c235e7c81b1b6069","owner":"postgres","volatility":"i","security_definer":false,"search_path":["search_path=\"\""],"execute":{"anon":false,"authenticated":false,"public":false,"service_role":false}},{"identity":"private.story_author_text_bundle_c1_v1(uuid)","definition_sha256":"28e76f502eaae19a0e74f43a96edaf29571088868e5f19fed31caf0547c52af0","owner":"postgres","volatility":"s","security_definer":true,"search_path":["search_path=\"\""],"execute":{"anon":false,"authenticated":false,"public":false,"service_role":false}},{"identity":"private.story_question_answer_source_qa_c1_v1(uuid,uuid,uuid)","definition_sha256":"123f625492ac7a6b1c9480a8a1b3798a3ac6f18a895b2872c2ad01d334eadea5","owner":"postgres","volatility":"s","security_definer":true,"search_path":["search_path=\"\""],"execute":{"anon":false,"authenticated":false,"public":false,"service_role":false}},{"identity":"public.prepare_story_question_answer(uuid,uuid,uuid)","definition_sha256":"8c9cf9f018d577e93c82354307bb0d6e8d0503c3a548c8fed66ad216a4d285d3","owner":"postgres","volatility":"s","security_definer":true,"search_path":["search_path=\"\""],"execute":{"anon":false,"authenticated":true,"public":false,"service_role":false}},{"identity":"public.create_story_question_answer_with_media(uuid,uuid,uuid,uuid,jsonb,uuid,jsonb)","definition_sha256":"4d1bfef144382ae5a67a5d1b665a1f64a559d4a45cba93aadd3b8399cf65afbd","owner":"postgres","volatility":"v","security_definer":true,"search_path":["search_path=\"\""],"execute":{"anon":false,"authenticated":true,"public":false,"service_role":false}},{"identity":"private.story_check_question_answer_link_qa_c1_v1()","definition_sha256":"e4e1a93d081cf53680b5eb54c593c92d35b48bf1dc2c2bc842f1ab9b13d5470d","owner":"postgres","volatility":"v","security_definer":true,"search_path":["search_path=\"\""],"execute":{"anon":false,"authenticated":false,"public":false,"service_role":false}},{"identity":"public.create_story_with_media(uuid,jsonb,uuid)","definition_sha256":"0b204e2add3b8f2c38b29b6f1e7f33e661783abb2cdf8838d8172d54184fb3d1","owner":"postgres","volatility":"v","security_definer":true,"search_path":["search_path=\"\""],"execute":{"anon":false,"authenticated":true,"public":false,"service_role":false}},{"identity":"public.create_story_with_media(uuid,jsonb,uuid,jsonb)","definition_sha256":"0171be4b3d51e3746fee472eea356306e0decbdb5d7dce35770b727a8e75901e","owner":"postgres","volatility":"v","security_definer":true,"search_path":["search_path=\"\""],"execute":{"anon":false,"authenticated":true,"public":false,"service_role":false}},{"identity":"public.create_story_from_content(uuid,jsonb,uuid)","definition_sha256":"fa070316fdf7fd91770d711fefd4248c0286164899dfdcc20fbf58f1e9a78413","owner":"postgres","volatility":"v","security_definer":true,"search_path":["search_path=\"\""],"execute":{"anon":false,"authenticated":true,"public":false,"service_role":false}},{"identity":"public.create_story_from_content(uuid,jsonb,uuid,jsonb)","definition_sha256":"1876897fd6665ed9528acb3306ecbc41d81111599753359bfa6d882cccf84a89","owner":"postgres","volatility":"v","security_definer":true,"search_path":["search_path=\"\""],"execute":{"anon":false,"authenticated":true,"public":false,"service_role":false}}],"c2_helper_replacements":["private.story_author_text_bundle_c1_v1(uuid)","public.create_story_with_media(uuid,jsonb,uuid)","public.create_story_with_media(uuid,jsonb,uuid,jsonb)","public.create_story_from_content(uuid,jsonb,uuid)","public.create_story_from_content(uuid,jsonb,uuid,jsonb)"],"rpc_replacements":["public.create_story_with_media(uuid,jsonb,uuid)","public.create_story_with_media(uuid,jsonb,uuid,jsonb)","public.create_story_from_content(uuid,jsonb,uuid)","public.create_story_from_content(uuid,jsonb,uuid,jsonb)"],"rpc_predecessor_exception":{"advisor_fingerprint":"010c78c43ba2cb32439c48ef8433d2706776f45f128fc2aa0572eb3b15377a14","advisor_type":"authenticated_security_definer_function_executable","advisor_severity":"WARN","object":{"schema":"public","name":"create_story_from_content","argument_types":["uuid","jsonb","uuid"],"identity_arguments":"p_video_id uuid, p_composition jsonb, p_client_story_id uuid"},"attestation":{"security_definer":true,"owner":"postgres","search_path":["search_path=\"\""],"acl":[{"grantee":"authenticated","privilege_type":"EXECUTE","is_grantable":false},{"grantee":"postgres","privilege_type":"EXECUTE","is_grantable":false}],"execute":{"anon":false,"authenticated":true,"public":false,"service_role":false},"definition_sha256":"82632e1f2b891ff7e435ad4d5e80186fdf78a64b1092d549d8ab4863eb78f4fe"},"authorization":{"functional_reason":"Exposes a bounded authenticated Stories operation while retaining ownership, visibility, expiry, idempotency, moderation, and rate-limit checks server-side.","controls":["authenticated_session","domain_authority_checks","negative_authorization_tests","server_side_validation"],"negative_test_evidence_sha256":"b55e754403fdfc3b225270e105741e3dbb397817148e64c5a37cd76794b9465b"},"origin":{"migration":"20261027191918_stories_v2_safety_c2_publish_first_async_review","migration_blob":"a621158297c9d75b56fe739f1c7dd72c8b786c97","source_sha":"244d458bb55b73782f4e7a32004b764ce622702e"},"technical_approval":"verified"},"relation_attestation":{"schema":"private","name":"story_question_answer_links","owner":"postgres","rls_enabled":true,"force_rls":true,"policy_count":0,"realtime_membership_count":0,"acl":[{"grantee":"postgres","privilege_type":"DELETE","is_grantable":false},{"grantee":"postgres","privilege_type":"INSERT","is_grantable":false},{"grantee":"postgres","privilege_type":"MAINTAIN","is_grantable":false},{"grantee":"postgres","privilege_type":"REFERENCES","is_grantable":false},{"grantee":"postgres","privilege_type":"SELECT","is_grantable":false},{"grantee":"postgres","privilege_type":"TRIGGER","is_grantable":false},{"grantee":"postgres","privilege_type":"TRUNCATE","is_grantable":false},{"grantee":"postgres","privilege_type":"UPDATE","is_grantable":false}],"columns":[{"position":1,"name":"story_id","type":"uuid","not_null":true,"default":null},{"position":2,"name":"source_story_id","type":"uuid","not_null":true,"default":null},{"position":3,"name":"source_element_id","type":"uuid","not_null":true,"default":null},{"position":4,"name":"respondent_id","type":"uuid","not_null":true,"default":null},{"position":5,"name":"request_hash","type":"text","not_null":true,"default":null},{"position":6,"name":"created_at","type":"timestamp with time zone","not_null":true,"default":"clock_timestamp()"}],"constraints":[{"name":"story_question_answer_links_pkey","type":"p","definition":"PRIMARY KEY (story_id)","columns":["story_id"],"valid":true,"deferrable":false,"initially_deferred":false},{"name":"story_question_answer_links_request_hash_check","type":"c","definition":"CHECK (request_hash ~ '^[a-f0-9]{64}$'::text)","columns":["request_hash"],"valid":true,"deferrable":false,"initially_deferred":false},{"name":"story_question_answer_links_source_story_id_source_element_fkey","type":"f","definition":"FOREIGN KEY (source_story_id, source_element_id, respondent_id) REFERENCES private.story_interactive_responses(story_id, element_id, respondent_id) ON DELETE CASCADE","columns":["source_story_id","source_element_id","respondent_id"],"referenced_relation":"private.story_interactive_responses","referenced_columns":["story_id","element_id","respondent_id"],"update_action":"a","delete_action":"c","valid":true,"deferrable":false,"initially_deferred":false},{"name":"story_question_answer_links_story_id_fkey","type":"f","definition":"FOREIGN KEY (story_id) REFERENCES stories(id) ON DELETE CASCADE","columns":["story_id"],"referenced_relation":"public.stories","referenced_columns":["id"],"update_action":"a","delete_action":"c","valid":true,"deferrable":false,"initially_deferred":false}],"indexes":[{"name":"story_question_answer_links_pkey","definition":"CREATE UNIQUE INDEX story_question_answer_links_pkey ON private.story_question_answer_links USING btree (story_id)","columns":["story_id"],"unique":true,"primary":true,"valid":true,"ready":true,"predicate":null,"expression":null},{"name":"story_question_answer_links_source","definition":"CREATE INDEX story_question_answer_links_source ON private.story_question_answer_links USING btree (source_story_id, source_element_id, respondent_id)","columns":["source_story_id","source_element_id","respondent_id"],"unique":false,"primary":false,"valid":true,"ready":true,"predicate":null,"expression":null}]},"trigger_attestation":{"name":"story_question_answer_link_required","table":"public.stories","function_identity":"private.story_check_question_answer_link_qa_c1_v1()","definition_sha256":"b0566debb8aa63ccc3de2c3733fb6ea4191fa580191206747e5a7fc468440ebf","tgtype":21,"enabled":"O","internal":false,"deferrable":true,"initially_deferred":true},"security_advisor":{"provider":{"source":"supabase/splinter","commit":"fccca4b1c4d8b48b8ccd69bd6b30e84adcb92975","sql_sha256":"d8d558baad3e03832e521c527907fa50a9a172fabd899dd0f5c2504a5a0e9349"},"normalized_digest":"b32e3e37e5776d90e73b1ee67ce79e74362f892ec84470cbb2b3b24f33c5c36d","introduced_exceptions":[{"advisor_fingerprint":"9cf89de2d5c962441f655087f8b3e5e89f2e7d6d94ce4196b48bd41bee29790a","advisor_type":"authenticated_security_definer_function_executable","advisor_severity":"WARN","object":{"schema":"public","name":"prepare_story_question_answer","argument_types":["uuid","uuid","uuid"],"identity_arguments":"p_source_story_id uuid, p_source_element_id uuid, p_respondent_id uuid"},"attestation":{"security_definer":true,"owner":"postgres","search_path":["search_path=\"\""],"acl":[{"grantee":"authenticated","privilege_type":"EXECUTE","is_grantable":false},{"grantee":"postgres","privilege_type":"EXECUTE","is_grantable":false}],"execute":{"anon":false,"authenticated":true,"public":false,"service_role":false},"definition_sha256":"8c9cf9f018d577e93c82354307bb0d6e8d0503c3a548c8fed66ad216a4d285d3"},"authorization":{"functional_reason":"Read-only authenticated preflight revalidates private question ownership and lifecycle server-side.","controls":["authenticated_session","negative_authorization_tests","owner_binding","read_only"],"negative_test_evidence_sha256":"5b13d971dcdcba94075d7bf8e7715e98cec2daac9c55e324611f27ec71689f66"},"origin":{"migration":"20261029042807_stories_v2_qa_c1_question_answer_authority","migration_blob":"b1f025b12f6d4e9fadf178630ee0e46c283bbd1c","source_sha":"351be882a7939be86cd9a758a78e8d514e9c5e2f"},"technical_approval":"verified"},{"advisor_fingerprint":"2195e746b4232e0a54f1fbb9fdd51dc4d87014ec20c4b8d6a6bd8b05bbc25d39","advisor_type":"authenticated_security_definer_function_executable","advisor_severity":"WARN","object":{"schema":"public","name":"create_story_question_answer_with_media","argument_types":["uuid","uuid","uuid","uuid","jsonb","uuid","jsonb"],"identity_arguments":"p_source_story_id uuid, p_source_element_id uuid, p_respondent_id uuid, p_asset_id uuid, p_composition jsonb, p_client_story_id uuid, p_interactive_definitions jsonb"},"attestation":{"security_definer":true,"owner":"postgres","search_path":["search_path=\"\""],"acl":[{"grantee":"authenticated","privilege_type":"EXECUTE","is_grantable":false},{"grantee":"postgres","privilege_type":"EXECUTE","is_grantable":false}],"execute":{"anon":false,"authenticated":true,"public":false,"service_role":false},"definition_sha256":"4d1bfef144382ae5a67a5d1b665a1f64a559d4a45cba93aadd3b8399cf65afbd"},"authorization":{"functional_reason":"Atomic authenticated QA publication reuses the canonical media, safety and publish-first authority.","controls":["authenticated_session","atomic_transaction","negative_authorization_tests","owner_binding"],"negative_test_evidence_sha256":"5b13d971dcdcba94075d7bf8e7715e98cec2daac9c55e324611f27ec71689f66"},"origin":{"migration":"20261029042807_stories_v2_qa_c1_question_answer_authority","migration_blob":"b1f025b12f6d4e9fadf178630ee0e46c283bbd1c","source_sha":"351be882a7939be86cd9a758a78e8d514e9c5e2f"},"technical_approval":"verified"},{"advisor_fingerprint":"3428d19b7577fa13fcae7ea23166d7053b98ce34804fcc5ac6f66d2339c80c64","advisor_type":"table","advisor_severity":"INFO","object":{"schema":"private","name":"story_question_answer_links"},"attestation":{"owner":"postgres","rls_enabled":true,"force_rls":true,"acl":[{"grantee":"postgres","privilege_type":"DELETE","is_grantable":false},{"grantee":"postgres","privilege_type":"INSERT","is_grantable":false},{"grantee":"postgres","privilege_type":"MAINTAIN","is_grantable":false},{"grantee":"postgres","privilege_type":"REFERENCES","is_grantable":false},{"grantee":"postgres","privilege_type":"SELECT","is_grantable":false},{"grantee":"postgres","privilege_type":"TRIGGER","is_grantable":false},{"grantee":"postgres","privilege_type":"TRUNCATE","is_grantable":false},{"grantee":"postgres","privilege_type":"UPDATE","is_grantable":false}]},"authorization":{"functional_reason":"Private forced-RLS provenance is owner-only and mediated by bounded server RPCs.","controls":["force_rls","negative_authorization_tests","owner_only_acl","private_schema"],"negative_test_evidence_sha256":"5b13d971dcdcba94075d7bf8e7715e98cec2daac9c55e324611f27ec71689f66"},"origin":{"migration":"20261029042807_stories_v2_qa_c1_question_answer_authority","migration_blob":"b1f025b12f6d4e9fadf178630ee0e46c283bbd1c","source_sha":"351be882a7939be86cd9a758a78e8d514e9c5e2f"},"technical_approval":"verified"}]},"safety":{"activation":true,"owner_approved_operating_model":true,"owner_approved_policy":false,"mode":"PUBLISH_FIRST_ASYNC_REVIEW","automatic_allow_authorized":false,"automatic_block_authorized":false,"numeric_thresholds":null,"historical_backfill":false},"finance_policy":{"platform_fee_bps":2000,"purchase_enabled":true,"refunds_enabled":true,"subscription_enabled":true},"requires_separate_baseline_promotion":true});
+
 export const STORIES_SAFETY_C1_RELEASE_TRANSITION = Object.freeze({
   id: 'stories-v2-safety-c1-technical-policy-prep-v1',
   from_phase: 'stories_v2_interactive_b1_fail_closed',
@@ -1622,6 +1624,11 @@ export function validatePolicy(policy) {
     !== canonicalJson(STORIES_SAFETY_C2_RELEASE_TRANSITION)) {
     deny('INVALID_STORIES_SAFETY_C2_TRANSITION',
       'Stories Safety C2 authority must match the exact reviewed publish-first operating model');
+  }
+  if (canonicalJson(policy.stories_qa_c1_transition ?? null)
+    !== canonicalJson(STORIES_QA_C1_RELEASE_TRANSITION)) {
+    deny('INVALID_STORIES_QA_C1_TRANSITION',
+      'Stories QA C1 authority must match the exact reviewed question-answer contract');
   }
   const c2AdminFinanceRpc = policy.finance_security_advisor?.c2_rpc_replacements?.find(exception =>
     exception?.object?.schema === 'public'
@@ -2466,6 +2473,87 @@ export function attestStoriesSafetyC2Transition({
   };
 }
 
+export function attestStoriesQaC1Transition({
+  cwd,
+  policy,
+  mode,
+  approvedSha,
+  changes,
+  migrations,
+  affectedFunctions,
+  runGit,
+}) {
+  if (mode === 'postcheck_recovery') return { migrations, attestation: null };
+  const transition = STORIES_QA_C1_RELEASE_TRANSITION;
+  const supabaseChanges = (changes ?? [])
+    .filter(item => item?.path?.startsWith('supabase/'))
+    .map(item => ({ path: item.path, status: item.status }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const expectedChanges = [{ path: transition.migration_path, status: 'A' }];
+  const hasExactMigration = migrations?.some(item => item?.path === transition.migration_path);
+  const hasCompletePredecessorScope = policy?.baseline?.sha === transition.baseline_sha
+    && (affectedFunctions ?? []).length === 0
+    && canonicalJson(supabaseChanges) === canonicalJson(expectedChanges);
+  if (!hasExactMigration && !hasCompletePredecessorScope) return { migrations, attestation: null };
+  const code = 'INVALID_STORIES_QA_C1_TRANSITION';
+  if (canonicalJson(policy?.stories_qa_c1_transition ?? null) !== canonicalJson(transition)
+    || policy?.baseline?.sha !== transition.baseline_sha
+    || canonicalJson(policy?.supabase?.finance_policy ?? null) !== canonicalJson(transition.finance_policy)
+    || !SHA_PATTERN.test(approvedSha ?? '') || typeof runGit !== 'function'
+    || migrations?.length !== 1 || migrations[0]?.path !== transition.migration_path
+    || migrations[0]?.version !== '20261029042807'
+    || (affectedFunctions ?? []).length !== 0
+    || canonicalJson(supabaseChanges) !== canonicalJson(expectedChanges)) {
+    deny(code, 'Stories QA C1 permits exactly one reviewed migration, zero Edge Functions, and no config drift');
+  }
+  try {
+    runGit(['cat-file', '-e', `${approvedSha}^{commit}`], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.baseline_sha, transition.integration_base_sha], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.integration_base_sha, approvedSha], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.reviewed_source_sha, approvedSha], { cwd });
+    for (const ref of [transition.reviewed_source_sha, approvedSha]) {
+      if (gitText(runGit, ['rev-parse', `${ref}:${transition.migration_path}`], cwd) !== transition.migration_blob
+        || fileTypeAtCommit(runGit, cwd, ref, transition.migration_path) !== 'file') {
+        deny(code, 'Stories QA C1 migration blob/type differs from reviewed Git bytes');
+      }
+      const bytes = runGit(['show', `${ref}:${transition.migration_path}`], { cwd });
+      if (sha256Hex(bytes) !== transition.migration_sha256
+        || Buffer.from(bytes).byteLength !== transition.migration_byte_length
+        || Buffer.from(bytes).includes(13)) {
+        deny(code, 'Stories QA C1 migration bytes are not the exact reviewed Git-LF source');
+      }
+    }
+    const actualChanges = parseNameStatusZ(runGit([
+      'diff', '--name-status', '-z', transition.integration_base_sha, approvedSha, '--', 'supabase/',
+    ], { cwd })).map(item => ({ path: item.path, status: item.status }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    if (canonicalJson(actualChanges) !== canonicalJson(expectedChanges)) {
+      deny(code, 'Stories QA C1 committed Supabase closure differs from the one-migration authority');
+    }
+    for (const exception of transition.security_advisor.introduced_exceptions) {
+      if (exception?.origin?.migration !== transition.migration_path.split('/').at(-1).replace(/\.sql$/, '')
+        || exception?.origin?.migration_blob !== transition.migration_blob
+        || exception?.origin?.source_sha !== transition.reviewed_source_sha) {
+        deny(code, 'Stories QA C1 Advisor origin differs from the reviewed migration authority');
+      }
+    }
+  } catch (error) {
+    if (error?.code === code) throw error;
+    deny(code, 'approved commit does not attest the exact Stories QA C1 ancestry and bytes');
+  }
+  return {
+    migrations: migrations.map(item => ({ ...item, blob: transition.migration_blob,
+      sha256: transition.migration_sha256 })),
+    attestation: {
+      ...stableCopy(transition),
+      approved_sha: approvedSha,
+      baseline_descendant_verified: true,
+      integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true,
+    },
+  };
+}
+
 export function attestFinanceAuthorityTransition({ mode, policy, approvedSha, changes, migrations, affectedFunctions, runGit, cwd }) {
   if (mode === 'postcheck_recovery') return { migrations, attestation: null };
   const f5 = F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION;
@@ -3281,6 +3369,10 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     cwd, policy, mode: request.mode, approvedSha: request.approvedSha,
     changes: gitState.changes, migrations: storiesSafetyC1Transition.migrations, affectedFunctions, runGit,
   });
+  const storiesQaC1Transition = attestStoriesQaC1Transition({
+    cwd, policy, mode: request.mode, approvedSha: request.approvedSha,
+    changes: gitState.changes, migrations: storiesSafetyC2Transition.migrations, affectedFunctions, runGit,
+  });
   const risk = classifyRisk({
     affectedFunctions,
     changedPaths: gitState.changes.map(change => change.path),
@@ -3292,12 +3384,13 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   return {
     gitState,
     classified,
-    migrations: storiesSafetyC2Transition.migrations,
+    migrations: storiesQaC1Transition.migrations,
     managedScopeTransition: transitionEvidence.attestation,
     financeAuthorityTransition: financeTransition.attestation,
     storiesB1Transition: storiesB1Transition.attestation,
     storiesSafetyC1Transition: storiesSafetyC1Transition.attestation,
     storiesSafetyC2Transition: storiesSafetyC2Transition.attestation,
+    storiesQaC1Transition: storiesQaC1Transition.attestation,
     affectedFunctions,
     functionContracts,
     reproducibility,
@@ -3327,6 +3420,7 @@ export function buildManifest({
   storiesB1Transition,
   storiesSafetyC1Transition,
   storiesSafetyC2Transition,
+  storiesQaC1Transition,
   affectedFunctions,
   functionContracts,
   reproducibility,
@@ -3512,6 +3606,38 @@ export function buildManifest({
     deny('INVALID_STORIES_SAFETY_C2_TRANSITION',
       'Stories Safety C2 transition attestation is not applicable');
   }
+  const storiesQaC1 = STORIES_QA_C1_RELEASE_TRANSITION;
+  const storiesQaC1Candidate = !recoveryMode
+    && migrations?.some(item => item?.path === storiesQaC1.migration_path);
+  if (storiesQaC1Candidate) {
+    const expectedAttestation = {
+      ...stableCopy(storiesQaC1),
+      approved_sha: request.approvedSha,
+      baseline_descendant_verified: true,
+      integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true,
+    };
+    if (canonicalJson(policy?.stories_qa_c1_transition ?? null) !== canonicalJson(storiesQaC1)
+      || policy.baseline.sha !== storiesQaC1.baseline_sha
+      || gitState.approvedSha !== request.approvedSha || gitState.originMainSha !== request.approvedSha
+      || request.mainSha !== request.approvedSha
+      || gitState.baselineSha !== storiesQaC1.baseline_sha || risk.level !== 'HIGH'
+      || migrations.length !== 1 || migrations[0].path !== storiesQaC1.migration_path
+      || migrations[0].version !== '20261029042807'
+      || migrations[0].blob !== storiesQaC1.migration_blob
+      || migrations[0].sha256 !== storiesQaC1.migration_sha256
+      || functionNames.length !== 0 || contracts.length !== 0
+      || canonicalJson(storiesQaC1Transition ?? null) !== canonicalJson(expectedAttestation)
+      || classified.config.length !== 0
+      || canonicalJson(classified.productive.map(item => item.path).sort())
+        !== canonicalJson(storiesQaC1.productive_paths)
+      || canonicalJson(policy.supabase.finance_policy) !== canonicalJson(storiesQaC1.finance_policy)) {
+      deny('INVALID_STORIES_QA_C1_TRANSITION',
+        'manifest lacks the exact Stories QA C1 one-migration zero-Edge attestation');
+    }
+  } else if (storiesQaC1Transition !== undefined && storiesQaC1Transition !== null) {
+    deny('INVALID_STORIES_QA_C1_TRANSITION', 'Stories QA C1 transition attestation is not applicable');
+  }
   const f5 = F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION;
   const f5Candidate = !recoveryMode && migrations?.some(item => item.version === '20261026072512'
     || item.path === f5.migration_path);
@@ -3681,6 +3807,9 @@ export function buildManifest({
         : {}),
       ...(storiesSafetyC2Transition
         ? { stories_safety_c2_transition: stableCopy(storiesSafetyC2Transition) }
+        : {}),
+      ...(storiesQaC1Transition
+        ? { stories_qa_c1_transition: stableCopy(storiesQaC1Transition) }
         : {}),
     },
     risk: stableCopy(risk),

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +21,10 @@ const STORIES_B1_SUPABASE_SCOPE = [
   'supabase/migrations/20261027042552_stories_v2_interactive_b1.sql',
   'supabase/migrations/20261027120000_stories_v2_safety_c1_technical_policy_prep.sql',
   'supabase/migrations/20261027191918_stories_v2_safety_c2_publish_first_async_review.sql',
+  'supabase/migrations/20261029042807_stories_v2_qa_c1_question_answer_authority.sql',
 ];
+const STORIES_QA_C1_MIGRATION_PATH = 'supabase/migrations/20261029042807_stories_v2_qa_c1_question_answer_authority.sql';
+const STORIES_QA_C1_MIGRATION_SHA256 = '7bd4afded4f6e0b36fa702c1eb83eedfed42f7b502ee9e2f97ada7121a1cf73c';
 const read = path => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 const feedContext = read('contexts/FeedContext.tsx');
 const videoPresentation = read('services/videoPresentation.ts');
@@ -200,7 +204,7 @@ test('server composition validation remains unchanged', () => {
   assert.equal(migration, baseFile(migrationPath));
 });
 
-test('I package authorities remain untouched and B1 plus Safety C1/C2 own the exact authorized Supabase scope', () => {
+test('I package authorities remain untouched and B1, Safety C1/C2 plus QA C1 own the exact authorized Supabase scope', () => {
   const headFile = path => execFileSync('git', ['show', `HEAD:${path}`], gitOptions).replace(/\r\n/g, '\n');
   const currentPackage = JSON.parse(read('package.json'));
   const approvedPackage = JSON.parse(headFile('package.json'));
@@ -216,6 +220,10 @@ test('I package authorities remain untouched and B1 plus Safety C1/C2 own the ex
     gitOptions,
   ).trim().split(/\r?\n/).filter(Boolean).sort();
   assert.deepEqual(supabaseChanges, [...STORIES_B1_SUPABASE_SCOPE].sort());
+  assert.equal(
+    createHash('sha256').update(read(STORIES_QA_C1_MIGRATION_PATH), 'utf8').digest('hex'),
+    STORIES_QA_C1_MIGRATION_SHA256,
+  );
 });
 
 test('no second Feed store, video route, player or StoryEditor was introduced', () => {

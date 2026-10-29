@@ -343,6 +343,543 @@ test('Stories Safety C2 RPC attestations replace only C2 post authority and pres
     pre.attestation.definition_sha256);
 });
 
+test('Stories QA C1 fixed SQL preserves historical C2 bytes and reconstructs question then answer read-only', async () => {
+  const adapter = await loadAdapter();
+  assert.equal(sha256(adapter.STORIES_SAFETY_C2_PRE_STATE_SQL),
+    'af830400c954e241081cfc9ca6988cc588462ade69f147af12ffe4591915989e');
+  assert.equal(sha256(adapter.STORIES_SAFETY_C2_STATE_SQL),
+    'c02cd3c076b951c0e99269082c2152bc4113017554a7a1a76951a8e30e3f2336');
+  for (const sql of [adapter.STORIES_QA_C1_PRE_STATE_SQL, adapter.STORIES_QA_C1_POST_STATE_SQL,
+    adapter.STORIES_SAFETY_C2_QA_STATE_SQL]) assert.equal(adapter.assertReadOnlySql(sql), true);
+  assert.doesNotMatch(adapter.STORIES_QA_C1_PRE_STATE_SQL,
+    /\bfrom\s+private\.story_question_answer_links\b/i);
+  assert.match(adapter.STORIES_QA_C1_POST_STATE_SQL, /story_question_answer_links/);
+  assert.match(adapter.STORIES_QA_C1_POST_STATE_SQL, /story_question_answer_link_required/);
+  assert.match(adapter.STORIES_SAFETY_C2_QA_STATE_SQL, /x\.element->>'type'='question_answer'/);
+  assert.match(adapter.STORIES_SAFETY_C2_QA_STATE_SQL,
+    /\(0::bigint,x\.element->>'question'\)[\s\S]*\(1::bigint,x\.element->>'answer'\)/);
+  const executable = adapter.STORIES_SAFETY_C2_QA_STATE_SQL.replace(/'(?:''|[^'])*'/g, "''");
+  assert.doesNotMatch(executable, /\bprivate\.[a-z_0-9]+\s*\(/i);
+});
+
+test('Stories QA C1 selector uses observed migration inventory for installed authority without rewriting C2 history', async () => {
+  const adapter = await loadAdapter();
+  const policy = structuredClone(installedPolicy);
+  const transition = policy.stories_qa_c1_transition;
+  assert.ok(transition, 'QA C1 authority must be present');
+  policy.baseline.sha = transition.baseline_sha;
+  policy.baseline.migration_count = 360;
+  policy.baseline.latest_migration = '20261027191918_stories_v2_safety_c2_publish_first_async_review';
+  const attestation = { ...transition, approved_sha: 'a'.repeat(40),
+    baseline_descendant_verified: true, integration_base_descendant_verified: true,
+    reviewed_source_descendant_verified: true };
+  const manifest = { identity: { approved_sha: 'a'.repeat(40) }, resources: {
+    migrations: [{ version: '20261029042807', path: transition.migration_path,
+      blob: transition.migration_blob, sha256: transition.migration_sha256 }],
+    stories_qa_c1_transition: attestation,
+  } };
+  const normalizeMigrations = items => ({
+    complete: true,
+    count: items.length,
+    items,
+    latest: items.at(-1) ?? null,
+    sha256: sha256(canonicalJson(items)),
+  });
+  const beforeItems = [{ version: '20261027191918', name: 'stories_v2_safety_c2_publish_first_async_review' }];
+  const afterItems = [...beforeItems, {
+    version: '20261029042807', name: 'stories_v2_qa_c1_question_answer_authority',
+  }];
+  const before = normalizeMigrations(beforeItems);
+  const after = normalizeMigrations(afterItems);
+  const pre = adapter.storiesQaC1StateRequirement(policy, manifest, 'pre', { migrations: before });
+  const post = adapter.storiesQaC1StateRequirement(policy, manifest, 'post', { migrations: after });
+  assert.equal(pre.installed, false);
+  assert.equal(pre.query, adapter.STORIES_QA_C1_PRE_STATE_SQL);
+  assert.equal(post.installed, true);
+  assert.equal(post.query, adapter.STORIES_QA_C1_POST_STATE_SQL);
+  assert.equal(adapter.storiesSafetyC2AuthorityForPhase(policy, manifest, 'pre', { migrations: before }).query,
+    adapter.STORIES_SAFETY_C2_STATE_SQL);
+  const installed = adapter.storiesSafetyC2AuthorityForPhase(policy, manifest, 'post', { migrations: after });
+  assert.equal(installed.query, adapter.STORIES_SAFETY_C2_QA_STATE_SQL);
+  assert.equal(installed.helpers.length, 27);
+  for (const identity of transition.c2_helper_replacements) {
+    assert.equal(installed.helpers.find(item => item.identity === identity)?.definition_sha256,
+      transition.helper_attestations.find(item => item.identity === identity)?.definition_sha256);
+  }
+  const promoted = structuredClone(policy);
+  promoted.baseline.sha = 'b'.repeat(40);
+  promoted.baseline.migration_count = 361;
+  promoted.baseline.latest_migration = '20261029042807_stories_v2_qa_c1_question_answer_authority';
+  for (const phase of ['pre', 'post', 'recovery']) assert.equal(
+    adapter.storiesQaC1StateRequirement(promoted, { resources: {} }, phase, { migrations: after }).installed,
+    true,
+  );
+  assert.throws(() => adapter.storiesQaC1StateRequirement(policy, manifest, 'post', {
+    migrations: normalizeMigrations([...afterItems, afterItems.at(-1)]),
+  }), /INVALID_REMOTE_INVENTORY|STORIES_QA_C1_POSTCHECK_FAILED/);
+  assert.throws(() => adapter.storiesQaC1StateRequirement(policy, manifest, 'post', {
+    migrations: normalizeMigrations([...afterItems, {
+      version: '20261029042808', name: 'stories_v2_qa_c1_question_answer_authority',
+    }]),
+  }), /STORIES_QA_C1_POSTCHECK_FAILED/);
+
+  const historicalPartialFixture = {
+    items: [{ version: '20261009021414', name: 'creator_premium_b5_creator_management_ux' }],
+  };
+  assert.equal(adapter.storiesQaC1StateRequirement(
+    policy, { resources: {} }, 'recovery', { migrations: historicalPartialFixture },
+  ).required, false, 'legacy partial fixtures without a QA signal remain on historical authority');
+  for (const wrong of [
+    { version: '20261029042807', name: 'wrong_qa_authority' },
+    { version: '20261029042808', name: 'stories_v2_qa_c1_question_answer_authority' },
+  ]) assert.throws(() => adapter.storiesQaC1StateRequirement(
+    policy,
+    { resources: {} },
+    'post',
+    { migrations: normalizeMigrations([...beforeItems, wrong]) },
+  ), /STORIES_QA_C1_POSTCHECK_FAILED/,
+  'either half of the QA migration identity must fail closed without a manifest');
+  assert.throws(() => adapter.storiesQaC1StateRequirement(policy, { resources: {} }, 'recovery', {
+    migrations: { items: [afterItems.at(-1)] },
+  }), /INVALID_REMOTE_INVENTORY/,
+  'an inventory that claims the QA migration must satisfy the complete normalized contract');
+  assert.throws(() => adapter.storiesQaC1StateRequirement(policy, manifest, 'pre', {
+    migrations: historicalPartialFixture,
+  }), /INVALID_REMOTE_INVENTORY/,
+  'an exact QA transition requires complete normalized migration evidence even before install');
+  assert.throws(() => adapter.storiesQaC1StateRequirement(promoted, { resources: {} }, 'post', {
+    migrations: historicalPartialFixture,
+  }), /INVALID_REMOTE_INVENTORY/,
+  'a promoted QA baseline requires complete normalized migration evidence');
+  assert.throws(() => adapter.storiesQaC1StateRequirement(policy, { resources: {} }, 'post', {
+    evidence: { adapter: { queries: [{ id: 'nelyon-stories-qa-c1-post-state-v1' }] } },
+    migrations: historicalPartialFixture,
+  }), /INVALID_REMOTE_INVENTORY/,
+  'a QA query receipt requires complete normalized migration evidence');
+});
+
+test('Stories QA C1 advisor projection replaces exactly four public RPC identities only after install', async () => {
+  const adapter = await loadAdapter();
+  const policy = structuredClone(installedPolicy);
+  const transition = policy.stories_qa_c1_transition;
+  policy.baseline.sha = transition.baseline_sha;
+  policy.baseline.migration_count = 360;
+  policy.baseline.latest_migration = '20261027191918_stories_v2_safety_c2_publish_first_async_review';
+  const manifest = { identity: { approved_sha: 'a'.repeat(40) }, resources: {
+    migrations: [{ version: '20261029042807', path: transition.migration_path,
+      blob: transition.migration_blob, sha256: transition.migration_sha256 }],
+    stories_qa_c1_transition: { ...transition, approved_sha: 'a'.repeat(40),
+      baseline_descendant_verified: true, integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true },
+  } };
+  const migrationInventory = items => ({ complete: true, count: items.length, items,
+    latest: items.at(-1) ?? null, sha256: sha256(canonicalJson(items)) });
+  const before = adapter.advisorExceptionsForPhase(policy, manifest, 'pre', {
+    migrations: migrationInventory([]),
+  });
+  const after = adapter.advisorExceptionsForPhase(policy, manifest, 'post', {
+    migrations: migrationInventory([{
+      version: '20261029042807', name: 'stories_v2_qa_c1_question_answer_authority',
+    }]),
+  });
+  const predecessorFingerprint = transition.rpc_predecessor_exception.advisor_fingerprint;
+  assert.equal(predecessorFingerprint,
+    '010c78c43ba2cb32439c48ef8433d2706776f45f128fc2aa0572eb3b15377a14');
+  assert.equal(before.filter(item => item.advisor_fingerprint === predecessorFingerprint).length, 1);
+  assert.equal(after.filter(item => item.advisor_fingerprint === predecessorFingerprint).length, 1);
+  assert.equal(adapter.advisorExceptionsForPhase(policy, { resources: {} }, 'post', {
+    migrations: migrationInventory([]),
+  })
+    .some(item => item.advisor_fingerprint === predecessorFingerprint), false,
+  'QA-local predecessor evidence must not rewrite the historical baseline projection');
+  const byIdentity = (items, identity) => items.find(item => {
+    const args = (item.object?.argument_types ?? []).join(',').replaceAll(' ', '');
+    return `${item.object?.schema}.${item.object?.name}(${args})` === identity;
+  });
+  for (const identity of transition.rpc_replacements) {
+    const oldRow = byIdentity(before, identity);
+    const newRow = byIdentity(after, identity);
+    assert.ok(oldRow && newRow, identity);
+    assert.notEqual(oldRow.attestation.definition_sha256, newRow.attestation.definition_sha256);
+    assert.equal(newRow.attestation.definition_sha256,
+      transition.helper_attestations.find(item => item.identity === identity).definition_sha256);
+    assert.equal(newRow.origin.migration, '20261029042807_stories_v2_qa_c1_question_answer_authority');
+  }
+});
+
+test('Stories QA C1 capture refines to observed installed authority before executing fixed queries', async () => {
+  const adapter = await loadAdapter();
+  const controlled = structuredClone(installedPolicy);
+  const transition = controlled.stories_qa_c1_transition;
+  controlled.baseline.sha = transition.baseline_sha;
+  controlled.baseline.migration_count = 360;
+  controlled.baseline.latest_migration = '20261027191918_stories_v2_safety_c2_publish_first_async_review';
+  const emptyManifest = manifest();
+  emptyManifest.resources = { config_changed: false, function_contracts: [], functions: [], migrations: [] };
+  const migrationRows = [
+    { version: '20261027042552', name: 'stories_v2_interactive_b1' },
+    { version: '20261027191918', name: 'stories_v2_safety_c2_publish_first_async_review' },
+    { version: '20261029042807', name: 'stories_v2_qa_c1_question_answer_authority' },
+  ];
+  const normalizedMigrations = {
+    complete: true, count: migrationRows.length, items: migrationRows, latest: migrationRows.at(-1),
+    sha256: sha256(canonicalJson(migrationRows)),
+  };
+  const c2Authority = adapter.storiesSafetyC2AuthorityForPhase(
+    controlled, emptyManifest, 'post', { migrations: normalizedMigrations },
+  );
+  const helperRows = c2Authority.helpers.map(item => ({ ...item, acl: [
+    ...(item.execute.authenticated
+      ? [{ grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false }]
+      : []),
+    { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+    ...(item.execute.service_role
+      ? [{ grantee: 'service_role', privilege_type: 'EXECUTE', is_grantable: false }]
+      : []),
+  ] }));
+  const c2 = controlled.stories_safety_c2_transition;
+  const c2State = {
+    schema_version: 1, complete: true, installed: true,
+    policy_id: c2.policy_artifact.policy_id, policy_artifact_sha256: c2.policy_artifact.sha256,
+    control: { policy_id: c2.policy_artifact.policy_id, policy_artifact_sha256: c2.policy_artifact.sha256,
+      activation: true, owner_approved_operating_model: true, owner_approved_policy: false,
+      mode: 'PUBLISH_FIRST_ASYNC_REVIEW', automatic_allow_authorized: false,
+      automatic_block_authorized: false, numeric_thresholds: null, historical_backfill: false },
+    approved_story_rule_count: 0, passed_count: 0, policy_digest_count: 0,
+    story_count: 0, safety_state_count: 0, story_inventory_sha256: '1'.repeat(64),
+    safety_inventory_sha256: '2'.repeat(64), transcript_refresh_trigger_installed: true,
+    trigger: controlled.stories_safety_c1_transition.trigger_attestation, helpers: helperRows,
+    publication_status: { unpublished: 0, published: 0, restricted: 0, removed: 0 },
+    moderation_status: { unreviewed: 0, alerted: 0, reviewed_keep: 0, reviewed_restrict: 0, reviewed_remove: 0 },
+    scan_status: { queued: 0, processing: 0, completed: 0, failed: 0 },
+    enabled_numeric_story_rule_count: 0, published_without_current_scan_count: 0,
+    no_current_scan_count: 0, publication_metadata_count: 0,
+    alert_trigger: c2.alert_trigger_attestation, initialization_trigger: c2.initialization_trigger_attestation,
+    columns: c2.column_attestations,
+  };
+  const qaFunctions = transition.helper_attestations.map(item => ({ ...item, acl: [
+    ...(item.execute.authenticated
+      ? [{ grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false }]
+      : []),
+    { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+  ] }));
+  const qaState = {
+    schema_version: 1, complete: true, installed: true, initial_link_count: 0,
+    functions: qaFunctions,
+    relation: transition.relation_attestation,
+    trigger: transition.trigger_attestation,
+  };
+  const b1State = {
+    schema_version: 1, complete: true, infrastructure_installed: true,
+    owner_approved_policy: false, activation: false, mode: 'fail_closed_review',
+    story_count: 0, direct_story_count: 0,
+    safety_state_counts: { blocked: 0, passed: 0, pending: 0, review: 0 },
+    complete_evidence_count: 0, complete_evidence_non_review_count: 0,
+    incomplete_evidence_non_pending_count: 0, complete_evidence_pass_count: 0,
+    fabricated_pass_count: 0, relations: STORY_B1_RELATIONS,
+  };
+  const exceptions = adapter.advisorExceptionsForPhase(controlled, emptyManifest, 'post', {
+    request: request(), migrations: normalizedMigrations,
+  });
+  const rpcRows = exceptions.filter(item => Array.isArray(item.object?.argument_types)).map(item => ({
+    schema: item.object.schema, name: item.object.name,
+    identity_arguments: item.object.identity_arguments ?? item.object.argument_types.join(', '),
+    argument_types: item.object.argument_types, security_definer: item.attestation.security_definer,
+    owner: item.attestation.owner, search_path: item.attestation.search_path,
+    acl: item.attestation.acl, execute: item.attestation.execute,
+    definition: `CREATE FUNCTION ${item.object.schema}.${item.object.name}(${item.object.argument_types.join(', ')}) RETURNS jsonb SECURITY DEFINER`,
+  }));
+  const calls = [];
+  const base = successfulFetch(calls, {
+    rpcSecurity: rpcRows,
+    finance: financeSnapshot({
+      policy: {
+        purchase_enabled: true, subscription_enabled: true, refunds_enabled: true,
+        platform_fee_bps: 2000, policy_version: 'creator-premium-f4-general-v1',
+      },
+    }),
+    backups: [completedPhysicalBackup({
+      id: '2026-10-29T11:45:00.000Z',
+      inserted_at: '2026-10-29T11:45:00.000Z',
+    })],
+  });
+  const fetchImpl = async (url, options = {}) => {
+    const pathname = new URL(url).pathname;
+    if (pathname.endsWith('/database/migrations')) {
+      calls.push({ url: String(url), options });
+      return jsonResponse(migrationRows);
+    }
+    if (pathname.endsWith('/database/query/read-only')) {
+      const body = JSON.parse(options.body);
+      if (body.query === adapter.STORIES_B1_POST_STATE_SQL) {
+        calls.push({ url: String(url), options });
+        return jsonResponse([{ snapshot: b1State }], 201);
+      }
+      if (body.query === adapter.STORIES_SAFETY_C2_QA_STATE_SQL) {
+        calls.push({ url: String(url), options });
+        return jsonResponse([{ snapshot: c2State }], 201);
+      }
+      if (body.query === adapter.STORIES_QA_C1_POST_STATE_SQL) {
+        calls.push({ url: String(url), options });
+        return jsonResponse([{ snapshot: qaState }], 201);
+      }
+    }
+    return base(url, options);
+  };
+  const captured = await adapter.captureProductionSnapshot({
+    phase: 'post', policy: controlled, request: request(), manifest: emptyManifest,
+    token: 'private-read-token', fetchImpl, observedAt: '2026-10-29T12:00:00.000Z',
+    adapterSourceSha256: '6'.repeat(64),
+  });
+  assert.equal(captured.stories_qa_c1_state.installed, true);
+  assert.ok(captured.adapter.queries.some(item => item.id === 'nelyon-stories-qa-c1-post-state-v1'
+    && item.sha256 === sha256(adapter.STORIES_QA_C1_POST_STATE_SQL)));
+  assert.ok(captured.adapter.queries.some(item => item.id === 'nelyon-stories-safety-c2-qa-state-v1'
+    && item.sha256 === sha256(adapter.STORIES_SAFETY_C2_QA_STATE_SQL)));
+  assert.ok(!calls.some(call => call.options?.body
+    && JSON.parse(call.options.body).query === adapter.STORIES_QA_C1_PRE_STATE_SQL));
+  assert.equal(adapter.validateStoriesQaC1CapturedEvidence(captured, controlled, emptyManifest, 'post', {
+    request: request(), migrations: captured.migrations,
+  }), true);
+  for (const mutate of [
+    value => {
+      value.migrations.items.at(-1).name = 'wrong_qa_authority';
+      value.migrations.sha256 = sha256(canonicalJson(value.migrations.items));
+    },
+    value => {
+      value.adapter.queries.find(item => item.id === 'nelyon-stories-qa-c1-post-state-v1').sha256 = '0'.repeat(64);
+    },
+  ]) {
+    const hostile = structuredClone(captured);
+    mutate(hostile);
+    resignEvidence(hostile);
+    assert.throws(() => adapter.validateStoriesQaC1CapturedEvidence(
+      hostile, controlled, emptyManifest, 'post', { request: request(), migrations: hostile.migrations },
+    ), /STORIES_QA_C1_POSTCHECK_FAILED/);
+  }
+
+  const asAdvisorRows = exceptions => exceptions.map(exception => ({
+    fingerprint: exception.advisor_fingerprint,
+    level: exception.advisor_severity,
+    resource_kind: exception.advisor_type,
+  }));
+  const unrelatedFinding = {
+    fingerprint: '4'.repeat(64), level: 'WARN', resource_kind: 'unrelated_provider_finding',
+  };
+  const b1Findings = asAdvisorRows(controlled.stories_b1_transition.security_advisor.introduced_exceptions);
+  const qaFindings = adapter.normalizeSecurityAdvisors({ lints: storiesQaC1ProviderLints() }).items;
+  const setAdvisors = (value, items) => {
+    const sorted = [...items].sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+    value.cron_security.advisors = {
+      complete: true, count: sorted.length, items: sorted, sha256: sha256(canonicalJson(sorted)),
+    };
+  };
+  const expectedHistoricalFindings = [
+    unrelatedFinding,
+    ...controlled.stories_b1_transition.security_advisor.removed_findings.map(item => ({
+      fingerprint: item.fingerprint, level: item.level, resource_kind: item.resource_kind,
+    })),
+  ].sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+  const expectedHistoricalCronDigest = sha256(canonicalJson({
+    complete: true,
+    cron: [],
+    security_findings: expectedHistoricalFindings,
+  }));
+  const installedQaEvidence = structuredClone(captured);
+  setAdvisors(installedQaEvidence, [...b1Findings, ...qaFindings, unrelatedFinding]);
+  assert.equal(adapter.buildProductionBaselineDigests({
+    evidence: installedQaEvidence, policy: controlled, managedFunctions: ['content-safety-scan'],
+  }).cron_security, expectedHistoricalCronDigest,
+  'installed QA projection removes exactly its three findings and reconstructs B1 history');
+
+  const preQaEvidence = structuredClone(captured);
+  preQaEvidence.migrations.items = migrationRows.slice(0, -1);
+  preQaEvidence.migrations.count = preQaEvidence.migrations.items.length;
+  preQaEvidence.migrations.latest = preQaEvidence.migrations.items.at(-1);
+  preQaEvidence.migrations.sha256 = sha256(canonicalJson(preQaEvidence.migrations.items));
+  delete preQaEvidence.stories_qa_c1_state;
+  const preQaC2Authority = adapter.storiesSafetyC2AuthorityForPhase(
+    controlled, emptyManifest, 'post', { migrations: preQaEvidence.migrations },
+  );
+  preQaEvidence.stories_safety_c2_state.helpers = preQaC2Authority.helpers.map(item => ({
+    ...item,
+    acl: [
+      ...(item.execute.authenticated
+        ? [{ grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false }]
+        : []),
+      { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+      ...(item.execute.service_role
+        ? [{ grantee: 'service_role', privilege_type: 'EXECUTE', is_grantable: false }]
+        : []),
+    ],
+  }));
+  delete preQaEvidence.stories_safety_c2_state.sha256;
+  setAdvisors(preQaEvidence, [...b1Findings, unrelatedFinding]);
+  const policyWithoutQaSuccessor = structuredClone(controlled);
+  delete policyWithoutQaSuccessor.stories_qa_c1_transition;
+  assert.equal(adapter.buildProductionBaselineDigests({
+    evidence: preQaEvidence, policy: controlled, managedFunctions: ['content-safety-scan'],
+  }).cron_security, expectedHistoricalCronDigest);
+  assert.equal(adapter.buildProductionBaselineDigests({
+    evidence: preQaEvidence, policy: policyWithoutQaSuccessor,
+    managedFunctions: ['content-safety-scan'],
+  }).cron_security, expectedHistoricalCronDigest,
+  'future QA policy bytes cannot change the historical B1/C2 baseline projection');
+
+  const predecessorFinding = adapter.normalizeSecurityAdvisors({ lints: [{
+    name: 'authenticated_security_definer_function_executable',
+    level: 'WARN', facing: 'EXTERNAL', categories: ['SECURITY'],
+    metadata: {
+      schema: 'public', name: 'create_story_from_content', language: 'plpgsql',
+      arguments: 'p_video_id uuid, p_composition jsonb, p_client_story_id uuid',
+      security_definer: true,
+    },
+  }] }).items[0];
+  const predecessorVisible = structuredClone(preQaEvidence);
+  setAdvisors(predecessorVisible, [...b1Findings, unrelatedFinding, predecessorFinding]);
+  const expectedWithPredecessor = [...expectedHistoricalFindings, predecessorFinding]
+    .sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+  assert.equal(adapter.buildProductionBaselineDigests({
+    evidence: predecessorVisible, policy: controlled, managedFunctions: ['content-safety-scan'],
+  }).cron_security, sha256(canonicalJson({
+    complete: true, cron: [], security_findings: expectedWithPredecessor,
+  })), 'the pre-existing three-argument wrapper finding remains visible in pre-QA baselines');
+
+  const promoted = structuredClone(controlled);
+  promoted.baseline.sha = 'b'.repeat(40);
+  promoted.baseline.migration_count = migrationRows.length;
+  promoted.baseline.latest_migration = '20261029042807_stories_v2_qa_c1_question_answer_authority';
+  promoted.baseline.blocked_resources = [];
+  promoted.supabase.managed_functions = ['content-safety-scan'];
+  promoted.supabase.expected_remote_function_count = 1;
+  const promotedPre = await adapter.captureProductionSnapshot({
+    phase: 'pre', policy: promoted, request: request(), manifest: emptyManifest,
+    token: 'private-read-token', fetchImpl, observedAt: '2026-10-29T12:00:30.000Z',
+    adapterSourceSha256: '6'.repeat(64),
+  });
+  bindRpcSecurityEvidence(promotedPre, adapter.advisorExceptionsForPhase(
+    promoted, emptyManifest, 'pre', { request: request(), migrations: promotedPre.migrations },
+  ));
+  const promotedDigests = adapter.buildProductionBaselineDigests({ evidence: promotedPre, policy: promoted });
+  assert.match(promotedDigests.migrations, /^[a-f0-9]{64}$/);
+  assert.match(promotedDigests.cron_security, /^[a-f0-9]{64}$/);
+  promoted.baseline.evidence_digests = promotedDigests;
+  assert.equal(adapter.verifyProductionPreSnapshot({
+    pre: promotedPre, policy: promoted, request: request(), manifest: emptyManifest,
+    adapterSourceSha256: '6'.repeat(64),
+  }).result, 'REMOTE_BASELINE_VERIFIED');
+  const promotedPost = await adapter.captureProductionSnapshot({
+    phase: 'post', policy: promoted, request: request(), manifest: emptyManifest,
+    token: 'private-read-token', fetchImpl, observedAt: '2026-10-29T12:00:45.000Z',
+    adapterSourceSha256: '6'.repeat(64),
+  });
+  bindRpcSecurityEvidence(promotedPost, adapter.advisorExceptionsForPhase(
+    promoted, emptyManifest, 'post', { request: request(), migrations: promotedPost.migrations },
+  ));
+  assert.equal(adapter.verifyProductionSnapshotPair({
+    pre: promotedPre, post: promotedPost, policy: promoted, request: request(), manifest: emptyManifest,
+    adapterSourceSha256: '6'.repeat(64),
+  }).result, 'REMOTE_POSTCHECK_VERIFIED');
+
+  const recoveryRequest = {
+    ...request(),
+    mode: 'postcheck_recovery',
+    scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
+    recoverySourceRunId: '99900011122',
+  };
+  const recoveryManifest = structuredClone(emptyManifest);
+  recoveryManifest.identity.mode = 'postcheck_recovery';
+  const recoveryPolicy = structuredClone(controlled);
+  recoveryPolicy.baseline.migration_count = 2;
+  recoveryPolicy.baseline.evidence_digests.migrations = sha256(canonicalJson([
+    '20261027042552_stories_v2_interactive_b1',
+    '20261027191918_stories_v2_safety_c2_publish_first_async_review',
+  ]));
+  recoveryPolicy.postcheck_recovery.approved_sources.push({
+    run_id: recoveryRequest.recoverySourceRunId,
+    repository: recoveryPolicy.repository,
+    mutation_status: 'completed',
+    expected_migrations: [{
+      blob: transition.migration_blob,
+      name: '20261029042807_stories_v2_qa_c1_question_answer_authority',
+    }],
+    expected_migration_count: 3,
+    expected_latest_migration: '20261029042807_stories_v2_qa_c1_question_answer_authority',
+    edge_functions: [],
+    productive_resources: [
+      'migration:20261029042807_stories_v2_qa_c1_question_answer_authority',
+    ],
+  });
+  assert.equal(adapter.storiesQaC1StateRequirement(
+    recoveryPolicy, recoveryManifest, 'recovery', {
+      request: recoveryRequest, migrations: normalizedMigrations,
+    },
+  ).recovery, true);
+  const wrongRecoveryCases = [
+    {
+      request: { ...recoveryRequest, recoverySourceRunId: 'unknown-run' },
+      manifest: recoveryManifest,
+      migrations: normalizedMigrations,
+    },
+    {
+      request: { ...recoveryRequest, scopeConfirmation: 'WRONG_SCOPE' },
+      manifest: recoveryManifest,
+      migrations: normalizedMigrations,
+    },
+    {
+      request: recoveryRequest,
+      manifest: { ...recoveryManifest, resources: {
+        ...recoveryManifest.resources,
+        migrations: [{ version: '20261029042807' }],
+      } },
+      migrations: normalizedMigrations,
+    },
+    { request: recoveryRequest, manifest: recoveryManifest, migrations: undefined },
+    {
+      request: recoveryRequest,
+      manifest: recoveryManifest,
+      migrations: { ...normalizedMigrations, sha256: '0'.repeat(64) },
+    },
+  ];
+  for (const invalid of wrongRecoveryCases) assert.throws(
+    () => adapter.storiesQaC1StateRequirement(
+      recoveryPolicy, invalid.manifest, 'recovery', {
+        request: invalid.request, migrations: invalid.migrations,
+      },
+    ),
+    /INVALID_REMOTE_INVENTORY|STORIES_QA_C1_POSTCHECK_FAILED/,
+  );
+  const recovery = await adapter.captureProductionSnapshot({
+    phase: 'recovery', policy: recoveryPolicy, request: recoveryRequest, manifest: recoveryManifest,
+    token: 'private-read-token', fetchImpl, observedAt: '2026-10-29T12:01:00.000Z',
+    adapterSourceSha256: '6'.repeat(64),
+  });
+  bindRpcSecurityEvidence(recovery, adapter.advisorExceptionsForPhase(
+    recoveryPolicy, recoveryManifest, 'recovery', { request: recoveryRequest, migrations: recovery.migrations },
+  ));
+  assert.equal(adapter.verifyProductionRecoverySnapshot({
+    recovery, policy: recoveryPolicy, request: recoveryRequest, manifest: recoveryManifest,
+    adapterSourceSha256: '6'.repeat(64),
+  }).result, 'RECOVERY_SNAPSHOT_VERIFIED');
+  for (const mutate of [
+    value => { value.stories_qa_c1_state.functions[0].owner = 'authenticated'; },
+    value => { value.stories_qa_c1_state.relation.force_rls = false; },
+    value => { value.stories_qa_c1_state.trigger.enabled = 'D'; },
+    value => {
+      value.adapter.queries.find(item => item.id === 'nelyon-stories-safety-c2-qa-state-v1').sha256
+        = '0'.repeat(64);
+    },
+  ]) {
+    const hostile = structuredClone(recovery);
+    mutate(hostile);
+    resignEvidence(hostile);
+    assert.throws(() => adapter.verifyProductionRecoverySnapshot({
+      recovery: hostile, policy: recoveryPolicy, request: recoveryRequest, manifest: recoveryManifest,
+      adapterSourceSha256: '6'.repeat(64),
+    }), /INVALID_SNAPSHOT_IDENTITY|STORIES_QA_C1_POSTCHECK_FAILED|STORIES_SAFETY_C2_POSTCHECK_FAILED/);
+  }
+});
+
 test('Stories Safety C2 transition rejects sanctions, fabricated PASS, stale grants and historical publication', async () => {
   const adapter = await loadAdapter();
   const c1 = installedPolicy.stories_safety_c1_transition;
@@ -3632,6 +4169,36 @@ function groupedAdvisorLints(lints) {
   })) };
 }
 
+function storiesQaC1ProviderLints() {
+  return [
+    {
+      name: 'rls_enabled_no_policy', level: 'INFO', facing: 'EXTERNAL', categories: ['SECURITY'],
+      metadata: { schema: 'private', name: 'story_question_answer_links', type: 'table' },
+      cache_key: 'rls_enabled_no_policy_private_story_question_answer_links',
+    },
+    {
+      name: 'authenticated_security_definer_function_executable',
+      level: 'WARN', facing: 'EXTERNAL', categories: ['SECURITY'],
+      metadata: {
+        schema: 'public', name: 'create_story_question_answer_with_media', language: 'plpgsql',
+        arguments: 'p_source_story_id uuid, p_source_element_id uuid, p_respondent_id uuid, p_asset_id uuid, p_composition jsonb, p_client_story_id uuid, p_interactive_definitions jsonb',
+        security_definer: true,
+      },
+      cache_key: 'authenticated_security_definer_function_executable_public_create_story_question_answer_with_media_p_source_story_id uuid, p_source_element_id uuid, p_respondent_id uuid, p_asset_id uuid, p_composition jsonb, p_client_story_id uuid, p_interactive_definitions jsonb',
+    },
+    {
+      name: 'authenticated_security_definer_function_executable',
+      level: 'WARN', facing: 'EXTERNAL', categories: ['SECURITY'],
+      metadata: {
+        schema: 'public', name: 'prepare_story_question_answer', language: 'sql',
+        arguments: 'p_source_story_id uuid, p_source_element_id uuid, p_respondent_id uuid',
+        security_definer: true,
+      },
+      cache_key: 'authenticated_security_definer_function_executable_public_prepare_story_question_answer_p_source_story_id uuid, p_source_element_id uuid, p_respondent_id uuid',
+    },
+  ];
+}
+
 test('Security Advisor raw and grouped inventories have identical historical fingerprints', async () => {
   const adapter = await loadAdapter();
   const lints = canonicalAdvisorLints();
@@ -3640,6 +4207,67 @@ test('Security Advisor raw and grouped inventories have identical historical fin
   assert.ok(raw.items.some(item => item.fingerprint === 'acc6db2023e39518a9407ac3dada47063023550ae9f275eb058b6f6aff32753e'));
   assert.ok(raw.items.some(item => item.fingerprint === '70d2706125a8861824f9c876848c472a28bde6db0813543ba97ec3409516967f'));
   assert.deepEqual(adapter.normalizeSecurityAdvisors(groupedAdvisorLints(lints)), raw);
+});
+
+test('Stories QA C1 pins official Splinter provenance, exact findings, and historical projection continuity', async () => {
+  const adapter = await loadAdapter();
+  const transition = installedPolicy.stories_qa_c1_transition;
+  assert.deepEqual(transition.security_advisor.provider, {
+    source: 'supabase/splinter',
+    commit: 'fccca4b1c4d8b48b8ccd69bd6b30e84adcb92975',
+    sql_sha256: 'd8d558baad3e03832e521c527907fa50a9a172fabd899dd0f5c2504a5a0e9349',
+  });
+  const raw = adapter.normalizeSecurityAdvisors({ lints: storiesQaC1ProviderLints() });
+  const grouped = adapter.normalizeSecurityAdvisors(groupedAdvisorLints(storiesQaC1ProviderLints()));
+  assert.deepEqual(grouped, raw);
+  assert.deepEqual(raw.items.map(item => item.fingerprint), [
+    '2195e746b4232e0a54f1fbb9fdd51dc4d87014ec20c4b8d6a6bd8b05bbc25d39',
+    '3428d19b7577fa13fcae7ea23166d7053b98ce34804fcc5ac6f66d2339c80c64',
+    '9cf89de2d5c962441f655087f8b3e5e89f2e7d6d94ce4196b48bd41bee29790a',
+  ]);
+  assert.equal(raw.sha256, 'b32e3e37e5776d90e73b1ee67ce79e74362f892ec84470cbb2b3b24f33c5c36d');
+  assert.equal(transition.security_advisor.normalized_digest, raw.sha256);
+  assert.deepEqual(
+    transition.security_advisor.introduced_exceptions.map(item => item.advisor_fingerprint).sort(),
+    raw.items.map(item => item.fingerprint).sort(),
+  );
+
+  const preQaPolicy = structuredClone(installedPolicy);
+  preQaPolicy.baseline.sha = transition.baseline_sha;
+  preQaPolicy.baseline.migration_count = 360;
+  preQaPolicy.baseline.latest_migration = '20261027191918_stories_v2_safety_c2_publish_first_async_review';
+  const withoutQaPolicy = structuredClone(preQaPolicy);
+  delete withoutQaPolicy.stories_qa_c1_transition;
+  const emptyInventory = {
+    complete: true, count: 0, items: [], latest: null, sha256: sha256(canonicalJson([])),
+  };
+  const historicalManifest = { resources: {} };
+  const withQa = adapter.advisorExceptionsForPhase(
+    preQaPolicy, historicalManifest, 'post', { migrations: emptyInventory },
+  );
+  const withoutQa = adapter.advisorExceptionsForPhase(
+    withoutQaPolicy, historicalManifest, 'post', { migrations: emptyInventory },
+  );
+  assert.deepEqual(withQa, withoutQa,
+    'adding a future QA successor must not rewrite historical B1/C2 Advisor projection');
+  assert.equal(preQaPolicy.baseline.evidence_digests.cron_security,
+    '83fe49cce6d9d0d69232f4afdcc1fab3665fbd5c8bf27aa8d4f626fd37b7dbf9');
+  const historicalFingerprints = new Set(withQa.map(item => item.advisor_fingerprint));
+  for (const item of raw.items) assert.equal(historicalFingerprints.has(item.fingerprint), false,
+    'QA-introduced findings must not project out of the pre-QA baseline');
+  const predecessor = adapter.normalizeSecurityAdvisors({ lints: [{
+    name: 'authenticated_security_definer_function_executable',
+    level: 'WARN', facing: 'EXTERNAL', categories: ['SECURITY'],
+    metadata: {
+      schema: 'public', name: 'create_story_from_content', language: 'plpgsql',
+      arguments: 'p_video_id uuid, p_composition jsonb, p_client_story_id uuid',
+      security_definer: true,
+    },
+  }] }).items[0];
+  assert.equal(predecessor.fingerprint,
+    '010c78c43ba2cb32439c48ef8433d2706776f45f128fc2aa0572eb3b15377a14');
+  assert.equal(historicalFingerprints.has(predecessor.fingerprint), false,
+    'the unmodeled historical wrapper finding remains visible before the QA successor');
 });
 
 test('Security Advisor transport cache keys cannot change semantic identity', async () => {

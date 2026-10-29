@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
@@ -101,6 +102,9 @@ const STORIES_SAFETY_C1_MIGRATION_PATH =
   'supabase/migrations/20261027120000_stories_v2_safety_c1_technical_policy_prep.sql';
 const STORIES_SAFETY_C1_ARTIFACT_PATH =
   'docs/stories-v2-content-safety-policy-candidate-v1.json';
+const STORIES_QA_C1_MIGRATION_PATH =
+  'supabase/migrations/20261029042807_stories_v2_qa_c1_question_answer_authority.sql';
+const sha256 = value => createHash('sha256').update(value).digest('hex');
 
 test('Stories B1 policy binds one migration, six Edge contracts, and fail-closed non-activation', async () => {
   const { gate, policy } = await loadGateAndPolicy();
@@ -401,6 +405,216 @@ test('Stories Safety C2 Git attestation binds reviewed policy migration and unch
   assert.deepEqual(gate.attestStoriesSafetyC2Transition({ ...input, policy: promoted, migrations: [] }),
     { migrations: [], attestation: null });
   assertDenied(() => gate.attestStoriesSafetyC2Transition({ ...input, policy: promoted }), 'INVALID_STORIES_SAFETY_C2_TRANSITION');
+});
+
+test('Stories QA C1 policy adds one exact migration-only successor without weakening C2', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.stories_qa_c1_transition;
+  assert.deepEqual(transition, gate.STORIES_QA_C1_RELEASE_TRANSITION);
+  assert.deepEqual({
+    id: transition.id,
+    from_phase: transition.from_phase,
+    to_phase: transition.to_phase,
+    baseline_sha: transition.baseline_sha,
+    reviewed_source_sha: transition.reviewed_source_sha,
+    integration_base_sha: transition.integration_base_sha,
+    migration_path: transition.migration_path,
+    migration_blob: transition.migration_blob,
+    migration_sha256: transition.migration_sha256,
+    productive_paths: transition.productive_paths,
+    functions: transition.functions,
+    config_changed: transition.config_changed,
+    helper_count: transition.helper_attestations.length,
+    c2_overlay_count: transition.c2_helper_replacements.length,
+    rpc_replacement_count: transition.rpc_replacements.length,
+    rpc_predecessor_fingerprint: transition.rpc_predecessor_exception.advisor_fingerprint,
+    finance_policy: transition.finance_policy,
+  }, {
+    id: 'stories-v2-qa-c1-question-answer-v1',
+    from_phase: 'stories_v2_safety_c2_publish_first_async_review',
+    to_phase: 'stories_v2_qa_c1_question_answer',
+    baseline_sha: 'c1c3043b24abe898a4400f858d646a2f788ee201',
+    reviewed_source_sha: '351be882a7939be86cd9a758a78e8d514e9c5e2f',
+    integration_base_sha: '10c549ac0dd84d28ccd832264184619ec56ba97f',
+    migration_path: STORIES_QA_C1_MIGRATION_PATH,
+    migration_blob: 'b1f025b12f6d4e9fadf178630ee0e46c283bbd1c',
+    migration_sha256: '7bd4afded4f6e0b36fa702c1eb83eedfed42f7b502ee9e2f97ada7121a1cf73c',
+    productive_paths: [STORIES_QA_C1_MIGRATION_PATH],
+    functions: [],
+    config_changed: false,
+    helper_count: 10,
+    c2_overlay_count: 5,
+    rpc_replacement_count: 4,
+    rpc_predecessor_fingerprint: '010c78c43ba2cb32439c48ef8433d2706776f45f128fc2aa0572eb3b15377a14',
+    finance_policy: {
+      platform_fee_bps: 2000,
+      purchase_enabled: true,
+      refunds_enabled: true,
+      subscription_enabled: true,
+    },
+  });
+  assert.deepEqual(policy.stories_safety_c2_transition, gate.STORIES_SAFETY_C2_RELEASE_TRANSITION,
+    'historical C2 authority must remain byte-for-byte immutable');
+  assert.equal(sha256(gate.canonicalJson(policy.stories_safety_c2_transition).trimEnd()),
+    '8c041ddcc845689fa4b4371f699eecd22a914971913340f1c9e103ed808186d5',
+    'QA successor must not rewrite the historical C2 transition');
+  assert.equal(gate.validatePolicy(policy), true);
+  for (const mutate of [
+    value => { value.migration_sha256 = '0'.repeat(64); },
+    value => { value.functions.push('content-safety-scan'); },
+    value => { value.helper_attestations.pop(); },
+    value => { value.c2_helper_replacements.pop(); },
+    value => { value.rpc_replacements[0] = 'public.create_story_with_media(uuid)'; },
+    value => { value.rpc_predecessor_exception.advisor_fingerprint = '0'.repeat(64); },
+    value => { value.relation_attestation.force_rls = false; },
+    value => { value.trigger_attestation.definition_sha256 = '0'.repeat(64); },
+    value => { value.safety.activation = false; },
+    value => { value.finance_policy.platform_fee_bps = 0; },
+  ]) {
+    const hostile = structuredClone(policy);
+    mutate(hostile.stories_qa_c1_transition);
+    assertDenied(() => gate.validatePolicy(hostile), 'INVALID_STORIES_QA_C1_TRANSITION');
+  }
+});
+
+test('Stories QA C1 Git attestation binds exact LF migration bytes, ancestry, and one-path Supabase closure', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.stories_qa_c1_transition;
+  const root = new URL('..', import.meta.url);
+  const runGit = args => execFileSync('git', args, { cwd: root,
+    encoding: args.includes('-z') ? 'buffer' : 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  const approvedSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  const input = { cwd: root, policy, mode: 'plan_only', approvedSha,
+    changes: [{ path: transition.migration_path, status: 'A' }],
+    migrations: [{ path: transition.migration_path, version: '20261029042807' }],
+    affectedFunctions: [], runGit };
+  const result = gate.attestStoriesQaC1Transition(input);
+  assert.equal(result.attestation.reviewed_source_descendant_verified, true);
+  assert.equal(result.migrations[0].blob, transition.migration_blob);
+  assert.equal(result.migrations[0].sha256, transition.migration_sha256);
+  for (const ref of [transition.reviewed_source_sha, input.approvedSha]) {
+    assert.equal(execFileSync('git', ['rev-parse', `${ref}:${transition.migration_path}`],
+      { cwd: root, encoding: 'utf8' }).trim(), transition.migration_blob);
+  }
+  for (const ancestry of [
+    [transition.baseline_sha, transition.integration_base_sha],
+    [transition.integration_base_sha, input.approvedSha],
+    [transition.reviewed_source_sha, input.approvedSha],
+  ]) {
+    const altered = args => {
+      if (args[0] === 'merge-base' && args[1] === '--is-ancestor'
+        && args[2] === ancestry[0] && args[3] === ancestry[1]) throw new Error('not an ancestor');
+      return runGit(args);
+    };
+    assertDenied(() => gate.attestStoriesQaC1Transition({ ...input, runGit: altered }),
+      'INVALID_STORIES_QA_C1_TRANSITION');
+  }
+  for (const altered of [
+    args => args[0] === 'rev-parse' && args[1] === `${input.approvedSha}:${transition.migration_path}`
+      ? `${'0'.repeat(40)}\n` : runGit(args),
+    args => args[0] === 'show' && args[1] === `${input.approvedSha}:${transition.migration_path}`
+      ? Buffer.from('altered migration\n') : runGit(args),
+  ]) assertDenied(() => gate.attestStoriesQaC1Transition({ ...input, runGit: altered }),
+    'INVALID_STORIES_QA_C1_TRANSITION');
+  for (const hostile of [
+    { migrations: [] },
+    { migrations: [{ path: transition.migration_path, version: '20261029042808' }] },
+    { migrations: [{ path: 'supabase/migrations/20261029042807_wrong.sql', version: '20261029042807' }] },
+    { changes: [{ path: transition.migration_path, status: 'M' }] },
+    { changes: [{ path: transition.migration_path, status: 'A' },
+      { path: 'supabase/migrations/20261029042808_extra.sql', status: 'A' }] },
+    { approvedSha: '0'.repeat(40) },
+  ]) assertDenied(() => gate.attestStoriesQaC1Transition({ ...input, ...hostile }),
+    'INVALID_STORIES_QA_C1_TRANSITION');
+  for (const mutate of [
+    value => { value.baseline_sha = '0'.repeat(40); },
+    value => { value.reviewed_source_sha = '0'.repeat(40); },
+    value => { value.migration_blob = '0'.repeat(40); },
+    value => { value.migration_path = 'supabase/migrations/20261029042807_wrong.sql'; },
+  ]) {
+    const hostile = structuredClone(policy);
+    mutate(hostile.stories_qa_c1_transition);
+    assertDenied(() => gate.attestStoriesQaC1Transition({ ...input, policy: hostile }),
+      'INVALID_STORIES_QA_C1_TRANSITION');
+  }
+  assertDenied(() => gate.attestStoriesQaC1Transition({ ...input,
+    changes: [...input.changes, { path: 'supabase/functions/content-safety-scan/index.ts', status: 'M' }] }),
+  'INVALID_STORIES_QA_C1_TRANSITION');
+});
+
+test('Stories QA C1 manifest accepts exactly one migration and zero Edge/config/function contracts', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.stories_qa_c1_transition;
+  const approvedSha = 'd'.repeat(40);
+  const changes = [{ status: 'A', path: transition.migration_path, fileType: 'file' }];
+  const attestation = { ...structuredClone(transition), approved_sha: approvedSha,
+    baseline_descendant_verified: true, integration_base_descendant_verified: true,
+    reviewed_source_descendant_verified: true };
+  const input = manifestInput(policy, {
+    request: request({ approvedSha, mainSha: approvedSha }),
+    gitState: { baselineSha: transition.baseline_sha, approvedSha, originMainSha: approvedSha, changes },
+    classified: gate.classifyChangedPaths(changes),
+    migrations: [{ version: '20261029042807', path: transition.migration_path,
+      blob: transition.migration_blob, sha256: transition.migration_sha256 }],
+    affectedFunctions: [], functionContracts: [], storiesQaC1Transition: attestation,
+  });
+  const manifest = gate.buildManifest(input);
+  assert.equal(manifest.result, 'PLAN READY');
+  assert.deepEqual(manifest.resources.stories_qa_c1_transition, attestation);
+  assert.deepEqual(manifest.resources.functions, []);
+  assert.deepEqual(manifest.resources.function_contracts, []);
+  assert.equal(manifest.resources.config_changed, false);
+  assert.equal(manifest.risk.level, 'HIGH');
+  for (const [mutate, code] of [
+    [value => { value.storiesQaC1Transition = null; }, 'INVALID_STORIES_QA_C1_TRANSITION'],
+    [value => { value.migrations[0].sha256 = '0'.repeat(64); }, 'INVALID_STORIES_QA_C1_TRANSITION'],
+    [value => { value.migrations.push({ version: '20261029042808', path: 'supabase/migrations/20261029042808_extra.sql' }); }, 'INVALID_STORIES_QA_C1_TRANSITION'],
+    [value => { value.affectedFunctions = ['content-safety-scan']; }, 'FUNCTION_CONTRACT_MISMATCH'],
+    [value => { value.classified.config.push({ path: 'supabase/config.toml' }); }, 'INVALID_STORIES_QA_C1_TRANSITION'],
+    [value => { value.classified.productive.push({ path: 'supabase/functions/content-safety-scan/index.ts' }); }, 'INVALID_STORIES_QA_C1_TRANSITION'],
+    [value => { value.gitState.baselineSha = '0'.repeat(40); }, 'INVALID_STORIES_QA_C1_TRANSITION'],
+    [value => { value.gitState.originMainSha = '0'.repeat(40); }, 'INVALID_STORIES_QA_C1_TRANSITION'],
+    [value => { value.request.mainSha = '0'.repeat(40); }, 'MAIN_SHA_MISMATCH'],
+    [value => { value.risk = { level: 'STANDARD', findings: [] }; }, 'INVALID_STORIES_QA_C1_TRANSITION'],
+  ]) {
+    const hostile = structuredClone(input);
+    mutate(hostile);
+    assertDenied(() => gate.buildManifest(hostile), code);
+  }
+  const unrelatedPath = 'supabase/functions/content-safety-scan/index.ts';
+  const unrelated = structuredClone(input);
+  unrelated.gitState.changes.push({ status: 'M', path: unrelatedPath, fileType: 'file' });
+  unrelated.classified = gate.classifyChangedPaths(unrelated.gitState.changes);
+  unrelated.affectedFunctions = ['content-safety-scan'];
+  unrelated.functionContracts = [{
+    name: 'content-safety-scan', entrypoint: unrelatedPath, import_map: null, verify_jwt: true,
+    source_changed: true, source_files: [{ path: unrelatedPath, sha256: '1'.repeat(64) }],
+    source_sha256: '1'.repeat(64),
+  }];
+  assertDenied(() => gate.buildManifest(unrelated), 'INVALID_STORIES_QA_C1_TRANSITION');
+
+  const dangling = structuredClone(input);
+  dangling.migrations = [];
+  dangling.gitState.changes = [];
+  dangling.classified = gate.classifyChangedPaths([]);
+  assertDenied(() => gate.buildManifest(dangling), 'INVALID_STORIES_QA_C1_TRANSITION');
+});
+
+test('Stories QA C1 transition retires after baseline promotion and rejects replay before Git', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.stories_qa_c1_transition;
+  const promoted = structuredClone(policy);
+  promoted.baseline.sha = 'e'.repeat(40);
+  promoted.baseline.migration_count = 361;
+  promoted.baseline.latest_migration = '20261029042807_stories_v2_qa_c1_question_answer_authority';
+  const base = { cwd: new URL('..', import.meta.url), policy: promoted, mode: 'plan_only',
+    approvedSha: 'e'.repeat(40), changes: [], affectedFunctions: [],
+    runGit: () => { throw new Error('retired QA attestation must reject before Git'); } };
+  assert.deepEqual(gate.attestStoriesQaC1Transition({ ...base, migrations: [] }),
+    { migrations: [], attestation: null });
+  assertDenied(() => gate.attestStoriesQaC1Transition({ ...base,
+    migrations: [{ path: transition.migration_path, version: '20261029042807' }] }),
+  'INVALID_STORIES_QA_C1_TRANSITION');
 });
 
 test('Stories Safety C1 policy adds an exact inactive one-migration zero-Edge transition', async () => {
