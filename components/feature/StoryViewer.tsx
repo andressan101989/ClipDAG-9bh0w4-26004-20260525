@@ -244,7 +244,7 @@ export function StoryViewer({
   const viewerRequestGeneration = useRef(0);
   const reactionRequestGeneration = useRef(0);
   const playbackGeneration = useRef(0);
-  const transitionLock = useRef(false);
+  const transitionLock = useRef<boolean | symbol>(false);
   const holdTriggered = useRef(false);
   const interactionFocusedRef = useRef(false);
   const eventAttemptIdsRef = useRef(new Map<string, string>());

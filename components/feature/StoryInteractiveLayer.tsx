@@ -413,9 +413,15 @@ export function StoryInteractiveLayer({
   callbacksRef.current = { onLoadState, onRespond, onInteractionFocus, onQuestionComposerActiveChange };
   const authorityRef = useRef({ visible, actorId, storyId, isOwner, placements, state });
   authorityRef.current = { visible, actorId, storyId, isOwner, placements, state };
-  const dismissalRef = useRef<((dismissed: boolean) => void) | null>(null);
+  const dismissalRef = useRef<{ elementId: string; resolve: (dismissed: boolean) => void } | null>(null);
   const resultsDismissingRef = useRef(false);
   const [refreshFailed, setRefreshFailed] = useState(false);
+  const cancelResultsDismissal = useCallback(() => {
+    const dismissal = dismissalRef.current;
+    dismissalRef.current = null;
+    resultsDismissingRef.current = false;
+    dismissal?.resolve(false);
+  }, []);
 
   const retireComposer = useCallback(() => {
     composerSessionRef.current += 1;
@@ -451,11 +457,10 @@ export function StoryInteractiveLayer({
       lifecycleRef.current += 1;
       generationRef.current += 1;
       retireComposer();
-      dismissalRef.current?.(false);
-      dismissalRef.current = null;
+      cancelResultsDismissal();
       callbacksRef.current.onInteractionFocus(false);
     };
-  }, [actorId, isOwner, retireComposer, storyId, visible]);
+  }, [actorId, cancelResultsDismissal, isOwner, retireComposer, storyId, visible]);
 
   useEffect(() => { void load(); }, [actorId, isOwner, load, revision, visible]);
 
@@ -464,6 +469,7 @@ export function StoryInteractiveLayer({
   ), [state]);
   const resultsElement = resultsElementId ? stateById.get(resultsElementId) ?? null : null;
   const activeElement = composer ? stateById.get(composer.elementId) : null;
+  const questionReplyAvailable = Boolean(onQuestionReply);
   useEffect(() => {
     const placed = (id: string) => placements.some(item => item.element_id === id);
     const active = composerRef.current;
@@ -473,7 +479,10 @@ export function StoryInteractiveLayer({
       setResultsElementId(null);
       callbacksRef.current.onInteractionFocus(false);
     }
-  }, [isOwner, placements, resultsElementId, retireComposer, state, stateById, visible]);
+    const dismissal = dismissalRef.current;
+    if (dismissal && (!visible || !isOwner || !questionReplyAvailable || !placed(dismissal.elementId)
+      || (state && stateById.get(dismissal.elementId)?.definition.type !== 'question'))) cancelResultsDismissal();
+  }, [cancelResultsDismissal, isOwner, placements, questionReplyAvailable, resultsElementId, retireComposer, state, stateById, visible]);
 
   const respond = useCallback(async (elementId: string, payload: StoryInteractivePayload) => {
     const identity = storyInteractionPayloadKey(storyId, elementId, payload);
@@ -530,16 +539,17 @@ export function StoryInteractiveLayer({
     onInteractionFocus(false);
   }, [onInteractionFocus]);
   const dismissResults = useCallback(() => new Promise<boolean>(resolve => {
-    if (resultsDismissingRef.current) { resolve(false); return; }
+    if (resultsDismissingRef.current || !resultsElementId) { resolve(false); return; }
     resultsDismissingRef.current = true;
-    dismissalRef.current = resolve;
+    dismissalRef.current = { elementId: resultsElementId, resolve };
     closeResults();
-  }), [closeResults]);
+  }), [closeResults, resultsElementId]);
+  const resultsDismissal = dismissalRef.current;
   const finishResultsDismissal = useCallback(() => {
-    const resolve = dismissalRef.current;
+    if (!resultsDismissal || dismissalRef.current !== resultsDismissal) return;
     dismissalRef.current = null;
-    resolve?.(true);
-  }, []);
+    resultsDismissal.resolve(true);
+  }, [resultsDismissal]);
 
   if (!visible || placements.length === 0) return null;
   return (

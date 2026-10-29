@@ -202,7 +202,7 @@ async function viewerFixture(native, overrides = {}, options = {}) {
     interpolate() { return this.value; }
   }
   const fixture = { ...base(),
-    Platform: { OS: options.web ? 'web' : 'ios' },
+    Platform: { OS: options.android ? 'android' : options.web ? 'web' : 'ios' },
     Animated: { Value, View: 'AnimatedView', timing: (value, config) => ({ start: callback => animations.push({ value, config, callback }) }), spring: value => ({ start() { value.setValue(0); } }) },
     AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) },
     PanResponder: { create: handlers => { pans.push(handlers); return { panHandlers: handlers }; } },
@@ -542,5 +542,143 @@ test('web results cannot reopen during handoff dismissal or strand the reserved 
     await app.flush(() => finish(animations()[0]));
     assert.equal(v.routes.length, 1, 'reopen cannot replace the pending dismissal/session');
     assert.deepEqual(v.order, ['close', 'navigate']);
+  } finally { await app.unmount(); }
+});
+
+const animatedNodes = app => app.nodes().filter(n => n.type === 'div' && n.props.onAnimationEnd);
+const finishCss = node => { assert.ok(node, 'expected current modal animation'); const target = {}; node.props.onAnimationEnd({ target, currentTarget: target }); };
+async function finishModal(app, native, index) {
+  await app.flush(() => native ? app.nodes().filter(n => n.type === 'Modal')[index].props.onDismiss() : finishCss(animatedNodes(app)[index]));
+}
+async function ownerInboxFixture(native, overrides = {}, options = {}) {
+  return viewerFixture(native, { currentUserId: respondent, onGetInteractiveResults: async () => page([row(actor)]), ...overrides }, { integrated: true, web: !native, animatedWeb: !native, ...options });
+}
+async function beginInboxReply(app) {
+  await app.flush(() => { assert.ok(app.find(n => n.props?.accessibilityLabel === 'Ver respuestas privadas')); press(app, 'Ver respuestas privadas'); });
+  await app.flush(() => { assert.ok(app.find(n => n.props?.accessibilityLabel === 'Responder por privado')); press(app, 'Responder por privado'); });
+}
+
+// Break caught: lifecycle cleanup drops the transaction before releasing its reserved lock.
+for (const native of [false, true]) for (const axis of ['actor', 'owner']) for (const phase of ['inner', 'outer']) {
+  test(`${native ? 'native' : 'animated web'} ${axis} retirement during ${phase} dismissal releases its reservation and permits a fresh reply`, async () => {
+    const v = await ownerInboxFixture(native); const { app } = v;
+    try {
+      await beginInboxReply(app);
+      if (phase === 'outer') await finishModal(app, native, 1);
+      const staleDismiss = native ? app.find(n => n.type === 'Modal').props.onDismiss : null;
+      const changed = axis === 'actor' ? { ...v.props, currentUserId: actor }
+        : { ...v.props, storyGroup: { ...v.props.storyGroup, stories: [{ ...v.props.storyGroup.stories[0], userId: actor }] } };
+      await app.update(changed);
+      if (staleDismiss) await app.flush(staleDismiss);
+      assert.deepEqual(v.order, []); assert.equal(v.routes.length, 0);
+      await app.update(v.props);
+      await beginInboxReply(app);
+      await app.flush(() => press(app, 'Cerrar historia'));
+      assert.deepEqual(v.order, [], 'replacement reservation must remain locked');
+      await finishModal(app, native, 1);
+      if (staleDismiss) { await app.flush(staleDismiss); assert.equal(v.routes.length, 0, 'old dismissal must not finish a replacement reservation'); }
+      await finishModal(app, native, 0);
+      assert.deepEqual(v.order, ['close', 'navigate']); assert.equal(v.routes.length, 1);
+    } finally { await app.unmount(); }
+  });
+}
+
+for (const native of [false, true]) {
+  test(`${native ? 'native' : 'animated web'} cancellation after accepted preflight leaves current-session Close usable`, async () => {
+    const v = await ownerInboxFixture(native); const { app } = v;
+    try {
+      await beginInboxReply(app);
+      await app.update({ ...v.props, currentUserId: actor });
+      await app.flush(() => press(app, 'Cerrar historia'));
+      assert.deepEqual(v.order, ['close']); assert.equal(v.routes.length, 0);
+    } finally { await app.unmount(); }
+  });
+
+  for (const removed of ['placement', 'layer', 'preflight', 'definition']) {
+    test(`${native ? 'native' : 'animated web'} ${removed} removal during inner dismissal settles cancellation and permits retry`, async () => {
+      let elements = [element()];
+      const v = await ownerInboxFixture(native, { onGetInteractiveState: async () => ({ storyId, elements }) }); const { app } = v;
+      try {
+        await beginInboxReply(app);
+        let changed;
+        if (removed === 'placement') changed = { ...v.props, storyGroup: { ...v.props.storyGroup, stories: [{ ...v.props.storyGroup.stories[0], composition: { version: 2, elements: [] } }] } };
+        if (removed === 'layer') changed = { ...v.props, onGetInteractiveResults: undefined };
+        if (removed === 'preflight') changed = { ...v.props, onPrepareStoryQuestionAnswer: undefined };
+        if (removed === 'definition') { elements = []; changed = { ...v.props, interactiveRevision: 2 }; }
+        await app.update(changed);
+        assert.equal(v.routes.length, 0);
+        elements = [element()]; await app.update({ ...v.props, interactiveRevision: 3 });
+        await beginInboxReply(app);
+        await finishModal(app, native, 1);
+        await finishModal(app, native, 0);
+        assert.deepEqual(v.order, ['close', 'navigate']); assert.equal(v.routes.length, 1);
+      } finally { await app.unmount(); }
+    });
+  }
+}
+
+test('animated web removing last placement settles the inner transaction even though its animation source is gone', async () => {
+  const v = await ownerInboxFixture(false); const { app } = v;
+  try {
+    await beginInboxReply(app);
+    await app.update({ ...v.props, storyGroup: { ...v.props.storyGroup, stories: [{ ...v.props.storyGroup.stories[0], composition: { version: 2, elements: [] } }] } });
+    assert.equal(animatedNodes(app).length, 1);
+    await app.flush(() => press(app, 'Cerrar historia'));
+    assert.deepEqual(v.order, ['close']); assert.equal(v.routes.length, 0);
+  } finally { await app.unmount(); }
+});
+
+test('retirement settles an unresolved dismissal and stale completion/dismiss cannot unlock or navigate a replacement lease', async () => {
+  const module = await import(storyQaModuleUrl('components/feature/useStoryQuestionInbox.ts', { react: new URL('../node_modules/react/index.js', import.meta.url).href, '@/services/storyQuestionHandoff': adapter }));
+  let current; const Component = props => { current = module.useStoryQuestionInbox(props); return null; };
+  const lock = { current: false }, old = deferred(), replacement = deferred(), order = [];
+  const props = { visible: true, actorId: respondent, storyId, isOwner: true, transitionLock: lock,
+    prepare: async source => ({ question: 'Canónica', respondentId: source.respondentId }), onExit() {}, onClose: () => order.push('close'), navigate: () => order.push('navigate') };
+  const app = await mount(Component, props);
+  try {
+    let settled = false;
+    const staleDismiss = current.onDismiss;
+    await app.flush(() => { void current.reply('story', { storyId, elementId, respondentId: actor }, () => true, () => old.promise).catch(() => { settled = true; }); });
+    await app.update({ ...props, actorId: actor });
+    assert.equal(settled, true, 'retirement must settle even if the removed modal can never report dismissal');
+    assert.equal(lock.current, false);
+    await app.flush(() => { void current.reply('story', { storyId, elementId, respondentId: respondent }, () => true, () => replacement.promise); });
+    const reserved = lock.current;
+    await app.flush(() => old.resolve(true));
+    assert.equal(lock.current, reserved, 'old catch/finally cannot release the new reservation');
+    await app.flush(() => replacement.resolve(true));
+    await app.flush(staleDismiss); assert.deepEqual(order, []);
+    assert.equal(lock.current, reserved);
+    await app.flush(() => current.onDismiss()); assert.deepEqual(order, ['close', 'navigate']);
+  } finally { await app.unmount(); }
+});
+
+test('retirement does not release a shared viewer transition already replaced by another owner', async () => {
+  const module = await import(storyQaModuleUrl('components/feature/useStoryQuestionInbox.ts', { react: new URL('../node_modules/react/index.js', import.meta.url).href, '@/services/storyQuestionHandoff': adapter }));
+  let current; const Component = props => { current = module.useStoryQuestionInbox(props); return null; };
+  const lock = { current: false }, dismissal = deferred();
+  const props = { visible: true, actorId: respondent, storyId, isOwner: true, transitionLock: lock,
+    prepare: async source => ({ question: 'Canónica', respondentId: source.respondentId }), onExit() {}, onClose() {}, navigate() {} };
+  const app = await mount(Component, props);
+  try {
+    await app.flush(() => { void current.reply('story', { storyId, elementId, respondentId: actor }, () => true, () => dismissal.promise).catch(() => {}); });
+    lock.current = true; // Existing viewer transitions use their own boolean reservation.
+    await app.update({ ...props, visible: false });
+    await app.flush(() => dismissal.resolve(false));
+    assert.equal(lock.current, true, 'cancellation owns only the exact token it acquired');
+  } finally { await app.unmount(); }
+});
+
+test('Android nonanimated dismissal preserves cancellation before accepted preflight and a fresh successful lease', async () => {
+  const prepared = deferred(); let requests = 0;
+  const v = await ownerInboxFixture(true, { onPrepareStoryQuestionAnswer: source => ++requests === 1 ? prepared.promise : Promise.resolve({ question: 'Nueva', respondentId: source.respondentId }) }, { android: true });
+  const { app } = v;
+  try {
+    await beginInboxReply(app);
+    await app.update({ ...v.props, currentUserId: actor });
+    await app.flush(() => prepared.resolve({ question: 'Anterior', respondentId: actor }));
+    assert.deepEqual(v.order, []);
+    await app.update(v.props); await beginInboxReply(app);
+    assert.deepEqual(v.order, ['close', 'navigate']); assert.equal(v.routes.length, 1);
   } finally { await app.unmount(); }
 });
