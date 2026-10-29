@@ -1,3 +1,6 @@
+import { parseStoryQuestionAnswerCard, type StoryQuestionAnswerCard } from '../../services/storyQuestionHandoffRuntime.mjs';
+export type { StoryQuestionAnswerCard } from '../../services/storyQuestionHandoffRuntime.mjs';
+
 export type StoryInteractiveKind = 'poll' | 'slider' | 'quiz' | 'question' | 'reaction';
 export type StoryTextSize = 'small' | 'medium' | 'large';
 export type StoryTextColor = '#FFFFFF' | '#111111' | '#FF2D78' | '#7C5CFF' | '#00D4FF' | '#FFD60A';
@@ -43,7 +46,7 @@ export interface StoryInteractivePlacement extends StoryElementBase {
   element_id: string;
 }
 
-export type StoryStaticElement = StoryTextElement | StoryStickerElement;
+export type StoryStaticElement = StoryTextElement | StoryStickerElement | StoryQuestionAnswerCard;
 export type StoryCompositionElement = StoryStaticElement | StoryInteractivePlacement;
 export type StoryComposition =
   | { version: 1; elements: StoryStaticElement[] }
@@ -136,6 +139,7 @@ export function parseStoryInteractiveDefinition(value: unknown): StoryInteractiv
 
 function parseElement(value: unknown, version: 1 | 2): StoryCompositionElement | null {
   if (!record(value)) return null;
+  if (value.type === 'question_answer') return version === 2 ? parseStoryQuestionAnswerCard(value) : null;
   const id = uuid(value.id);
   if (!id || !range(value.x, 0, 1) || !range(value.y, 0, 1)
     || !range(value.scale, 0.5, 4) || !range(value.rotation, -180, 180)) return null;
@@ -170,12 +174,14 @@ export function parseStoryComposition(value: unknown): StoryComposition | null {
   const references = new Set<string>();
   let texts = 0;
   let stickers = 0;
+  let answers = 0;
   for (const input of value.elements) {
     const element = parseElement(input, value.version);
     if (!element || ids.has(element.id)) return null;
     ids.add(element.id);
     if (element.type === 'text' && ++texts > 10) return null;
     if (element.type === 'sticker' && ++stickers > 24) return null;
+    if (element.type === 'question_answer' && ++answers > 1) return null;
     if (element.type === 'interactive') {
       if (references.has(element.element_id)) return null;
       references.add(element.element_id);
@@ -187,11 +193,11 @@ export function parseStoryComposition(value: unknown): StoryComposition | null {
     : { version: 2, elements };
 }
 
-/** v1 remains the wire format for static-only Stories; interactive placement requires v2. */
+/** Legacy text/stickers use v1; interactive placements and answer cards require v2. */
 export function normalizeStoryCompositionVersion(
   composition: { version: 1 | 2; elements: StoryCompositionElement[] },
 ): StoryComposition {
-  return composition.elements.some(element => element.type === 'interactive')
+  return composition.elements.some(element => element.type === 'interactive' || element.type === 'question_answer')
     ? { version: 2, elements: composition.elements }
     : { version: 1, elements: composition.elements as StoryStaticElement[] };
 }

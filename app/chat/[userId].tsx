@@ -44,6 +44,8 @@ import {
 } from '@/services/messageNotificationPresentation';
 import { AdvertisingMessageStartRetryController, recordAdvertisingMessageStartConversion } from '@/services/chatService';
 import { CREATOR_PREMIUM_FOUNDATION_MESSAGE } from '@/services/creatorPremiumService';
+import { storyQuestionHandoffs } from '@/services/storyQuestionHandoff';
+import { StoryQuestionChatDraftSession } from '@/services/storyQuestionIntegrationRuntime';
 
 const PREMIUM_COLOR  = '#FF9D00';
 const PREMIUM_COLOR2 = '#FF5A00';
@@ -252,9 +254,10 @@ const badge = StyleSheet.create({
 // ── Main chat screen ──────────────────────────────────────────────────────────
 export default function ChatScreen() {
   // Approved Figma: 02 — Direct Conversation — Sofia (FmwCrxtAV5k8jpLFr3RTgy, node 1:112).
-  const { userId: partnerId, advertisingImpressionEventId } = useLocalSearchParams<{
+  const { userId: partnerId, advertisingImpressionEventId, handoffToken } = useLocalSearchParams<{
     userId: string;
     advertisingImpressionEventId?: string;
+    handoffToken?: string;
   }>();
   const insets = useSafeAreaInsets();
   const router  = useRouter();
@@ -300,6 +303,56 @@ export default function ChatScreen() {
   const isSendingRef = useRef(false);
   const voiceDraftSenderRef = useRef<ChatVoiceDraftSender | null>(null);
   if (!voiceDraftSenderRef.current) voiceDraftSenderRef.current = new ChatVoiceDraftSender();
+  const questionDraftSessionRef = useRef<StoryQuestionChatDraftSession | null>(null);
+  if (!questionDraftSessionRef.current) questionDraftSessionRef.current = new StoryQuestionChatDraftSession(storyQuestionHandoffs);
+  const [hasPendingQuestionDraft, setHasPendingQuestionDraft] = useState(false);
+  const ownsQuestionDraftRef = useRef(false);
+  const questionDraftLifecycleRef = useRef(0);
+  const isQuestionDraftLifecycleCurrent = useCallback((lifecycle: number) => questionDraftLifecycleRef.current === lifecycle, []);
+  const questionDraftIdentityRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const lifecycle = ++questionDraftLifecycleRef.current;
+    const identity = `${user?.id ?? ''}:${typeof partnerId === 'string' ? partnerId : ''}`;
+    if (questionDraftIdentityRef.current !== identity) {
+      questionDraftIdentityRef.current = identity;
+      if (ownsQuestionDraftRef.current) setText('');
+      ownsQuestionDraftRef.current = false;
+      setHasPendingQuestionDraft(false);
+    }
+    questionDraftSessionRef.current!.setIdentity(user?.id ?? null, typeof partnerId === 'string' ? partnerId : null);
+    return () => {
+      void Promise.resolve().then(() => {
+        if (!isQuestionDraftLifecycleCurrent(lifecycle)) return;
+        questionDraftSessionRef.current!.setIdentity(null, null);
+        ownsQuestionDraftRef.current = false;
+      });
+    };
+  }, [isQuestionDraftLifecycleCurrent, partnerId, user?.id]);
+
+  useEffect(() => {
+    if (handoffToken === undefined) return;
+    const result = questionDraftSessionRef.current!.receive(handoffToken, user?.id ?? null,
+      typeof partnerId === 'string' ? partnerId : null, text, voiceRecording || isUploading || isSending);
+    if (result.status === 'waiting' || result.status === 'occupied') return;
+    router.setParams({ handoffToken: undefined });
+    if (result.status === 'ready') {
+      ownsQuestionDraftRef.current = true;
+      setText(result.text);
+    } else if (result.status === 'pending') setHasPendingQuestionDraft(true);
+    else if (result.status === 'invalid') showAlert('Borrador no disponible', 'La solicitud venció. Abre de nuevo la pregunta para responder.');
+  }, [handoffToken, isSending, isUploading, partnerId, router, showAlert, text, user?.id, voiceRecording]);
+
+  const insertQuestionDraft = () => {
+    const inserted = questionDraftSessionRef.current!.insert(text, voiceRecording || isUploading || isSending);
+    if (!inserted) {
+      showAlert('Conservamos tu respuesta', 'Termina la nota de voz o deja espacio en el mensaje para insertar la respuesta.');
+      return;
+    }
+    ownsQuestionDraftRef.current = true;
+    setText(inserted.text);
+    setHasPendingQuestionDraft(false);
+  };
 
   // Premium DM state
   const [premiumConfig,   setPremiumConfig]   = useState<{ enabled: boolean; price_bdag: number; welcome_message: string } | null>(null);
@@ -391,6 +444,7 @@ export default function ChatScreen() {
       const sent = await sendMessage(partnerId, text.trim());
       recordAdvertisingMessageStartForConfirmedMessage(sent);
       setText(''); setInputHeight(INPUT_MIN_HEIGHT);
+      ownsQuestionDraftRef.current = false;
       scrollToLatest(true);
 
     } catch {
@@ -756,6 +810,12 @@ export default function ChatScreen() {
             );
           }}
         >
+          {hasPendingQuestionDraft ? (
+            <Pressable accessibilityRole="button" accessibilityLabel="Insertar respuesta de historia"
+              onPress={insertQuestionDraft} style={styles.inputAction}>
+              <MaterialCommunityIcons name="text-box-plus-outline" size={22} color="#9B5CFF" />
+            </Pressable>
+          ) : null}
           {!voiceRecording ? <>
             <Pressable
               accessibilityLabel={premiumEnabled ? 'Opciones Premium' : 'Adjuntar'}

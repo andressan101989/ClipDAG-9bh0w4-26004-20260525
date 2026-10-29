@@ -5,6 +5,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Crypto from 'expo-crypto';
+import { StoryQuestionEditorSession } from '@/services/storyQuestionIntegrationRuntime';
+import type { StoryQuestionAnswerCard } from '@/services/storyQuestionHandoff';
 import { Image } from '@/components/ui/SafeImage';
 import { Avatar } from '@/components/ui/Avatar';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -139,7 +141,8 @@ function EditableElement({
       {...responder.panHandlers}
       accessible
       accessibilityRole="adjustable"
-      accessibilityLabel={element.type === 'interactive' ? `Sticker interactivo ${definition?.prompt ?? ''}` : 'Elemento de historia'}
+      accessibilityLabel={element.type === 'interactive' ? `Sticker interactivo ${definition?.prompt ?? ''}`
+        : element.type === 'question_answer' ? `Pregunta: ${element.question}. Respuesta: ${element.answer}` : 'Elemento de historia'}
       accessibilityActions={accessibilityActions}
       onAccessibilityAction={event => {
         switch (event.nativeEvent.actionName) {
@@ -180,10 +183,11 @@ function EditableElement({
 }
 
 export function StoryEditor({
-  visible, source, onCancel, onPublish,
+  visible, source, questionAnswerSeed = null, onCancel, onPublish,
 }: {
   visible: boolean;
   source: StoryEditorSource | null;
+  questionAnswerSeed?: StoryQuestionAnswerCard | null;
   onCancel: (clientStoryId?: string) => void;
   onPublish: (source: StoryEditorSource, publication: StoryEditorPublication, clientStoryId: string) => Promise<void>;
 }) {
@@ -205,26 +209,33 @@ export function StoryEditor({
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const publishingRef = useRef(false);
   const [error, setError] = useState(false);
   const clientStoryIdRef = useRef<string | null>(null);
+  const questionSessionRef = useRef<StoryQuestionEditorSession | null>(null);
+  if (!questionSessionRef.current) questionSessionRef.current = new StoryQuestionEditorSession(Crypto.randomUUID);
   const toolSizeStyle = stage.width > 0 && stage.width < 360 ? styles.toolCompact : undefined;
 
   useEffect(() => {
-    if (!visible || !source) return;
-    setComposition({ version: 1, elements: [] });
+    const initial = questionSessionRef.current!.initialize(visible, source, questionAnswerSeed);
+    if (!initial) return;
+    setComposition(initial.composition);
     setInteractiveDrafts([]);
     setInteractiveSheetDraft(null);
-    setSelectedId(null);
-    setEditingTextId(null);
+    setSelectedId(initial.selectedId);
+    setEditingTextId(initial.selectedId);
     setShowStickerPicker(false);
     setError(false);
-    clientStoryIdRef.current = Crypto.randomUUID();
-  }, [source, visible]);
+    clientStoryIdRef.current = initial.clientStoryId;
+  }, [source, visible, questionAnswerSeed]);
 
   const updateElement = (next: StoryCompositionElement) => {
     setComposition(current => normalizeStoryCompositionVersion({
       version: current.version,
-      elements: current.elements.map(item => item.id === next.id ? next : item),
+      elements: current.elements.map(item => item.id === next.id
+        ? item.type === 'question_answer' && next.type === 'question_answer'
+          ? questionSessionRef.current!.updateCard(item, next) : next
+        : item),
     }));
   };
   const setElements = (elements: StoryCompositionElement[]) => {
@@ -291,6 +302,7 @@ export function StoryEditor({
     setInteractiveSheetDraft(null);
   };
   const removeElement = (element: StoryCompositionElement) => {
+    if (element.id === questionAnswerSeed?.id) { setError(true); return; }
     setElements(composition.elements.filter(item => item.id !== element.id));
     if (element.type === 'interactive') {
       setInteractiveDrafts(current => current.filter(item => item.definition.element_id !== element.element_id));
@@ -321,6 +333,8 @@ export function StoryEditor({
   };
   const submit = async () => {
     if (!source || publishing) return;
+    if (publishingRef.current) return;
+    publishingRef.current = true;
     if (!clientStoryIdRef.current) clientStoryIdRef.current = Crypto.randomUUID();
     const publishableComposition = normalizeStoryCompositionVersion({
       version: composition.version,
@@ -335,11 +349,12 @@ export function StoryEditor({
     setError(false);
     try {
       const publication = buildStoryInteractivePublication(publishableComposition, interactiveDrafts);
-      if (!publication) throw new Error('invalid_story_interactive_publication');
+      if (!publication || !questionSessionRef.current!.validate(publication.composition)) throw new Error('invalid_story_interactive_publication');
       await onPublish(source, publication, clientStoryIdRef.current);
     } catch {
       setError(true);
     } finally {
+      publishingRef.current = false;
       setPublishing(false);
     }
   };
@@ -411,7 +426,7 @@ export function StoryEditor({
                 onSelect={() => setSelectedId(element.id)}
                 onChange={updateElement}
                 onEdit={() => {
-                  if (element.type === 'text') setEditingTextId(element.id);
+                  if (element.type === 'text' || element.type === 'question_answer') setEditingTextId(element.id);
                   if (interactiveDraft) setInteractiveSheetDraft(interactiveDraft);
                 }}
                 onDelete={() => removeElement(element)}
@@ -436,8 +451,22 @@ export function StoryEditor({
           />
         ) : null}
 
+        {editingTextId && selected?.type === 'question_answer' ? (
+          <TextInput autoFocus accessibilityLabel="Tu respuesta" multiline maxLength={1000}
+            value={selected.answer} placeholder="Escribe tu respuesta (máximo 500 caracteres)"
+            onChangeText={answer => updateElement({ ...selected, answer })}
+            onBlur={finishTextEditing} textAlignVertical="top"
+            style={[styles.textInput, { bottom: toolbarHeight + 64 }]} />
+        ) : null}
+
         {selected ? (
           <View style={[styles.layerControls, { bottom: toolbarHeight + 12 }]}>
+            {selected.type === 'question_answer' ? (
+              <Pressable accessibilityRole="button" accessibilityLabel="Editar respuesta"
+                onPress={() => setEditingTextId(selected.id)} style={styles.layerAction}>
+                <Text style={styles.layerActionText}>Respuesta</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Enviar elemento al fondo"
@@ -494,7 +523,9 @@ export function StoryEditor({
           <Pressable disabled={!selected} accessibilityRole="button" accessibilityLabel="Eliminar elemento" style={[styles.tool, toolSizeStyle, !selected && styles.toolDisabled, selected && styles.deleteTool]} onPress={() => selected && removeElement(selected)}><MaterialIcons name="backspace" color="#fff" size={20} /></Pressable>
           <Text pointerEvents="none" style={styles.toolbarHint}>Arrastra · pellizca · gira · edita</Text>
         </View>
-        {error ? <Text style={styles.error}>No se pudo publicar. Tu edición sigue aquí.</Text> : null}
+        {error ? <Text style={styles.error}>{questionAnswerSeed
+          ? 'Conserva la pregunta y escribe una respuesta válida de 1 a 500 caracteres. Tu edición sigue aquí; puedes reintentar.'
+          : 'No se pudo publicar. Tu edición sigue aquí.'}</Text> : null}
         <StoryInteractiveEditorSheet
           visible={interactiveSheetDraft !== null}
           draft={interactiveSheetDraft}
