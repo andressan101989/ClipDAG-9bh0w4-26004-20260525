@@ -102,7 +102,7 @@ export default function FeedScreen() {
     sendGift, ensureVideoLoadedById,
   } = useFeed();
   const {
-    storyGroups, addStory, addSharedStory, addQuestionAnswerStory, getStorySharedContent,
+    storyGroups, addStory, addSharedStory, addQuestionAnswerStory, prepareStoryQuestionAnswer, getStorySharedContent,
     getStoryViewers, deleteStory,
     setStoryReaction, getStoryReactions, replyToStory,
     getInteractiveState, respondToInteractiveElement, getInteractiveResults,
@@ -819,6 +819,7 @@ export default function FeedScreen() {
         onGetReactions={getStoryReactions}
         onReplyToStory={replyToStory}
         onGetInteractiveState={getInteractiveState}
+        onPrepareStoryQuestionAnswer={prepareStoryQuestionAnswer}
         onRespondToInteractiveElement={respondToInteractiveElement}
         onGetInteractiveResults={getInteractiveResults}
         onModerateInteractiveQuestion={moderateInteractiveQuestion}

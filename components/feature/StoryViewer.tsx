@@ -45,6 +45,7 @@ import type {
   StoryInteractiveResultsCursor,
   StoryInteractiveResultsPage,
   StoryInteractiveState,
+  StoryQuestionAnswerPreflight,
 } from '@/contexts/StoriesContext';
 
 const PHOTO_DURATION_MS = 15000;
@@ -70,6 +71,7 @@ interface StoryViewerProps {
   ) => Promise<StoryReactionsPage>;
   onReplyToStory?: (storyId: string, text: string, clientMessageId: string) => Promise<void>;
   onGetInteractiveState?: (storyId: string) => Promise<StoryInteractiveState>;
+  onPrepareStoryQuestionAnswer?: StoryQuestionAnswerPreflight;
   onRespondToInteractiveElement?: (
     storyId: string,
     elementId: string,

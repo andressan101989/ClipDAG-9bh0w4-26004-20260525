@@ -75,7 +75,7 @@ export default function CreatorProfileScreen() {
   const {
     getStoryGroupForUser, getStoryViewers,
     deleteStory, refreshStories, setStoryReaction, getStoryReactions, replyToStory,
-    getStorySharedContent,
+    getStorySharedContent, prepareStoryQuestionAnswer,
     getInteractiveState, respondToInteractiveElement, getInteractiveResults,
     moderateInteractiveQuestion, recordStoryAnalyticsEvent, realtimeRevision,
   } = useStories();
@@ -592,6 +592,7 @@ export default function CreatorProfileScreen() {
         onGetReactions={getStoryReactions}
         onReplyToStory={replyToStory}
         onGetInteractiveState={getInteractiveState}
+        onPrepareStoryQuestionAnswer={prepareStoryQuestionAnswer}
         onRespondToInteractiveElement={respondToInteractiveElement}
         onGetInteractiveResults={getInteractiveResults}
         onModerateInteractiveQuestion={moderateInteractiveQuestion}

@@ -52,10 +52,13 @@ export type StorySharedContent =
       previewUrl: string | null;
     };
 
+/** Optional viewer preflight seam. Issuing handoffs/navigation remains an explicit inbox action. */
+export type StoryQuestionAnswerPreflight = (source: StoryQuestionReplySource) => Promise<PreparedStoryQuestionAnswer>;
+
 interface StoriesContextType {
   storyGroups: StoryGroup[];
   isLoadingStories: boolean;
-  prepareStoryQuestionAnswer: (source: StoryQuestionReplySource) => Promise<PreparedStoryQuestionAnswer>;
+  prepareStoryQuestionAnswer: StoryQuestionAnswerPreflight;
   addQuestionAnswerStory: (input: StoryQuestionAnswerInput) => Promise<string>;
   addStory: (
     mediaAssetId: string,
