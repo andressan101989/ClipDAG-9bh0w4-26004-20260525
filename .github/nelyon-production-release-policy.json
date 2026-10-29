@@ -3701,7 +3701,7 @@
     "from_phase": "stories_v2_safety_c2_publish_first_async_review",
     "to_phase": "stories_v2_qa_c1_question_answer",
     "baseline_sha": "c1c3043b24abe898a4400f858d646a2f788ee201",
-    "reviewed_source_sha": "351be882a7939be86cd9a758a78e8d514e9c5e2f",
+    "reviewed_source_sha": "3b7652e9ae7d9c66ce3f06286f738a724f3a9cd5",
     "integration_base_sha": "10c549ac0dd84d28ccd832264184619ec56ba97f",
     "approved_sha_ancestry": "verified_integration_base",
     "migration_path": "supabase/migrations/20261029042807_stories_v2_qa_c1_question_answer_authority.sql",
@@ -3879,7 +3879,7 @@
           "object": { "schema": "public", "name": "prepare_story_question_answer", "argument_types": ["uuid", "uuid", "uuid"], "identity_arguments": "p_source_story_id uuid, p_source_element_id uuid, p_respondent_id uuid" },
           "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "8c9cf9f018d577e93c82354307bb0d6e8d0503c3a548c8fed66ad216a4d285d3" },
           "authorization": { "functional_reason": "Read-only authenticated preflight revalidates private question ownership and lifecycle server-side.", "controls": ["authenticated_session", "negative_authorization_tests", "owner_binding", "read_only"], "negative_test_evidence_sha256": "5b13d971dcdcba94075d7bf8e7715e98cec2daac9c55e324611f27ec71689f66" },
-          "origin": { "migration": "20261029042807_stories_v2_qa_c1_question_answer_authority", "migration_blob": "b1f025b12f6d4e9fadf178630ee0e46c283bbd1c", "source_sha": "351be882a7939be86cd9a758a78e8d514e9c5e2f" }, "technical_approval": "verified"
+          "origin": { "migration": "20261029042807_stories_v2_qa_c1_question_answer_authority", "migration_blob": "b1f025b12f6d4e9fadf178630ee0e46c283bbd1c", "source_sha": "3b7652e9ae7d9c66ce3f06286f738a724f3a9cd5" }, "technical_approval": "verified"
         },
         {
           "advisor_fingerprint": "2195e746b4232e0a54f1fbb9fdd51dc4d87014ec20c4b8d6a6bd8b05bbc25d39",
@@ -3887,7 +3887,7 @@
           "object": { "schema": "public", "name": "create_story_question_answer_with_media", "argument_types": ["uuid", "uuid", "uuid", "uuid", "jsonb", "uuid", "jsonb"], "identity_arguments": "p_source_story_id uuid, p_source_element_id uuid, p_respondent_id uuid, p_asset_id uuid, p_composition jsonb, p_client_story_id uuid, p_interactive_definitions jsonb" },
           "attestation": { "security_definer": true, "owner": "postgres", "search_path": ["search_path=\"\""], "acl": [{ "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }], "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false }, "definition_sha256": "4d1bfef144382ae5a67a5d1b665a1f64a559d4a45cba93aadd3b8399cf65afbd" },
           "authorization": { "functional_reason": "Atomic authenticated QA publication reuses the canonical media, safety and publish-first authority.", "controls": ["authenticated_session", "atomic_transaction", "negative_authorization_tests", "owner_binding"], "negative_test_evidence_sha256": "5b13d971dcdcba94075d7bf8e7715e98cec2daac9c55e324611f27ec71689f66" },
-          "origin": { "migration": "20261029042807_stories_v2_qa_c1_question_answer_authority", "migration_blob": "b1f025b12f6d4e9fadf178630ee0e46c283bbd1c", "source_sha": "351be882a7939be86cd9a758a78e8d514e9c5e2f" }, "technical_approval": "verified"
+          "origin": { "migration": "20261029042807_stories_v2_qa_c1_question_answer_authority", "migration_blob": "b1f025b12f6d4e9fadf178630ee0e46c283bbd1c", "source_sha": "3b7652e9ae7d9c66ce3f06286f738a724f3a9cd5" }, "technical_approval": "verified"
         },
         {
           "advisor_fingerprint": "3428d19b7577fa13fcae7ea23166d7053b98ce34804fcc5ac6f66d2339c80c64",
@@ -3897,7 +3897,7 @@
             { "grantee": "postgres", "privilege_type": "DELETE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "INSERT", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "MAINTAIN", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "REFERENCES", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "SELECT", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "TRIGGER", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "TRUNCATE", "is_grantable": false }, { "grantee": "postgres", "privilege_type": "UPDATE", "is_grantable": false }
           ] },
           "authorization": { "functional_reason": "Private forced-RLS provenance is owner-only and mediated by bounded server RPCs.", "controls": ["force_rls", "negative_authorization_tests", "owner_only_acl", "private_schema"], "negative_test_evidence_sha256": "5b13d971dcdcba94075d7bf8e7715e98cec2daac9c55e324611f27ec71689f66" },
-          "origin": { "migration": "20261029042807_stories_v2_qa_c1_question_answer_authority", "migration_blob": "b1f025b12f6d4e9fadf178630ee0e46c283bbd1c", "source_sha": "351be882a7939be86cd9a758a78e8d514e9c5e2f" }, "technical_approval": "verified"
+          "origin": { "migration": "20261029042807_stories_v2_qa_c1_question_answer_authority", "migration_blob": "b1f025b12f6d4e9fadf178630ee0e46c283bbd1c", "source_sha": "3b7652e9ae7d9c66ce3f06286f738a724f3a9cd5" }, "technical_approval": "verified"
         }
       ]
     },
