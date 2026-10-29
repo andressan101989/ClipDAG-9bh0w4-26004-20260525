@@ -21,7 +21,7 @@ test('slider uses a normalized value and question text is bounded before server 
   assert.match(layer, /normalizeStorySliderValue/);
   assert.match(layer, /maxLength=\{500\}/);
   assert.match(layer, /value:\s*sliderValue/);
-  assert.match(layer, /text:\s*questionDraft\.trim\(\)/);
+  assert.match(layer, /text:\s*current\.draft\.trim\(\)/);
 });
 
 test('interactive controls own responder gestures and expose accessible labels and states', () => {

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -13,6 +13,8 @@ import { createChatClientMessageId } from '@/services/chatService';
 import { STORY_REACTIONS, type StoryReactionKey } from './storyReactions';
 
 interface StoryInteractionsProps {
+  hidden?: boolean;
+  renderRail?: (content: React.ReactNode) => React.ReactNode;
   username: string;
   selectedReaction: StoryReactionKey | null;
   reactionPending: boolean;
@@ -23,6 +25,8 @@ interface StoryInteractionsProps {
 }
 
 export function StoryInteractions({
+  hidden = false,
+  renderRail,
   username,
   selectedReaction,
   reactionPending,
@@ -37,6 +41,15 @@ export function StoryInteractions({
   const [sent, setSent] = useState(false);
   const sendingRef = useRef(false);
   const replyAttemptRef = useRef<{ text: string; clientMessageId: string } | null>(null);
+  const inputRef = useRef<TextInput>(null);
+  const focusRef = useRef(onFocusChange);
+  focusRef.current = onFocusChange;
+  useEffect(() => {
+    if (hidden) {
+      inputRef.current?.blur();
+      focusRef.current(false);
+    }
+  }, [hidden]);
 
   const submit = async () => {
     const text = draft.trim();
@@ -62,10 +75,12 @@ export function StoryInteractions({
     }
   };
 
-  return (
+  if (hidden) return null;
+  const rail = (
     <View style={styles.root} onStartShouldSetResponder={() => true}>
       <View style={styles.replyRow}>
         <TextInput
+          ref={inputRef}
           accessibilityLabel={`Responder a ${username}`}
           value={draft}
           onChangeText={value => {
@@ -134,6 +149,7 @@ export function StoryInteractions({
       </View>
     </View>
   );
+  return renderRail ? renderRail(rail) : rail;
 }
 
 const styles = StyleSheet.create({
