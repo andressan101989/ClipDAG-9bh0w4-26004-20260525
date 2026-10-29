@@ -324,6 +324,31 @@ test('QA C1 disposable PostgreSQL authority', {skip:!enabled}, async t => {
       run(`begin; delete from public.follows where follower_id='${follower}' and following_id='${owner}';
         select set_config('request.jwt.claim.sub','${owner}',true); ${preflight}; rollback;`);
     });
+    await t.test('stale source fingerprint or scan identity denies preflight and publication without writes',()=>{
+      const r=request(),before=rowState();
+      const staleSource=`update public.stories set story_composition=jsonb_set(story_composition,'{elements,0,x}','0.6'::jsonb) where id='${source}'`;
+      assert.equal(run(`begin;${staleSource};select private.story_current_fingerprint('${source}')<>(select evidence_fingerprint from private.story_safety_state where story_id='${source}');rollback;`).split('\n').at(-1),'t');
+      for(const command of [preflight,r.sql]) {
+        fails(`begin;${staleSource};select set_config('request.jwt.claim.sub','${owner}',true);${command};commit;`);
+        assert.deepEqual(rowState(),before,'stale source fingerprint must not write');
+      }
+
+      const staleScan=`update private.content_safety_scans set content_fingerprint=repeat('f',64)
+        where id=(select scan_id from private.story_safety_state where story_id='${source}')`;
+      assert.equal(run(`begin;${staleScan};select scan.content_fingerprint<>private.content_safety_sha256('story|'||scan.target_id::text||'|'||safety.evidence_fingerprint)
+        from private.content_safety_scans scan join private.story_safety_state safety on safety.scan_id=scan.id where safety.story_id='${source}';rollback;`).split('\n').at(-1),'t');
+      for(const command of [preflight,r.sql]) {
+        fails(`begin;${staleScan};select set_config('request.jwt.claim.sub','${owner}',true);${command};commit;`);
+        assert.deepEqual(rowState(),before,'mismatched source scan identity must not write');
+      }
+
+      const published=query(`begin;select set_config('request.jwt.claim.sub','${owner}',true);
+        select jsonb_build_object('preflight',public.prepare_story_question_answer('${source}','${element}','${follower}'),
+          'story_id',${r.sql.replace(/^select /,'')});set constraints all immediate;rollback;`);
+      assert.deepEqual(published.preflight,{question:'Submitted private question',respondent_id:follower});
+      assert.match(published.story_id,/^[a-f0-9-]{36}$/);
+      assert.deepEqual(rowState(),before,'valid source proof runs inside rollback without persistent writes');
+    });
     await t.test('image and signed Stream publication uses real C2 pending review and sanitized projection',()=>{
       for(const video of [false,true]) {
         const r=request(asset(video));const id=value(owner,r.sql);

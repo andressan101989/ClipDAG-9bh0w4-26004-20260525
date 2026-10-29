@@ -131,6 +131,17 @@ test('Feed waits for auth/focus, preserves occupied editor, consumes once, and e
   assert.equal(session.reply, null);
 });
 
+test('Feed wrong configured actor cannot locally burn a still-bound handoff', () => {
+  const store = createStoryQuestionHandoffStore({ randomUUID });
+  const session = new integration.StoryQuestionFeedSession(store, randomUUID);
+  const token = store.issueStoryReply({ actorId: actor, source, question: card.question, answer: '' }).handoffToken;
+  session.setActor(recipient);
+  assert.equal(session.receive(token, recipient, true, false).status, 'invalid');
+  session.setActor(actor);
+  assert.equal(session.receive(token, actor, true, false).status, 'ready');
+  assert.equal(session.receive(token, actor, true, false).status, 'duplicate');
+});
+
 test('Feed picker cancellation/denial and actor teardown fence late callbacks from new ordinary sessions', () => {
   const { session, issue } = feedHarness();
   const ready = session.receive(issue().handoffToken, actor, true, false);
@@ -162,6 +173,24 @@ test('Chat recipient/actor binding, late authentication, duplicates and pending 
   assert.equal(session.insert('', true), null);
   session.setIdentity(recipient, actor);
   assert.equal(session.pendingText, null);
+});
+
+test('Chat wrong configured identity cannot locally burn a recipient-bound draft', () => {
+  const store = createStoryQuestionHandoffStore({ randomUUID });
+  const session = new integration.StoryQuestionChatDraftSession(store);
+  const wrongActorToken = store.issueChatDraft({ actorId: actor, recipientId: recipient, text: 'Correct actor draft' }).handoffToken;
+  session.setIdentity(recipient, recipient);
+  assert.equal(session.receive(wrongActorToken, recipient, recipient, '', false).status, 'invalid');
+  session.setIdentity(actor, recipient);
+  assert.deepEqual(session.receive(wrongActorToken, actor, recipient, '', false), { status: 'ready', text: 'Correct actor draft' });
+  assert.equal(session.receive(wrongActorToken, actor, recipient, '', false).status, 'duplicate');
+
+  const wrongRecipientToken = store.issueChatDraft({ actorId: actor, recipientId: recipient, text: 'Correct recipient draft' }).handoffToken;
+  session.setIdentity(actor, actor);
+  assert.equal(session.receive(wrongRecipientToken, actor, actor, '', false).status, 'invalid');
+  session.setIdentity(actor, recipient);
+  assert.deepEqual(session.receive(wrongRecipientToken, actor, recipient, '', false), { status: 'ready', text: 'Correct recipient draft' });
+  assert.equal(session.receive(wrongRecipientToken, actor, recipient, '', false).status, 'duplicate');
 });
 
 test('strict preflight parses exact canonical server text and recipient and sends the exact read-only RPC', async () => {

@@ -65,9 +65,9 @@ export class StoryQuestionFeedSession {
     if (actorId !== this.actorId || typeof token !== 'string') return { status: 'invalid' as const };
     if (this.seen.has(token)) return { status: 'duplicate' as const };
     if (occupied || this.reply) return { status: 'occupied' as const };
-    this.seen.add(token);
     const payload = this.store.consumeStoryReply(token, actorId);
     if (!payload) return { status: 'invalid' as const };
+    this.seen.add(token);
     const seed = buildStoryQuestionAnswerSeed({ question: payload.question, answer: payload.answer }, { randomUUID: this.randomUUID });
     if (!seed) return { status: 'invalid' as const };
     this.reply = { ...payload, seed };
@@ -93,9 +93,9 @@ export class StoryQuestionChatDraftSession {
     if (this.seen.has(token)) return { status: 'duplicate' as const };
     // Keep an earlier pending reply until explicit insertion; do not consume/discard a later token.
     if (this.pendingText !== null) return { status: 'occupied' as const };
-    this.seen.add(token);
     const payload = this.store.consumeChatDraft(token, actorId, recipientId);
     if (!payload) return { status: 'invalid' as const };
+    this.seen.add(token);
     if (text.length > 0 || voiceBusy) {
       this.pendingText = payload.text;
       return { status: 'pending' as const };
