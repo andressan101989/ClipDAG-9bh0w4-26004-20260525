@@ -184,6 +184,20 @@ test('a random token collision never replaces or resurrects a previous handoff',
   assert.equal(store.issueChatDraft(chatInput()), null);
 });
 
+test('spent token identity retention is bounded and fails closed instead of recycling old routes', () => {
+  let sequence = 0;
+  const store = makeStore({
+    randomUUID: () => `40000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, '0')}`,
+  });
+  for (let index = 0; index < 4_096; index += 1) {
+    const route = store.issueStoryReply(storyInput());
+    assert.ok(route, `handoff ${index + 1} must fit within the bounded registry`);
+    assert.ok(store.consumeStoryReply(route.handoffToken, actorId));
+  }
+  assert.equal(store.issueStoryReply(storyInput()), null,
+    'capacity exhaustion must fail closed without forgetting any previously issued token identity');
+});
+
 test('public answer seeds contain only fresh card identity, normalized geometry, question, and answer', () => {
   let id = cardId;
   const input = { question: '  Your question?  ', answer: '  My answer.  ' };

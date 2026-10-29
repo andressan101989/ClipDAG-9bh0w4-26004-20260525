@@ -37,6 +37,12 @@ test('canonical StoryEditor initializes one seed, edits answer, rejects blank an
     assert.equal(calls.length, 0);
     const answerInput = () => app.find(node => node.type === 'TextInput' && node.props.accessibilityLabel === 'Tu respuesta');
     assert.ok(answerInput(), 'seed must open answer-only input in canonical editor');
+    assert.equal(answerInput().props.maxLength, undefined,
+      'the controlled editor must enforce the 500-code-point contract instead of a UTF-16 native limit');
+    await app.flush(() => answerInput().props.onChangeText('😀'.repeat(501)));
+    assert.equal([...answerInput().props.value].length, 500,
+      'the visible draft must never exceed the canonical 500-code-point publication limit');
+    await app.flush(() => answerInput().props.onChangeText(''));
     await app.flush(() => app.find(node => node.props?.accessibilityLabel === 'Eliminar elemento').props.onPress());
     assert.ok(answerInput(), 'the required card cannot be removed');
     const publish = () => app.find(node => node.props?.accessibilityLabel === 'Publicar historia').props.onPress();

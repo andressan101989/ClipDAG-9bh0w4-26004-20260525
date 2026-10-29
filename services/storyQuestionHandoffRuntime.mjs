@@ -1,6 +1,8 @@
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_TTL_MS = 5 * 60 * 1000;
+// Never recycle an opaque route in one process; fail closed at the bounded session budget.
+const MAX_ISSUED_TOKENS = 4_096;
 const CARD_KEYS = ['id', 'type', 'x', 'y', 'scale', 'rotation', 'question', 'answer'];
 
 function exactRecord(value, expected) {
@@ -81,7 +83,8 @@ export function createStoryQuestionHandoffStore({ randomUUID, now = Date.now, tt
 
   function issue(actorId, purpose, recipientId, payload) {
     const timestamp = time();
-    if (timestamp === null || !Number.isFinite(timestamp + ttlMs)) return null;
+    if (timestamp === null || !Number.isFinite(timestamp + ttlMs)
+      || issuedTokens.size >= MAX_ISSUED_TOKENS) return null;
     const token = randomUUID();
     if (typeof token !== 'string' || !RANDOM_UUID.test(token)) return null;
     const normalizedToken = token.toLowerCase();
