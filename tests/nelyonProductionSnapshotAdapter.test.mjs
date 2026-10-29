@@ -4242,6 +4242,8 @@ test('Stories QA C1 pins official Splinter provenance, exact findings, and histo
   preQaPolicy.baseline.sha = transition.baseline_sha;
   preQaPolicy.baseline.migration_count = 360;
   preQaPolicy.baseline.latest_migration = '20261027191918_stories_v2_safety_c2_publish_first_async_review';
+  preQaPolicy.baseline.evidence_digests.cron_security =
+    '83fe49cce6d9d0d69232f4afdcc1fab3665fbd5c8bf27aa8d4f626fd37b7dbf9';
   const withoutQaPolicy = structuredClone(preQaPolicy);
   delete withoutQaPolicy.stories_qa_c1_transition;
   const emptyInventory = {
@@ -4361,7 +4363,13 @@ test('baseline phase-effective exceptions replace both historical F2 predecessor
 
 test('current successor RPC attestations require exact definition ACL owner and search_path', async () => {
   const adapter = await loadAdapter();
-  const exceptions = adapter.advisorExceptionsForPhase(installedPolicy, null, 'post');
+  const items = [{
+    version: '20261029042807', name: 'stories_v2_qa_c1_question_answer_authority',
+  }];
+  const migrations = {
+    complete: true, count: items.length, items, latest: items.at(-1), sha256: sha256(canonicalJson(items)),
+  };
+  const exceptions = adapter.advisorExceptionsForPhase(installedPolicy, null, 'post', { migrations });
   const evidence = {};
   bindRpcSecurityEvidence(evidence, exceptions);
   assert.equal(adapter.validateRpcSecurityAttestations(evidence.rpc_security, exceptions), true);
