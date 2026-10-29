@@ -1,15 +1,22 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
   LayoutChangeEvent,
+  Modal,
   PanResponder,
+  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { randomUUID } from 'expo-crypto';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { StoryQuestionReplySource } from '@/services/storyQuestionHandoff';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
 import type { StoryComposition, StoryInteractivePlacement } from './storyInteractiveTypes';
 import {
@@ -35,6 +42,8 @@ import type {
 } from '@/services/storyInteractiveClient';
 
 interface StoryInteractiveLayerProps {
+  actorId?: string;
+  visible?: boolean;
   storyId: string;
   composition: StoryComposition;
   width: number;
@@ -43,6 +52,8 @@ interface StoryInteractiveLayerProps {
   isOwner: boolean;
   revision: number;
   onInteractionFocus: (focused: boolean) => void;
+  onQuestionComposerActiveChange?: (active: boolean) => void;
+  onQuestionReply?: (kind: 'story' | 'chat', source: StoryQuestionReplySource, isCurrent: () => boolean, dismissResults: () => Promise<boolean>) => Promise<void>;
   onLoadState: (storyId: string) => Promise<StoryInteractiveState>;
   onRespond: (
     storyId: string,
@@ -73,6 +84,7 @@ interface InteractiveCardProps {
   onInteractionFocus: (focused: boolean) => void;
   onSubmit: (elementId: string, payload: StoryInteractivePayload) => Promise<void>;
   onOpenResults: (element: StoryInteractiveElementState) => void;
+  onOpenQuestion: (elementId: string) => void;
 }
 
 function SliderControl({
@@ -172,9 +184,9 @@ function InteractiveCard({
   onInteractionFocus,
   onSubmit,
   onOpenResults,
+  onOpenQuestion,
 }: InteractiveCardProps) {
   const { definition } = elementState;
-  const [questionDraft, setQuestionDraft] = useState('');
   const [sliderValue, setSliderValue] = useState(() => {
     const payload = elementState.response?.payload;
     const value = payload && 'value' in payload ? payload.value : undefined;
@@ -195,13 +207,12 @@ function InteractiveCard({
     setFailed(false);
     try {
       await onSubmit(elementState.elementId, payload);
-      if (definition.type === 'question') setQuestionDraft('');
     } catch {
       setFailed(true);
     } finally {
       setPending(false);
     }
-  }, [definition.type, elementState.elementId, isOwner, onSubmit, pending]);
+  }, [elementState.elementId, isOwner, onSubmit, pending]);
 
   const optionPercent = (optionId: string) => {
     const count = aggregate?.options?.[optionId] ?? 0;
@@ -264,30 +275,17 @@ function InteractiveCard({
             <Text style={styles.resultsText}>Ver respuestas privadas</Text>
           </Pressable>
         ) : (
-          <View style={styles.questionRow}>
-            <TextInput
-              accessibilityLabel="Tu respuesta privada"
-              value={questionDraft}
-              onChangeText={setQuestionDraft}
-              onFocus={() => onInteractionFocus(true)}
-              onBlur={() => onInteractionFocus(false)}
-              editable={!pending && !elementState.response}
-              maxLength={500}
-              placeholder={elementState.response ? 'Respuesta enviada' : 'Escribe tu respuesta…'}
-              placeholderTextColor="#787486"
-              style={styles.questionInput}
-            />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Enviar respuesta privada"
-              accessibilityState={{ disabled: pending || !questionDraft.trim() || Boolean(elementState.response) }}
-              disabled={pending || !questionDraft.trim() || Boolean(elementState.response)}
-              onPress={() => void submit({ text: questionDraft.trim() })}
-              style={styles.send}
-            >
-              <Text style={styles.sendText}>Enviar</Text>
-            </Pressable>
-          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Responder pregunta"
+            accessibilityHint="Abre el formulario de respuesta privada"
+            accessibilityState={{ disabled: Boolean(elementState.response) }}
+            disabled={Boolean(elementState.response)}
+            onPress={() => onOpenQuestion(elementState.elementId)}
+            style={styles.resultsButton}
+          >
+            <Text style={styles.resultsText}>{elementState.response ? 'Respuesta enviada' : 'Escribe tu respuesta…'}</Text>
+          </Pressable>
         )
       ) : definition.type === 'reaction' ? (
         <Pressable
@@ -322,6 +320,7 @@ function PositionedInteractiveCard({
   onInteractionFocus,
   onSubmit,
   onOpenResults,
+  onOpenQuestion,
 }: {
   placement: StoryInteractivePlacement;
   stage: StoryStageFrame;
@@ -331,6 +330,7 @@ function PositionedInteractiveCard({
   onInteractionFocus: (focused: boolean) => void;
   onSubmit: (elementId: string, payload: StoryInteractivePayload) => Promise<void>;
   onOpenResults: (element: StoryInteractiveElementState) => void;
+  onOpenQuestion: (elementId: string) => void;
 }) {
   const [measuredFrame, setMeasuredFrame] = useState(INTERACTIVE_CARD_FALLBACK);
   const fitted = useMemo(
@@ -368,12 +368,15 @@ function PositionedInteractiveCard({
         onInteractionFocus={onInteractionFocus}
         onSubmit={onSubmit}
         onOpenResults={onOpenResults}
+        onOpenQuestion={onOpenQuestion}
       />
     </View>
   );
 }
 
 export function StoryInteractiveLayer({
+  actorId,
+  visible = true,
   storyId,
   composition,
   width,
@@ -382,11 +385,14 @@ export function StoryInteractiveLayer({
   isOwner,
   revision,
   onInteractionFocus,
+  onQuestionComposerActiveChange,
+  onQuestionReply,
   onLoadState,
   onRespond,
   onLoadResults,
   onModerateQuestion,
 }: StoryInteractiveLayerProps) {
+  const deviceInsets = useSafeAreaInsets();
   const placements = useMemo(() => {
     const elements: StoryComposition['elements'][number][] = composition.elements;
     return elements.filter(
@@ -395,56 +401,147 @@ export function StoryInteractiveLayer({
   }, [composition]);
   const stage = useMemo<StoryStageFrame>(() => ({ width, height, safeInsets }), [height, safeInsets, width]);
   const [state, setState] = useState<StoryInteractiveState | null>(null);
-  const [resultsElement, setResultsElement] = useState<StoryInteractiveElementState | null>(null);
+  const [resultsElementId, setResultsElementId] = useState<string | null>(null);
+  const [composer, setComposer] = useState<{ elementId: string; draft: string; pending: boolean; failed: boolean } | null>(null);
+  const composerRef = useRef(composer);
+  const inputRef = useRef<TextInput>(null);
+  const composerSessionRef = useRef(0);
+  const lifecycleRef = useRef(0);
   const generationRef = useRef(0);
-  const responseAttemptsRef = useRef(new Map<string, string>());
+  const responseAttemptsRef = useRef(new Map<string, { idempotencyKey: string }>());
+  const callbacksRef = useRef({ onLoadState, onRespond, onInteractionFocus, onQuestionComposerActiveChange });
+  callbacksRef.current = { onLoadState, onRespond, onInteractionFocus, onQuestionComposerActiveChange };
+  const authorityRef = useRef({ visible, actorId, storyId, isOwner, placements, state });
+  authorityRef.current = { visible, actorId, storyId, isOwner, placements, state };
+  const dismissalRef = useRef<((dismissed: boolean) => void) | null>(null);
+  const resultsDismissingRef = useRef(false);
+  const [refreshFailed, setRefreshFailed] = useState(false);
+
+  const retireComposer = useCallback(() => {
+    composerSessionRef.current += 1;
+    if (composerRef.current) Keyboard.dismiss();
+    composerRef.current = null;
+    setComposer(null);
+    callbacksRef.current.onQuestionComposerActiveChange?.(false);
+  }, []);
 
   const load = useCallback(async () => {
-    if (placements.length === 0) return;
+    if (!authorityRef.current.visible || authorityRef.current.placements.length === 0) return;
     const generation = ++generationRef.current;
     try {
-      const next = await onLoadState(storyId);
-      if (generationRef.current === generation && next.storyId === storyId) setState(next);
+      const next = await callbacksRef.current.onLoadState(storyId);
+      if (generationRef.current === generation && next.storyId === storyId) {
+        setState(next);
+        setRefreshFailed(false);
+      }
     } catch {
-      if (generationRef.current === generation) setState(null);
+      if (generationRef.current === generation) setRefreshFailed(true);
     }
-  }, [onLoadState, placements.length, storyId]);
+  }, [storyId]);
 
   useEffect(() => {
+    lifecycleRef.current += 1;
+    generationRef.current += 1;
     setState(null);
-    setResultsElement(null);
+    setResultsElementId(null);
+    resultsDismissingRef.current = false;
+    retireComposer();
     responseAttemptsRef.current.clear();
-    void load();
     return () => {
+      lifecycleRef.current += 1;
       generationRef.current += 1;
-      onInteractionFocus(false);
+      retireComposer();
+      dismissalRef.current?.(false);
+      dismissalRef.current = null;
+      callbacksRef.current.onInteractionFocus(false);
     };
-  }, [load, onInteractionFocus, revision, storyId]);
+  }, [actorId, isOwner, retireComposer, storyId, visible]);
+
+  useEffect(() => { void load(); }, [actorId, isOwner, load, revision, visible]);
 
   const stateById = useMemo(() => new Map(
     (state?.elements ?? []).map(element => [element.elementId, element]),
   ), [state]);
+  const resultsElement = resultsElementId ? stateById.get(resultsElementId) ?? null : null;
+  const activeElement = composer ? stateById.get(composer.elementId) : null;
+  useEffect(() => {
+    const placed = (id: string) => placements.some(item => item.element_id === id);
+    const active = composerRef.current;
+    if (active && (!visible || isOwner || !placed(active.elementId)
+      || (state && (!stateById.get(active.elementId) || stateById.get(active.elementId)?.definition.type !== 'question' || stateById.get(active.elementId)?.response)))) retireComposer();
+    if (resultsElementId && (!visible || !isOwner || !placed(resultsElementId) || (state && !stateById.has(resultsElementId)))) {
+      setResultsElementId(null);
+      callbacksRef.current.onInteractionFocus(false);
+    }
+  }, [isOwner, placements, resultsElementId, retireComposer, state, stateById, visible]);
 
   const respond = useCallback(async (elementId: string, payload: StoryInteractivePayload) => {
     const identity = storyInteractionPayloadKey(storyId, elementId, payload);
-    const idempotencyKey = responseAttemptsRef.current.get(identity) ?? randomUUID();
-    responseAttemptsRef.current.set(identity, idempotencyKey);
-    await onRespond(storyId, elementId, idempotencyKey, payload);
-    responseAttemptsRef.current.delete(identity);
-    await load();
-  }, [load, onRespond, storyId]);
+    const lifecycle = lifecycleRef.current;
+    const attempt = { idempotencyKey: responseAttemptsRef.current.get(identity)?.idempotencyKey ?? randomUUID() };
+    responseAttemptsRef.current.set(identity, attempt);
+    await callbacksRef.current.onRespond(storyId, elementId, attempt.idempotencyKey, payload);
+    if (lifecycle !== lifecycleRef.current) return;
+    if (responseAttemptsRef.current.get(identity) === attempt) responseAttemptsRef.current.delete(identity);
+    void load();
+  }, [load, storyId]);
+
+  const openQuestion = useCallback((elementId: string) => {
+    const current = authorityRef.current;
+    const element = current.state?.elements.find(item => item.elementId === elementId);
+    if (composerRef.current || resultsElementId || !current.visible || current.isOwner
+      || !element || element.definition.type !== 'question' || element.response
+      || !current.placements.some(item => item.element_id === elementId)) return;
+    Keyboard.dismiss();
+    composerSessionRef.current += 1;
+    const next = { elementId, draft: '', pending: false, failed: false };
+    composerRef.current = next;
+    callbacksRef.current.onQuestionComposerActiveChange?.(true);
+    setComposer(next);
+  }, [resultsElementId]);
+
+  const submitQuestion = useCallback(async () => {
+    const current = composerRef.current;
+    if (!current || current.pending || !current.draft.trim()) return;
+    const session = composerSessionRef.current;
+    const next = { ...current, pending: true, failed: false };
+    composerRef.current = next;
+    setComposer(next);
+    try {
+      await respond(current.elementId, { text: current.draft.trim() });
+      if (session === composerSessionRef.current) retireComposer();
+    } catch {
+      if (session === composerSessionRef.current) {
+        const failed = { ...next, pending: false, failed: true };
+        composerRef.current = failed;
+        setComposer(failed);
+      }
+    }
+  }, [respond, retireComposer]);
 
   const openResults = useCallback((element: StoryInteractiveElementState) => {
+    if (!authorityRef.current.visible || !authorityRef.current.isOwner || composerRef.current || resultsDismissingRef.current) return;
     onInteractionFocus(true);
-    setResultsElement(element);
+    setResultsElementId(element.elementId);
   }, [onInteractionFocus]);
 
   const closeResults = useCallback(() => {
-    setResultsElement(null);
+    setResultsElementId(null);
     onInteractionFocus(false);
   }, [onInteractionFocus]);
+  const dismissResults = useCallback(() => new Promise<boolean>(resolve => {
+    if (resultsDismissingRef.current) { resolve(false); return; }
+    resultsDismissingRef.current = true;
+    dismissalRef.current = resolve;
+    closeResults();
+  }), [closeResults]);
+  const finishResultsDismissal = useCallback(() => {
+    const resolve = dismissalRef.current;
+    dismissalRef.current = null;
+    resolve?.(true);
+  }, []);
 
-  if (placements.length === 0) return null;
+  if (!visible || placements.length === 0) return null;
   return (
     <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, styles.layer]}>
       {placements.map(placement => {
@@ -461,9 +558,33 @@ export function StoryInteractiveLayer({
             onInteractionFocus={onInteractionFocus}
             onSubmit={respond}
             onOpenResults={openResults}
+            onOpenQuestion={openQuestion}
           />
         );
       })}
+      {refreshFailed ? <Text accessibilityRole="alert" style={styles.error}>No se pudo actualizar. Inténtalo de nuevo.</Text> : null}
+      {composer ? (
+        <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={retireComposer} onShow={() => inputRef.current?.focus()}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.composerRoot}>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.composerContent, { paddingTop: deviceInsets.top + 16, paddingBottom: deviceInsets.bottom + 16, paddingLeft: deviceInsets.left + 16, paddingRight: deviceInsets.right + 16 }]}>
+              <Text accessibilityRole="header" style={styles.prompt}>{activeElement?.definition.prompt ?? ''}</Text>
+              <TextInput ref={inputRef} accessibilityLabel="Tu respuesta privada" accessibilityHint="Solo el creador puede ver tu respuesta" autoFocus multiline maxLength={500} value={composer.draft} editable={!composer.pending}
+                onChangeText={draft => {
+                  const current = composerRef.current;
+                  if (!current || current.pending) return;
+                  const next = { ...current, draft, failed: false };
+                  composerRef.current = next;
+                  setComposer(next);
+                }} style={[styles.questionInput, styles.composerInput]} />
+              {composer.failed ? <Text accessibilityRole="alert" style={styles.error}>No se pudo guardar. Inténtalo de nuevo.</Text> : null}
+              <Pressable accessibilityRole="button" accessibilityLabel="Cancelar respuesta privada" onPress={retireComposer} style={styles.send}><Text style={styles.sendText}>Cancelar</Text></Pressable>
+              <Pressable accessibilityRole="button" accessibilityLabel="Enviar respuesta privada" accessibilityState={{ disabled: composer.pending || !composer.draft.trim(), busy: composer.pending }} disabled={composer.pending || !composer.draft.trim()} onPress={() => void submitQuestion()} style={styles.send}>
+                {composer.pending ? <ActivityIndicator color="#fff" /> : <Text style={styles.sendText}>Enviar</Text>}
+              </Pressable>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </Modal>
+      ) : null}
       <StoryInteractiveResultsSheet
         visible={Boolean(resultsElement)}
         storyId={storyId}
@@ -472,6 +593,8 @@ export function StoryInteractiveLayer({
         onClose={closeResults}
         onLoad={onLoadResults}
         onModerate={onModerateQuestion}
+        onDismiss={finishResultsDismissal}
+        onReply={onQuestionReply ? (kind, source, isCurrent) => onQuestionReply(kind, source, isCurrent, dismissResults) : undefined}
       />
     </View>
   );
@@ -479,6 +602,9 @@ export function StoryInteractiveLayer({
 
 const styles = StyleSheet.create({
   layer: { zIndex: 9 },
+  composerRoot: { flex: 1, backgroundColor: '#fff' },
+  composerContent: { flexGrow: 1, gap: 16 },
+  composerInput: { minHeight: 120, textAlignVertical: 'top' },
   positioned: { position: 'absolute', width: 260, minHeight: 104 },
   card: { width: 260, minHeight: 104, padding: Spacing.sm, borderRadius: Radius.xl, backgroundColor: 'rgba(255,255,255,0.97)', gap: 7, shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
   prompt: { color: '#111119', textAlign: 'center', fontWeight: FontWeight.bold, fontSize: 15, lineHeight: 19 },

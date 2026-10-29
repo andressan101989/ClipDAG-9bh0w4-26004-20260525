@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet, useWindowDimensions,
-  ActivityIndicator, Animated, PanResponder,
+  ActivityIndicator, Animated, PanResponder, Platform,
 } from 'react-native';
 import { Image } from '@/components/ui/SafeImage';
 import { randomUUID } from 'expo-crypto';
@@ -21,6 +21,8 @@ import { StoryViewersSheet } from './StoryViewersSheet';
 import { StoryInteractions } from './StoryInteractions';
 import { StoryCompositionOverlay } from './storyComposition';
 import { StoryInteractiveLayer } from './StoryInteractiveLayer';
+import { getStoryQuestionComposerState } from './storyQuestionComposerRuntime.mjs';
+import { useStoryQuestionInbox } from './useStoryQuestionInbox';
 import { createStoryStageSafeInsets } from './storyStageGeometry';
 import {
   resolveStoryAnchor,
@@ -191,6 +193,7 @@ export function StoryViewer({
   onGetReactions,
   onReplyToStory,
   onGetInteractiveState,
+  onPrepareStoryQuestionAnswer,
   onRespondToInteractiveElement,
   onGetInteractiveResults,
   onModerateInteractiveQuestion,
@@ -221,6 +224,9 @@ export function StoryViewer({
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState(false);
   const [interactionFocused, setInteractionFocused] = useState(false);
+  const [questionComposerActive, setQuestionComposerActive] = useState(false);
+  const questionComposerActiveRef = useRef(false);
+  const questionComposerState = getStoryQuestionComposerState(questionComposerActive);
   const [reactionPending, setReactionPending] = useState(false);
   const [reactions, setReactions] = useState<StoryReactionRecord[]>([]);
   const [reactionCount, setReactionCount] = useState(0);
@@ -271,6 +277,7 @@ export function StoryViewer({
     || deleteConfirmVisible
     || deletePending
     || interactionFocused
+    || questionComposerState.pausePlayback
     || reactionPending
     || !mediaReady;
 
@@ -387,6 +394,21 @@ export function StoryViewer({
     progressAnim.setValue(0);
   }, [progressAnim, stopPhotoProgress]);
 
+  const handleQuestionComposerActiveChange = useCallback((active: boolean) => {
+    questionComposerActiveRef.current = active;
+    if (active) {
+      stopPhotoProgress();
+      translateY.stopAnimation();
+      translateY.setValue(0);
+    }
+    setQuestionComposerActive(active);
+  }, [stopPhotoProgress, translateY]);
+
+  useLayoutEffect(() => {
+    questionComposerActiveRef.current = false;
+    setQuestionComposerActive(false);
+  }, [currentUserId, resolvedStoryId, visible]);
+
   const clearAnalyticsRetryTimers = useCallback(() => {
     for (const timer of analyticsRetryTimersRef.current.values()) clearTimeout(timer);
     analyticsRetryTimersRef.current.clear();
@@ -430,6 +452,7 @@ export function StoryViewer({
   const recordStoryEvent = recordViewerEvent;
 
   const closeViewer = useCallback(() => {
+    if (getStoryQuestionComposerState(questionComposerActiveRef.current).blockViewerGestures) return;
     if (transitionLock.current) return;
     transitionLock.current = true;
     stopPhotoProgress();
@@ -439,11 +462,30 @@ export function StoryViewer({
     onClose();
   }, [clearAnalyticsRetryTimers, onClose, recordViewerEvent, stopPhotoProgress]);
 
+  const exitForQuestionReply = useCallback(() => {
+    stopPhotoProgress();
+    recordViewerEvent('exit', currentStoryIdRef.current, 'question-reply');
+    analyticsActiveRef.current = false;
+    clearAnalyticsRetryTimers();
+  }, [clearAnalyticsRetryTimers, recordViewerEvent, stopPhotoProgress]);
+  const questionInbox = useStoryQuestionInbox({
+    visible, actorId: currentUserId, storyId: resolvedStoryId, isOwner: isOwnStory,
+    prepare: onPrepareStoryQuestionAnswer, transitionLock, onExit: exitForQuestionReply,
+    onClose, navigate: route => router.push(route as never),
+  });
+  const { closing: questionInboxClosing, onDismiss: onQuestionInboxDismiss } = questionInbox;
+  useEffect(() => {
+    // Android's Modal has no onDismiss event; use a non-animated removal there.
+    // iOS and react-native-web report their real presentation/animation completion.
+    if (questionInboxClosing && Platform.OS === 'android') onQuestionInboxDismiss();
+  }, [questionInboxClosing, onQuestionInboxDismiss]);
+
   const goNext = useCallback((
     sourceStoryId?: string,
     sourceGeneration?: number,
     reason: 'completion' | 'forward' = 'forward',
   ) => {
+    if (getStoryQuestionComposerState(questionComposerActiveRef.current).blockViewerGestures) return;
     if (sourceStoryId && sourceStoryId !== currentStoryIdRef.current) return;
     if (sourceGeneration !== undefined && sourceGeneration !== playbackGeneration.current) return;
     if (transitionLock.current) return;
@@ -472,6 +514,7 @@ export function StoryViewer({
   }, [resetProgress]);
 
   const goPrev = useCallback(() => {
+    if (getStoryQuestionComposerState(questionComposerActiveRef.current).blockViewerGestures) return;
     if (transitionLock.current) return;
     const activeStoryId = currentStoryIdRef.current;
     if (!activeStoryId) return;
@@ -627,6 +670,7 @@ export function StoryViewer({
   }, []);
 
   const handleLongPress = useCallback(() => {
+    if (getStoryQuestionComposerState(questionComposerActiveRef.current).blockViewerGestures) return;
     holdTriggered.current = true;
     setManualHold(true);
   }, []);
@@ -637,7 +681,7 @@ export function StoryViewer({
 
   const handleZonePress = useCallback((direction: 'prev' | 'next') => {
     if (!shouldNavigateStory({
-      interactionFocused: interactionFocusedRef.current,
+      interactionFocused: interactionFocusedRef.current || getStoryQuestionComposerState(questionComposerActiveRef.current).blockViewerGestures,
       holdTriggered: holdTriggered.current,
     })) {
       holdTriggered.current = false;
@@ -650,20 +694,32 @@ export function StoryViewer({
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, g) => !interactionFocusedRef.current
+        && !getStoryQuestionComposerState(questionComposerActiveRef.current).blockViewerGestures
         && Math.abs(g.dy) > 10
         && Math.abs(g.dy) > Math.abs(g.dx),
-      onPanResponderMove: (_, g) => { if (g.dy > 0) translateY.setValue(g.dy); },
+      onPanResponderMove: (_, g) => {
+        if (interactionFocusedRef.current || getStoryQuestionComposerState(questionComposerActiveRef.current).blockViewerGestures) { translateY.setValue(0); return; }
+        if (g.dy > 0) translateY.setValue(g.dy);
+      },
       onPanResponderRelease: (_, g) => {
+        if (interactionFocusedRef.current || getStoryQuestionComposerState(questionComposerActiveRef.current).blockViewerGestures) {
+          translateY.setValue(0);
+          return;
+        }
         if (g.dy > 100) {
           Animated.timing(translateY, {
             toValue: viewportHeightRef.current,
             duration: 200,
             useNativeDriver: true,
-          }).start(closeViewer);
+          }).start(({ finished }) => {
+            if (finished && !getStoryQuestionComposerState(questionComposerActiveRef.current).blockViewerGestures) closeViewer();
+            else translateY.setValue(0);
+          });
         } else {
           Animated.spring(translateY, { toValue: 0, useNativeDriver: true }).start();
         }
       },
+      onPanResponderTerminate: () => translateY.setValue(0),
     })
   ).current;
 
@@ -671,11 +727,12 @@ export function StoryViewer({
 
   return (
     <Modal
-      visible={visible}
-      animationType="slide"
+      visible={visible && !questionInbox.closing}
+      animationType={Platform.OS === 'android' ? 'none' : 'slide'}
       transparent={false}
       presentationStyle="fullScreen"
       onRequestClose={closeViewer}
+      onDismiss={questionInbox.onDismiss}
     >
       <Animated.View
         style={[styles.container, { transform: [{ translateY }] }]}
@@ -722,6 +779,8 @@ export function StoryViewer({
             <StoryInteractiveLayer
               key={currentStory.id}
               storyId={currentStory.id}
+              actorId={currentUserId}
+              visible={visible && !questionInbox.closing}
               composition={currentStory.composition}
               width={viewportWidth}
               height={viewportHeight}
@@ -729,6 +788,8 @@ export function StoryViewer({
               isOwner={isOwnStory}
               revision={interactiveRevision}
               onInteractionFocus={handleInteractionFocus}
+              onQuestionComposerActiveChange={handleQuestionComposerActiveChange}
+              onQuestionReply={questionInbox.reply}
               onLoadState={onGetInteractiveState}
               onRespond={onRespondToInteractiveElement}
               onLoadResults={onGetInteractiveResults}
@@ -781,7 +842,7 @@ export function StoryViewer({
           </Pressable>
         </View>
 
-        <View style={styles.tapZones} pointerEvents={deleteConfirmVisible || viewersVisible || interactionFocused ? 'none' : 'box-none'}>
+        <View style={styles.tapZones} pointerEvents={deleteConfirmVisible || viewersVisible || interactionFocused || questionComposerState.blockViewerGestures ? 'none' : 'box-none'}>
           <Pressable
             style={styles.tapLeft}
             delayLongPress={HOLD_DELAY_MS}
@@ -801,9 +862,10 @@ export function StoryViewer({
         </View>
 
         {!isAdvertisingStory && !isOwnStory && onSetReaction && onReplyToStory ? (
-          <View style={[styles.interactionsContainer, { paddingBottom: Math.max(insets.bottom, Spacing.sm) }]}>
             <StoryInteractions
-              key={currentStory.id}
+              key={`reply-${currentStory.id}`}
+              hidden={questionComposerState.hideReplyRail}
+              renderRail={content => <View style={[styles.interactionsContainer, { paddingBottom: Math.max(insets.bottom, Spacing.sm) }]}>{content}</View>}
               username={storyGroup.username}
               selectedReaction={currentStory.viewerReaction ?? null}
               reactionPending={reactionPending}
@@ -812,7 +874,6 @@ export function StoryViewer({
               onReply={sendReply}
               onFocusChange={handleInteractionFocus}
             />
-          </View>
         ) : null}
 
         {isOwnStory ? <View style={[styles.bottomRow, { paddingBottom: insets.bottom + Spacing.md }]}>

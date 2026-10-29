@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -11,6 +12,7 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
+import type { StoryQuestionReplySource } from '@/services/storyQuestionHandoff';
 import type {
   StoryInteractiveElementState,
   StoryInteractiveResultResponse,
@@ -24,6 +26,8 @@ interface StoryInteractiveResultsSheetProps {
   element: StoryInteractiveElementState | null;
   revision: number;
   onClose: () => void;
+  onDismiss?: () => void;
+  onReply?: (kind: 'story' | 'chat', source: StoryQuestionReplySource, isCurrent: () => boolean) => Promise<void>;
   onLoad: (
     storyId: string,
     elementId: string,
@@ -44,6 +48,8 @@ export function StoryInteractiveResultsSheet({
   element,
   revision,
   onClose,
+  onDismiss,
+  onReply,
   onLoad,
   onModerate,
 }: StoryInteractiveResultsSheetProps) {
@@ -53,23 +59,44 @@ export function StoryInteractiveResultsSheet({
   const [loadingMore, setLoadingMore] = useState(false);
   const [failed, setFailed] = useState(false);
   const generationRef = useRef(0);
+  const sessionRef = useRef(0);
+  const rowsRef = useRef(responses);
+  const currentRef = useRef({ visible, storyId, elementId: element?.elementId, question: element?.definition.type === 'question' });
+  currentRef.current = { visible, storyId, elementId: element?.elementId, question: element?.definition.type === 'question' };
+  const callbacksRef = useRef({ onLoad, onModerate, onReply, onDismiss });
+  callbacksRef.current = { onLoad, onModerate, onReply, onDismiss };
+  const locksRef = useRef(new Set<string>());
+  const mutationsRef = useRef(new Map<string, 'hidden' | 'blocked'>());
+  const loadedPagesRef = useRef(1);
+  const [rowBusy, setRowBusy] = useState<Set<string>>(new Set());
+  const [rowErrors, setRowErrors] = useState<Record<string, boolean>>({});
+  const elementId = element?.elementId;
+  const wasVisibleRef = useRef(false);
 
   const load = useCallback(async (cursor?: StoryInteractiveResultsCursor, append = false) => {
-    if (!element) return;
+    if (!elementId || !currentRef.current.visible) return;
     const generation = ++generationRef.current;
     if (append) setLoadingMore(true);
     else setLoading(true);
     setFailed(false);
     try {
-      const next = await onLoad(storyId, element.elementId, cursor, 50);
+      let next = await callbacksRef.current.onLoad(storyId, elementId, cursor, 50);
+      const incoming = [...next.responses];
+      // Refresh the loaded cursor chain, keeping current rows visible until it is complete.
+      let fetched = 1;
+      while (!append && fetched < loadedPagesRef.current && next.hasMore && next.nextCursor) {
+        if (generationRef.current !== generation) return;
+        next = await callbacksRef.current.onLoad(storyId, elementId, next.nextCursor, 50);
+        incoming.push(...next.responses);
+        fetched += 1;
+      }
       if (generationRef.current !== generation) return;
       setPage(next);
-      setResponses(previous => {
-        if (!append) return next.responses;
-        const merged = new Map(previous.map(item => [item.respondentId, item]));
-        for (const item of next.responses) merged.set(item.respondentId, item);
-        return Array.from(merged.values());
-      });
+      loadedPagesRef.current = append ? loadedPagesRef.current + 1 : fetched;
+      const merged = new Map((append ? rowsRef.current : []).map(item => [item.respondentId, item]));
+      for (const item of incoming) merged.set(item.respondentId, { ...item, moderationState: mutationsRef.current.get(item.respondentId) ?? item.moderationState });
+      rowsRef.current = Array.from(merged.values());
+      setResponses(rowsRef.current);
     } catch {
       if (generationRef.current === generation) setFailed(true);
     } finally {
@@ -78,33 +105,61 @@ export function StoryInteractiveResultsSheet({
         setLoadingMore(false);
       }
     }
-  }, [element, onLoad, storyId]);
+  }, [elementId, storyId]);
 
   useEffect(() => {
+    sessionRef.current += 1;
     generationRef.current += 1;
+    rowsRef.current = [];
+    locksRef.current.clear();
+    mutationsRef.current.clear();
+    loadedPagesRef.current = 1;
+    setRowBusy(new Set());
+    setRowErrors({});
     setResponses([]);
     setPage(null);
     setFailed(false);
-    if (visible && element) void load();
-  }, [element, load, revision, visible]);
+    return () => { sessionRef.current += 1; generationRef.current += 1; };
+  }, [elementId, storyId, visible]);
+  useEffect(() => { if (visible && elementId) void load(); }, [elementId, load, revision, visible]);
+  useEffect(() => {
+    if (wasVisibleRef.current && !visible && Platform.OS === 'android') callbacksRef.current.onDismiss?.();
+    wasVisibleRef.current = visible;
+  }, [visible]);
 
-  const hide = useCallback(async (response: StoryInteractiveResultResponse) => {
-    if (!element || response.moderationState === 'blocked') return;
+  const act = useCallback(async (response: StoryInteractiveResultResponse, kind: 'hide' | 'story' | 'chat', renderedStoryId: string, renderedElementId: string | undefined, renderedSession: number) => {
+    const identity = currentRef.current;
+    const session = sessionRef.current;
+    const isCurrent = () => sessionRef.current === session && currentRef.current.visible
+      && currentRef.current.storyId === identity.storyId && currentRef.current.elementId === identity.elementId
+      && currentRef.current.question && rowsRef.current.some(item => item.respondentId === response.respondentId && item.moderationState === 'pending');
+    if (!identity.elementId || identity.storyId !== renderedStoryId || identity.elementId !== renderedElementId
+      || session !== renderedSession || !isCurrent() || locksRef.current.has(response.respondentId)) return;
+    locksRef.current.add(response.respondentId);
+    setRowBusy(new Set(locksRef.current));
+    setRowErrors(current => ({ ...current, [response.respondentId]: false }));
     try {
-      const moderationState = await onModerate(
-        storyId,
-        element.elementId,
-        response.respondentId,
-        'hide',
-      );
-      setResponses(current => current.map(item => item.respondentId === response.respondentId
-        ? { ...item, moderationState }
-        : item));
+      if (kind === 'hide') {
+        const moderationState = await callbacksRef.current.onModerate(identity.storyId, identity.elementId, response.respondentId, 'hide');
+        if (session !== sessionRef.current) return;
+        mutationsRef.current.set(response.respondentId, moderationState);
+        rowsRef.current = rowsRef.current.map(item => item.respondentId === response.respondentId ? { ...item, moderationState } : item);
+        setResponses(rowsRef.current);
+      } else {
+        if (!callbacksRef.current.onReply) throw new Error('STORY_QUESTION_REPLY_UNAVAILABLE');
+        await callbacksRef.current.onReply(kind, { storyId: identity.storyId, elementId: identity.elementId, respondentId: response.respondentId }, isCurrent);
+      }
     } catch {
-      setFailed(true);
+      if (session === sessionRef.current) setRowErrors(current => ({ ...current, [response.respondentId]: true }));
+    } finally {
+      if (session === sessionRef.current) {
+        locksRef.current.delete(response.respondentId);
+        setRowBusy(new Set(locksRef.current));
+      }
     }
-  }, [element, onModerate, storyId]);
+  }, []);
 
+  const renderedSession = sessionRef.current;
   const renderResponse = ({ item, index }: { item: StoryInteractiveResultResponse; index: number }) => (
     <View style={styles.response}>
       <View style={styles.responseHeader}>
@@ -112,21 +167,33 @@ export function StoryInteractiveResultsSheet({
         <Text style={styles.responseState}>{item.moderationState}</Text>
       </View>
       <Text style={styles.responseText}>{String(item.payload.text ?? '')}</Text>
-      {item.moderationState === 'pending' ? (
+      {element?.definition.type === 'question' && item.moderationState === 'pending' ? (
+        <>
+          {onReply ? (['story', 'chat'] as const).map(kind => (
+            <Pressable key={kind} accessibilityRole="button" accessibilityLabel={kind === 'story' ? 'Responder en historia' : 'Responder por privado'}
+              accessibilityState={{ disabled: rowBusy.has(item.respondentId), busy: rowBusy.has(item.respondentId) }} disabled={rowBusy.has(item.respondentId)}
+              onPress={() => void act(item, kind, storyId, elementId, renderedSession)} style={styles.hideButton}>
+              <Text style={styles.moreText}>{kind === 'story' ? 'Responder en historia' : 'Responder por privado'}</Text>
+            </Pressable>
+          )) : null}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Ocultar respuesta ${index + 1}`}
-          onPress={() => void hide(item)}
+          accessibilityState={{ disabled: rowBusy.has(item.respondentId), busy: rowBusy.has(item.respondentId) }}
+          disabled={rowBusy.has(item.respondentId)}
+          onPress={() => void act(item, 'hide', storyId, elementId, renderedSession)}
           style={styles.hideButton}
         >
           <Text style={styles.hideText}>Ocultar</Text>
         </Pressable>
+        </>
       ) : null}
+      {rowErrors[item.respondentId] ? <Text accessibilityRole="alert" style={styles.retryText}>No se pudo completar. Actualiza las respuestas e inténtalo de nuevo.</Text> : null}
     </View>
   );
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} animationType={Platform.OS === 'android' ? 'none' : 'slide'} onRequestClose={onClose} onDismiss={onDismiss}>
       <SafeAreaView style={styles.root}>
         <View style={styles.header}>
           <View style={styles.heading}>
@@ -148,7 +215,7 @@ export function StoryInteractiveResultsSheet({
             <Text style={styles.retryText}>No se pudieron cargar. Reintentar</Text>
           </Pressable>
         ) : null}
-        {loading ? <ActivityIndicator color={Colors.primary} style={styles.loader} /> : (
+        {loading && responses.length === 0 ? <ActivityIndicator color={Colors.primary} style={styles.loader} /> : (
           <FlatList
             data={responses}
             keyExtractor={item => item.respondentId}

@@ -192,7 +192,7 @@ test('composer focus and mutation busy state join F effective pause authority', 
     assert.match(viewer, /const handleInteractionFocus = useCallback\(\(focused: boolean\) => \{[\s\S]*interactionFocusedRef\.current = focused;[\s\S]*setInteractionFocused\(focused\)/i);
     assert.match(viewer, /<StoryInteractiveLayer[\s\S]*onInteractionFocus=\{handleInteractionFocus\}/i);
     assert.match(viewer, /<StoryInteractions[\s\S]*onFocusChange=\{handleInteractionFocus\}/i);
-    assert.match(viewer, /pointerEvents=\{deleteConfirmVisible \|\| viewersVisible \|\| interactionFocused \? 'none' : 'box-none'\}/i);
+    assert.match(viewer, /pointerEvents=\{deleteConfirmVisible \|\| viewersVisible \|\| interactionFocused \|\| questionComposerState\.blockViewerGestures \? 'none' : 'box-none'\}/i);
   }
 });
 

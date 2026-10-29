@@ -150,7 +150,7 @@ test('long press pauses, release resumes and navigation is suppressed', () => {
 
 test('tap zones are disabled behind viewer and delete overlays', () => {
   for (const viewer of [nativeViewer, webViewer]) {
-    assert.match(viewer, /pointerEvents=\{deleteConfirmVisible \|\| viewersVisible \|\| interactionFocused \? 'none' : 'box-none'\}/i);
+    assert.match(viewer, /pointerEvents=\{deleteConfirmVisible \|\| viewersVisible \|\| interactionFocused \|\| questionComposerState\.blockViewerGestures \? 'none' : 'box-none'\}/i);
   }
 });
 
