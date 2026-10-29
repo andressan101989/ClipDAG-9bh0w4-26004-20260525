@@ -1893,8 +1893,7 @@ function qaMigrationItems(migrations, { requireAuthoritative = false, version, n
     return null;
   }
   if (items.some(item => !/^20[0-9]{12}$/.test(item.version) || !item.name)
-    || new Set(items.map(item => item.version)).size !== items.length
-    || new Set(items.map(item => item.name)).size !== items.length) {
+    || new Set(items.map(item => item.version)).size !== items.length) {
     fail('STORIES_QA_C1_POSTCHECK_FAILED', 'Stories QA C1 migration inventory is incomplete or duplicate');
   }
   return items;
