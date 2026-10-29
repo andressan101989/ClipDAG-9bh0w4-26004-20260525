@@ -2,7 +2,7 @@
 // No provider/production calls or physical-device result. Opt in explicitly:
 // RUN_STORIES_QA_C1_LOCAL=1; STORIES_QA_C1_PG_BIN=<local PostgreSQL bin>.
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,6 +13,7 @@ const db = `stories_qa_c1_${randomUUID().replaceAll('-', '')}`;
 const owner = '11111111-1111-4111-8111-111111111111';
 const follower = '22222222-2222-4222-8222-222222222222';
 const other = '33333333-3333-4333-8333-333333333333';
+const historicalFixtureStory = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
 const quote = value => `'${String(value).replaceAll("'", "''")}'`;
 const json = value => `${quote(JSON.stringify(value))}::jsonb`;
@@ -22,6 +23,31 @@ const port = process.env.STORIES_QA_C1_PG_PORT || '55432';
 const user = process.env.STORIES_QA_C1_PG_USER || 'postgres';
 const bin = process.env.STORIES_QA_C1_PG_BIN;
 const psql = bin ? join(bin, process.platform === 'win32' ? 'psql.exe' : 'psql') : 'psql';
+const QA_MIGRATION_VERSION = '20261029042807';
+const QA_MIGRATION_NAME = 'stories_v2_qa_c1_question_answer_authority';
+const QA_FUNCTION_DEFINITION_SHA256 = Object.freeze({
+  'private.story_validate_composition(jsonb)': '2d16a92c6a3dd33fe85d96e14578917922be5ab68f5fe0e9c235e7c81b1b6069',
+  'private.story_author_text_bundle_c1_v1(uuid)': '28e76f502eaae19a0e74f43a96edaf29571088868e5f19fed31caf0547c52af0',
+  'private.story_question_answer_source_qa_c1_v1(uuid,uuid,uuid)': '123f625492ac7a6b1c9480a8a1b3798a3ac6f18a895b2872c2ad01d334eadea5',
+  'public.prepare_story_question_answer(uuid,uuid,uuid)': '8c9cf9f018d577e93c82354307bb0d6e8d0503c3a548c8fed66ad216a4d285d3',
+  'public.create_story_question_answer_with_media(uuid,uuid,uuid,uuid,jsonb,uuid,jsonb)': '4d1bfef144382ae5a67a5d1b665a1f64a559d4a45cba93aadd3b8399cf65afbd',
+  'private.story_check_question_answer_link_qa_c1_v1()': 'e4e1a93d081cf53680b5eb54c593c92d35b48bf1dc2c2bc842f1ab9b13d5470d',
+  'public.create_story_with_media(uuid,jsonb,uuid)': '0b204e2add3b8f2c38b29b6f1e7f33e661783abb2cdf8838d8172d54184fb3d1',
+  'public.create_story_with_media(uuid,jsonb,uuid,jsonb)': '0171be4b3d51e3746fee472eea356306e0decbdb5d7dce35770b727a8e75901e',
+  'public.create_story_from_content(uuid,jsonb,uuid)': 'fa070316fdf7fd91770d711fefd4248c0286164899dfdcc20fbf58f1e9a78413',
+  'public.create_story_from_content(uuid,jsonb,uuid,jsonb)': '1876897fd6665ed9528acb3306ecbc41d81111599753359bfa6d882cccf84a89',
+});
+const QA_TRIGGER_DEFINITION_SHA256 = 'b0566debb8aa63ccc3de2c3733fb6ea4191fa580191206747e5a7fc468440ebf';
+const migrationInventory = rows => {
+  const items = rows.map(item => ({ name: item.name, version: item.version }));
+  return {
+    complete: true,
+    count: items.length,
+    items,
+    latest: items.at(-1) ?? null,
+    sha256: createHash('sha256').update(`${JSON.stringify(items)}\n`).digest('hex'),
+  };
+};
 function invocation(database,{dockerContainer=container,dockerContext=context}={}) {
   const env = { ...process.env, PGCONNECT_TIMEOUT: '5', PGCLIENTENCODING: 'UTF8', PGHOSTADDR:'127.0.0.1' };
   for (const key of ['PGSERVICE', 'PGSERVICEFILE', 'PGOPTIONS']) delete env[key];
@@ -169,17 +195,122 @@ test('QA C1 disposable PostgreSQL authority', {skip:!enabled}, async t => {
   try {
     assert.deepEqual(queryServer(),['127.0.0.1',Number(container?'5432':port)],'effective connection is loopback before CREATE DATABASE');
     run(`create database ${db} template template0`,'postgres');created=true;setup();
+    const adapter=await import('../scripts/nelyon-production-snapshot-adapter.mjs');
+    const releasePolicy=JSON.parse(read('../.github/nelyon-production-release-policy.json'));
+    const qaTransition=releasePolicy.stories_qa_c1_transition;
+    assert.ok(qaTransition,'QA C1 release transition must be installed in policy');
+    const qaAttestation={...qaTransition,approved_sha:qaTransition.reviewed_source_sha,
+      baseline_descendant_verified:true,integration_base_descendant_verified:true,reviewed_source_descendant_verified:true};
+    const qaManifest={identity:{approved_sha:qaTransition.reviewed_source_sha},resources:{
+      migrations:[{version:QA_MIGRATION_VERSION,path:qaTransition.migration_path,
+        blob:qaTransition.migration_blob,sha256:qaTransition.migration_sha256}],
+      stories_qa_c1_transition:qaAttestation,
+    }};
+    const migrationsBefore=migrationInventory([
+      {version:'20261027191918',name:'stories_v2_safety_c2_publish_first_async_review'},
+    ]);
+    const migrationsAfter=migrationInventory([
+      ...migrationsBefore.items,{version:QA_MIGRATION_VERSION,name:QA_MIGRATION_NAME},
+    ]);
+    const qaPreRequirement=adapter.storiesQaC1StateRequirement(releasePolicy,qaManifest,'pre',{migrations:migrationsBefore});
+    assert.equal(qaPreRequirement.installed,false);
+    assert.equal(qaPreRequirement.query,adapter.STORIES_QA_C1_PRE_STATE_SQL);
+    const qaPreSnapshot=query(qaPreRequirement.query);
+    assert.equal(adapter.normalizeStoriesQaC1State(qaPreSnapshot).installed,false);
+    const c2PreAuthority=adapter.storiesSafetyC2AuthorityForPhase(releasePolicy,qaManifest,'pre',{migrations:migrationsBefore});
+    assert.equal(c2PreAuthority.query,adapter.STORIES_SAFETY_C2_STATE_SQL);
+    // B1's disposable fixture deliberately includes a synthetic historical
+    // `passed` row. Remove only that fixture inside the snapshot transaction,
+    // then roll it back, so C2's exact no-fabricated-PASS validator is exercised.
+    const c2PreSnapshot=query(`begin;delete from public.stories where id='${historicalFixtureStory}';
+      ${c2PreAuthority.query}rollback;`);
+    assert.equal(adapter.validateStoriesSafetyC2InstalledState(c2PreSnapshot,releasePolicy.stories_safety_c2_transition).installed,true);
     const unchanged=immutableEvidence(),sharedCatalog=preservedCatalog();
     const beforeMigration=query(`select jsonb_build_array((select count(*) from public.stories),(select count(*) from public.messages),
       (select count(*) from private.content_safety_scans),(select count(*) from private.story_interactive_responses))`);
     const files=readdirSync(new URL('../supabase/migrations/',import.meta.url)).filter(x=>/_stories_v2_qa_c1_question_answer_authority\.sql$/.test(x));
     assert.equal(files.length,1,'exactly one forward QA authority migration is required');
     run(read(`../supabase/migrations/${files[0]}`));
+    const qaPostRequirement=adapter.storiesQaC1StateRequirement(releasePolicy,qaManifest,'post',{migrations:migrationsAfter});
+    assert.equal(qaPostRequirement.installed,true);
+    assert.equal(qaPostRequirement.query,adapter.STORIES_QA_C1_POST_STATE_SQL);
+    const qaPostSnapshot=query(qaPostRequirement.query);
+    assert.equal(adapter.validateStoriesQaC1StateTransition(qaPreSnapshot,qaPostSnapshot,qaTransition,releasePolicy),true);
+    const qaInstalled=adapter.validateStoriesQaC1InstalledState(qaPostSnapshot,qaTransition);
+    const actualFunctionDigests=Object.fromEntries(qaInstalled.functions.map(item=>[item.identity,item.definition_sha256]));
+    assert.deepEqual(actualFunctionDigests,QA_FUNCTION_DEFINITION_SHA256,'all ten SQL-real function bytes are pinned');
+    assert.equal(qaInstalled.trigger.definition_sha256,QA_TRIGGER_DEFINITION_SHA256);
+    assert.deepEqual(qaInstalled.relation,qaTransition.relation_attestation);
+    assert.deepEqual(qaInstalled.trigger,qaTransition.trigger_attestation);
+    assert.deepEqual({schema:qaInstalled.relation.schema,name:qaInstalled.relation.name,owner:qaInstalled.relation.owner,
+      rls_enabled:qaInstalled.relation.rls_enabled,force_rls:qaInstalled.relation.force_rls,
+      policy_count:qaInstalled.relation.policy_count,realtime_membership_count:qaInstalled.relation.realtime_membership_count},
+    {schema:'private',name:'story_question_answer_links',owner:'postgres',rls_enabled:true,force_rls:true,
+      policy_count:0,realtime_membership_count:0});
+    assert.deepEqual(qaInstalled.relation.columns.map(({position,name,type,not_null,default:defaultValue})=>
+      [position,name,type,not_null,defaultValue]),[
+      [1,'story_id','uuid',true,null],
+      [2,'source_story_id','uuid',true,null],
+      [3,'source_element_id','uuid',true,null],
+      [4,'respondent_id','uuid',true,null],
+      [5,'request_hash','text',true,null],
+      [6,'created_at','timestamp with time zone',true,'clock_timestamp()'],
+    ]);
+    assert.deepEqual(qaInstalled.relation.constraints.map(item=>[item.name,item.type,item.definition]),[
+      ['story_question_answer_links_pkey','p','PRIMARY KEY (story_id)'],
+      ['story_question_answer_links_request_hash_check','c',"CHECK (request_hash ~ '^[a-f0-9]{64}$'::text)"],
+      ['story_question_answer_links_source_story_id_source_element_fkey','f',
+        'FOREIGN KEY (source_story_id, source_element_id, respondent_id) REFERENCES private.story_interactive_responses(story_id, element_id, respondent_id) ON DELETE CASCADE'],
+      ['story_question_answer_links_story_id_fkey','f','FOREIGN KEY (story_id) REFERENCES stories(id) ON DELETE CASCADE'],
+    ]);
+    assert.deepEqual(qaInstalled.relation.indexes.map(item=>[item.name,item.definition,item.unique,item.primary]),[
+      ['story_question_answer_links_pkey','CREATE UNIQUE INDEX story_question_answer_links_pkey ON private.story_question_answer_links USING btree (story_id)',true,true],
+      ['story_question_answer_links_source','CREATE INDEX story_question_answer_links_source ON private.story_question_answer_links USING btree (source_story_id, source_element_id, respondent_id)',false,false],
+    ]);
+    const c2PostAuthority=adapter.storiesSafetyC2AuthorityForPhase(releasePolicy,qaManifest,'post',{migrations:migrationsAfter});
+    assert.equal(c2PostAuthority.query,adapter.STORIES_SAFETY_C2_QA_STATE_SQL);
+    const c2PostTransition={...releasePolicy.stories_safety_c2_transition,helper_attestations:c2PostAuthority.helpers};
+    const c2PostSnapshot=query(`begin;delete from public.stories where id='${historicalFixtureStory}';
+      ${c2PostAuthority.query}rollback;`);
+    assert.equal(adapter.validateStoriesSafetyC2InstalledState(c2PostSnapshot,c2PostTransition).installed,true);
     assert.deepEqual(immutableEvidence(),unchanged,'canonical C2/core/enqueue/fingerprint/policy remain unchanged');
     assert.deepEqual(preservedCatalog(),sharedCatalog,'all installed shared authorities, ACL and policies remain unchanged');
     assert.deepEqual(query(`select jsonb_build_array((select count(*) from public.stories),(select count(*) from public.messages),
       (select count(*) from private.content_safety_scans),(select count(*) from private.story_interactive_responses))`),beforeMigration,'migration creates no content/evidence');
     assert.equal(run('select count(*) from private.story_question_answer_links'),'0');
+    await t.test('fixed QA catalog evidence rejects hostile SQL-real drift and every probe rolls back',()=>{
+      const exact=query(adapter.STORIES_QA_C1_POST_STATE_SQL);
+      const mutations=[
+        `create or replace function private.story_author_text_bundle_c1_v1(p_story_id uuid) returns text language sql stable security definer set search_path='' as $$select 'hostile'::text$$`,
+        `alter function private.story_validate_composition(jsonb) security definer;alter function private.story_validate_composition(jsonb) volatile`,
+        `grant execute on function public.prepare_story_question_answer(uuid,uuid,uuid) to public,service_role`,
+        `revoke execute on function public.prepare_story_question_answer(uuid,uuid,uuid) from authenticated`,
+        `revoke execute on function public.create_story_question_answer_with_media(uuid,uuid,uuid,uuid,jsonb,uuid,jsonb) from authenticated`,
+        `revoke execute on function public.create_story_with_media(uuid,jsonb,uuid) from authenticated`,
+        `revoke execute on function public.create_story_with_media(uuid,jsonb,uuid,jsonb) from authenticated`,
+        `revoke execute on function public.create_story_from_content(uuid,jsonb,uuid) from authenticated`,
+        `revoke execute on function public.create_story_from_content(uuid,jsonb,uuid,jsonb) from authenticated`,
+        `alter function public.prepare_story_question_answer(uuid,uuid,uuid) set search_path=public`,
+        `alter function public.prepare_story_question_answer(uuid,uuid,uuid) owner to authenticated`,
+        `alter table private.story_question_answer_links disable row level security;alter table private.story_question_answer_links no force row level security`,
+        `alter table private.story_question_answer_links owner to authenticated`,
+        `create policy qa_hostile_policy on private.story_question_answer_links for select to authenticated using(true)`,
+        `create publication qa_hostile_publication for table private.story_question_answer_links`,
+        `grant select on private.story_question_answer_links to authenticated`,
+        `alter table private.story_question_answer_links alter column request_hash drop not null`,
+        `alter table private.story_question_answer_links alter column created_at set default now()`,
+        `alter table public.stories disable trigger story_question_answer_link_required`,
+        `create constraint trigger qa_hostile_question_answer_link after insert or update on public.stories deferrable initially deferred for each row execute function private.story_check_question_answer_link_qa_c1_v1()`,
+        `alter table private.story_question_answer_links drop constraint story_question_answer_links_request_hash_check`,
+        `drop index private.story_question_answer_links_source`,
+        `create function public.prepare_story_question_answer(uuid,uuid) returns jsonb language sql set search_path='' as $$select '{}'::jsonb$$`,
+      ];
+      for(const mutation of mutations) {
+        const hostile=query(`begin;${mutation};${adapter.STORIES_QA_C1_POST_STATE_SQL}rollback;`);
+        assert.throws(()=>adapter.validateStoriesQaC1InstalledState(hostile,qaTransition),/STORIES_QA_C1_POSTCHECK_FAILED/);
+        assert.deepEqual(query(adapter.STORIES_QA_C1_POST_STATE_SQL),exact,`rolled back: ${mutation}`);
+      }
+    });
     const element=randomUUID(),sourceAsset=asset();
     const source=value(owner,`select public.create_story_with_media('${sourceAsset}',${json({version:2,elements:[{id:randomUUID(),type:'interactive',element_id:element,x:0.5,y:0.5,scale:1,rotation:0} ]})},'${randomUUID()}',${json([{version:1,element_id:element,type:'question',prompt:'Sticker prompt is not the submitted question'}])})`);
     value(follower,`select public.respond_to_story_element('${source}','${element}','${randomUUID()}','{"text":"Submitted private question"}')`);
@@ -488,6 +619,23 @@ test('QA C1 disposable PostgreSQL authority', {skip:!enabled}, async t => {
         assert.notEqual(result,fingerprint);
         fails(`begin; update public.stories set story_composition=${json(changed)} where id='${id}'; select set_config('request.jwt.claim.sub','${owner}',true);
           select private.story_publish_c2_v1('${id}',(select scan_id from private.story_safety_state where story_id='${id}')); commit;`,/story_safety_publication_fence_failed/);
+      }
+      const exactSuccessor=query(`begin;delete from public.stories where id='${historicalFixtureStory}';
+        ${adapter.STORIES_SAFETY_C2_QA_STATE_SQL}rollback;`);
+      assert.equal(adapter.validateStoriesSafetyC2InstalledState(exactSuccessor,c2PostTransition).installed,true);
+      const staleCompositions=[
+        composition({...r.c,question:r.c.answer,answer:r.c.question}),
+        {version:2,elements:[]},
+        composition({...r.c,answer:'Changed answer'}),
+      ];
+      for(const staleComposition of staleCompositions) {
+        const stale=query(`begin;delete from public.stories where id='${historicalFixtureStory}';
+          update public.stories set story_composition=${json(staleComposition)} where id='${id}';
+          ${adapter.STORIES_SAFETY_C2_QA_STATE_SQL}rollback;`);
+        assert.throws(()=>adapter.validateStoriesSafetyC2InstalledState(stale,c2PostTransition),/STORIES_SAFETY_C2_POSTCHECK_FAILED/,
+          'swapped, omitted or changed QA safety text must stale the installed scan fingerprint');
+        assert.deepEqual(query(`begin;delete from public.stories where id='${historicalFixtureStory}';
+          ${adapter.STORIES_SAFETY_C2_QA_STATE_SQL}rollback;`),exactSuccessor,'hostile fingerprint probe must roll back');
       }
       const longCard={...card(),answer:'a'.repeat(500)};const long=request(asset(),longCard);
       const longSnapshot=query(`begin;select set_config('request.jwt.claim.sub','${owner}',true);${long.sql};

@@ -1448,6 +1448,224 @@ select pg_catalog.jsonb_build_object(
     order by identity) from function_rows),'[]'::jsonb) else '[]'::jsonb end
 ) snapshot from installed_state cross join story_inventory cross join safety_inventory;`;
 
+// QA C1 changes author-text reconstruction without rewriting the historical C2 query.
+export const STORIES_SAFETY_C2_QA_STATE_SQL = STORIES_SAFETY_C2_STATE_SQL.replace(
+  `    where s.id=safety.story_id and x.element->>'type'='sticker'
+    union all
+    select 1,e.element_order,0::bigint,e.public_config->>'prompt'`,
+  `    where s.id=safety.story_id and x.element->>'type'='sticker'
+    union all
+    select 0,x.ordinality,q.option_order,q.value
+    from public.stories s
+    cross join lateral pg_catalog.jsonb_array_elements(
+      coalesce(s.story_composition->'elements','[]'::jsonb)
+    ) with ordinality x(element,ordinality)
+    cross join lateral (values
+      (0::bigint,x.element->>'question'),
+      (1::bigint,x.element->>'answer')
+    ) q(option_order,value)
+    where s.id=safety.story_id and x.element->>'type'='question_answer'
+    union all
+    select 1,e.element_order,0::bigint,e.public_config->>'prompt'`,
+);
+
+export const STORIES_QA_C1_PRE_STATE_SQL = `with expected(identity) as (
+  values
+    ('private.story_validate_composition(jsonb)'),
+    ('private.story_author_text_bundle_c1_v1(uuid)'),
+    ('public.create_story_with_media(uuid,jsonb,uuid)'),
+    ('public.create_story_with_media(uuid,jsonb,uuid,jsonb)'),
+    ('public.create_story_from_content(uuid,jsonb,uuid)'),
+    ('public.create_story_from_content(uuid,jsonb,uuid,jsonb)')
+), allowed(identity) as (
+  values
+    ('private.story_validate_composition(jsonb)'),
+    ('private.story_author_text_bundle_c1_v1(uuid)'),
+    ('private.story_question_answer_source_qa_c1_v1(uuid,uuid,uuid)'),
+    ('public.prepare_story_question_answer(uuid,uuid,uuid)'),
+    ('public.create_story_question_answer_with_media(uuid,uuid,uuid,uuid,jsonb,uuid,jsonb)'),
+    ('private.story_check_question_answer_link_qa_c1_v1()'),
+    ('public.create_story_with_media(uuid)'),
+    ('public.create_story_with_media(uuid,jsonb,uuid)'),
+    ('public.create_story_with_media(uuid,jsonb,uuid,jsonb)'),
+    ('public.create_story_from_content(uuid,jsonb,uuid)'),
+    ('public.create_story_from_content(uuid,jsonb,uuid,jsonb)')
+), function_rows as (
+  select n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' identity,
+    owner_role.rolname owner,p.provolatile volatility,p.prosecdef security_definer,
+    coalesce(pg_catalog.to_jsonb(p.proconfig),'[]'::jsonb) search_path,
+    pg_catalog.jsonb_build_object(
+      'anon',pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE'),
+      'authenticated',pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE'),
+      'public',pg_catalog.has_function_privilege('public',p.oid,'EXECUTE'),
+      'service_role',pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE')) execute,
+    coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable)
+      order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,acl.privilege_type,acl.is_grantable)
+      from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+      left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee),'[]'::jsonb) acl,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex') definition_sha256
+  from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
+  join expected e on e.identity=n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')'
+), unexpected_overloads as (
+  select pg_catalog.count(*)::integer count
+  from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  where (n.nspname,p.proname) in (
+    ('private','story_validate_composition'),('private','story_author_text_bundle_c1_v1'),
+    ('private','story_question_answer_source_qa_c1_v1'),('public','prepare_story_question_answer'),
+    ('public','create_story_question_answer_with_media'),('private','story_check_question_answer_link_qa_c1_v1'),
+    ('public','create_story_with_media'),('public','create_story_from_content'))
+    and not exists(select 1 from allowed a where a.identity=n.nspname||'.'||p.proname||'('||
+      pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')')
+), future_objects as (
+  select ((pg_catalog.to_regprocedure('private.story_question_answer_source_qa_c1_v1(uuid,uuid,uuid)') is not null)::integer
+    +(pg_catalog.to_regprocedure('public.prepare_story_question_answer(uuid,uuid,uuid)') is not null)::integer
+    +(pg_catalog.to_regprocedure('public.create_story_question_answer_with_media(uuid,uuid,uuid,uuid,jsonb,uuid,jsonb)') is not null)::integer
+    +(pg_catalog.to_regprocedure('private.story_check_question_answer_link_qa_c1_v1()') is not null)::integer
+    +(pg_catalog.to_regclass('private.story_question_answer_links') is not null)::integer
+    +(exists(select 1 from pg_catalog.pg_trigger where not tgisinternal
+      and (tgname='story_question_answer_link_required'
+        or tgfoid=pg_catalog.to_regprocedure('private.story_check_question_answer_link_qa_c1_v1()'))))::integer) count
+)
+select pg_catalog.jsonb_build_object(
+  'schema_version',1,'complete',(select pg_catalog.count(*) from function_rows)=6 and future_objects.count=0
+    and (select count from unexpected_overloads)=0,
+  'installed',false,'initial_link_count',0,
+  'functions',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+    'identity',identity,'owner',owner,'volatility',volatility,'security_definer',security_definer,
+    'search_path',search_path,'execute',execute,'acl',acl,'definition_sha256',definition_sha256) order by identity)
+    from function_rows),'[]'::jsonb),
+  'relation',null,'trigger',null
+) snapshot from future_objects;`;
+
+export const STORIES_QA_C1_POST_STATE_SQL = `with expected(identity) as (
+  values
+    ('private.story_validate_composition(jsonb)'),
+    ('private.story_author_text_bundle_c1_v1(uuid)'),
+    ('private.story_question_answer_source_qa_c1_v1(uuid,uuid,uuid)'),
+    ('public.prepare_story_question_answer(uuid,uuid,uuid)'),
+    ('public.create_story_question_answer_with_media(uuid,uuid,uuid,uuid,jsonb,uuid,jsonb)'),
+    ('private.story_check_question_answer_link_qa_c1_v1()'),
+    ('public.create_story_with_media(uuid,jsonb,uuid)'),
+    ('public.create_story_with_media(uuid,jsonb,uuid,jsonb)'),
+    ('public.create_story_from_content(uuid,jsonb,uuid)'),
+    ('public.create_story_from_content(uuid,jsonb,uuid,jsonb)')
+), allowed(identity) as (
+  values
+    ('private.story_validate_composition(jsonb)'),
+    ('private.story_author_text_bundle_c1_v1(uuid)'),
+    ('private.story_question_answer_source_qa_c1_v1(uuid,uuid,uuid)'),
+    ('public.prepare_story_question_answer(uuid,uuid,uuid)'),
+    ('public.create_story_question_answer_with_media(uuid,uuid,uuid,uuid,jsonb,uuid,jsonb)'),
+    ('private.story_check_question_answer_link_qa_c1_v1()'),
+    ('public.create_story_with_media(uuid)'),
+    ('public.create_story_with_media(uuid,jsonb,uuid)'),
+    ('public.create_story_with_media(uuid,jsonb,uuid,jsonb)'),
+    ('public.create_story_from_content(uuid,jsonb,uuid)'),
+    ('public.create_story_from_content(uuid,jsonb,uuid,jsonb)')
+), function_rows as (
+  select n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' identity,
+    owner_role.rolname owner,p.provolatile volatility,p.prosecdef security_definer,
+    coalesce(pg_catalog.to_jsonb(p.proconfig),'[]'::jsonb) search_path,
+    pg_catalog.jsonb_build_object(
+      'anon',pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE'),
+      'authenticated',pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE'),
+      'public',pg_catalog.has_function_privilege('public',p.oid,'EXECUTE'),
+      'service_role',pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE')) execute,
+    coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable)
+      order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,acl.privilege_type,acl.is_grantable)
+      from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+      left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee),'[]'::jsonb) acl,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex') definition_sha256
+  from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
+  join expected e on e.identity=n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')'
+), unexpected_overloads as (
+  select pg_catalog.count(*)::integer count
+  from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  where (n.nspname,p.proname) in (
+    ('private','story_validate_composition'),('private','story_author_text_bundle_c1_v1'),
+    ('private','story_question_answer_source_qa_c1_v1'),('public','prepare_story_question_answer'),
+    ('public','create_story_question_answer_with_media'),('private','story_check_question_answer_link_qa_c1_v1'),
+    ('public','create_story_with_media'),('public','create_story_from_content'))
+    and not exists(select 1 from allowed a where a.identity=n.nspname||'.'||p.proname||'('||
+      pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')')
+), relation_row as (
+  select n.nspname schema,c.relname name,owner_role.rolname owner,c.relrowsecurity rls_enabled,
+    c.relforcerowsecurity force_rls,(select pg_catalog.count(*)::integer from pg_catalog.pg_policy p where p.polrelid=c.oid) policy_count,
+    (select pg_catalog.count(*)::integer from pg_catalog.pg_publication_rel pr where pr.prrelid=c.oid) realtime_membership_count,
+    coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable)
+      order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,acl.privilege_type,acl.is_grantable)
+      from pg_catalog.aclexplode(coalesce(c.relacl,pg_catalog.acldefault('r',c.relowner))) acl
+      left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee),'[]'::jsonb) acl,
+    (select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('position',a.attnum,'name',a.attname,
+      'type',pg_catalog.format_type(a.atttypid,a.atttypmod),'not_null',a.attnotnull,
+      'default',pg_catalog.pg_get_expr(d.adbin,d.adrelid)) order by a.attnum)
+      from pg_catalog.pg_attribute a left join pg_catalog.pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum
+      where a.attrelid=c.oid and a.attnum>0 and not a.attisdropped) columns,
+    (select pg_catalog.jsonb_agg(pg_catalog.jsonb_strip_nulls(pg_catalog.jsonb_build_object(
+      'name',con.conname,'type',con.contype,'definition',pg_catalog.pg_get_constraintdef(con.oid,true),
+      'columns',(select pg_catalog.jsonb_agg(a.attname order by key.n) from pg_catalog.unnest(con.conkey) with ordinality key(attnum,n)
+        join pg_catalog.pg_attribute a on a.attrelid=con.conrelid and a.attnum=key.attnum),
+      'referenced_relation',case when con.confrelid<>0 then rn.nspname||'.'||rc.relname end,
+      'referenced_columns',case when con.confrelid<>0 then (select pg_catalog.jsonb_agg(a.attname order by key.n)
+        from pg_catalog.unnest(con.confkey) with ordinality key(attnum,n)
+        join pg_catalog.pg_attribute a on a.attrelid=con.confrelid and a.attnum=key.attnum) end,
+      'update_action',case when con.contype='f' then con.confupdtype::text end,
+      'delete_action',case when con.contype='f' then con.confdeltype::text end,
+      'valid',con.convalidated,'deferrable',con.condeferrable,'initially_deferred',con.condeferred)) order by con.conname)
+      from pg_catalog.pg_constraint con left join pg_catalog.pg_class rc on rc.oid=con.confrelid
+      left join pg_catalog.pg_namespace rn on rn.oid=rc.relnamespace where con.conrelid=c.oid) constraints,
+    (select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('name',ic.relname,
+      'definition',pg_catalog.pg_get_indexdef(i.indexrelid),'columns',(select pg_catalog.jsonb_agg(a.attname order by key.n)
+        from pg_catalog.unnest(i.indkey) with ordinality key(attnum,n)
+        join pg_catalog.pg_attribute a on a.attrelid=i.indrelid and a.attnum=key.attnum),
+      'unique',i.indisunique,'primary',i.indisprimary,'valid',i.indisvalid,'ready',i.indisready,
+      'predicate',pg_catalog.pg_get_expr(i.indpred,i.indrelid),'expression',pg_catalog.pg_get_expr(i.indexprs,i.indrelid)) order by ic.relname)
+      from pg_catalog.pg_index i join pg_catalog.pg_class ic on ic.oid=i.indexrelid where i.indrelid=c.oid) indexes
+  from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=c.relowner
+  where n.nspname='private' and c.relname='story_question_answer_links' and c.relkind='r'
+), trigger_row as (
+  select t.tgname name,n.nspname||'.'||c.relname table_name,
+    fnn.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' function_identity,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_triggerdef(t.oid,true),'UTF8')),'hex') definition_sha256,
+    t.tgtype::integer tgtype,t.tgenabled enabled,t.tgisinternal internal,t.tgdeferrable deferrable,t.tginitdeferred initially_deferred
+  from pg_catalog.pg_trigger t join pg_catalog.pg_class c on c.oid=t.tgrelid
+  join pg_catalog.pg_namespace n on n.oid=c.relnamespace join pg_catalog.pg_proc p on p.oid=t.tgfoid
+  join pg_catalog.pg_namespace fnn on fnn.oid=p.pronamespace
+  where not t.tgisinternal and t.tgname='story_question_answer_link_required'
+), protected_trigger_count as (
+  select pg_catalog.count(*)::integer count
+  from pg_catalog.pg_trigger t
+  where not t.tgisinternal and (t.tgname='story_question_answer_link_required'
+    or t.tgfoid=pg_catalog.to_regprocedure('private.story_check_question_answer_link_qa_c1_v1()'))
+)
+select pg_catalog.jsonb_build_object(
+  'schema_version',1,'complete',(select pg_catalog.count(*) from function_rows)=10
+    and (select pg_catalog.count(*) from relation_row)=1 and (select pg_catalog.count(*) from trigger_row)=1
+    and (select count from protected_trigger_count)=1 and (select count from unexpected_overloads)=0,
+  'installed',(select pg_catalog.count(*) from function_rows)=10
+    and (select pg_catalog.count(*) from relation_row)=1 and (select pg_catalog.count(*) from trigger_row)=1
+    and (select count from protected_trigger_count)=1 and (select count from unexpected_overloads)=0,
+  'initial_link_count',(select pg_catalog.count(*)::integer from private.story_question_answer_links),
+  'functions',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+    'identity',identity,'owner',owner,'volatility',volatility,'security_definer',security_definer,
+    'search_path',search_path,'execute',execute,'acl',acl,'definition_sha256',definition_sha256) order by identity)
+    from function_rows),'[]'::jsonb),
+  'relation',(select pg_catalog.to_jsonb(relation_row) from relation_row),
+  'trigger',(select pg_catalog.jsonb_build_object('name',trigger_row.name,'table',trigger_row.table_name,
+    'function_identity',trigger_row.function_identity,'definition_sha256',trigger_row.definition_sha256,
+    'tgtype',trigger_row.tgtype,'enabled',trigger_row.enabled,'internal',trigger_row.internal,
+    'deferrable',trigger_row.deferrable,'initially_deferred',trigger_row.initially_deferred) from trigger_row)
+) snapshot;`;
+
 function fail(code, message) {
   const error = new Error(`${code}: ${message}`);
   error.code = code;
@@ -1595,6 +1813,367 @@ export function storiesSafetyC2StateRequirement(policy, manifest, phase, { reque
     installed, transition, recovery,
     query_id: 'nelyon-stories-safety-c2-state-v1',
   };
+}
+
+function storiesQaC1Transition(policy, manifest) {
+  const expected = policy?.stories_qa_c1_transition;
+  const attestation = manifest?.resources?.stories_qa_c1_transition;
+  if (!attestation) return null;
+  if (!expected || canonicalJson(attestation) !== canonicalJson({
+    ...expected, approved_sha: manifest?.identity?.approved_sha,
+    baseline_descendant_verified: true, integration_base_descendant_verified: true,
+    reviewed_source_descendant_verified: true,
+  })) fail('INVALID_STORIES_QA_C1_TRANSITION', 'Stories QA C1 manifest attestation differs from policy');
+  return expected;
+}
+
+function storiesQaC1RecoverySource(policy, manifest, phase, {
+  request, migrations, migration, authority,
+} = {}) {
+  if (phase !== 'recovery') return null;
+  const source = policy?.postcheck_recovery?.approved_sources?.find(
+    item => String(item?.run_id ?? '') === String(request?.recoverySourceRunId ?? ''),
+  );
+  const claimsQa = source?.expected_latest_migration === migration
+    || (source?.expected_migrations ?? []).some(item => item?.name === migration);
+  if (!claimsQa) return null;
+  const emptyResources = {
+    config_changed: false,
+    function_contracts: [],
+    functions: [],
+    migrations: [],
+  };
+  const exact = request?.mode === 'postcheck_recovery'
+    && request?.scopeConfirmation === 'POSTCHECK_RECOVERY_READ_ONLY'
+    && manifest?.identity?.mode === 'postcheck_recovery'
+    && canonicalJson(manifest?.resources ?? null) === canonicalJson(emptyResources)
+    && source?.repository === policy?.repository
+    && source?.mutation_status === 'completed'
+    && source?.expected_latest_migration === migration
+    && source?.expected_migration_count === policy?.baseline?.migration_count + 1
+    && canonicalJson(source?.expected_migrations ?? null) === canonicalJson([{
+      blob: authority?.migration_blob,
+      name: migration,
+    }])
+    && canonicalJson(source?.edge_functions ?? null) === canonicalJson([])
+    && canonicalJson(source?.productive_resources ?? null) === canonicalJson([`migration:${migration}`])
+    && hasExactBaselineMigrationAppend(policy, migrations, migration);
+  if (!exact) {
+    fail('STORIES_QA_C1_POSTCHECK_FAILED',
+      'Stories QA C1 recovery is not bound to the exact approved read-only source and inventory');
+  }
+  return source;
+}
+
+function qaMigrationItems(migrations, { requireAuthoritative = false, version, name } = {}) {
+  const rawItems = Array.isArray(migrations)
+    ? migrations
+    : Array.isArray(migrations?.items) ? migrations.items : [];
+  const claimsQaIdentity = rawItems.some(item => {
+    const itemVersion = String(item?.version ?? '');
+    const itemName = String(item?.name
+      ?? item?.path?.split('/').at(-1)?.replace(/^\d{14}_|\.sql$/gu, '') ?? '');
+    return itemVersion === version || itemName === name;
+  });
+  const claimsCompleteEnvelope = !Array.isArray(migrations)
+    && migrations !== null && typeof migrations === 'object' && migrations.complete === true;
+  if (!requireAuthoritative && !claimsQaIdentity && !claimsCompleteEnvelope) return null;
+  if (migrations === undefined || migrations === null || Array.isArray(migrations)) {
+    fail('INVALID_REMOTE_INVENTORY', 'Stories QA C1 requires a complete normalized migration inventory');
+  }
+  let items;
+  try {
+    items = validateNormalizedMigrations(migrations).items;
+  } catch (error) {
+    // Historical phase selectors deliberately accept incomplete/hostile legacy
+    // fixtures so their own predecessor authority can decide whether to fall
+    // back. A QA transition, promoted baseline, QA envelope, or claimed QA
+    // migration is different: it must bind complete authoritative inventory.
+    if (requireAuthoritative || claimsQaIdentity) throw error;
+    return null;
+  }
+  if (items.some(item => !/^20[0-9]{12}$/.test(item.version) || !item.name)
+    || new Set(items.map(item => item.version)).size !== items.length
+    || new Set(items.map(item => item.name)).size !== items.length) {
+    fail('STORIES_QA_C1_POSTCHECK_FAILED', 'Stories QA C1 migration inventory is incomplete or duplicate');
+  }
+  return items;
+}
+
+export function storiesQaC1StateRequirement(policy, manifest, phase, context = {}) {
+  if (!['pre', 'post', 'recovery'].includes(phase)) {
+    fail('STORIES_QA_C1_POSTCHECK_FAILED', 'Stories QA C1 phase is invalid');
+  }
+  const { request, migrations, evidence } = context;
+  const authority = policy?.stories_qa_c1_transition;
+  const migration = authority?.migration_path?.split('/').at(-1)?.replace(/\.sql$/, '');
+  const version = migration?.slice(0, 14);
+  const name = migration?.slice(15);
+  const transition = storiesQaC1Transition(policy, manifest);
+  const promoted = Boolean(migration) && String(policy?.baseline?.latest_migration ?? '') >= migration;
+  const recoveryCandidate = phase === 'recovery'
+    ? policy?.postcheck_recovery?.approved_sources?.find(
+      item => String(item?.run_id ?? '') === String(request?.recoverySourceRunId ?? ''),
+    ) : null;
+  const recoveryCandidateClaimsQa = recoveryCandidate?.expected_latest_migration === migration
+    || (recoveryCandidate?.expected_migrations ?? []).some(item => item?.name === migration);
+  const evidenceSignalsQa = evidence !== null && typeof evidence === 'object'
+    && (Object.prototype.hasOwnProperty.call(evidence, 'stories_qa_c1_state')
+      || (evidence?.adapter?.queries ?? []).some(item => /^nelyon-stories-qa-c1-/u.test(item?.id ?? '')));
+  const items = qaMigrationItems(migrations, {
+    requireAuthoritative: Boolean(transition) || promoted || evidenceSignalsQa || recoveryCandidateClaimsQa,
+    version,
+    name,
+  });
+  const observedInstalled = Boolean(items?.some(item => item.version === version && item.name === name));
+  const wrongIdentity = Boolean(items?.some(item => (
+    (item.version === version) !== (item.name === name)
+  )));
+  if (wrongIdentity) fail('STORIES_QA_C1_POSTCHECK_FAILED', 'Stories QA C1 migration identity is inconsistent');
+  const recoverySource = recoveryCandidateClaimsQa
+    ? storiesQaC1RecoverySource(policy, manifest, phase, {
+      request, migrations, migration, authority,
+    }) : null;
+  if (phase === 'recovery' && observedInstalled && !promoted && !recoverySource) {
+    fail('STORIES_QA_C1_POSTCHECK_FAILED',
+      'observed Stories QA C1 recovery lacks an exact approved read-only source');
+  }
+  const installed = promoted || (observedInstalled && phase !== 'recovery') || Boolean(recoverySource);
+  const required = Boolean(transition) || installed;
+  if (transition && phase === 'post' && items && !observedInstalled) {
+    fail('STORIES_QA_C1_POSTCHECK_FAILED', 'Stories QA C1 post state lacks the approved migration');
+  }
+  if (promoted && items && !observedInstalled) {
+    fail('STORIES_QA_C1_POSTCHECK_FAILED', 'promoted Stories QA C1 baseline lacks installed migration evidence');
+  }
+  const useInstalled = installed || (transition && phase !== 'pre');
+  return {
+    required,
+    installed: Boolean(useInstalled),
+    transition,
+    recovery: Boolean(recoverySource),
+    query: useInstalled ? STORIES_QA_C1_POST_STATE_SQL : STORIES_QA_C1_PRE_STATE_SQL,
+    query_id: `nelyon-stories-qa-c1-${useInstalled ? 'post' : 'pre'}-state-v1`,
+  };
+}
+
+export function storiesSafetyC2AuthorityForPhase(policy, manifest, phase, context = {}) {
+  const authority = policy?.stories_safety_c2_transition;
+  const qa = storiesQaC1StateRequirement(policy, manifest, phase, context);
+  const helpers = (authority?.helper_attestations ?? []).map(item => ({ ...item }));
+  if (!qa.installed) return {
+    helpers,
+    query: STORIES_SAFETY_C2_STATE_SQL,
+    query_id: 'nelyon-stories-safety-c2-state-v1',
+  };
+  const qaAuthority = policy?.stories_qa_c1_transition;
+  const replacements = new Map((qaAuthority?.c2_helper_replacements ?? []).map(identity => [
+    identity, qaAuthority.helper_attestations?.find(item => item.identity === identity),
+  ]));
+  if (replacements.size !== 5 || [...replacements.values()].some(item => !item)
+    || ![...replacements.keys()].every(identity => helpers.some(item => item.identity === identity))) {
+    fail('STORIES_QA_C1_POSTCHECK_FAILED', 'Stories QA C1 C2 helper overlay is incomplete');
+  }
+  const asC2Helper = item => ({
+    identity: item.identity,
+    definition_sha256: item.definition_sha256,
+    owner: item.owner,
+    security_definer: item.security_definer,
+    search_path: item.search_path,
+    execute: item.execute,
+  });
+  return {
+    helpers: helpers.map(item => asC2Helper(replacements.get(item.identity) ?? item)),
+    query: STORIES_SAFETY_C2_QA_STATE_SQL,
+    query_id: 'nelyon-stories-safety-c2-qa-state-v1',
+  };
+}
+
+function effectiveStoriesSafetyC2Transition(policy, manifest, phase, context = {}) {
+  const authority = policy?.stories_safety_c2_transition;
+  if (!authority) return null;
+  const selected = storiesSafetyC2AuthorityForPhase(policy, manifest, phase, context);
+  return { ...authority, helper_attestations: selected.helpers };
+}
+
+function normalizeStoriesQaC1Functions(rows) {
+  const code = 'STORIES_QA_C1_POSTCHECK_FAILED';
+  if (!Array.isArray(rows)) fail(code, 'Stories QA C1 function evidence must be an array');
+  const items = rows.map(row => {
+    exactKeys(row, ['acl', 'definition_sha256', 'execute', 'identity', 'owner', 'search_path',
+      'security_definer', 'volatility'], code);
+    exactKeys(row.execute, ['anon', 'authenticated', 'public', 'service_role'], code);
+    if (typeof row.identity !== 'string' || !HASH_PATTERN.test(row.definition_sha256 ?? '')
+      || typeof row.owner !== 'string' || !['i', 's', 'v'].includes(row.volatility)
+      || typeof row.security_definer !== 'boolean' || !Array.isArray(row.search_path)
+      || row.search_path.some(item => typeof item !== 'string')
+      || Object.values(row.execute).some(value => typeof value !== 'boolean')) {
+      fail(code, 'Stories QA C1 function evidence is malformed');
+    }
+    return { ...row, search_path: [...row.search_path].sort(), acl: normalizeAcl(row.acl, code) };
+  }).sort((left, right) => left.identity.localeCompare(right.identity));
+  if (new Set(items.map(item => item.identity)).size !== items.length) {
+    fail(code, 'Stories QA C1 function identities are duplicate');
+  }
+  return items;
+}
+
+function normalizeStoriesQaC1Relation(relation) {
+  const code = 'STORIES_QA_C1_POSTCHECK_FAILED';
+  if (relation === null) return null;
+  exactKeys(relation, ['acl', 'columns', 'constraints', 'force_rls', 'indexes', 'name', 'owner',
+    'policy_count', 'realtime_membership_count', 'rls_enabled', 'schema'], code);
+  if (!Array.isArray(relation.columns) || !Array.isArray(relation.constraints) || !Array.isArray(relation.indexes)
+    || !Number.isInteger(relation.policy_count) || !Number.isInteger(relation.realtime_membership_count)) {
+    fail(code, 'Stories QA C1 relation evidence is malformed');
+  }
+  return {
+    ...relation,
+    acl: normalizeAcl(relation.acl, code),
+    columns: [...relation.columns].sort((a, b) => a.position - b.position),
+    constraints: [...relation.constraints].sort((a, b) => String(a.name).localeCompare(String(b.name))),
+    indexes: [...relation.indexes].sort((a, b) => String(a.name).localeCompare(String(b.name))),
+  };
+}
+
+function normalizeStoriesQaC1Trigger(trigger) {
+  const code = 'STORIES_QA_C1_POSTCHECK_FAILED';
+  if (trigger === null) return null;
+  exactKeys(trigger, ['deferrable', 'definition_sha256', 'enabled', 'function_identity', 'initially_deferred',
+    'internal', 'name', 'table', 'tgtype'], code);
+  if (!HASH_PATTERN.test(trigger.definition_sha256 ?? '') || !Number.isInteger(trigger.tgtype)
+    || typeof trigger.enabled !== 'string' || typeof trigger.internal !== 'boolean'
+    || typeof trigger.deferrable !== 'boolean' || typeof trigger.initially_deferred !== 'boolean') {
+    fail(code, 'Stories QA C1 trigger evidence is malformed');
+  }
+  return { ...trigger };
+}
+
+export function normalizeStoriesQaC1State(snapshot) {
+  const code = 'STORIES_QA_C1_POSTCHECK_FAILED';
+  const withDigest = Object.hasOwn(snapshot ?? {}, 'sha256');
+  exactKeys(snapshot, ['schema_version', 'complete', 'installed', 'initial_link_count', 'functions',
+    'relation', 'trigger', ...(withDigest ? ['sha256'] : [])], code);
+  if (snapshot.schema_version !== 1 || snapshot.complete !== true || typeof snapshot.installed !== 'boolean'
+    || !Number.isInteger(snapshot.initial_link_count) || snapshot.initial_link_count < 0) {
+    fail(code, 'Stories QA C1 snapshot shape is invalid');
+  }
+  const functions = normalizeStoriesQaC1Functions(snapshot.functions);
+  const relation = normalizeStoriesQaC1Relation(snapshot.relation);
+  const trigger = normalizeStoriesQaC1Trigger(snapshot.trigger);
+  const unsigned = { schema_version: 1, complete: true, installed: snapshot.installed,
+    initial_link_count: snapshot.initial_link_count, functions, relation, trigger };
+  const digest = sha256(canonicalJson(unsigned));
+  if (withDigest && snapshot.sha256 !== digest) fail(code, 'Stories QA C1 snapshot digest differs');
+  return { ...unsigned, sha256: digest };
+}
+
+function expectedQaFunctionRows(items) {
+  return items.map(item => ({ ...item, acl: [
+    ...(item.execute?.authenticated
+      ? [{ grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false }] : []),
+    { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+  ] })).sort((a, b) => a.identity.localeCompare(b.identity));
+}
+
+function predecessorQaFunctionRows(policy) {
+  const c2 = new Map((policy?.stories_safety_c2_transition?.helper_attestations ?? [])
+    .map(item => [item.identity, item]));
+  const validator = {
+    identity: 'private.story_validate_composition(jsonb)',
+    definition_sha256: 'bbe80903f672b5e48c41afa17271e8e0a1f22b63385baf7d6ef0fff977ecd46f',
+    owner: 'postgres', volatility: 'i', security_definer: false, search_path: ['search_path=""'],
+    execute: { anon: false, authenticated: false, public: false, service_role: false },
+  };
+  const volatilities = new Map([
+    ['private.story_author_text_bundle_c1_v1(uuid)', 's'],
+    ['public.create_story_with_media(uuid,jsonb,uuid)', 'v'],
+    ['public.create_story_with_media(uuid,jsonb,uuid,jsonb)', 'v'],
+    ['public.create_story_from_content(uuid,jsonb,uuid)', 'v'],
+    ['public.create_story_from_content(uuid,jsonb,uuid,jsonb)', 'v'],
+  ]);
+  const rows = [validator, ...[...volatilities].map(([identity, volatility]) => ({ ...c2.get(identity), volatility }))];
+  if (rows.some(item => !item?.identity)) fail('STORIES_QA_C1_POSTCHECK_FAILED', 'QA predecessor authority is incomplete');
+  return expectedQaFunctionRows(rows);
+}
+
+export function validateStoriesQaC1InstalledState(snapshot, transition) {
+  const state = normalizeStoriesQaC1State(snapshot);
+  const expectedFunctions = expectedQaFunctionRows(transition?.helper_attestations ?? []);
+  const relation = normalizeStoriesQaC1Relation(transition?.relation_attestation ?? null);
+  const trigger = normalizeStoriesQaC1Trigger(transition?.trigger_attestation ?? null);
+  if (state.installed !== true || expectedFunctions.length !== 10
+    || canonicalJson(state.functions) !== canonicalJson(expectedFunctions)
+    || canonicalJson(state.relation) !== canonicalJson(relation)
+    || canonicalJson(state.trigger) !== canonicalJson(trigger)) {
+    fail('STORIES_QA_C1_POSTCHECK_FAILED', 'Stories QA C1 installed authority differs from reviewed catalog');
+  }
+  return state;
+}
+
+export function validateStoriesQaC1StateTransition(preSnapshot, postSnapshot, transition, policy = null) {
+  const pre = normalizeStoriesQaC1State(preSnapshot);
+  const post = validateStoriesQaC1InstalledState(postSnapshot, transition);
+  const authorityPolicy = policy ?? { stories_safety_c2_transition: {
+    helper_attestations: [],
+  } };
+  if (pre.installed !== false || pre.initial_link_count !== 0 || pre.relation !== null || pre.trigger !== null
+    || post.initial_link_count !== 0
+    || (policy && canonicalJson(pre.functions) !== canonicalJson(predecessorQaFunctionRows(authorityPolicy)))) {
+    fail('STORIES_QA_C1_POSTCHECK_FAILED', 'Stories QA C1 transition mutated data or lacks exact predecessor evidence');
+  }
+  return true;
+}
+
+function validateStoriesQaC1PreState(snapshot, policy) {
+  const state = normalizeStoriesQaC1State(snapshot);
+  if (state.installed !== false || state.initial_link_count !== 0
+    || state.relation !== null || state.trigger !== null
+    || canonicalJson(state.functions) !== canonicalJson(predecessorQaFunctionRows(policy))) {
+    fail('STORIES_QA_C1_POSTCHECK_FAILED',
+      'Stories QA C1 predecessor differs from the exact C2 authority');
+  }
+  return state;
+}
+
+export function validateStoriesQaC1CapturedEvidence(evidence, policy, manifest, phase, context = {}) {
+  const code = 'STORIES_QA_C1_POSTCHECK_FAILED';
+  try {
+    validateNormalizedMigrations(evidence?.migrations);
+  } catch {
+    fail(code, 'Stories QA C1 migration evidence is invalid');
+  }
+  const request = context.request;
+  const migrations = evidence.migrations;
+  const requirement = storiesQaC1StateRequirement(policy, manifest, phase, { request, migrations });
+  const queryRows = evidence?.adapter?.queries;
+  if (!Array.isArray(queryRows)) fail(code, 'Stories QA C1 adapter query evidence is unavailable');
+  const matching = queryRows.filter(item => item?.id === requirement.query_id);
+  if (requirement.required) {
+    if (matching.length !== 1 || matching[0].sha256 !== sha256(requirement.query)
+      || !evidence.stories_qa_c1_state) {
+      fail(code, 'Stories QA C1 query receipt or state evidence differs');
+    }
+    if (requirement.installed) {
+      validateStoriesQaC1InstalledState(evidence.stories_qa_c1_state,
+        policy?.stories_qa_c1_transition);
+    } else {
+      validateStoriesQaC1PreState(evidence.stories_qa_c1_state, policy);
+    }
+  } else if (matching.length !== 0 || evidence?.stories_qa_c1_state !== undefined) {
+    fail(code, 'Stories QA C1 evidence exists outside its authorized scope');
+  }
+  const c2Requirement = storiesSafetyC2StateRequirement(policy, manifest, phase, { request, migrations });
+  if (c2Requirement.required) {
+    const selected = storiesSafetyC2AuthorityForPhase(policy, manifest, phase, { request, migrations });
+    const c2Query = queryRows.filter(item => item?.id === selected.query_id);
+    if (c2Query.length !== 1 || c2Query[0].sha256 !== sha256(selected.query)) {
+      fail(code, 'Stories Safety C2 successor query receipt differs');
+    }
+    validateStoriesSafetyC2InstalledState(evidence.stories_safety_c2_state,
+      effectiveStoriesSafetyC2Transition(policy, manifest, phase, { request, migrations }));
+  }
+  return true;
 }
 
 function storiesSafetyC1StateRequirement(policy, manifest, phase = 'pre', context = {}) {
@@ -2422,6 +3001,16 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   const requireStoriesSafetyC1 = storiesSafetyRequirement.required;
   const storiesSafetyC2Requirement = storiesSafetyC2StateRequirement(policy, manifest, phase, { request, migrations: evidence?.migrations });
   const requireStoriesSafetyC2 = storiesSafetyC2Requirement.required;
+  const storiesSafetyC2Authority = storiesSafetyC2AuthorityForPhase(policy, manifest, phase, {
+    request,
+    migrations: evidence?.migrations,
+  });
+  const storiesQaRequirement = storiesQaC1StateRequirement(policy, manifest, phase, {
+    evidence,
+    request,
+    migrations: evidence?.migrations,
+  });
+  const requireStoriesQaC1 = storiesQaRequirement.required;
   exactKeys(evidence, [
     'adapter', 'backup', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
     'health', 'identity', 'migrations', 'observed_at', 'phase', 'premium_state', 'project_ref',
@@ -2430,6 +3019,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     ...(requireStoriesB1 ? ['stories_b1_state'] : []),
     ...(requireStoriesSafetyC1 ? ['stories_safety_c1_state'] : []),
     ...(requireStoriesSafetyC2 ? ['stories_safety_c2_state'] : []),
+    ...(requireStoriesQaC1 ? ['stories_qa_c1_state'] : []),
   ], 'INVALID_SNAPSHOT');
   const { evidence_sha256: claimedDigest, ...unsigned } = evidence;
   if (!HASH_PATTERN.test(claimedDigest ?? '') || claimedDigest !== sha256(canonicalJson(unsigned))) {
@@ -2458,11 +3048,15 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       sha256: sha256(storiesQuery),
     }] : []),
     ...(requireStoriesSafetyC2 ? [{
-      id: storiesSafetyC2Requirement.query_id, sha256: sha256(STORIES_SAFETY_C2_STATE_SQL),
+      id: storiesSafetyC2Authority.query_id, sha256: sha256(storiesSafetyC2Authority.query),
     }] : []),
     ...(requireStoriesSafetyC1 ? [{
       id: storiesSafetyRequirement.query_id,
       sha256: sha256(storiesSafetyRequirement.query),
+    }] : []),
+    ...(requireStoriesQaC1 ? [{
+      id: storiesQaRequirement.query_id,
+      sha256: sha256(storiesQaRequirement.query),
     }] : []),
   ];
   if (!HASH_PATTERN.test(adapterSourceSha256 ?? '')
@@ -2488,6 +3082,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   if (requireStoriesB1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (requireStoriesSafetyC1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (requireStoriesSafetyC2) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
+  if (requireStoriesQaC1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (!Array.isArray(evidence.requests) || evidence.requests.length !== expectedRequests.length
     || evidence.requests.some((receipt, index) => {
       try {
@@ -2555,7 +3150,17 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   validatePremiumPostcheckState(evidence.premium_state);
   if (requireStoriesB1) normalizeStoriesB1State(evidence.stories_b1_state);
   if (requireStoriesSafetyC1) normalizeStoriesSafetyC1State(evidence.stories_safety_c1_state);
-  if (requireStoriesSafetyC2) normalizeStoriesSafetyC2State(evidence.stories_safety_c2_state);
+  if (requireStoriesSafetyC2) validateStoriesSafetyC2InstalledState(
+    evidence.stories_safety_c2_state,
+    effectiveStoriesSafetyC2Transition(policy, manifest, phase, {
+      request,
+      migrations: evidence.migrations,
+    }),
+  );
+  validateStoriesQaC1CapturedEvidence(evidence, policy, manifest, phase, {
+    request,
+    migrations: evidence.migrations,
+  });
   return evidence;
 }
 
@@ -2779,7 +3384,10 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
   const storiesSafetyC2Installed = (evidence.migrations?.items ?? []).some(item =>
     baselineMigrationName(item) === policy?.stories_safety_c2_transition?.migration_path?.split('/').at(-1)?.replace(/\.sql$/, ''));
   if (storiesSafetyC2Installed) {
-    validateStoriesSafetyC2InstalledState(evidence.stories_safety_c2_state, policy?.stories_safety_c2_transition);
+    validateStoriesSafetyC2InstalledState(
+      evidence.stories_safety_c2_state,
+      effectiveStoriesSafetyC2Transition(policy, null, 'post', { migrations: evidence.migrations }),
+    );
   }
   if (storiesSafetyC1Installed && !storiesSafetyC2Installed) {
     try {
@@ -2791,6 +3399,14 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
       fail('REMOTE_BASELINE_MISMATCH',
         'Stories Safety C1 baseline evidence is not exact fail-closed technical preparation');
     }
+  }
+  const storiesQaRequirement = storiesQaC1StateRequirement(policy, null, 'post', {
+    evidence,
+    migrations: evidence.migrations,
+  });
+  if (storiesQaRequirement.required) {
+    validateStoriesQaC1InstalledState(evidence.stories_qa_c1_state,
+      policy?.stories_qa_c1_transition);
   }
   const attestedRpcIdentities = new Set((evidence.rpc_security?.items ?? []).map(rpcIdentity));
   if (storiesB1Installed) {
@@ -2860,7 +3476,10 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
 
 export function verifyProductionPreSnapshot({ pre, policy, request, manifest, adapterSourceSha256 }) {
   validateCapturedEvidence({ evidence: pre, phase: 'pre', policy, request, manifest, adapterSourceSha256 });
-  validateRpcSecurityAttestations(pre.rpc_security, advisorExceptionsForPhase(policy, manifest, 'pre'));
+  validateRpcSecurityAttestations(pre.rpc_security, advisorExceptionsForPhase(policy, manifest, 'pre', {
+    request,
+    migrations: pre.migrations,
+  }));
   const storiesTransition = storiesB1Transition(policy, manifest);
   if (storiesTransition) {
     const stories = normalizeStoriesB1State(pre.stories_b1_state);
@@ -2897,7 +3516,10 @@ export function verifyProductionPreSnapshot({ pre, policy, request, manifest, ad
     );
   }
   if (storiesSafetyC2StateRequirement(policy, manifest, 'pre', { request, migrations: pre.migrations }).required) {
-    validateStoriesSafetyC2InstalledState(pre.stories_safety_c2_state, policy?.stories_safety_c2_transition);
+    validateStoriesSafetyC2InstalledState(
+      pre.stories_safety_c2_state,
+      effectiveStoriesSafetyC2Transition(policy, manifest, 'pre', { request, migrations: pre.migrations }),
+    );
   }
   const baseline = policy?.baseline;
   if (baseline?.state !== 'verified'
@@ -2979,7 +3601,10 @@ export function verifyF5AutonomousPostReleaseFacts(pre, post) {
 export function verifyProductionSnapshotPair({ pre, post, policy, request, manifest, adapterSourceSha256 }) {
   verifyProductionPreSnapshot({ pre, policy, request, manifest, adapterSourceSha256 });
   validateCapturedEvidence({ evidence: post, phase: 'post', policy, request, manifest, adapterSourceSha256 });
-  validateRpcSecurityAttestations(post.rpc_security, advisorExceptionsForPhase(policy, manifest, 'post'));
+  validateRpcSecurityAttestations(post.rpc_security, advisorExceptionsForPhase(policy, manifest, 'post', {
+    request,
+    migrations: post.migrations,
+  }));
   const financeTransition = activeFinanceAuthorityTransition(policy, manifest);
   const storiesTransition = storiesB1Transition(policy, manifest);
   if (storiesTransition) {
@@ -3008,7 +3633,25 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
     validateStoriesSafetyC2StateTransition(pre.stories_safety_c1_state, post.stories_safety_c2_state,
       c2Transition, policy?.stories_safety_c1_transition);
   } else if (storiesSafetyC2StateRequirement(policy, manifest, 'post', { request, migrations: post.migrations }).required) {
-    validateStoriesSafetyC2InstalledState(post.stories_safety_c2_state, policy?.stories_safety_c2_transition);
+    validateStoriesSafetyC2InstalledState(
+      post.stories_safety_c2_state,
+      effectiveStoriesSafetyC2Transition(policy, manifest, 'post', { request, migrations: post.migrations }),
+    );
+  }
+  const qaTransition = storiesQaC1Transition(policy, manifest);
+  if (qaTransition) {
+    validateStoriesQaC1StateTransition(
+      pre.stories_qa_c1_state,
+      post.stories_qa_c1_state,
+      qaTransition,
+      policy,
+    );
+  } else if (storiesQaC1StateRequirement(policy, manifest, 'post', {
+    request,
+    migrations: post.migrations,
+  }).required) {
+    validateStoriesQaC1InstalledState(post.stories_qa_c1_state,
+      policy?.stories_qa_c1_transition);
   }
   validatePremiumStateTransition(pre.premium_state, post.premium_state, manifest, policy);
   if (Date.parse(post.observed_at) < Date.parse(pre.observed_at)
@@ -3096,8 +3739,14 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
   }
 
   verifyCronSnapshotTransition(pre.cron_security.cron, post.cron_security.cron, financeTransition);
-  const preExceptions = advisorExceptionsForPhase(policy, manifest, 'pre');
-  const postExceptions = advisorExceptionsForPhase(policy, manifest, 'post');
+  const preExceptions = advisorExceptionsForPhase(policy, manifest, 'pre', {
+    request,
+    migrations: pre.migrations,
+  });
+  const postExceptions = advisorExceptionsForPhase(policy, manifest, 'post', {
+    request,
+    migrations: post.migrations,
+  });
   const preExceptionFingerprints = new Set(preExceptions.map(exception => exception.advisor_fingerprint));
   const postExceptionFingerprints = new Set(postExceptions.map(exception => exception.advisor_fingerprint));
   const introducedExceptions = postExceptions
@@ -3202,7 +3851,21 @@ export function verifyProductionRecoverySnapshot({ recovery, policy, request, ma
     );
   }
   if (storiesSafetyC2StateRequirement(policy, manifest, 'recovery', { request, migrations: recovery.migrations }).required) {
-    validateStoriesSafetyC2InstalledState(recovery.stories_safety_c2_state, policy?.stories_safety_c2_transition);
+    validateStoriesSafetyC2InstalledState(
+      recovery.stories_safety_c2_state,
+      effectiveStoriesSafetyC2Transition(policy, manifest, 'recovery', {
+        request,
+        migrations: recovery.migrations,
+      }),
+    );
+  }
+  if (storiesQaC1StateRequirement(policy, manifest, 'recovery', {
+    evidence: recovery,
+    request,
+    migrations: recovery.migrations,
+  }).required) {
+    validateStoriesQaC1InstalledState(recovery.stories_qa_c1_state,
+      policy?.stories_qa_c1_transition);
   }
   return {
     result: 'RECOVERY_SNAPSHOT_VERIFIED',
@@ -3654,6 +4317,66 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
       };
     });
   }
+  const qaRequirement = storiesQaC1StateRequirement(policy, manifest, phase, context);
+  if (qaRequirement.required) {
+    const predecessor = policy?.stories_qa_c1_transition?.rpc_predecessor_exception;
+    const identity = Array.isArray(predecessor?.object?.argument_types)
+      ? rpcIdentity(predecessor.object).replaceAll(' ', '') : null;
+    if (identity !== 'public.create_story_from_content(uuid,jsonb,uuid)'
+      || predecessor?.advisor_fingerprint
+        !== '010c78c43ba2cb32439c48ef8433d2706776f45f128fc2aa0572eb3b15377a14') {
+      fail('RPC_SECURITY_ATTESTATION_FAILED', 'Stories QA C1 predecessor RPC authority is unavailable');
+    }
+    const matching = result.filter(item => item?.advisor_fingerprint === predecessor.advisor_fingerprint);
+    if (matching.length > 1 || (matching.length === 1
+      && canonicalJson(matching[0]) !== canonicalJson(predecessor))) {
+      fail('RPC_SECURITY_ATTESTATION_FAILED', 'Stories QA C1 predecessor RPC authority is inconsistent');
+    }
+    if (matching.length === 0) result = [...result, predecessor];
+  }
+  if (qaRequirement.installed) {
+    const authority = policy?.stories_qa_c1_transition;
+    const replacements = new Set(authority?.rpc_replacements ?? []);
+    const helpers = new Map((authority?.helper_attestations ?? []).map(item => [item.identity, item]));
+    const additions = authority?.security_advisor?.introduced_exceptions;
+    if (replacements.size !== 4 || [...replacements].some(identity => !helpers.has(identity))
+      || !Array.isArray(additions) || additions.length !== 3
+      || new Set(additions.map(item => item?.advisor_fingerprint)).size !== additions.length) {
+      fail('RPC_SECURITY_ATTESTATION_FAILED', 'Stories QA C1 advisor authority is unavailable');
+    }
+    result = result.map(exception => {
+      if (!Array.isArray(exception?.object?.argument_types)) return exception;
+      const identity = rpcIdentity(exception.object).replaceAll(' ', '');
+      if (!replacements.has(identity)) return exception;
+      const helper = helpers.get(identity);
+      return {
+        ...exception,
+        attestation: {
+          security_definer: helper.security_definer,
+          owner: helper.owner,
+          search_path: helper.search_path,
+          acl: [
+            ...(helper.execute.authenticated
+              ? [{ grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false }]
+              : []),
+            { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+            ...(helper.execute.service_role
+              ? [{ grantee: 'service_role', privilege_type: 'EXECUTE', is_grantable: false }]
+              : []),
+          ],
+          execute: helper.execute,
+          definition_sha256: helper.definition_sha256,
+        },
+        origin: {
+          migration: authority.migration_path.split('/').at(-1).replace(/\.sql$/, ''),
+          migration_blob: authority.migration_blob,
+          source_sha: authority.reviewed_source_sha,
+        },
+      };
+    });
+    const fingerprints = new Set(additions.map(item => item.advisor_fingerprint));
+    result = [...result.filter(item => !fingerprints.has(item?.advisor_fingerprint)), ...additions];
+  }
   return phaseBoundRpcExceptions(result, manifest, phase, { policy, migrations: context.migrations });
 }
 
@@ -4026,13 +4749,6 @@ export async function captureProductionSnapshot({
   assertReadOnlySql(CRON_SNAPSHOT_SQL);
   assertReadOnlySql(RPC_SECURITY_ATTESTATION_SQL);
   assertReadOnlySql(PREMIUM_POSTCHECK_STATE_SQL);
-  const initialStoriesRequirement = storiesB1StateRequirement(policy, manifest, phase, { request });
-  const storiesQuery = initialStoriesRequirement.query;
-  if (initialStoriesRequirement.required) assertReadOnlySql(storiesQuery);
-  const storiesSafetyRequirement = storiesSafetyC1StateRequirement(policy, manifest, phase, { request });
-  const storiesSafetyC2Requirement = storiesSafetyC2StateRequirement(policy, manifest, phase, { request });
-  if (storiesSafetyRequirement.required) assertReadOnlySql(storiesSafetyRequirement.query);
-  if (storiesSafetyC2Requirement.required) assertReadOnlySql(STORIES_SAFETY_C2_STATE_SQL);
   const base = `/v1/projects/${PRODUCTION_PROJECT_REF}`;
   const calls = [];
   const get = async (path, label) => {
@@ -4058,10 +4774,15 @@ export async function captureProductionSnapshot({
   const migrationsBody = await get(`${base}/database/migrations`, 'migration inventory');
   const migrations = normalizeMigrations(migrationsBody);
   const storiesRequirement = storiesB1StateRequirement(policy, manifest, phase, { request, migrations });
-  if (initialStoriesRequirement.required !== storiesRequirement.required
-    || initialStoriesRequirement.query_id !== storiesRequirement.query_id) {
-    fail('STORIES_B1_POSTCHECK_FAILED', 'Stories B1 capture scope differs from the observed migration inventory');
-  }
+  const storiesQuery = storiesRequirement.query;
+  const storiesSafetyRequirement = storiesSafetyC1StateRequirement(policy, manifest, phase, { request, migrations });
+  const storiesSafetyC2Requirement = storiesSafetyC2StateRequirement(policy, manifest, phase, { request, migrations });
+  const storiesSafetyC2Authority = storiesSafetyC2AuthorityForPhase(policy, manifest, phase, { request, migrations });
+  const storiesQaRequirement = storiesQaC1StateRequirement(policy, manifest, phase, { request, migrations });
+  if (storiesRequirement.required) assertReadOnlySql(storiesQuery);
+  if (storiesSafetyRequirement.required) assertReadOnlySql(storiesSafetyRequirement.query);
+  if (storiesSafetyC2Requirement.required) assertReadOnlySql(storiesSafetyC2Authority.query);
+  if (storiesQaRequirement.required) assertReadOnlySql(storiesQaRequirement.query);
   const financeQueries = selectFinanceSnapshotQueries(migrations);
   const requireFinanceAuthority = Boolean(activeFinanceAuthorityTransition(policy, manifest)) || financeQueries.phase !== 'legacy';
   const functionsBody = await get(`${base}/functions`, 'function inventory');
@@ -4106,12 +4827,11 @@ export async function captureProductionSnapshot({
     )
     : null;
   const storiesSafetyC2State = storiesSafetyC2Requirement.required
-    ? singleSnapshot(await sql(STORIES_SAFETY_C2_STATE_SQL, null, 'Stories Safety C2 publish-first state'),
+    ? singleSnapshot(await sql(storiesSafetyC2Authority.query, null, 'Stories Safety C2 publish-first state'),
       normalizeStoriesSafetyC2State, 'Stories Safety C2 publish-first state') : null;
-  const observedC2Requirement = storiesSafetyC2StateRequirement(policy, manifest, phase, { request, migrations });
-  if (observedC2Requirement.required !== storiesSafetyC2Requirement.required) {
-    fail('STORIES_SAFETY_C2_POSTCHECK_FAILED', 'Stories Safety C2 capture differs from migration inventory');
-  }
+  const storiesQaC1State = storiesQaRequirement.required
+    ? singleSnapshot(await sql(storiesQaRequirement.query, null, 'Stories QA C1 authority state'),
+      normalizeStoriesQaC1State, 'Stories QA C1 authority state') : null;
   const rpcSecurity = normalizeRpcSecurityAttestations(rpcSecurityBody);
   validateRpcIdentitySet(rpcSecurity, phaseExceptions);
   const evidence = {
@@ -4136,11 +4856,15 @@ export async function captureProductionSnapshot({
           sha256: sha256(storiesQuery),
         }] : []),
         ...(storiesSafetyC2Requirement.required ? [{
-          id: storiesSafetyC2Requirement.query_id, sha256: sha256(STORIES_SAFETY_C2_STATE_SQL),
+          id: storiesSafetyC2Authority.query_id, sha256: sha256(storiesSafetyC2Authority.query),
         }] : []),
         ...(storiesSafetyRequirement.required ? [{
           id: storiesSafetyRequirement.query_id,
           sha256: sha256(storiesSafetyRequirement.query),
+        }] : []),
+        ...(storiesQaRequirement.required ? [{
+          id: storiesQaRequirement.query_id,
+          sha256: sha256(storiesQaRequirement.query),
         }] : []),
       ],
     },
@@ -4163,6 +4887,7 @@ export async function captureProductionSnapshot({
       ? { stories_safety_c1_state: storiesSafetyC1State }
       : {}),
     ...(storiesSafetyC2Requirement.required ? { stories_safety_c2_state: storiesSafetyC2State } : {}),
+    ...(storiesQaRequirement.required ? { stories_qa_c1_state: storiesQaC1State } : {}),
     requests: calls,
   };
   return { ...evidence, evidence_sha256: sha256(canonicalJson(evidence)) };
