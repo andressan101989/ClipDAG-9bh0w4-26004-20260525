@@ -385,7 +385,11 @@ test('Stories QA C1 selector uses observed migration inventory for installed aut
     latest: items.at(-1) ?? null,
     sha256: sha256(canonicalJson(items)),
   });
-  const beforeItems = [{ version: '20261027191918', name: 'stories_v2_safety_c2_publish_first_async_review' }];
+  const beforeItems = [
+    { version: '20260901000000', name: 'add_realtime_publications' },
+    { version: '20260902000000', name: 'add_realtime_publications' },
+    { version: '20261027191918', name: 'stories_v2_safety_c2_publish_first_async_review' },
+  ];
   const afterItems = [...beforeItems, {
     version: '20261029042807', name: 'stories_v2_qa_c1_question_answer_authority',
   }];
@@ -395,6 +399,8 @@ test('Stories QA C1 selector uses observed migration inventory for installed aut
   const post = adapter.storiesQaC1StateRequirement(policy, manifest, 'post', { migrations: after });
   assert.equal(pre.installed, false);
   assert.equal(pre.query, adapter.STORIES_QA_C1_PRE_STATE_SQL);
+  assert.equal(before.items.filter(item => item.name === 'add_realtime_publications').length, 2,
+    'distinct historical migration versions may legitimately reuse a descriptive name');
   assert.equal(post.installed, true);
   assert.equal(post.query, adapter.STORIES_QA_C1_POST_STATE_SQL);
   assert.equal(adapter.storiesSafetyC2AuthorityForPhase(policy, manifest, 'pre', { migrations: before }).query,
