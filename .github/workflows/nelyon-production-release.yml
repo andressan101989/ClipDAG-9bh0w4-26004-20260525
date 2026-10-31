@@ -38,6 +38,7 @@ env:
   NELYON_POLICY: .github/nelyon-production-release-policy.json
   NELYON_HELPER: scripts/nelyon-production-release.mjs
   NELYON_PROJECT_REF: aewwdlvbwpczqyvkwvvj
+  NELYON_WRANGLER: apps/admin-web/node_modules/.bin/wrangler
 
 jobs:
   plan:
@@ -603,6 +604,8 @@ jobs:
         run: |
           set -euo pipefail
           npm ci --prefix apps/admin-web
+          test -x "$NELYON_WRANGLER"
+          test "$("$NELYON_WRANGLER" --version)" = '4.135.0'
           npm --prefix apps/admin-web run build:deployment
           node scripts/nelyon-admin-production-release.mjs build-manifest \
             --approved-sha "${{ inputs.approved_sha }}" \
@@ -662,18 +665,29 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
-          npx --yes wrangler@4.135.0 deployments status \
+          "$NELYON_WRANGLER" deployments status \
             --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
             > admin-evidence/admin-web-before-deployment.json
           node scripts/nelyon-admin-production-release.mjs active-version \
             --deployment admin-evidence/admin-web-before-deployment.json \
             --output admin-evidence/admin-web-previous.json
-          npx --yes wrangler@4.135.0 versions list \
+          "$NELYON_WRANGLER" versions list \
             --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
             > admin-evidence/admin-web-before-versions.json
           node scripts/nelyon-admin-production-release.mjs capture-routes \
             --phase pre \
             --output admin-evidence/admin-web-before-routes.json
+
+      - name: Verify Admin recovery Cloudflare pre-state
+        id: admin_recovery_cloudflare_prestate
+        if: needs.plan.outputs.mode == 'admin_recovery' && steps.admin_prestate.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node "$NELYON_HELPER" verify-admin-recovery-cloudflare-prestate \
+            --verified-source admin-recovery-evidence/verified-source.json \
+            --previous admin-evidence/admin-web-previous.json \
+            --routes admin-evidence/admin-web-before-routes.json \
+            --output admin-recovery-evidence/cloudflare-prestate-verification.json
 
       - name: Verify exact remote migration dry-run before mutation
         id: migration_dry_run
@@ -741,7 +755,8 @@ jobs:
         if: >-
           needs.plan.outputs.admin_enabled == 'true' && steps.admin_prestate.outcome == 'success' &&
           ((needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success') ||
-           (needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_postcheck.outcome == 'success'))
+           (needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_postcheck.outcome == 'success' &&
+            steps.admin_recovery_cloudflare_prestate.outcome == 'success'))
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -749,14 +764,14 @@ jobs:
           VERSION_TAG="$(node -p "JSON.parse(require('fs').readFileSync('admin-release-artifact/admin-web-manifest.json','utf8')).worker.version_tag")"
           PREVIEW_ALIAS="$(node -p "JSON.parse(require('fs').readFileSync('admin-release-artifact/admin-web-manifest.json','utf8')).worker.preview_alias")"
           BUILD_DIGEST="$(node -p "JSON.parse(require('fs').readFileSync('admin-evidence/admin-web-build.json','utf8')).dist_sha256")"
-          npx --yes wrangler@4.135.0 versions upload \
+          "$NELYON_WRANGLER" versions upload \
             --config apps/admin-web/deployment/wrangler.preview.jsonc \
             --strict \
             --tag "$VERSION_TAG" \
             --message "b:${BUILD_DIGEST}" \
             --preview-alias "$PREVIEW_ALIAS" \
             > admin-evidence/admin-web-upload.log 2>&1
-          npx --yes wrangler@4.135.0 versions list \
+          "$NELYON_WRANGLER" versions list \
             --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
             > admin-evidence/admin-web-after-versions.json
           node scripts/nelyon-admin-production-release.mjs identify-upload \
@@ -774,7 +789,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION_ID="$(node -p "JSON.parse(require('fs').readFileSync('admin-evidence/admin-web-candidate-id.json','utf8')).version_id")"
-          npx --yes wrangler@4.135.0 versions view "$VERSION_ID" \
+          "$NELYON_WRANGLER" versions view "$VERSION_ID" \
             --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
             > admin-evidence/admin-web-version.json
           node scripts/nelyon-admin-production-release.mjs identify-upload \
@@ -800,14 +815,14 @@ jobs:
         run: |
           set -euo pipefail
           VERSION_ID="$(node -p "JSON.parse(require('fs').readFileSync('admin-evidence/admin-web-candidate.json','utf8')).version_id")"
-          npx --yes wrangler@4.135.0 versions deploy \
+          "$NELYON_WRANGLER" versions deploy \
             --config apps/admin-web/deployment/wrangler.preview.jsonc \
             --name nelyon-admin-web \
             --version-id "$VERSION_ID" \
             --percentage 100 \
             --message "Nelyon protected release ${{ inputs.release_id }}" \
             --yes
-          npx --yes wrangler@4.135.0 deployments status \
+          "$NELYON_WRANGLER" deployments status \
             --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
             > admin-evidence/admin-web-promoted-deployment.json
           node scripts/nelyon-admin-production-release.mjs active-version \
@@ -822,7 +837,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@4.135.0 triggers deploy \
+          "$NELYON_WRANGLER" triggers deploy \
             --config apps/admin-web/deployment/wrangler.route.jsonc
 
       - name: Verify exact Admin production version, routes, and HTTP matrix
@@ -836,7 +851,7 @@ jobs:
             --base-url https://nelyon.app \
             --build admin-evidence/admin-web-build.json \
             --output admin-evidence/admin-web-production-http.json
-          npx --yes wrangler@4.135.0 deployments status \
+          "$NELYON_WRANGLER" deployments status \
             --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
             > admin-evidence/admin-web-after-deployment.json
           node scripts/nelyon-admin-production-release.mjs capture-routes \
@@ -859,7 +874,7 @@ jobs:
         run: |
           set -euo pipefail
           PREVIOUS_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('admin-evidence/admin-web-previous.json','utf8')).version_id")"
-          npx --yes wrangler@4.135.0 versions deploy \
+          "$NELYON_WRANGLER" versions deploy \
             --config apps/admin-web/deployment/wrangler.preview.jsonc \
             --name nelyon-admin-web \
             --version-id "$PREVIOUS_VERSION" \
@@ -869,7 +884,7 @@ jobs:
           node scripts/nelyon-admin-production-release.mjs restore-routes \
             --before admin-evidence/admin-web-before-routes.json \
             --output admin-evidence/admin-web-recovered-routes.json
-          npx --yes wrangler@4.135.0 deployments status \
+          "$NELYON_WRANGLER" deployments status \
             --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
             > admin-evidence/admin-web-recovered-deployment.json
           node scripts/nelyon-admin-production-release.mjs verify-recovery \
@@ -1013,6 +1028,7 @@ jobs:
             admin-recovery-evidence/verified-source.json
             admin-recovery-evidence/control-center-post-state.json
             admin-recovery-evidence/postcheck-admin-recovery-result.json
+            admin-recovery-evidence/cloudflare-prestate-verification.json
             admin-release-artifact/admin-web-manifest.json
             admin-release-artifact/admin-web-manifest.sha256
             admin-evidence/admin-web-build.json
