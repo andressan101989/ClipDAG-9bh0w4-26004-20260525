@@ -4,13 +4,13 @@ import {beforeEach,describe,expect,it,vi} from "vitest";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
 import {adminLinks} from "../layout/adminNavigation";
 import {AdminAdvertisingAnalyticsPage,AdminAdvertisingBillingPage,AdminAdvertisingCampaignDetailPage,AdminAdvertisingCampaignsPage,AdminAdvertisingHealthPage,AdminAdvertisingOverviewPage,AdminAdvertisingReviewPage} from "../pages/AdminAdvertisingPages";
-import {createAdminAdvertisingBillingRateDraft,getAdminAdvertisingBillingHealth,getAdminAdvertisingCampaignDetail,getAdminAdvertisingHealth,getAdminAdvertisingOverview,getAdminAdvertisingRolloutControl,publishAdminAdvertisingBillingRate,retireAdminAdvertisingBillingRate,reviewAdvertisingAd,searchAdminAdvertisingAds,searchAdminAdvertisingBillingRates,searchAdminAdvertisingCampaigns,setAdminAdvertisingLaunchMode,setAdminAdvertisingProductionRollout,updateAdminAdvertisingBillingRateDraft} from "../lib/adminAdvertisingApi";
+import {createAdminAdvertisingBillingRateDraft,getAdminAdvertisingBillingHealth,getAdminAdvertisingCampaignDetail,getAdminAdvertisingHealth,getAdminAdvertisingOverview,getAdminAdvertisingRolloutControl,publishAdminAdvertisingBillingRate,retireAdminAdvertisingBillingRate,reviewAdvertisingAd,searchAdminAdvertisingAds,searchAdminAdvertisingAdsPage,searchAdminAdvertisingBillingRates,searchAdminAdvertisingCampaigns,setAdminAdvertisingLaunchMode,setAdminAdvertisingProductionRollout,updateAdminAdvertisingBillingRateDraft} from "../lib/adminAdvertisingApi";
 
 vi.mock("../auth/AdminAuthProvider",()=>({useAdminAuth:vi.fn()}));
 vi.mock("../lib/adminApi",()=>({formatBdag:(value:unknown)=>`${value} BDAG`,formatDate:(value:unknown)=>String(value)}));
 vi.mock("../lib/adminAdvertisingApi",()=>({
   getAdminAdvertisingCampaignDetail:vi.fn(),getAdminAdvertisingFinanceHealth:vi.fn(),getAdminAdvertisingHealth:vi.fn(),
-  getAdminAdvertisingBillingHealth:vi.fn(),getAdminAdvertisingOverview:vi.fn(),getAdminAdvertisingRolloutControl:vi.fn(),reviewAdvertisingAd:vi.fn(),searchAdminAdvertisingAds:vi.fn(),searchAdminAdvertisingBillingRates:vi.fn(),searchAdminAdvertisingCampaigns:vi.fn(),
+  getAdminAdvertisingBillingHealth:vi.fn(),getAdminAdvertisingOverview:vi.fn(),getAdminAdvertisingRolloutControl:vi.fn(),reviewAdvertisingAd:vi.fn(),searchAdminAdvertisingAds:vi.fn(),searchAdminAdvertisingAdsPage:vi.fn(),searchAdminAdvertisingBillingRates:vi.fn(),searchAdminAdvertisingCampaigns:vi.fn(),
   createAdminAdvertisingBillingRateDraft:vi.fn(),updateAdminAdvertisingBillingRateDraft:vi.fn(),publishAdminAdvertisingBillingRate:vi.fn(),retireAdminAdvertisingBillingRate:vi.fn(),
   setAdminAdvertisingLaunchMode:vi.fn(),setAdminAdvertisingProductionRollout:vi.fn(),
 }));
@@ -27,6 +27,7 @@ beforeEach(()=>{
   vi.mocked(getAdminAdvertisingOverview).mockResolvedValue(overview);
   vi.mocked(searchAdminAdvertisingCampaigns).mockResolvedValue({items:[],next_cursor:null,page_size:0,authority:"ads_v2"});
   vi.mocked(searchAdminAdvertisingAds).mockResolvedValue([]);
+  vi.mocked(searchAdminAdvertisingAdsPage).mockImplementation(async input=>({items:await searchAdminAdvertisingAds(input?.reviewStatus),next_cursor:null}));
   vi.mocked(searchAdminAdvertisingBillingRates).mockResolvedValue({items:[],next_cursor:null});
   vi.mocked(getAdminAdvertisingBillingHealth).mockResolvedValue({authority:"ads_v2",launch_mode:"DISARMED",billing_cutover_at:"2026-09-28T00:17:06Z",pricing_policy:"nelyon-ads-pricing-v1",production_rate_coverage_ready:true,production_rate_coverage:{required_count:54,covered_count:54,missing_count:0,ready:true},production_rate_coverage_by_placement:["clips","live","marketplace_home","marketplace_search","social_feed","stories"].map((placement_code)=>({placement_code,required_count:9,covered_count:9,missing_count:0,ready:true})),rate_versions:{draft:0,published:54,retired:0},authorization_windows:{open:0,closed:0},materializations:{pending:0,active_pending:0,charged:0,budget_exhausted:0,oldest_pending_at:null},active_pending_reservation_anomalies:0,cron_jobs:[]});
   vi.mocked(getAdminAdvertisingRolloutControl).mockResolvedValue(rolloutControl);
@@ -36,14 +37,14 @@ beforeEach(()=>{
 });
 
 describe("ADS-V2-J Admin Web",()=>{
-  it("shows a factual pre-launch overview without launch, delivery, or finance mutation controls",async()=>{
+  it("shows a factual canonical overview without launch, delivery, or finance mutation controls",async()=>{
     render(<MemoryRouter><AdminAdvertisingOverviewPage/></MemoryRouter>);
-    expect(await screen.findByText("ADS V2 PRE-LAUNCH")).toBeInTheDocument();
-    expect(screen.getByText("Delivery disabled")).toBeInTheDocument();
+    expect(await screen.findByText("ADS V2 · ESTADO CANÓNICO")).toBeInTheDocument();
+    expect(await screen.findByText("Delivery disabled")).toBeInTheDocument();
     expect(screen.getByText("Funding disabled")).toBeInTheDocument();
-    expect(screen.getByLabelText("Clicks metric")).toHaveTextContent("Not available yet");
-    expect(screen.getByLabelText("Conversions metric")).toHaveTextContent("Not available yet");
-    expect(screen.getByLabelText("Impressions metric")).toHaveTextContent("No delivery yet");
+    expect(screen.getByLabelText("Clicks metric")).toHaveTextContent("0");
+    expect(screen.getByLabelText("Conversions metric")).toHaveTextContent("0");
+    expect(screen.getByLabelText("Impressions metric")).toHaveTextContent("0");
     expect(screen.queryByRole("button",{name:/launch|activate|fund|enable delivery/i})).not.toBeInTheDocument();
   });
 
@@ -60,7 +61,7 @@ describe("ADS-V2-J Admin Web",()=>{
     expect(alert).toHaveTextContent("couldn't load this Ads data");
     expect(alert).not.toHaveTextContent(/XX000|get_admin|advertising_events/i);
     fireEvent.click(screen.getByRole("button",{name:"Reintentar"}));
-    expect(await screen.findByText("ADS V2 PRE-LAUNCH")).toBeInTheDocument();
+    expect(await screen.findByText("ADS V2 · ESTADO CANÓNICO")).toBeInTheDocument();
   });
 
   it("distinguishes a moderation read error from a canonically empty queue",async()=>{
@@ -72,15 +73,16 @@ describe("ADS-V2-J Admin Web",()=>{
     expect(await screen.findByText("No ads are waiting for review.")).toBeInTheDocument();
   });
 
-  it("distinguishes a measured no-delivery impression zero from unavailable interaction and attribution runtimes",async()=>{
+  it("renders canonical measured zeros and distinguishes CTR without a denominator",async()=>{
     render(<MemoryRouter><AdminAdvertisingAnalyticsPage/></MemoryRouter>);
     expect(await screen.findByText("Ads V2 Analytics")).toBeInTheDocument();
     expect(screen.getByLabelText("Impressions metric")).toHaveTextContent("0");
-    expect(screen.getByLabelText("Impressions metric")).toHaveTextContent("No delivery yet");
-    for(const label of ["Clicks","CTR","Conversions","Attributed","Purchase value"]){
-      expect(screen.getByLabelText(`${label} metric`)).toHaveTextContent("Not available yet");
+    expect(screen.getByLabelText("Impressions metric")).toHaveTextContent("0");
+    expect(screen.getByLabelText("CTR metric")).toHaveTextContent("Sin impresiones");
+    for(const label of ["Clicks","Conversions","Attributed","Purchase value"]){
+      expect(screen.getByLabelText(`${label} metric`)).toHaveTextContent("0");
     }
-    expect(screen.getByText(/Reconciliation counters remain measured/)).toBeInTheDocument();
+    expect(screen.getByText(/Gasto histórico medido/)).toBeInTheDocument();
   });
 
   it("keeps moderation on the canonical D RPC and requires the moderation capability for actions",async()=>{
@@ -151,7 +153,7 @@ describe("ADS-V2-J Admin Web",()=>{
     expect(await screen.findByText("rejected · misleading")).toBeInTheDocument();
     expect(screen.queryByText(/internal moderator note/i)).not.toBeInTheDocument();
     expect(screen.getByText("No finance draft.")).toBeInTheDocument();
-    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.getByText("Budget").closest("article")).toHaveTextContent("No disponible");
   });
 
   it("shows launch blockers separately from unavailable targeting capabilities",async()=>{
@@ -336,7 +338,7 @@ it.each([
  expect(vi.mocked(read).mock.calls[1][0]).toMatchObject({cursor,limit:50});await waitFor(()=>expect(screen.getByRole("button",{name:"Página siguiente"})).toBeDisabled());fireEvent.click(screen.getByRole("button",{name:"Página anterior"}));await waitFor(()=>expect(read).toHaveBeenCalledTimes(3));expect(createAdminAdvertisingBillingRateDraft).not.toHaveBeenCalled();expect(setAdminAdvertisingLaunchMode).not.toHaveBeenCalled();
 });
 it("states that Ads review is a bounded window with no server continuation",async()=>{
- render(<MemoryRouter><AdminAdvertisingReviewPage/></MemoryRouter>);expect(await screen.findByText(/Maximum 100.*continuation unavailable/i)).toBeInTheDocument();expect(reviewAdvertisingAd).not.toHaveBeenCalled();
+ render(<MemoryRouter><AdminAdvertisingReviewPage/></MemoryRouter>);expect(await screen.findByText(/50 records per server page/i)).toBeInTheDocument();expect(reviewAdvertisingAd).not.toHaveBeenCalled();
 });
 it("fences an older Ads review read after the selected URL filter changes",async()=>{
  let resolve!:(items:Awaited<ReturnType<typeof searchAdminAdvertisingAds>>)=>void;

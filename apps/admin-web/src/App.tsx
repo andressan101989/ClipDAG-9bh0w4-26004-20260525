@@ -29,6 +29,7 @@ import {AdminContentSafetyAudioDetailPage,AdminContentSafetyAudioPage,AdminConte
 import {AdminAdvertisingAnalyticsPage,AdminAdvertisingBillingPage,AdminAdvertisingCampaignDetailPage,AdminAdvertisingCampaignsPage,AdminAdvertisingFinanceHealthPage,AdminAdvertisingHealthPage,AdminAdvertisingOverviewPage,AdminAdvertisingReviewPage} from "./pages/AdminAdvertisingPages";
 import {AdminCreatorPremiumDetailPage,AdminCreatorPremiumPage} from "./pages/AdminCreatorPremiumPages";
 import {AdminSecurityPage} from "./pages/AdminSecurityPage";
+import {AdminOperationalStatusPage} from "./pages/AdminOperationalStatusPage";
 
 function DefaultAdminRoute(){const {hasCapability}=useAdminAuth();return hasCapability("admin.shell.access")?<Navigate to="/overview" replace/>:<main className="center-state"><div className="state-card"><h1>Sin módulos disponibles</h1><p>Tu acceso al shell no incluye todavía un módulo administrativo.</p></div></main>}
 
@@ -38,6 +39,7 @@ export function App(){return <Routes>
     <Route index element={<DefaultAdminRoute/>}/>
     <Route element={<CapabilityRoute capability="admin.shell.access"/>}><Route path="/overview" element={<AdminOverviewPage/>}/></Route>
     <Route element={<CapabilityRoute capability="admin.shell.access"/>}><Route path="/system/security" element={<AdminSecurityPage/>}/></Route>
+    <Route element={<CapabilityRoute capability="admin.shell.access"/>}><Route path="/system/integrations" element={<AdminOperationalStatusPage/>}/></Route>
     <Route element={<CapabilityRoute capability="users.accounts.read"/>}><Route path="/users" element={<AdminUsersPage/>}/><Route path="/users/:id" element={<AdminUserDetailPage/>}/></Route>
     <Route element={<CapabilityRoute capability="reports.cases.read"/>}><Route path="/reports" element={<AdminReportsPage/>}/><Route path="/reports/:id" element={<AdminReportDetailPage/>}/></Route>
     <Route element={<CapabilityRoute capability="content.items.read"/>}><Route path="/content" element={<AdminContentPage/>}/><Route path="/content/:type/:id" element={<AdminContentDetailPage/>}/></Route>

@@ -27,6 +27,7 @@ export const adminNavigationGroups:AdminNavigationGroupDefinition[]=[
 
 export const adminLinks:AdminLink[]=[
   {to:"/overview",label:"Overview",capability:"admin.shell.access",icon:"overview",primary:true,end:true,group:"overview",sectionLabel:"Dashboard ejecutivo"},
+  {to:"/system/integrations",label:"Integraciones y estado",capability:"admin.shell.access",icon:"system",group:"system",sectionLabel:"Integraciones y estado"},
   {to:"/users",label:"Users",capability:"users.accounts.read",icon:"users",primary:true,group:"community",sectionLabel:"Usuarios"},
   {to:"/reports",label:"Reports",capability:"reports.cases.read",icon:"reports",primary:true,group:"community",sectionLabel:"Reportes"},
   {to:"/access",label:"Access",capability:"admin.roles.read",icon:"access",primary:true,group:"community",sectionLabel:"Roles y permisos"},

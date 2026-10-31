@@ -1,55 +1,55 @@
-import {useEffect,useMemo,useState} from "react";
+import {useEffect,useRef,useState} from "react";
 import {Link} from "react-router-dom";
-import globe from "../assets/figma-electric-blue-globe.svg";
-import {AdminMetricCard,AdminPanel,AdminStatusBadge} from "../components/AdminDashboard";
+import {AdminChartPanel,AdminDateRangeFilter,AdminFilterBar,AdminPageHeader,AdminStatCard} from "../components/AdminControlCenter";
+import {EmptyState,ErrorState,LoadingState} from "../components/PageState";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
-import {formatDate,getOverview,type Overview} from "../lib/adminApi";
-import {searchActivity} from "../lib/adminIntelligenceApi";
-import {getAdminFinanceOverview,getAdminSystemHealth,searchAdminGlobalAudit,searchAdminSystemJobs,type JsonRecord} from "../lib/adminObservabilityApi";
-
-type DashboardState={marketplace?:Overview;finance?:JsonRecord;health?:JsonRecord;audit?:JsonRecord[];jobs?:JsonRecord[];errors:string[]};
-const record=(value:unknown):JsonRecord=>value&&typeof value==="object"&&!Array.isArray(value)?value as JsonRecord:{};
-const list=(value:unknown)=>Array.isArray(value)?value.filter((item):item is JsonRecord=>!!item&&typeof item==="object"&&!Array.isArray(item)):[];
-const value=(input:unknown)=>typeof input==="number"||typeof input==="string"?String(input):"No disponible";
-const actor=(row:JsonRecord)=>{const identity=record(row.actor);return value(identity.display_name??identity.username??row.actor_display_name??row.actor_username??row.actor_kind??"system")};
-
+import {controlCenterRange,getAdminControlCenterOverview,type ControlCenterModule,type ControlCenterOverview,type ControlCenterRange} from "../lib/adminControlCenterApi";
+import {getAdminPlatformRevenue,getAdminSystemHealth} from "../lib/adminObservabilityApi";
+const modules:Array<{id:ControlCenterModule;title:string;cap:string;to:string;chart?:string}>=[
+ {id:"users",title:"Usuarios",cap:"users.accounts.read",to:"/users",chart:"Usuarios por día"},
+ {id:"content",title:"Contenido",cap:"content.items.read",to:"/content",chart:"Publicaciones por día"},
+ {id:"stories",title:"Stories",cap:"stories.items.read",to:"/stories"},
+ {id:"live",title:"LIVE",cap:"live.sessions.read",to:"/live"},
+ {id:"marketplace",title:"Marketplace",cap:"marketplace.overview.read",to:"/marketplace"},
+ {id:"finance",title:"Finanzas",cap:"finance.ledger.read",to:"/finance"},
+ {id:"premium",title:"Premium",cap:"finance.ledger.read",to:"/finance/creator-premium"},
+ {id:"ads",title:"Publicidad",cap:"advertising.ads.read",to:"/advertising"},
+ {id:"reports",title:"Alertas prioritarias",cap:"reports.cases.read",to:"/reports"},
+ {id:"activity",title:"Actividad reciente",cap:"admin.audit.read",to:"/audit"},
+];
+type ReadState={status:"loading"|"ready"|"failed"|"denied";data?:ControlCenterOverview};
+function ModuleSummary({module,range}:{module:typeof modules[number];range:ControlCenterRange}){
+ const {hasCapability}=useAdminAuth(),allowed=hasCapability(module.cap),key=JSON.stringify([range,allowed]),[nonce,setNonce]=useState(0),[result,setResult]=useState<{key:string;state:ReadState}|null>(null);
+ const requestKey=JSON.stringify([key,nonce]),requestRef=useRef(requestKey);requestRef.current=requestKey;
+ useEffect(()=>{let active=true;if(!allowed)return;void getAdminControlCenterOverview(module.id,range).then(data=>{if(active&&requestRef.current===requestKey)setResult({key:requestKey,state:{status:"ready",data}})}).catch(reason=>{if(active&&requestRef.current===requestKey)setResult({key:requestKey,state:{status:reason?.code==="42501"?"denied":"failed"}})});return()=>{active=false}},[requestKey,allowed,module.id,range]);
+ const state:ReadState=!allowed?{status:"denied"}:result?.key===requestKey?result.state:{status:"loading"},data=state.data;
+ return <section className="detail-card" role="region" aria-label={module.title}><div className="panel-title"><h2>{module.title}</h2>{allowed&&<Link to={module.to}>Abrir {module.title}</Link>}</div>
+ {state.status==="denied"?<p>Sin permiso para esta fuente.</p>:state.status==="failed"?<ErrorState message="No se pudo consultar esta fuente. Los demás módulos conservan su estado." onRetry={()=>setNonce(n=>n+1)}/>:!data?<LoadingState label={`Consultando ${module.title}…`}/>:<>
+ <div className="metrics-grid">{data.metrics.map(metric=><AdminStatCard key={metric.key} label={metric.label} value={metric.value===null?"No disponible":`${metric.value}${metric.unit==="BDAG"?" BDAG":""}`} detail={`${metric.source}${metric.reason?` · ${metric.reason}`:""}`}/>)}</div>
+ {module.chart&&(data.series.length?<AdminChartPanel title={module.chart} description="Altas en el periodo seleccionado, días UTC. Fuente canónica agregada por el servidor." data={data.series.map(row=>({label:row.day,value:row.value}))} valueLabel="Registros"/>:<EmptyState title="Sin actividad en el periodo" detail="La fuente no devuelve buckets para estas fechas."/>)}
+ {module.id==="activity"&&(data.recent.length?<table className="human-table"><caption>Últimas 8 acciones visibles, sin identidades ni destinos</caption><thead><tr><th>Fecha UTC</th><th>Acción</th><th>Dominio</th></tr></thead><tbody>{data.recent.map((row,index)=><tr key={index}><td>{row.at}</td><td>{row.action}</td><td>{row.domain}</td></tr>)}</tbody></table>:<EmptyState title="Sin actividad visible" detail="No hay acciones autorizadas en el periodo."/>)}
+ </>}
+ </section>;
+}
+function SystemSummary(){
+ const {hasCapability}=useAdminAuth(),allowed=hasCapability("system.health.read"),[nonce,setNonce]=useState(0),[state,setState]=useState<{value?:Record<string,unknown>;error?:boolean}|null>(null);
+ useEffect(()=>{if(!allowed)return;let active=true;setState(null);void getAdminSystemHealth().then(value=>{if(active)setState({value})}).catch(()=>{if(active)setState({error:true})});return()=>{active=false}},[allowed,nonce]);
+ const cron=state?.value?.cron as Record<string,unknown>|undefined;
+ return <section className="detail-card" aria-label="Salud del sistema"><h2>Salud del sistema</h2>{!allowed?<p>Sin permiso para esta fuente.</p>:state?.error?<ErrorState message="No se pudo consultar salud del sistema" onRetry={()=>setNonce(n=>n+1)}/>:!state?<LoadingState/>:<><AdminStatCard label="Jobs sin éxito (24 h)" value={typeof cron?.non_successes_24h==="number"?cron.non_successes_24h:"No disponible"} detail="get_admin_system_health · ventana propia de 24 horas; no usa el filtro de fechas"/><Link to="/system">Abrir salud del sistema</Link></>}</section>;
+}
+function CanonicalRevenueSummary(){
+ const {hasCapability}=useAdminAuth(),allowed=hasCapability("finance.ledger.read"),[nonce,setNonce]=useState(0),[result,setResult]=useState<{value:unknown;error:boolean}|null>(null);
+ useEffect(()=>{if(!allowed)return;let active=true;setResult(null);void getAdminPlatformRevenue("today").then(data=>{if(active){const rows=Array.isArray(data.summary)?data.summary:[],bdag=rows.find(row=>row&&typeof row==="object"&&(row as Record<string,unknown>).currency==="BDAG") as Record<string,unknown>|undefined;setResult({value:bdag?.net_revenue,error:false})}}).catch(()=>{if(active)setResult({value:null,error:true})});return()=>{active=false}},[allowed,nonce]);
+ const value=result?.value,available=value!==null&&value!==undefined&&(typeof value==="number"||typeof value==="string"&&value.trim()!=="")&&Number.isFinite(Number(value));
+ return <section className="detail-card" aria-label="Ingresos reconocidos"><h2>Ingresos reconocidos</h2>{!allowed?<p>Sin permiso para esta fuente.</p>:!result?<LoadingState label="Consultando ingresos reconocidos…"/>:result.error?<ErrorState message="No se pudo consultar ingresos reconocidos" onRetry={()=>setNonce(n=>n+1)}/>:<><AdminStatCard label="Ingresos reconocidos hoy (UTC)" value={available?`${value} BDAG`:"No disponible"} detail="get_admin_platform_revenue(today) · fuentes económicas canónicas, separado de volumen y saldo"/><p>Ventana propia de hoy; no usa el filtro de fechas del dashboard.</p><Link to="/finance">Abrir ingresos, fuentes y reconciliación</Link></>}</section>;
+}
 export function AdminOverviewPage(){
-  const {admin,hasCapability}=useAdminAuth();
-  const [state,setState]=useState<DashboardState>({errors:[]});
-  const capabilities=admin?.capabilities.join("|")??"";
-  useEffect(()=>{let active=true;const tasks:Array<Promise<[keyof DashboardState,unknown]>>=[];
-    if(hasCapability("marketplace.overview.read"))tasks.push(getOverview("30d").then((data)=>["marketplace",data]));
-    if(hasCapability("finance.ledger.read"))tasks.push(getAdminFinanceOverview().then((data)=>["finance",data]));
-    if(hasCapability("system.health.read"))tasks.push(getAdminSystemHealth().then((data)=>["health",data]));
-    if(hasCapability("system.jobs.read"))tasks.push(searchAdminSystemJobs({p_limit:5}).then((data)=>["jobs",list(data.items)]));
-    if(hasCapability("admin.audit.read"))tasks.push(searchAdminGlobalAudit({p_limit:5}).then((data)=>["audit",data.items]));
-    else if(hasCapability("marketplace.audit.read"))tasks.push(searchActivity({limit:5}).then((data)=>["audit",data.items]));
-    void Promise.allSettled(tasks).then((results)=>{if(!active)return;const next:DashboardState={errors:[]};for(const result of results){if(result.status==="fulfilled"){const [key,data]=result.value;(next as Record<string,unknown>)[key]=data}else next.errors.push(result.reason instanceof Error?result.reason.message:"No se pudo consultar un módulo")};setState(next)});return()=>{active=false};
-  },[capabilities,hasCapability]);
-  const health=record(state.health),cron=record(health.cron),liveBattles=record(health.live_battles),finance=record(state.finance),metrics=useMemo(()=>{
-    const rows:Array<{label:string;value:string;detail:string;icon:Parameters<typeof AdminMetricCard>[0]["icon"]}>=[];
-    if(state.marketplace)rows.push({label:"Marketplace Orders",value:value(state.marketplace.commerce.orders),detail:"últimos 30 días",icon:"marketplace"});
-    if(state.finance){rows.push({label:"Financial Transactions",value:value(finance.financial_transaction_count),detail:"registro canónico",icon:"finance"});rows.push({label:"Ledger Accounts",value:value(finance.ledger_account_count),detail:"cuentas canónicas",icon:"finance"})}
-    if(state.health){rows.push({label:"Live Sessions",value:value(liveBattles.active_live_sessions),detail:"activas ahora",icon:"live"});rows.push({label:"Battles",value:value(liveBattles.open_battles),detail:"abiertas ahora",icon:"battles"});rows.push({label:"System Jobs",value:`${value(cron.active_jobs)} / ${value(cron.total_jobs)}`,detail:"jobs activos",icon:"system"})}
-    return rows;
-  },[state.marketplace,state.finance,state.health,finance,liveBattles,cron]);
-  const snapshot=state.marketplace?[{label:"Pedidos",count:state.marketplace.commerce.orders},{label:"Pagados",count:state.marketplace.commerce.paid_orders},{label:"Envíos pendientes",count:state.marketplace.commerce.pending_fulfillment},{label:"Disputas",count:state.marketplace.operations.open_disputes},{label:"Productos con atención",count:state.marketplace.products.requiring_attention}]:state.finance?list(finance.transactions_by_status).map((item)=>({label:value(item.status),count:Number(item.count)||0})):[];
-  const max=Math.max(1,...snapshot.map((item)=>item.count));
-  const keyMetrics=state.marketplace?[{label:"Vendedores",value:state.marketplace.sellers.approved},{label:"Tiendas activas",value:state.marketplace.sellers.active_stores},{label:"Productos",value:state.marketplace.products.active_published},{label:"Pedidos con creador",value:state.marketplace.creator_commerce.attributed_orders},{label:"Reportes",value:"No disponible"}]:state.finance?[{label:"Cuentas",value:value(finance.ledger_account_count)},{label:"Entradas ledger",value:value(finance.ledger_entry_count)},{label:"Cuentas frozen",value:value(finance.frozen_account_count)},{label:"Settlements",value:value(finance.marketplace_settlement_count)},{label:"Refunds",value:value(finance.marketplace_refund_count)}]:[];
-  const audit=state.audit??[],jobs=state.jobs??[];
-  return <div className="admin-overview">
-    <section className="dashboard-hero"><div><p>ADMIN DASHBOARD</p><h2>Good to see you</h2><span>Control operativo de la plataforma en un solo lugar.</span></div><div className="hero-status"><small>Authority contract</small><AdminStatusBadge tone="success">v{admin?.authority_version.slice(0,8)??"—"}</AdminStatusBadge></div><div className="hero-globe"><img alt="" src={globe}/><span/><span/><span/><span/><span/><span/></div></section>
-    {state.errors.length>0&&<p className="dashboard-notice" role="status">Algunos módulos autorizados no están disponibles. Los demás datos permanecen operativos.</p>}
-    {metrics.length>0?<section className="dashboard-metrics">{metrics.map((item)=><AdminMetricCard {...item} key={item.label}/>)}</section>:<section className="dashboard-empty">No hay métricas adicionales autorizadas para este acceso.</section>}
-    <div className="dashboard-main-grid">
-      <AdminPanel title="Platform Activity" aside={<span>Snapshot actual</span>} className="activity-panel">{snapshot.length?<div className="activity-bars" role="img" aria-label="Distribución operativa actual">{snapshot.map((item)=><div key={item.label}><span>{item.label}</span><i><b style={{width:`${Math.max(3,item.count/max*100)}%`}}/></i><strong>{item.count}</strong></div>)}</div>:<div className="dashboard-panel-empty">No disponible para las capabilities actuales.</div>}</AdminPanel>
-      <AdminPanel title="Key Metrics"><div className="key-metrics">{keyMetrics.length?keyMetrics.map((item)=><div key={item.label}><span className="dashboard-icon mini"/><span>{item.label}</span><strong>{item.value}</strong><i className={item.value==="No disponible"?"muted":""}/></div>):<div className="dashboard-panel-empty">No disponible</div>}</div></AdminPanel>
-      <AdminPanel title="System Health"><div className="health-facts">{state.health?<><AdminStatusBadge tone={Number(cron.non_successes_24h)===0?"success":"warning"}>Operational signals</AdminStatusBadge><div><span>Cron jobs</span><strong>{value(cron.active_jobs)} / {value(cron.total_jobs)} active</strong></div><div><span>Runs 24h</span><strong>{value(cron.runs_24h)}</strong></div><div><span>Non-success 24h</span><strong>{value(cron.non_successes_24h)}</strong></div><div><span>Active LIVE</span><strong>{value(liveBattles.active_live_sessions)}</strong></div><div><span>Open Battles</span><strong>{value(liveBattles.open_battles)}</strong></div></>:<div className="dashboard-panel-empty">No autorizado</div>}</div></AdminPanel>
-    </div>
-    <div className="dashboard-bottom-grid">
-      <AdminPanel title="Recent Admin Actions" aside={hasCapability("admin.audit.read")?<Link to="/audit">View all</Link>:hasCapability("marketplace.audit.read")?<Link to="/marketplace/activity">View all</Link>:undefined}><div className="compact-table"><div className="compact-table-head"><span>TIME</span><span>ADMIN</span><span>ACTION</span><span>TARGET</span><span>DOMAIN</span></div>{audit.length?audit.map((row)=><div className="compact-table-row" key={value(row.id)}><span>{formatDate(row.created_at)}</span><span>{actor(row)}</span><span>{value(row.action)}</span><span>{value(row.target_type)} · {value(row.target_id).slice(0,8)}</span><span>{value(row.domain??"marketplace")}</span></div>):<div className="dashboard-panel-empty">No hay acciones visibles.</div>}</div></AdminPanel>
-      <AdminPanel title="Recent System Events"><div className="system-events">{jobs.length?jobs.map((job)=>{const last=record(job.last_run);return <div key={value(job.job_id)}><span className={`event-dot ${last.status==="succeeded"?"success":"warning"}`}/><strong>{value(job.job_name)}</strong><span>{value(last.status)}</span><small>{formatDate(last.started_at)}</small></div>}):<div className="dashboard-panel-empty">No hay eventos autorizados.</div>}</div></AdminPanel>
-    </div>
-    <footer className="dashboard-footer"><strong><i/>NELYON</strong><span>BUILD A MORE OPEN CREATOR ECONOMY</span><span>Production</span></footer>
-  </div>
+ const [preset,setPreset]=useState("30d"),[range,setRange]=useState(()=>controlCenterRange("30d")),[from,setFrom]=useState(range.from),[to,setTo]=useState(range.to),[error,setError]=useState<string|null>(null);
+ const select=(value:string)=>{setPreset(value);setError(null);if(value!=="custom"){const next=controlCenterRange(value);setRange(next);setFrom(next.from);setTo(next.to)}};
+ const apply=()=>{try{setRange(controlCenterRange("custom",from,to));setError(null)}catch(reason){setError(reason instanceof Error?reason.message:"Fechas inválidas")}};
+ return <div className="admin-overview"><AdminPageHeader eyebrow="CONTROL CENTER" title="Dashboard ejecutivo" description="Lectura de fuentes canónicas. Las métricas muestran su origen; ausencia de autoridad nunca equivale a cero."/>
+ <AdminFilterBar label="Fechas del dashboard" onSubmit={apply}><AdminDateRangeFilter label="Periodo" value={preset} onChange={select} options={[{value:"today",label:"Hoy"},{value:"7d",label:"7 días"},{value:"30d",label:"30 días"},{value:"90d",label:"90 días"},{value:"custom",label:"Personalizado"}]}/>{preset==="custom"&&<><label>Desde (UTC)<input aria-label="Desde (UTC)" type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label><label>Hasta (UTC)<input aria-label="Hasta (UTC)" type="date" value={to} onChange={e=>setTo(e.target.value)}/></label><button type="submit">Aplicar fechas</button></>}</AdminFilterBar>
+ <p role="status">{range.from} → {range.to} · UTC · máximo 90 días, ambos días incluidos</p>{error&&<p role="alert">{error}</p>}
+ <div className="detail-grid">{modules.map(module=><ModuleSummary key={module.id} module={module} range={range}/>)}<CanonicalRevenueSummary/><SystemSummary/></div>
+ </div>;
 }

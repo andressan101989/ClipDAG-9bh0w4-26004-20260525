@@ -139,9 +139,13 @@ test("Admin Web integrates one canonical Advertising workspace and reuses modera
   assert.match(nav, /capability:"advertising\.ads\.read"/);
   assert.match(api, /search_admin_advertising_ads/);
   assert.match(api, /admin_review_advertising_ad/);
-  assert.match(pages, /ADS V2 PRE-LAUNCH/);
-  assert.match(pages, /Delivery disabled/);
-  assert.match(pages, /Funding disabled/);
+  assert.match(pages, /OperationalBanner/);
+  assert.match(pages, /getAdminAdvertisingRolloutControl/);
+  assert.match(pages, /getAdminAdvertisingHealth/);
+  assert.match(pages, /flag\(rollout\.data\?\.global_delivery_enabled\)/);
+  for (const field of ["funding_enabled", "spend_enabled", "settlement_enabled"])
+    assert.match(pages, new RegExp(`flag\\(finance\\?\\.${field}\\)`));
+  assert.doesNotMatch(pages, /ADS V2 PRE-LAUNCH|Architecture complete.*Pre-launch locked|ADS_OPERATIONAL_RUNTIME/);
   assert.doesNotMatch(api, /fund_my_advertising|spend_advertising|settle_advertising|fetch_advertising_delivery_candidates|service_role/i);
   assert.doesNotMatch(pages, /Enable delivery|Activate campaign|Launch campaign/i);
 });
