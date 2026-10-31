@@ -7,6 +7,7 @@ import {AdminAuthProvider,useAdminAuth} from "../auth/AdminAuthProvider";
 import {AdminRoute} from "../auth/AdminRoute";
 import {getAdminAccess} from "../lib/adminApi";
 import {supabase} from "../lib/supabase";
+import {adminLogoutFence} from "../auth/adminLogoutFence";
 
 vi.mock("../lib/adminApi",()=>({getAdminAccess:vi.fn()}));
 vi.mock("../lib/supabase",()=>({supabase:{auth:{getSession:vi.fn(),onAuthStateChange:vi.fn(),signOut:vi.fn(),signInWithPassword:vi.fn(),stopAutoRefresh:vi.fn().mockResolvedValue(undefined),startAutoRefresh:vi.fn().mockResolvedValue(undefined),mfa:{getAuthenticatorAssuranceLevel:vi.fn()}}}}));
@@ -16,8 +17,8 @@ let event:(event:string,session:Session|null)=>void;
 const deferred=<T,>()=>{let resolve!:(value:T)=>void;let reject!:(reason:unknown)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no});return{promise,resolve,reject}};
 function Status(){const auth=useAdminAuth();return <><output>{auth.admin?.user_id??"none"}</output><output>{auth.error}</output><button onClick={()=>void auth.retry()}>refresh</button><button onClick={()=>void auth.logout()}>logout</button><button onClick={()=>void auth.login("operator@example.test","synthetic-password").catch(()=>undefined)}>password login</button></>}
 function mount(){return render(<AdminAuthProvider><Status/><MemoryRouter><Routes><Route element={<AdminRoute/>}><Route path="/" element={<input aria-label="draft"/>}/></Route><Route path="/login" element={<p>login</p>}/></Routes></MemoryRouter></AdminAuthProvider>)}
-beforeEach(()=>{vi.resetAllMocks();localStorage.clear();vi.mocked(getAdminAccess).mockResolvedValue(access);vi.mocked(supabase.auth.signOut).mockResolvedValue({error:null});vi.mocked(supabase.auth.getSession).mockResolvedValue({data:{session:session()},error:null});vi.mocked(supabase.auth.onAuthStateChange).mockImplementation((callback)=>{event=callback as typeof event;return{data:{subscription:{unsubscribe:vi.fn()}}} as never});vi.mocked(supabase.auth.mfa.getAuthenticatorAssuranceLevel).mockResolvedValue({data:{currentLevel:"aal1",nextLevel:"aal1",currentAuthenticationMethods:[]},error:null});});
-afterEach(()=>{cleanup();vi.useRealTimers()});
+beforeEach(()=>{vi.resetAllMocks();localStorage.clear();adminLogoutFence.clearAfterPasswordLogin();vi.mocked(getAdminAccess).mockResolvedValue(access);vi.mocked(supabase.auth.signOut).mockResolvedValue({error:null});vi.mocked(supabase.auth.getSession).mockResolvedValue({data:{session:session()},error:null});vi.mocked(supabase.auth.onAuthStateChange).mockImplementation((callback)=>{event=callback as typeof event;return{data:{subscription:{unsubscribe:vi.fn()}}} as never});vi.mocked(supabase.auth.mfa.getAuthenticatorAssuranceLevel).mockResolvedValue({data:{currentLevel:"aal1",nextLevel:"aal1",currentAuthenticationMethods:[]},error:null});});
+afterEach(()=>{cleanup();vi.useRealTimers();vi.restoreAllMocks();document.cookie="nelyon_admin_logout_intent_v1=; Path=/admin; Max-Age=0";window.history.replaceState(null,"","/")});
 it("keeps an active form mounted and authority visible during same-user token refresh",async()=>{mount();const input=await screen.findByLabelText("draft");await userEvent.type(input,"unsaved");const pending=deferred<typeof access>();vi.mocked(getAdminAccess).mockReturnValueOnce(pending.promise);act(()=>event("TOKEN_REFRESHED",session()));expect(screen.getByLabelText("draft")).toBe(input);expect(input).toHaveValue("unsaved");await act(async()=>pending.resolve(access));});
 it("fences stale capability responses after immediate sign out",async()=>{mount();await screen.findByLabelText("draft");const pending=deferred<typeof access>();vi.mocked(getAdminAccess).mockReturnValueOnce(pending.promise);act(()=>event("TOKEN_REFRESHED",session()));act(()=>event("SIGNED_OUT",null));expect(screen.getByText("none")).toBeInTheDocument();await act(async()=>pending.resolve(access));expect(screen.getByText("none")).toBeInTheDocument();});
 it("ignores an initial session response after a newer auth event",async()=>{const initial=deferred<Awaited<ReturnType<typeof supabase.auth.getSession>>>();vi.mocked(supabase.auth.getSession).mockReturnValue(initial.promise);mount();act(()=>event("SIGNED_OUT",null));await act(async()=>initial.resolve({data:{session:session()},error:null}));expect(screen.getByText("none")).toBeInTheDocument();expect(getAdminAccess).not.toHaveBeenCalled();});
@@ -46,4 +47,21 @@ it("clears authority at token expiry even when no refresh event arrives",async()
   const active=session();vi.mocked(supabase.auth.getSession).mockResolvedValue({data:{session:active},error:null});mount();await screen.findByLabelText("draft");
   vi.useFakeTimers();act(()=>event("TOKEN_REFRESHED",{...active,expires_at:Math.floor(Date.now()/1000)+2}));await act(async()=>{await vi.advanceTimersByTimeAsync(2100)});
   expect(screen.queryByLabelText("draft")).not.toBeInTheDocument();expect(screen.getByText("none")).toBeInTheDocument();vi.useRealTimers();
+});
+it("verifies a cookie logout fallback when local storage reads work but writes fail",async()=>{
+  window.history.replaceState(null,"","/admin/");const view=mount();await screen.findByLabelText("draft");
+  vi.spyOn(Storage.prototype,"setItem").mockImplementation(()=>{throw new DOMException("quota","QuotaExceededError")});vi.mocked(supabase.auth.signOut).mockResolvedValue({error:{message:"remote unavailable"}} as never);
+  await userEvent.click(screen.getByText("logout"));expect(document.cookie).toContain("nelyon_admin_logout_intent_v1=");
+  view.unmount();mount();await act(async()=>{event("INITIAL_SESSION",session());await new Promise((resolve)=>setTimeout(resolve,10))});expect(screen.getByText("none")).toBeInTheDocument();
+  vi.mocked(supabase.auth.signInWithPassword).mockResolvedValueOnce({data:{session:session(),user:session().user},error:null});await userEvent.click(screen.getByText("password login"));expect(await screen.findByText("one")).toBeInTheDocument();expect(document.cookie).not.toContain("nelyon_admin_logout_intent_v1=");
+});
+it("authorizes explicit password login when every local storage operation is unavailable",async()=>{
+  vi.spyOn(Storage.prototype,"getItem").mockImplementation(()=>{throw new DOMException("blocked","SecurityError")});vi.spyOn(Storage.prototype,"setItem").mockImplementation(()=>{throw new DOMException("blocked","SecurityError")});vi.spyOn(Storage.prototype,"removeItem").mockImplementation(()=>{throw new DOMException("blocked","SecurityError")});
+  vi.mocked(supabase.auth.getSession).mockResolvedValue({data:{session:null},error:null});mount();await screen.findByText("login");
+  vi.mocked(supabase.auth.signInWithPassword).mockResolvedValueOnce({data:{session:session(),user:session().user},error:null});await userEvent.click(screen.getByText("password login"));expect(await screen.findByText("one")).toBeInTheDocument();
+});
+it("keeps module intent across remount and reports an unverified durable logout if no marker can be stored",async()=>{
+  const view=mount();await screen.findByLabelText("draft");vi.spyOn(Storage.prototype,"setItem").mockImplementation(()=>{throw new DOMException("quota","QuotaExceededError")});vi.spyOn(document,"cookie","get").mockReturnValue("");vi.spyOn(document,"cookie","set").mockImplementation(()=>undefined);vi.mocked(supabase.auth.signOut).mockResolvedValue({error:{message:"remote unavailable"}} as never);
+  await userEvent.click(screen.getByText("logout"));expect(await screen.findByText(/No se pudo asegurar el cierre tras recargar/)).toBeInTheDocument();
+  view.unmount();mount();await act(async()=>{event("INITIAL_SESSION",session());await new Promise((resolve)=>setTimeout(resolve,10))});expect(screen.getByText("none")).toBeInTheDocument();
 });
