@@ -1,4 +1,4 @@
-import {fireEvent,render,screen,waitFor} from "@testing-library/react";
+import {act,fireEvent,render,screen,waitFor} from "@testing-library/react";
 import {MemoryRouter} from "react-router-dom";
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
@@ -245,7 +245,9 @@ describe("ADS-V2-J Admin Web",()=>{
   it("lets only rollout managers save six placements with an idempotency key",async()=>{
     vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.billing.read","advertising.rollout.manage"]) as never);
     render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
-    fireEvent.change(await screen.findByLabelText("Social feed rollout percentage"),{target:{value:"10"}});
+    const input=await screen.findByLabelText("Social feed rollout percentage");
+    await act(async()=>{}); // Let the authoritative initial draft hydrate before editing.
+    fireEvent.change(input,{target:{value:"10"}});
     fireEvent.click(screen.getByRole("button",{name:"Save configuration"}));
     fireEvent.click(screen.getByRole("button",{name:"Confirm rollout configuration"}));
     await waitFor(()=>expect(setAdminAdvertisingProductionRollout).toHaveBeenCalledWith(expect.objectContaining({expectedConfigVersion:1,globalPaused:false,idempotencyKey:expect.any(String),placements:expect.arrayContaining([expect.objectContaining({code:"social_feed",rollout_bps:1000,kill_switch:false})])})));
@@ -323,4 +325,28 @@ describe("ADS-V2-J Admin Web",()=>{
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.queryByText("Production rollout configuration saved.")).not.toBeInTheDocument();
   });
+});
+it.each([
+ ["campaigns",AdminAdvertisingCampaignsPage,searchAdminAdvertisingCampaigns],
+ ["rates",AdminAdvertisingBillingPage,searchAdminAdvertisingBillingRates],
+] as const)("paginates bounded Ads %s reads without invoking commands",async(_label,Page,read)=>{
+ const cursor={created_at:"2026-09-28T00:00:00Z",id:"11111111-1111-4111-8111-111111111111"};
+ vi.mocked(read).mockResolvedValueOnce({items:[],next_cursor:cursor} as never).mockResolvedValueOnce({items:[],next_cursor:null} as never).mockResolvedValueOnce({items:[],next_cursor:cursor} as never);
+ render(<MemoryRouter><Page/></MemoryRouter>);fireEvent.click(await screen.findByRole("button",{name:"Página siguiente"}));await waitFor(()=>expect(read).toHaveBeenCalledTimes(2));
+ expect(vi.mocked(read).mock.calls[1][0]).toMatchObject({cursor,limit:50});await waitFor(()=>expect(screen.getByRole("button",{name:"Página siguiente"})).toBeDisabled());fireEvent.click(screen.getByRole("button",{name:"Página anterior"}));await waitFor(()=>expect(read).toHaveBeenCalledTimes(3));expect(createAdminAdvertisingBillingRateDraft).not.toHaveBeenCalled();expect(setAdminAdvertisingLaunchMode).not.toHaveBeenCalled();
+});
+it("states that Ads review is a bounded window with no server continuation",async()=>{
+ render(<MemoryRouter><AdminAdvertisingReviewPage/></MemoryRouter>);expect(await screen.findByText(/Maximum 100.*continuation unavailable/i)).toBeInTheDocument();expect(reviewAdvertisingAd).not.toHaveBeenCalled();
+});
+it("fences an older Ads review read after the selected URL filter changes",async()=>{
+ let resolve!:(items:Awaited<ReturnType<typeof searchAdminAdvertisingAds>>)=>void;
+ vi.mocked(searchAdminAdvertisingAds).mockImplementationOnce(()=>new Promise(r=>{resolve=r})).mockRejectedValueOnce(new Error("Newest request failed"));
+ render(<MemoryRouter><AdminAdvertisingReviewPage/></MemoryRouter>);await waitFor(()=>expect(searchAdminAdvertisingAds).toHaveBeenCalledTimes(1));fireEvent.change(screen.getByLabelText("Review status"),{target:{value:"rejected"}});await screen.findByRole("alert");await act(async()=>resolve([]));expect(screen.getByRole("alert")).toBeInTheDocument();expect(screen.queryByText("No ads are waiting for review.")).not.toBeInTheDocument();
+});
+
+it("preserves the explicit all-status review filter when the default is pending",async()=>{
+ render(<MemoryRouter><AdminAdvertisingReviewPage/></MemoryRouter>);await screen.findByText("No ads are waiting for review.");fireEvent.change(screen.getByLabelText("Review status"),{target:{value:""}});expect(screen.getByLabelText("Review status")).toHaveValue("");await waitFor(()=>expect(searchAdminAdvertisingAds).toHaveBeenLastCalledWith(""));
+});
+it.each([[AdminAdvertisingCampaignsPage,searchAdminAdvertisingCampaigns],[AdminAdvertisingBillingPage,searchAdminAdvertisingBillingRates]] as const)("redacts backend details in paginated Ads read failures",async(Page,read)=>{
+ vi.mocked(read).mockRejectedValueOnce(new Error("SQLSTATE XX000 private.secret_table"));render(<MemoryRouter><Page/></MemoryRouter>);const alert=await screen.findByRole("alert");expect(alert).toHaveTextContent("couldn't load this Ads data");expect(alert).not.toHaveTextContent(/XX000|secret_table|SQLSTATE/);
 });

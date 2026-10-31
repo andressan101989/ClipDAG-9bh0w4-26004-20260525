@@ -189,7 +189,7 @@ describe("ADMIN-SUPERUSER-OPT-F1 Story inspection",()=>{
     expect(await screen.findAllByText("Compartida")).toHaveLength(2);
     expect(screen.getAllByText(/30000000/)).toHaveLength(2);
     expect(screen.getAllByRole("link",{name:"Abrir Story"})).toHaveLength(2);
-    expect(searchAdminStories).toHaveBeenCalledWith({query:"",visibility:""});
+    expect(searchAdminStories).toHaveBeenCalledWith({query:"",visibility:"",cursor:undefined,limit:50});
   });
 
   it("shows the canonical shared video, source, reports, and composition in human form",async()=>{

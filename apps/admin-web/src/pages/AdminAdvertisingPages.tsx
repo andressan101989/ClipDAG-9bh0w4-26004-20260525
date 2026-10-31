@@ -1,3 +1,5 @@
+import {useAdminCursorPage,useAdminUrlFilter} from "../lib/useAdminCursorPage";
+import {AdminCursorPagination} from "../components/AdminCursorPagination";
 import {useCallback,useEffect,useRef,useState,type ReactNode} from "react";
 import {Link,useParams} from "react-router-dom";
 import {EmptyState,ErrorState,LoadingState,StaleDataNotice} from "../components/PageState";
@@ -25,6 +27,7 @@ const num=(value:unknown)=>Number.isFinite(Number(value))?Number(value):0;
 const txt=(value:unknown)=>typeof value==="string"?value:"—";
 const obj=(value:unknown):JsonRecord=>value!==null&&typeof value==="object"&&!Array.isArray(value)?value as JsonRecord:{};
 const list=(value:unknown):JsonRecord[]=>Array.isArray(value)?value.filter((item)=>item!==null&&typeof item==="object"&&!Array.isArray(item)) as JsonRecord[]:[];
+const readAdsPage=async<T,>(read:Promise<T>):Promise<T>=>read.catch(reason=>{throw new Error(presentAdsError(reason,{operation:"read",resource:"Ads data"}).message)});
 const tone=(value:string)=>value==="approved"||value==="active"||value==="funded"?"success":value==="pending"||value==="rejected"||value==="archived"?"warn":"";
 
 function useAsync<T>(load:()=>Promise<T>,deps:unknown[]){
@@ -56,12 +59,11 @@ export function AdminAdvertisingOverviewPage(){
 }
 
 export function AdminAdvertisingCampaignsPage(){
-  const [query,setQuery]=useState(""),[objective,setObjective]=useState(""),[status,setStatus]=useState(""),[cursor,setCursor]=useState<AdsCampaignCursor|undefined>(),[history,setHistory]=useState<Array<AdsCampaignCursor|undefined>>([]);
-  const state=useAsync(()=>searchAdminAdvertisingCampaigns({query,objective,status,cursor,limit:50}),[query,objective,status,cursor]);
-  const reset=()=>{setCursor(undefined);setHistory([])},next=(value:AdsCampaignCursor)=>{setHistory((old)=>[...old,cursor]);setCursor(value)},previous=()=>{setCursor(history.at(-1));setHistory((old)=>old.slice(0,-1))};
-  return <><Heading eyebrow="ADVERTISING" title="Campaigns" detail="Canonical Ads V2 campaigns. Marketplace Ads remains a separate authority."/><div className="filters"><input aria-label="Buscar campañas Ads V2" placeholder="Campaign or Business" value={query} onChange={(event)=>{setQuery(event.target.value);reset()}}/><select aria-label="Objetivo Ads V2" value={objective} onChange={(event)=>{setObjective(event.target.value);reset()}}><option value="">All objectives</option>{objectives.map((item)=><option key={item}>{item}</option>)}</select><select aria-label="Estado Ads V2" value={status} onChange={(event)=>{setStatus(event.target.value);reset()}}><option value="">All statuses</option>{["draft","scheduled","active","paused","completed","cancelled","archived"].map((item)=><option key={item}>{item}</option>)}</select></div>{state.error&&!state.data?<ErrorState message={state.error} onRetry={state.reload}/>:!state.data?<LoadingState label="Buscando campañas…"/>:<><RefreshNotice error={state.error} loading={state.loading} reload={state.reload}/><CampaignTable page={state.data} onNext={next} onPrevious={history.length>0?previous:undefined}/></>}</>;
+  const [query,setQuery]=useAdminUrlFilter("query"),[objective,setObjective]=useAdminUrlFilter("objective"),[status,setStatus]=useAdminUrlFilter("status");
+  const state=useAdminCursorPage({query,objective,status},(filters,cursor:AdsCampaignCursor|undefined,limit)=>readAdsPage(searchAdminAdvertisingCampaigns({...filters,cursor,limit})));
+  return <><Heading eyebrow="ADVERTISING" title="Campaigns" detail="Canonical Ads V2 campaigns. Marketplace Ads remains a separate authority."/><div className="filters"><input aria-label="Buscar campañas Ads V2" placeholder="Campaign or Business" value={query} onChange={(event)=>{setQuery(event.target.value)}}/><select aria-label="Objetivo Ads V2" value={objective} onChange={(event)=>{setObjective(event.target.value)}}><option value="">All objectives</option>{objectives.map((item)=><option key={item}>{item}</option>)}</select><select aria-label="Estado Ads V2" value={status} onChange={(event)=>{setStatus(event.target.value)}}><option value="">All statuses</option>{["draft","scheduled","active","paused","completed","cancelled","archived"].map((item)=><option key={item}>{item}</option>)}</select></div>{state.error&&!state.data?<ErrorState message={state.error} onRetry={state.reload}/>:!state.data?<LoadingState label="Buscando campañas…"/>:<><RefreshNotice error={state.error} loading={state.loading} reload={state.reload}/><CampaignTable page={state.data}/></>}<AdminCursorPagination state={state}/></>;
 }
-function CampaignTable({page,onNext,onPrevious}:{page:AdsCampaignPage;onNext:(cursor:AdsCampaignCursor)=>void;onPrevious?:()=>void}){if(page.items.length===0)return <EmptyState title="No Ads V2 campaigns" detail="The production authority currently contains no Campaign V2 rows."/>;return <section className="table-panel"><table className="human-table"><thead><tr><th>Campaign</th><th>Business</th><th>Ad Account</th><th>Objective</th><th>Status</th><th>Ads / Review</th><th>Budget</th><th>Created</th></tr></thead><tbody>{page.items.map((item)=><tr key={item.campaign_id}><td><Link to={`/advertising/campaigns/${item.campaign_id}`}><strong>{item.name}</strong><small>ads_v2</small></Link></td><td>{item.business.display_name}</td><td>{item.ad_account.name}</td><td>{item.objective}</td><td><em className={`badge ${tone(item.status)}`}>{item.status}</em></td><td>{item.counts.ads} · {item.counts.review_pending} pending</td><td>{item.finance?formatBdag(num(item.finance.budget_bdag)):"—"}</td><td>{formatDate(item.created_at)}</td></tr>)}</tbody></table>{(onPrevious||page.next_cursor)&&<footer className="pagination">{onPrevious&&<button className="secondary" onClick={onPrevious}>Previous</button>}{page.next_cursor&&<button className="secondary" onClick={()=>onNext(page.next_cursor as AdsCampaignCursor)}>Next</button>}</footer>}</section>}
+function CampaignTable({page}:{page:Pick<AdsCampaignPage,"items"|"next_cursor">}){if(page.items.length===0)return <EmptyState title="No Ads V2 campaigns" detail="The production authority currently contains no Campaign V2 rows."/>;return <section className="table-panel"><table className="human-table"><thead><tr><th>Campaign</th><th>Business</th><th>Ad Account</th><th>Objective</th><th>Status</th><th>Ads / Review</th><th>Budget</th><th>Created</th></tr></thead><tbody>{page.items.map((item)=><tr key={item.campaign_id}><td><Link to={`/advertising/campaigns/${item.campaign_id}`}><strong>{item.name}</strong><small>ads_v2</small></Link></td><td>{item.business.display_name}</td><td>{item.ad_account.name}</td><td>{item.objective}</td><td><em className={`badge ${tone(item.status)}`}>{item.status}</em></td><td>{item.counts.ads} · {item.counts.review_pending} pending</td><td>{item.finance?formatBdag(num(item.finance.budget_bdag)):"—"}</td><td>{formatDate(item.created_at)}</td></tr>)}</tbody></table></section>}
 
 export function AdminAdvertisingCampaignDetailPage(){
   const {campaignId=""}=useParams(),state=useAsync(()=>getAdminAdvertisingCampaignDetail(campaignId),[campaignId]);
@@ -76,7 +78,8 @@ function DetailList({title,items,label,secondary}:{title:string;items:JsonRecord
 export function AdminAdvertisingReviewPage(){
   const {hasCapability}=useAdminAuth();
   const canModerate=hasCapability("content.items.moderate");
-  const [filter,setFilter]=useState("pending");
+  const [filter,setFilter]=useAdminUrlFilter("reviewStatus","pending");
+  const readGeneration=useRef(0),filterRef=useRef(filter);filterRef.current=filter;
   const [items,setItems]=useState<AdsReviewItem[]|null>(null);
   const [error,setError]=useState<string|null>(null);
   const [readError,setReadError]=useState<string|null>(null);
@@ -88,10 +91,12 @@ export function AdminAdvertisingReviewPage(){
   const [confirmation,setConfirmation]=useState<{item:AdsReviewItem;action:"approve"|"reject"}|null>(null);
   const fetchItems=useCallback(()=>searchAdminAdvertisingAds(filter),[filter]);
   const load=useCallback((clear=false)=>{
+    const generation=++readGeneration.current,requestedFilter=filter;
+    const current=()=>generation===readGeneration.current&&requestedFilter===filterRef.current;
     if(clear)setItems(null);setError(null);setReadError(null);setLoading(true);
-    void fetchItems().then((value)=>{setItems(value);setReadError(null)}).catch((value)=>setReadError(presentAdsError(value,{operation:"read",resource:"review queue"}).message)).finally(()=>setLoading(false));
-  },[fetchItems]);
-  useEffect(()=>load(true),[load]);
+    void fetchItems().then(value=>{if(current()){setItems(value);setReadError(null)}}).catch(value=>{if(current())setReadError(presentAdsError(value,{operation:"read",resource:"review queue"}).message)}).finally(()=>{if(current())setLoading(false)});
+  },[fetchItems,filter]);
+  useEffect(()=>{load(true);const generation=readGeneration;return()=>{generation.current++}},[load]);
 
   const decide=async(item:AdsReviewItem,action:"approve"|"reject")=>{
     const reasonCode=action==="reject"?(reason[item.id]??"policy_violation"):null;
@@ -107,7 +112,7 @@ export function AdminAdvertisingReviewPage(){
         reconcile:async()=>reconcileAdminDecision(await searchAdminAdvertisingAds(""),intent),
       });
       let refreshFailed=false;
-      try{setItems(await fetchItems())}catch{refreshFailed=true}
+      try{const generation=++readGeneration.current,requestedFilter=filter;const next=await fetchItems();if(generation===readGeneration.current&&requestedFilter===filterRef.current)setItems(next)}catch{refreshFailed=true}
       if(result.state==="uncertain"||result.state==="conflict") setError(result.message);
       else{
         setNotice(refreshFailed ? "The review was saved, but the latest queue could not be loaded. Try again." : action==="approve"?"Ad approved.":"Ad rejected.");
@@ -121,7 +126,7 @@ export function AdminAdvertisingReviewPage(){
   };
 
   return <>
-    <Heading eyebrow="CONTENT MODERATION" title="Ads V2 Review Queue" detail="Review the exact creative and destination submitted by the advertiser.">
+    <p className="readonly-note">Maximum 100 review records. Server continuation unavailable; this window is not a complete queue.</p><Heading eyebrow="CONTENT MODERATION" title="Ads V2 Review Queue" detail="Review the exact creative and destination submitted by the advertiser.">
       <select aria-label="Review status" value={filter} onChange={(event)=>setFilter(event.target.value)}>
         <option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="">All</option>
       </select>
@@ -210,7 +215,7 @@ export function AdminAdvertisingFinanceHealthPage(){
 
 export function AdminAdvertisingBillingPage(){
   const {hasCapability}=useAdminAuth(),canManage=hasCapability("advertising.rates.manage");
-  const health=useAsync(getAdminAdvertisingBillingHealth,[]),rates=useAsync(()=>searchAdminAdvertisingBillingRates({limit:100}),[]);
+  const health=useAsync(getAdminAdvertisingBillingHealth,[]),rates=useAdminCursorPage({},(_filters,cursor:AdsCampaignCursor|undefined,limit)=>readAdsPage(searchAdminAdvertisingBillingRates({cursor,limit})));
   const [objective,setObjective]=useState("awareness"),[eventType,setEventType]=useState<"impression"|"click">("impression"),[placement,setPlacement]=useState("social_feed"),[scope,setScope]=useState<"global"|"canary_campaign">("global"),[campaignId,setCampaignId]=useState(""),[rate,setRate]=useState(""),[effectiveFrom,setEffectiveFrom]=useState(""),[effectiveTo,setEffectiveTo]=useState(""),[reason,setReason]=useState("");
   const [editingRateId,setEditingRateId]=useState<string|null>(null),[confirmation,setConfirmation]=useState<{item:AdsBillingRate;action:"publish"|"retire"}|null>(null);
   const [busy,setBusy]=useState(false),[notice,setNotice]=useState<string|null>(null),[mutationError,setMutationError]=useState<string|null>(null);
@@ -232,5 +237,5 @@ export function AdminAdvertisingBillingPage(){
     {canManage&&<section className="detail-card"><h3>{editingRateId?"Edit draft rate":"Create draft rate"}</h3><p className="muted-copy">Drafts never enable billing. Publication remains prospective and cannot occur while a billing authorization window is open.</p><div className="filters"><label>Objective<select aria-label="Rate objective" value={objective} onChange={(event)=>{const value=event.target.value;setObjective(value);setEventType(["awareness","reach","video_views"].includes(value)?"impression":"click")}}><option value="awareness">Awareness</option><option value="reach">Reach</option><option value="video_views">Video views</option><option value="traffic">Traffic</option><option value="engagement">Engagement</option><option value="profile_visits">Profile visits</option><option value="messages">Messages</option><option value="app_promotion">App promotion</option><option value="marketplace_sales">Marketplace sales</option></select></label><label>Billable event<select aria-label="Billable event" value={eventType} onChange={(event)=>setEventType(event.target.value as "impression"|"click")}><option value="impression">Impression</option><option value="click">Click</option></select></label><label>Placement<select aria-label="Rate placement" value={placement} onChange={(event)=>setPlacement(event.target.value)}><option value="social_feed">Social feed</option><option value="clips">Clips</option><option value="stories">Stories</option><option value="live">LIVE discovery</option><option value="marketplace_home">Marketplace home</option><option value="marketplace_search">Marketplace search</option></select></label><label>Scope<select aria-label="Rate scope" value={scope} onChange={(event)=>setScope(event.target.value as "global"|"canary_campaign")}><option value="global">Global</option><option value="canary_campaign">Canary Campaign</option></select></label>{scope==="canary_campaign"&&<label>Campaign ID<input aria-label="Canary Campaign ID" value={campaignId} onChange={(event)=>setCampaignId(event.target.value)}/></label>}<label>Rate BDAG<input aria-label="Rate BDAG" inputMode="decimal" value={rate} onChange={(event)=>setRate(event.target.value)}/></label><label>Effective from<input aria-label="Effective from" type="datetime-local" value={effectiveFrom} onChange={(event)=>setEffectiveFrom(event.target.value)}/></label>{editingRateId&&<label>Effective to<input aria-label="Effective to" type="datetime-local" value={effectiveTo} onChange={(event)=>setEffectiveTo(event.target.value)}/></label>}<button disabled={busy||!rate||!effectiveFrom||(scope==="canary_campaign"&&!campaignId)} onClick={save}>{editingRateId?"Save draft":"Create draft"}</button>{editingRateId&&<button className="secondary" disabled={busy} onClick={clearDraft}>Cancel edit</button>}</div></section>}
     <section className="table-panel"><div className="panel-title"><div><h3>Rate versions</h3><p>Published and retired versions remain immutable evidence.</p></div>{canManage&&<label>Publish / retire reason<input aria-label="Rate action reason" maxLength={500} value={reason} onChange={(event)=>setReason(event.target.value)}/></label>}</div>{rates.data.items.length===0?<EmptyState title="No Ads billing rates" detail="No real production rate has been configured."/>:<table className="human-table"><thead><tr><th>Objective</th><th>Basis</th><th>Scope</th><th>Rate</th><th>Effective</th><th>State</th>{canManage&&<th>Action</th>}</tr></thead><tbody>{rates.data.items.map((item)=><tr key={item.id}><td>{item.objective.replaceAll("_"," ")}</td><td>{item.billable_event_type} · {item.placement_code}</td><td>{item.scope}{item.scope_campaign_id?` · ${item.scope_campaign_id}`:""}</td><td>{formatBdag(num(item.rate_bdag))}</td><td>{formatDate(item.effective_from)}</td><td><em className={`badge ${item.state==="published"?"success":item.state==="retired"?"warn":""}`}>{item.state}</em></td>{canManage&&<td>{item.state==="draft"?<><button className="secondary" disabled={busy} onClick={()=>edit(item)}>Edit</button><button disabled={busy||!reason.trim()} onClick={()=>setConfirmation({item,action:"publish"})}>Publish</button></>:item.state==="published"?<button className="danger" disabled={busy||!reason.trim()} onClick={()=>setConfirmation({item,action:"retire"})}>Retire</button>:"—"}</td>}</tr>)}</tbody></table>}</section>
     <ConfirmDialog open={Boolean(confirmation)} title={confirmation?.action==="publish"?"Publish this Ads rate?":"Retire this Ads rate?"} consequence={confirmation?.action==="publish"?"The immutable version can authorize future charges only inside an approved launch mode and billing window.":"Future applicability closes; historical charged events keep this exact rate provenance."} actionLabel={confirmation?.action==="publish"?"Publish rate":"Retire rate"} reason={reason.trim()||undefined} danger={confirmation?.action==="retire"} pending={busy} onCancel={()=>{if(!busy)setConfirmation(null)}} onConfirm={transition}/>
-  </>;
+  <AdminCursorPagination state={rates}/></>;
 }
