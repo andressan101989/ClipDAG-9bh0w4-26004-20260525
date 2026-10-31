@@ -5,3 +5,9 @@ ios/.xcode.env.local text eol=lf
 # Normative policy identities hash exact committed bytes on every platform.
 docs/stories-v2-content-safety-policy-candidate-v1.json text eol=lf
 docs/stories-v2-content-safety-policy-publish-first-v1.json text eol=lf
+
+# Release policy and reviewed Control Center migration attestations hash Git-LF bytes.
+.github/nelyon-production-release-policy.json text eol=lf
+supabase/migrations/20261031020113_superuser_control_center_mfa_aal2.sql text eol=lf
+supabase/migrations/20261031025722_superuser_control_center_cursor_terminal_truth.sql text eol=lf
+supabase/migrations/20261031032022_superuser_control_center_overview.sql text eol=lf

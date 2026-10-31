@@ -161,6 +161,119 @@ async function loadAdapter() {
   return import(`${adapterUrl.href}?test=${Date.now()}-${Math.random()}`);
 }
 
+const CONTROL_CENTER_MIGRATIONS = [
+  ['20261031020113', 'superuser_control_center_mfa_aal2'],
+  ['20261031025722', 'superuser_control_center_cursor_terminal_truth'],
+  ['20261031032022', 'superuser_control_center_overview'],
+];
+
+function controlCenterMigrations(installed) {
+  const base = Array.from({ length: 360 }, (_, index) => ({
+    version: `2026${String(index).padStart(10, '0')}`,
+    name: `historical_${index}`,
+  }));
+  base.push({ version: '20261029042807', name: 'stories_v2_qa_c1_question_answer_authority' });
+  if (installed) base.push(...CONTROL_CENTER_MIGRATIONS.map(([version, name]) => ({ version, name })));
+  base.sort((a, b) => a.version.localeCompare(b.version));
+  return { complete: true, count: base.length, items: base, latest: base.at(-1),
+    sha256: sha256(canonicalJson(base)) };
+}
+
+function controlCenterState(transition, { installed, inventories } = {}) {
+  const predecessor = transition.security_advisor.predecessor_exception;
+  const oldFunction = {
+    identity: 'public.search_admin_advertising_ads(text,integer)',
+    ...predecessor.attestation,
+    volatility: 's',
+  };
+  const normalizedInventories = inventories ?? transition.unchanged_inventories.map((identity, index) => ({
+    identity, count: index, sha256: String(index + 1).repeat(64).slice(0, 64),
+  }));
+  return {
+    schema_version: 1,
+    complete: true,
+    installed,
+    capability_count: transition.required_aal_catalog.capability_count,
+    aal2_codes: installed ? transition.required_aal_catalog.aal2_codes : [],
+    refund_roles: installed ? transition.required_aal_catalog.refund_roles : [],
+    root_role: transition.required_aal_catalog.root_role,
+    root_grant_rule_count: transition.required_aal_catalog.root_grant_rule_count,
+    functions: installed ? transition.function_definitions : [oldFunction],
+    predecessor_function: installed ? null : oldFunction,
+    index: installed ? {
+      schema: transition.index_attestation.schema,
+      table: transition.index_attestation.table,
+      name: transition.index_attestation.name,
+      owner: transition.index_attestation.owner,
+      definition: transition.index_attestation.definition,
+      valid: transition.index_attestation.valid,
+      ready: transition.index_attestation.ready,
+      unique: transition.index_attestation.unique,
+      primary: transition.index_attestation.primary,
+    } : null,
+    advertising_ads_cardinality: transition.index_attestation.production_cardinality,
+    advertising_ads_relation_bytes: transition.index_attestation.production_relation_bytes,
+    inventories: normalizedInventories,
+  };
+}
+
+test('Control Center snapshot freezes catalog, ACL, index, inventories, and Advisor phase', async () => {
+  const adapter = await loadAdapter();
+  const transition = installedPolicy.superuser_control_center_transition;
+  assert.equal(adapter.assertReadOnlySql(adapter.SUPERUSER_CONTROL_CENTER_STATE_SQL), true);
+  const approvedSha = 'd'.repeat(40);
+  const manifest = {
+    identity: { approved_sha: approvedSha },
+    resources: { superuser_control_center_transition: {
+      ...structuredClone(transition), approved_sha: approvedSha,
+      baseline_descendant_verified: true, integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true,
+    } },
+  };
+  const preMigrations = controlCenterMigrations(false);
+  const postMigrations = controlCenterMigrations(true);
+  const preRequirement = adapter.superuserControlCenterStateRequirement(
+    installedPolicy, manifest, 'pre', { migrations: preMigrations },
+  );
+  const postRequirement = adapter.superuserControlCenterStateRequirement(
+    installedPolicy, manifest, 'post', { migrations: postMigrations },
+  );
+  assert.equal(preRequirement.required, true);
+  assert.equal(preRequirement.installed, false);
+  assert.equal(postRequirement.required, true);
+  assert.equal(postRequirement.installed, true);
+  assert.equal(preRequirement.query, adapter.SUPERUSER_CONTROL_CENTER_STATE_SQL);
+  const pre = controlCenterState(transition, { installed: false });
+  const post = controlCenterState(transition, { installed: true, inventories: pre.inventories });
+  assert.equal(adapter.validateSuperuserControlCenterStateTransition(pre, post, transition), true);
+  const preExceptions = adapter.advisorExceptionsForPhase(installedPolicy, manifest, 'pre', {
+    migrations: preMigrations,
+  });
+  const postExceptions = adapter.advisorExceptionsForPhase(installedPolicy, manifest, 'post', {
+    migrations: postMigrations,
+  });
+  assert.equal(preExceptions.filter(item => item.advisor_fingerprint
+    === transition.security_advisor.predecessor_exception.advisor_fingerprint).length, 1);
+  assert.equal(postExceptions.some(item => item.advisor_fingerprint
+    === transition.security_advisor.predecessor_exception.advisor_fingerprint), false);
+  for (const item of transition.security_advisor.introduced_exceptions) {
+    assert.equal(postExceptions.filter(candidate => candidate.advisor_fingerprint === item.advisor_fingerprint).length, 1);
+  }
+  for (const mutate of [
+    value => { value.aal2_codes.pop(); },
+    value => { value.refund_roles.push('PLATFORM_ADMIN'); },
+    value => { value.functions[0].definition_sha256 = '0'.repeat(64); },
+    value => { value.functions[0].acl.push({ grantee: 'PUBLIC', privilege_type: 'EXECUTE', is_grantable: false }); },
+    value => { value.index.ready = false; },
+    value => { value.inventories[0].sha256 = 'f'.repeat(64); },
+    value => { value.advertising_ads_cardinality += 1; },
+  ]) {
+    const hostile = structuredClone(post); mutate(hostile);
+    assert.throws(() => adapter.validateSuperuserControlCenterStateTransition(pre, hostile, transition),
+      /SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED/);
+  }
+});
+
 test('Stories B1 snapshot contract is fail-closed and rejects policy activation or fabricated pass', async () => {
   const adapter = await loadAdapter();
   assert.equal(adapter.assertReadOnlySql(adapter.STORIES_B1_PRE_STATE_SQL), true);
