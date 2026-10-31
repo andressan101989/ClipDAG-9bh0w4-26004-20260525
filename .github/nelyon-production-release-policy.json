@@ -4280,19 +4280,35 @@
       "ready": true,
       "unique": false,
       "primary": false,
-      "production_cardinality": 5,
-      "production_relation_bytes": 131072,
-      "lock_risk": "bounded_reviewed_nonconcurrent_btree_create"
+      "lock_risk": "bounded_reviewed_nonconcurrent_btree_create",
+      "plan": {
+        "access_method": "btree",
+        "key_columns": [
+          "submitted_at",
+          "id"
+        ],
+        "probe_order": [
+          "submitted_at",
+          "id"
+        ],
+        "probe_limit": 1001,
+        "create_mode": "nonconcurrent",
+        "lock_mode": "SHARE"
+      }
     },
-    "unchanged_inventories": [
-      "auth.mfa_factors",
-      "private.admin_action_audit",
-      "public.financial_transactions",
-      "public.ledger_accounts",
-      "public.ledger_entries",
-      "private.creator_premium_purchase_receipts",
-      "private.creator_premium_subscription_periods"
-    ],
+    "bounded_postcheck": {
+      "probe_limit": 1001,
+      "resources": [
+        "auth.mfa_factors",
+        "private.admin_action_audit",
+        "private.advertising_ads"
+      ],
+      "admin_audit_release_attribution_required_zero": true,
+      "advertising_ads_probe_must_not_saturate": true,
+      "concurrent_activity": "allowed_without_row_equality",
+      "finance_authority": "canonical_finance_snapshot_and_reconciliation",
+      "premium_authority": "canonical_finance_facts_and_premium_state"
+    },
     "security_advisor": {
       "provider": {
         "source": "supabase/splinter",

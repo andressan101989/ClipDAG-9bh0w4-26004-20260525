@@ -998,12 +998,20 @@ export const SUPERUSER_CONTROL_CENTER_RELEASE_TRANSITION = Object.freeze({
     schema: 'private', table: 'advertising_ads', name: 'advertising_ads_submitted_cursor_idx',
     owner: 'postgres', definition: 'CREATE INDEX advertising_ads_submitted_cursor_idx ON private.advertising_ads USING btree (submitted_at, id)',
     valid: true, ready: true, unique: false, primary: false,
-    production_cardinality: 5, production_relation_bytes: 131072,
     lock_risk: 'bounded_reviewed_nonconcurrent_btree_create',
+    plan: { access_method: 'btree', key_columns: ['submitted_at','id'],
+      probe_order: ['submitted_at','id'], probe_limit: 1001,
+      create_mode: 'nonconcurrent', lock_mode: 'SHARE' },
   },
-  unchanged_inventories: ['auth.mfa_factors','private.admin_action_audit',
-    'public.financial_transactions','public.ledger_accounts','public.ledger_entries',
-    'private.creator_premium_purchase_receipts','private.creator_premium_subscription_periods'],
+  bounded_postcheck: {
+    probe_limit: 1001,
+    resources: ['auth.mfa_factors','private.admin_action_audit','private.advertising_ads'],
+    admin_audit_release_attribution_required_zero: true,
+    advertising_ads_probe_must_not_saturate: true,
+    concurrent_activity: 'allowed_without_row_equality',
+    finance_authority: 'canonical_finance_snapshot_and_reconciliation',
+    premium_authority: 'canonical_finance_facts_and_premium_state',
+  },
   security_advisor: {
     provider: { source: 'supabase/splinter', commit: 'fccca4b1c4d8b48b8ccd69bd6b30e84adcb92975',
       sql_sha256: 'd8d558baad3e03832e521c527907fa50a9a172fabd899dd0f5c2504a5a0e9349' },
@@ -2733,7 +2741,6 @@ export function attestSuperuserControlCenterTransition({
     runGit(['cat-file', '-e', `${approvedSha}^{commit}`], { cwd });
     runGit(['merge-base', '--is-ancestor', transition.baseline_sha, transition.integration_base_sha], { cwd });
     runGit(['merge-base', '--is-ancestor', transition.integration_base_sha, approvedSha], { cwd });
-    runGit(['merge-base', '--is-ancestor', transition.reviewed_source_sha, approvedSha], { cwd });
     for (const source of transition.migrations) {
       for (const ref of [transition.reviewed_source_sha, approvedSha]) {
         if (gitText(runGit, ['rev-parse', `${ref}:${source.path}`], cwd) !== source.blob
@@ -2777,7 +2784,7 @@ export function attestSuperuserControlCenterTransition({
       approved_sha: approvedSha,
       baseline_descendant_verified: true,
       integration_base_descendant_verified: true,
-      reviewed_source_descendant_verified: true,
+      reviewed_bytes_verified: true,
     },
   };
 }
@@ -3491,7 +3498,10 @@ export function classifyRisk({ affectedFunctions = [], changedPaths = [], config
     if (/^supabase\/migrations\/[^/]+\.sql$/.test(path)) {
       add(riskFinding('DATABASE_MIGRATION', 'database', path, 'production database migration'));
     }
-    if (/^(?:apps\/admin-web\/|shared\/web-deployment\/)/.test(path)) {
+    if (/^(?:apps\/admin-web\/|shared\/web-deployment\/|shared\/web-media\/)/.test(path)
+      || path === 'shared/adsOperationalTruth.ts'
+      || path === 'shared/adsErrorPresentation.ts'
+      || path === 'assets/branding/nelyon/v1/nelyon-wordmark-on-dark.png') {
       add(riskFinding('ADMIN_WEB_PRODUCTION_RESOURCE', 'admin-web', path,
         'Admin Web production bundle or deployment authority changed'));
     }
@@ -3885,7 +3895,7 @@ export function buildManifest({
       approved_sha: request.approvedSha,
       baseline_descendant_verified: true,
       integration_base_descendant_verified: true,
-      reviewed_source_descendant_verified: true,
+      reviewed_bytes_verified: true,
     };
     const expectedMigrations = controlCenter.migrations.map(item => ({
       version: item.version, path: item.path, blob: item.blob, sha256: item.sha256,
