@@ -126,9 +126,21 @@ export function buildAdminSourceManifest({ approvedSha, releaseManifest, readTra
   if (!/^[1-9][0-9]*$/.test(runId) || !Number.isSafeInteger(runAttempt) || runAttempt < 1) {
     fail('admin_release_identity_invalid');
   }
+  const recoveryMode = releaseManifest.identity?.mode === 'admin_recovery';
+  const recoverySourceRunId = String(releaseManifest.recovery?.source_run_id ?? '');
+  if (recoveryMode && (releaseManifest.recovery?.kind !== 'admin_cloudflare_forward_completion'
+    || !/^[1-9][0-9]*$/.test(recoverySourceRunId))) {
+    fail('admin_recovery_identity_invalid');
+  }
+  const versionTag = recoveryMode
+    ? `nelyon-admin-recovery-${recoverySourceRunId}-${runId}-${runAttempt}`
+    : `nelyon-admin-${runId}-${runAttempt}`;
+  const previewAlias = recoveryMode
+    ? `admin-recovery-${recoverySourceRunId}-${runId}-${runAttempt}`
+    : `admin-${runId}-${runAttempt}`;
   return {
     schema_version: 1,
-    enabled: changedPaths.some(isAdminChange),
+    enabled: recoveryMode || changedPaths.some(isAdminChange),
     release: {
       approved_sha: approvedSha,
       mode: releaseManifest.identity.mode,
@@ -137,6 +149,7 @@ export function buildAdminSourceManifest({ approvedSha, releaseManifest, readTra
       run_attempt: runAttempt,
       manifest_sha256: releaseManifestDigest,
       changed_admin_paths: changedPaths.filter(isAdminChange).sort(),
+      ...(recoveryMode ? { recovery_source_run_id: recoverySourceRunId } : {}),
     },
     source: { files: sourceFiles, sha256: sourceDigest },
     build: {
@@ -151,8 +164,8 @@ export function buildAdminSourceManifest({ approvedSha, releaseManifest, readTra
       wrangler_version: WRANGLER_VERSION,
       upload_config: 'apps/admin-web/deployment/wrangler.preview.jsonc',
       route_config: 'apps/admin-web/deployment/wrangler.route.jsonc',
-      version_tag: `nelyon-admin-${runId}-${runAttempt}`,
-      preview_alias: `admin-${runId}-${runAttempt}`,
+      version_tag: versionTag,
+      preview_alias: previewAlias,
       routes: [...ADMIN_ROUTES],
       production_origin: PRODUCTION_ORIGIN,
     },

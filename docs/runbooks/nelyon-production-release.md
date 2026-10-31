@@ -426,6 +426,47 @@ Edge recovery redeploys previously approved reproducible Edge source through a
 new explicitly authorized release. Never infer a rollback artifact from a remote bundle hash
 or deploy an unlisted local function such as `bdag-economy`.
 
+### Admin Cloudflare forward recovery
+
+`admin_recovery` is the only canonical continuation when an ordinary
+`release` already completed its Supabase post-snapshot and postcheck, but the
+protected Admin Cloudflare delivery failed and restored its exact previous
+version/routes. It is not a database retry or rollback mode. Dispatch it from
+the same approved `main` SHA with a new release ID, exact
+`ADMIN_RECOVERY_EXACT_SOURCE` confirmation, and the numeric failed source run
+in `recovery_source_run_id`.
+
+The source is selected dynamically; no run ID is embedded in policy. The gate
+requires one completed `workflow_dispatch` run on `main`, original mode
+`release`, conclusion `failure`, the same approved SHA, successful Supabase
+post-snapshot and postcheck, `admin.enabled=true`, and a non-successful Admin
+finalize. If the candidate or promotion occurred, the source artifact must
+prove a successful exact rollback to the pre-release Cloudflare version and
+route inventory. The three exact source artifacts are derived from the source
+run attempt and verified by their GitHub artifact metadata, canonical release
+manifest/request, sanitized gate observation/postcheck, Admin manifest/build,
+and rollback provenance. Missing, duplicate, expired, altered, cross-run, or
+cross-SHA evidence fails closed.
+
+The recovery manifest contains zero migrations, zero Edge Functions, no config
+change, and no Supabase mutation. A fresh bound read-only `post` snapshot must
+prove all three Control Center migrations exactly once, the reviewed
+capability/AAL2/ACL/function/index catalog, current Advisor authority, healthy
+backup, unchanged Finance policy, and zero reconciliation anomalies. The
+workflow never invokes `supabase db push`, `supabase functions deploy`, or
+mutating SQL in this mode.
+
+Only after source verification, reproducible double-build equality, optional
+equality with the source build digest, and the fresh post-state check may the
+workflow capture the current Cloudflare pre-state, upload one immutable version
+tagged `nelyon-admin-recovery-<source-run>-<run>-<attempt>`, smoke every exact
+artifact, promote that exact version to 100%, apply the exact Admin routes, and
+finalize production HTTP/route/version evidence. A failure after candidate
+creation restores the exact pre-recovery Cloudflare version and routes and must
+itself verify that rollback. The immutable result artifact is
+`nelyon-admin-recovery-<run>-<attempt>`. Success does not advance the Supabase
+baseline because no Supabase resource changed.
+
 ## Creator Premium postcheck recovery
 
 `postcheck_recovery` is the read-only continuation for an exact failed release

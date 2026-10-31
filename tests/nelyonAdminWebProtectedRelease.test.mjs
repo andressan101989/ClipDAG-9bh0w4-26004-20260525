@@ -14,7 +14,7 @@ import {
   verifyUploadedVersionIdentity,
 } from '../scripts/nelyon-admin-production-release.mjs';
 
-function fixtureReleaseManifest({ mode = 'release', files = [] } = {}) {
+function fixtureReleaseManifest({ mode = 'release', files = [], recoverySourceRunId = null } = {}) {
   return {
     identity: {
       approved_sha: 'a'.repeat(40),
@@ -27,6 +27,12 @@ function fixtureReleaseManifest({ mode = 'release', files = [] } = {}) {
       files: files.map((path) => ({ path, status: 'M', file_type: 'source' })),
       productive_change_count: 0,
     },
+    ...(recoverySourceRunId ? {
+      recovery: {
+        kind: 'admin_cloudflare_forward_completion',
+        source_run_id: recoverySourceRunId,
+      },
+    } : {}),
   };
 }
 
@@ -58,6 +64,33 @@ test('Admin source manifest is exact, immutable, and enabled only by Admin deplo
     readTrackedFiles,
   });
   assert.equal(unrelated.enabled, false);
+});
+
+test('Admin recovery always rebuilds the exact source SHA with a source-run-bound unique tag', () => {
+  const sourceRunId = '987654321';
+  const manifest = buildAdminSourceManifest({
+    approvedSha: 'a'.repeat(40),
+    releaseManifest: fixtureReleaseManifest({
+      mode: 'admin_recovery',
+      recoverySourceRunId: sourceRunId,
+    }),
+  });
+  assert.equal(manifest.enabled, true);
+  assert.equal(manifest.release.mode, 'admin_recovery');
+  assert.equal(manifest.release.recovery_source_run_id, sourceRunId);
+  assert.equal(manifest.release.changed_admin_paths.length, 0);
+  assert.equal(manifest.worker.version_tag, `nelyon-admin-recovery-${sourceRunId}-123-1`);
+  assert.equal(manifest.worker.preview_alias, `admin-recovery-${sourceRunId}-123-1`);
+
+  for (const recovery of [undefined, { kind: 'wrong', source_run_id: sourceRunId }, {
+    kind: 'admin_cloudflare_forward_completion', source_run_id: '0',
+  }]) {
+    const releaseManifest = fixtureReleaseManifest({ mode: 'admin_recovery' });
+    if (recovery !== undefined) releaseManifest.recovery = recovery;
+    assert.throws(() => buildAdminSourceManifest({
+      approvedSha: 'a'.repeat(40), releaseManifest,
+    }), /admin_recovery_identity_invalid/);
+  }
 });
 
 test('Admin source manifest rejects SHA mismatch and untracked or unsafe source entries', () => {
@@ -325,6 +358,29 @@ test('canonical workflow exposes Admin plan but mutates Cloudflare only after HI
     workflow.indexOf('- name: Verify postcheck recovery gate without deployment commands'),
   );
   assert.doesNotMatch(gateProofSection, /CLOUDFLARE_API_TOKEN|versions upload|versions deploy|triggers deploy/);
+});
+
+test('canonical Admin recovery is forward-only, source-bound, and never invokes a Supabase mutation', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/nelyon-production-release.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /- admin_recovery/);
+  assert.match(workflow, /ADMIN_RECOVERY_EXACT_SOURCE/);
+  assert.match(workflow, /verify-admin-recovery-source/);
+  assert.match(workflow, /postcheck-admin-recovery/);
+  assert.match(workflow, /nelyon-admin-recovery-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/);
+  const apply = workflow.slice(
+    workflow.indexOf('- name: Apply exact manifest migrations'),
+    workflow.indexOf('- name: Deploy each exact manifest function'),
+  );
+  const functions = workflow.slice(
+    workflow.indexOf('- name: Deploy each exact manifest function'),
+    workflow.indexOf('- name: Capture immutable read-only production post-snapshot'),
+  );
+  assert.match(apply, /needs\.plan\.outputs\.mode == 'release'/);
+  assert.match(functions, /needs\.plan\.outputs\.mode == 'release'/);
+  assert.doesNotMatch(apply, /admin_recovery/);
+  assert.doesNotMatch(functions, /admin_recovery/);
+  assert.match(workflow, /admin_recovery[\s\S]*Capture Admin recovery read-only production post-state/);
+  assert.match(workflow, /Recover previous Admin production version and routes[\s\S]*mode == 'admin_recovery'/);
 });
 
 test('reproducible npm install and build never receive the Cloudflare production token', () => {

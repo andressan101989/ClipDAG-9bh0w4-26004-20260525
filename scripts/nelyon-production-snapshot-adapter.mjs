@@ -2523,6 +2523,115 @@ export function validateSuperuserControlCenterStateTransition(preSnapshot, postS
   return true;
 }
 
+export function validateAdminRecoveryControlCenterPostState({ migrations, state, policy }) {
+  const code = 'ADMIN_RECOVERY_POSTCHECK_FAILED';
+  const transition = policy?.superuser_control_center_transition;
+  if (!transition || migrations?.complete !== true || !Array.isArray(migrations.items)) {
+    fail(code, 'Admin recovery migration or Control Center authority is incomplete');
+  }
+  validateNormalizedMigrations(migrations);
+  const expected = transition.migrations.map(item => ({
+    version: item.version,
+    name: item.path.replace(/^.*\//u, '').replace(/\.sql$/u, '').slice(15),
+  }));
+  const baselineCount = policy?.baseline?.migration_count;
+  const baselineNames = migrations.items.slice(0, baselineCount).map(baselineMigrationName);
+  if (!Number.isInteger(baselineCount) || baselineCount < 0
+    || !HASH_PATTERN.test(policy?.baseline?.evidence_digests?.migrations ?? '')
+    || migrations.count !== baselineCount + expected.length
+    || migrations.items.length !== migrations.count
+    || sha256(canonicalJson(baselineNames)) !== policy.baseline.evidence_digests.migrations
+    || canonicalJson(migrations.items.slice(baselineCount)) !== canonicalJson(expected)
+    || migrations.latest?.version !== expected.at(-1)?.version
+    || migrations.latest?.name !== expected.at(-1)?.name) {
+    fail(code, 'Admin recovery requires the exact post-Control-Center migration inventory');
+  }
+  validateSuperuserControlCenterInstalledState(state, transition);
+  return true;
+}
+
+export function verifyAdminRecoveryInfrastructurePostState({ post, policy }) {
+  const code = 'ADMIN_RECOVERY_POSTCHECK_FAILED';
+  const transition = policy?.superuser_control_center_transition;
+  if (!post || !transition) fail(code, 'Admin recovery infrastructure evidence is unavailable');
+  validateAdminRecoveryControlCenterPostState({
+    migrations: post.migrations,
+    state: post.superuser_control_center_state,
+    policy,
+  });
+  const expectedAppendCount = transition.migrations.length;
+  const expectedLatestMigration = transition.migrations.at(-1)?.path
+    ?.replace(/^.*\//u, '').replace(/\.sql$/u, '');
+  verifyRecoveryInfrastructureBaseline({
+    policy,
+    migrations: post.migrations,
+    functions: post.functions,
+    expectedLatestMigration,
+    functionTransitions: [],
+    expectedAppendCount,
+  });
+
+  validateNormalizedAdvisors(post.cron_security?.advisors);
+  validateCronSnapshot(post.cron_security?.cron);
+  const advisorAuthority = transition.security_advisor;
+  const advisorTransition = advisorAuthority?.transition;
+  const predecessor = advisorAuthority?.predecessor_exception;
+  const additions = advisorAuthority?.introduced_exceptions;
+  if (!advisorTransition || !predecessor || !Array.isArray(additions)
+    || additions.length === 0
+    || post.cron_security.advisors.count !== advisorTransition.after_count
+    || post.cron_security.advisors.sha256 !== advisorTransition.after_sha256) {
+    fail(code, 'Admin recovery Security Advisor state differs from the reviewed post-state');
+  }
+  const additionFingerprints = new Set(additions.map(item => item?.advisor_fingerprint));
+  const currentAdvisorItems = post.cron_security.advisors.items;
+  if (additionFingerprints.size !== additions.length
+    || additions.some(item => currentAdvisorItems.filter(current => (
+      current.fingerprint === item.advisor_fingerprint
+      && current.level === item.advisor_severity
+      && current.resource_kind === item.advisor_type
+    )).length !== 1)
+    || currentAdvisorItems.some(item => item.fingerprint === predecessor.advisor_fingerprint)) {
+    fail(code, 'Admin recovery Security Advisor transition is incomplete or ambiguous');
+  }
+  const baselineAdvisorItems = [
+    ...currentAdvisorItems.filter(item => !additionFingerprints.has(item.fingerprint)),
+    {
+      fingerprint: predecessor.advisor_fingerprint,
+      level: predecessor.advisor_severity,
+      resource_kind: predecessor.advisor_type,
+    },
+  ].sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+  if (new Set(baselineAdvisorItems.map(item => item.fingerprint)).size !== baselineAdvisorItems.length) {
+    fail(code, 'Admin recovery reconstructed Advisor baseline is duplicated');
+  }
+  const baselineMigrationItems = post.migrations.items.slice(0, policy.baseline.migration_count);
+  const baselineEvidence = {
+    ...post,
+    migrations: {
+      complete: true,
+      count: baselineMigrationItems.length,
+      items: baselineMigrationItems,
+      latest: baselineMigrationItems.at(-1) ?? null,
+      sha256: sha256(canonicalJson(baselineMigrationItems)),
+    },
+    cron_security: {
+      ...post.cron_security,
+      advisors: {
+        complete: true,
+        count: baselineAdvisorItems.length,
+        items: baselineAdvisorItems,
+        sha256: sha256(canonicalJson(baselineAdvisorItems)),
+      },
+    },
+  };
+  const reconstructedDigests = buildProductionBaselineDigests({ evidence: baselineEvidence, policy });
+  if (canonicalJson(reconstructedDigests) !== canonicalJson(policy.baseline.evidence_digests)) {
+    fail(code, 'Admin recovery migrations, Edge, cron, Advisor, or Finance drifted from the reviewed baseline');
+  }
+  return reconstructedDigests;
+}
+
 function storiesSafetyC1StateRequirement(policy, manifest, phase = 'pre', context = {}) {
   const transition = storiesSafetyC1Transition(policy, manifest);
   const installed = String(policy?.baseline?.latest_migration ?? '') >= STORIES_SAFETY_C1_MIGRATION;
@@ -3545,12 +3654,13 @@ function baselineMigrationName(item) {
   return `${item.version}_${item.name}`;
 }
 
-function hasExactBaselineMigrationAppend(policy, migrations, expectedLatestMigration) {
+function hasExactBaselineMigrationAppend(policy, migrations, expectedLatestMigration, expectedAppendCount = 1) {
   const baseline = policy?.baseline;
   const baselineCount = baseline?.migration_count;
   if (!Number.isInteger(baselineCount) || baselineCount < 0
     || !HASH_PATTERN.test(baseline?.evidence_digests?.migrations ?? '')
-    || migrations?.complete !== true || migrations.count !== baselineCount + 1
+    || !Number.isInteger(expectedAppendCount) || expectedAppendCount < 1
+    || migrations?.complete !== true || migrations.count !== baselineCount + expectedAppendCount
     || !Array.isArray(migrations.items) || migrations.items.length !== migrations.count
     || `${migrations.latest?.version}_${migrations.latest?.name}` !== expectedLatestMigration
     || canonicalJson(migrations.latest) !== canonicalJson(migrations.items.at(-1) ?? null)) return false;
@@ -3564,10 +3674,11 @@ export function verifyRecoveryInfrastructureBaseline({
   functions,
   expectedLatestMigration,
   functionTransitions,
+  expectedAppendCount = 1,
 }) {
   validateNormalizedMigrations(migrations);
   validateNormalizedFunctions(functions);
-  if (!hasExactBaselineMigrationAppend(policy, migrations, expectedLatestMigration)) {
+  if (!hasExactBaselineMigrationAppend(policy, migrations, expectedLatestMigration, expectedAppendCount)) {
     fail('RECOVERY_POSTCHECK_FAILED', 'migration history is not the exact reviewed baseline plus the approved append');
   }
   if (!Array.isArray(functionTransitions)) {
@@ -4273,6 +4384,45 @@ export function verifyProductionRecoverySnapshot({ recovery, policy, request, ma
     evidence_sha256: recovery.evidence_sha256,
     rpc_security_sha256: recovery.rpc_security.sha256,
     premium_state_sha256: recovery.premium_state.sha256,
+  };
+}
+
+export function verifyProductionAdminRecoverySnapshot({ post, policy, request, manifest, adapterSourceSha256 }) {
+  const code = 'ADMIN_RECOVERY_POSTCHECK_FAILED';
+  if (request?.mode !== 'admin_recovery'
+    || request?.scopeConfirmation !== 'ADMIN_RECOVERY_EXACT_SOURCE'
+    || manifest?.identity?.mode !== 'admin_recovery'
+    || manifest?.identity?.approved_sha !== request?.approvedSha
+    || manifest?.recovery?.kind !== 'admin_cloudflare_forward_completion'
+    || manifest?.recovery?.source_run_id !== String(request?.recoverySourceRunId ?? '')
+    || canonicalJson(manifest?.resources) !== canonicalJson({
+      config_changed: false, function_contracts: [], functions: [], migrations: [],
+    })) {
+    fail(code, 'Admin recovery request or manifest is not exact and read-only');
+  }
+  validateCapturedEvidence({ evidence: post, phase: 'post', policy, request, manifest, adapterSourceSha256 });
+  validateRpcSecurityAttestations(post.rpc_security, advisorExceptionsForPhase(policy, manifest, 'post', {
+    request, migrations: post.migrations,
+  }));
+  validatePremiumPostcheckState(post.premium_state);
+  const baselineDigests = verifyAdminRecoveryInfrastructurePostState({ post, policy });
+  if (canonicalJson({
+    platform_fee_bps: post.finance?.policy?.platform_fee_bps,
+    purchase_enabled: post.finance?.policy?.purchase_enabled,
+    refunds_enabled: post.finance?.policy?.refunds_enabled,
+    subscription_enabled: post.finance?.policy?.subscription_enabled,
+  }) !== canonicalJson(policy?.supabase?.finance_policy)
+    || RECONCILIATION_KEYS.some(key => post.finance?.reconciliation?.[key] !== 0)) {
+    fail(code, 'Admin recovery observed Finance drift or unreconciled state');
+  }
+  return {
+    schema_version: 1,
+    result: 'ADMIN_RECOVERY_POSTCHECK_VERIFIED',
+    source_run_id: String(request.recoverySourceRunId),
+    evidence_sha256: post.evidence_sha256,
+    rpc_security_sha256: post.rpc_security.sha256,
+    premium_state_sha256: post.premium_state.sha256,
+    baseline_digests: baselineDigests,
   };
 }
 
