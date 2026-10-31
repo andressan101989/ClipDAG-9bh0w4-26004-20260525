@@ -118,4 +118,3 @@ Each behavior is developed RED/GREEN. Tests cover navigation, accessibility, sta
 Disposable PostgreSQL proves ACL/RLS, AAL2, capability mappings and overview query bounds. Production verification is read-only until the protected release. Desktop browser QA covers 1280x720, 1440x900, 1920x1080 and ultrawide layouts.
 
 Integration uses protected PRs and rebase merge. Release uses fresh plan-only, gate-proof, backup, snapshots, exact manifest, postcheck, a separate baseline PR, policy digest synchronization and a final `NO PRODUCTIVE CHANGES` plan. No financial operation is part of release verification.
-
