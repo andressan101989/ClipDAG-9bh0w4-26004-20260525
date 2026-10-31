@@ -70,6 +70,44 @@ begin
 end;
 $$;
 
+-- Bootstrap shares the active-account boundary, while remaining available at AAL1.
+create or replace function public.get_my_admin_access()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path to 'pg_catalog','private','public'
+as $$
+declare
+  v_actor uuid:=auth.uid();v_roles text[];v_capabilities text[];v_profile record;v_admin boolean;
+begin
+  if v_actor is null then raise exception using errcode='28000',message='admin_auth_required';end if;
+  if not exists(select 1 from auth.users where id=v_actor and deleted_at is null
+    and (banned_until is null or banned_until<=now())) then
+    raise exception using errcode='42501',message='admin_actor_inactive';
+  end if;
+  v_roles:=private.admin_active_role_codes(v_actor);
+  if not private.admin_role_set_is_valid(v_roles) then
+    raise exception using errcode='42501',message='admin_role_set_invalid';
+  end if;
+  v_capabilities:=private.admin_effective_capabilities(v_actor);
+  v_admin:='admin.shell.access'=any(v_capabilities);
+  if not v_admin then
+    return jsonb_build_object('admin',false,'roles','[]'::jsonb,'capabilities','[]'::jsonb,
+      'effective_capabilities','[]'::jsonb,'authority_version',private.admin_authority_version(v_actor));
+  end if;
+  select id,username,display_name,avatar_url into v_profile
+  from public.public_user_profiles where id=v_actor;
+  return jsonb_build_object(
+    'user_id',v_actor,'username',v_profile.username,'display_name',v_profile.display_name,
+    'avatar_url',v_profile.avatar_url,'admin',true,'roles',to_jsonb(v_roles),
+    'capabilities',to_jsonb(v_capabilities),'effective_capabilities',to_jsonb(v_capabilities),
+    'authority_version',private.admin_authority_version(v_actor));
+end;
+$$;
+
+revoke all on function public.get_my_admin_access() from public,anon,authenticated,service_role;
+grant execute on function public.get_my_admin_access() to authenticated;
 revoke all on function public.admin_actor_has_capability(text) from public,anon,authenticated,service_role;
 revoke all on function public.admin_require_capability(text) from public,anon,authenticated,service_role;
 grant execute on function public.admin_actor_has_capability(text) to authenticated;

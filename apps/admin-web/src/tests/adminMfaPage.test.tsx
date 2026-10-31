@@ -1,4 +1,4 @@
-import {cleanup,render,screen,waitFor} from "@testing-library/react";
+import {act,cleanup,render,screen,waitFor} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {MemoryRouter} from "react-router-dom";
 import {afterEach,beforeEach,expect,it,vi} from "vitest";
@@ -7,7 +7,7 @@ import {AdminAuthProvider} from "../auth/AdminAuthProvider";
 import {getAdminAccess} from "../lib/adminApi";
 import {supabase} from "../lib/supabase";
 vi.mock("../lib/adminApi",async(original)=>({...await original<typeof import("../lib/adminApi")>(),getAdminAccess:vi.fn()}));
-vi.mock("../lib/supabase",()=>({supabase:{rpc:vi.fn().mockResolvedValue({data:null,error:{message:"unavailable"}}),auth:{getSession:vi.fn(),onAuthStateChange:vi.fn(),refreshSession:vi.fn(),signOut:vi.fn().mockResolvedValue({error:null}),mfa:{getAuthenticatorAssuranceLevel:vi.fn(),listFactors:vi.fn(),enroll:vi.fn(),challenge:vi.fn(),verify:vi.fn(),unenroll:vi.fn()}}}}));
+vi.mock("../lib/supabase",()=>({supabase:{rpc:vi.fn().mockResolvedValue({data:null,error:{message:"unavailable"}}),auth:{getSession:vi.fn(),onAuthStateChange:vi.fn(),refreshSession:vi.fn(),signOut:vi.fn().mockResolvedValue({error:null}),stopAutoRefresh:vi.fn().mockResolvedValue(undefined),startAutoRefresh:vi.fn().mockResolvedValue(undefined),mfa:{getAuthenticatorAssuranceLevel:vi.fn(),listFactors:vi.fn(),enroll:vi.fn(),challenge:vi.fn(),verify:vi.fn(),unenroll:vi.fn()}}}}));
 const mfa=supabase.auth.mfa;
 const factor={id:"factor-one",factor_type:"totp",friendly_name:"Admin",status:"verified"};
 function mount(path="/system/security"){return render(<MemoryRouter initialEntries={[path]}><AdminAuthProvider><App/></AdminAuthProvider></MemoryRouter>)}
@@ -19,3 +19,11 @@ it("requires confirmation at AAL2 and refreshes the session after unenroll",asyn
 it("shows a recoverable factor-list failure without falsely claiming no factor",async()=>{vi.mocked(mfa.listFactors).mockResolvedValue({data:null,error:{message:"provider secret detail"}} as never);mount();await screen.findByRole("alert");expect(screen.queryByRole("button",{name:"Configurar autenticador"})).not.toBeInTheDocument();expect(screen.getByRole("button",{name:"Reintentar seguridad"})).toBeInTheDocument();expect(screen.queryByText("provider secret detail")).not.toBeInTheDocument();});
 it("takes an enrolled AAL1 login to the challenge",async()=>{vi.mocked(mfa.listFactors).mockResolvedValue({data:{all:[factor],totp:[factor],phone:[]},error:null} as never);vi.mocked(mfa.getAuthenticatorAssuranceLevel).mockResolvedValue({data:{currentLevel:"aal1",nextLevel:"aal2",currentAuthenticationMethods:[]},error:null});mount("/login");expect(await screen.findByText("Verifica tu autenticador")).toBeInTheDocument();});
 it("clears local authority when session downgrade fails after factor removal",async()=>{vi.mocked(mfa.listFactors).mockResolvedValue({data:{all:[factor],totp:[factor],phone:[]},error:null} as never);vi.mocked(mfa.getAuthenticatorAssuranceLevel).mockResolvedValue({data:{currentLevel:"aal2",nextLevel:"aal2",currentAuthenticationMethods:[]},error:null});vi.mocked(supabase.auth.refreshSession).mockResolvedValue({data:{session:null,user:null},error:{message:"refresh unavailable"}} as never);mount();await userEvent.click(await screen.findByRole("button",{name:"Eliminar autenticador"}));await userEvent.click(screen.getByRole("button",{name:"Confirmar eliminación"}));await waitFor(()=>expect(supabase.auth.signOut).toHaveBeenCalled());expect(await screen.findByLabelText("Correo")).toBeInTheDocument();});
+it("keeps failed post-removal logout fenced when stale Auth events arrive",async()=>{
+  let callback!:Parameters<typeof supabase.auth.onAuthStateChange>[0];vi.mocked(supabase.auth.onAuthStateChange).mockImplementation((next)=>{callback=next;return{data:{subscription:{unsubscribe:vi.fn()}}} as never});
+  vi.mocked(mfa.listFactors).mockResolvedValue({data:{all:[factor],totp:[factor],phone:[]},error:null} as never);vi.mocked(mfa.getAuthenticatorAssuranceLevel).mockResolvedValue({data:{currentLevel:"aal2",nextLevel:"aal2",currentAuthenticationMethods:[]},error:null});
+  vi.mocked(supabase.auth.refreshSession).mockResolvedValue({data:{session:null,user:null},error:{message:"refresh unavailable"}} as never);vi.mocked(supabase.auth.signOut).mockResolvedValue({error:{message:"logout unavailable"}} as never);
+  mount();await userEvent.click(await screen.findByRole("button",{name:"Eliminar autenticador"}));await userEvent.click(screen.getByRole("button",{name:"Confirmar eliminación"}));await screen.findByLabelText("Correo");
+  await act(async()=>{const stale={user:{id:"one"},expires_at:Math.floor(Date.now()/1000)+3600} as never;callback("INITIAL_SESSION",stale);callback("TOKEN_REFRESHED",stale);await new Promise((resolve)=>setTimeout(resolve,10))});
+  expect(screen.getByLabelText("Correo")).toBeInTheDocument();expect(screen.queryByText("Sesión verificada · AAL2")).not.toBeInTheDocument();
+});

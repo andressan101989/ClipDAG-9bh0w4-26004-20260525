@@ -59,7 +59,7 @@ try{
     end$$;
   `);
   // A separate connection gets fresh temporary snapshots; persist them only in this isolated cluster.
-  sql("create table private.proof_guards as select oid,proowner,proacl from pg_proc where oid in('public.admin_actor_has_capability(text)'::regprocedure,'public.admin_require_capability(text)'::regprocedure);");
+  sql("create table private.proof_guards as select oid,proowner,proacl from pg_proc where oid in('public.admin_actor_has_capability(text)'::regprocedure,'public.admin_require_capability(text)'::regprocedure,'public.get_my_admin_access()'::regprocedure);");
   const dir=new URL("../supabase/migrations/",import.meta.url);
   const name=readdirSync(dir).find((file)=>file.endsWith("_superuser_control_center_mfa_aal2.sql"));assert.ok(name);
   console.log(`Applying only ${name} to the isolated database.`);
@@ -73,6 +73,10 @@ try{
   const allowed=(capability)=>`do $$begin
     if not public.admin_actor_has_capability('${capability}') then raise exception 'boolean guard denied';end if;
     perform public.admin_require_capability('${capability}');end$$;`;
+  const bootstrapDenied=`do $$begin
+    begin perform public.get_my_admin_access();raise exception 'inactive bootstrap allowed';
+    exception when sqlstate '42501' then if sqlerrm<>'admin_actor_inactive' then raise;end if;end;
+  end$$;`;
   console.log("Checking AAL1/AAL2, active accounts, roles, catalog constraints and security metadata.");
   sql(`
     do $$begin
@@ -98,9 +102,9 @@ try{
     update auth.users set banned_until=now()-interval '1 hour' where id='10000000-0000-4000-8000-000000000001';
     set role authenticated;${allowed("users.accounts.suspend")}reset role;
     update auth.users set banned_until=now()+interval '1 hour' where id='10000000-0000-4000-8000-000000000001';
-    set role authenticated;${denied("admin.shell.access","admin_actor_inactive")}reset role;
+    set role authenticated;${denied("admin.shell.access","admin_actor_inactive")}${bootstrapDenied}reset role;
     update auth.users set banned_until=null,deleted_at=now() where id='10000000-0000-4000-8000-000000000001';
-    set role authenticated;${denied("users.accounts.suspend","admin_actor_inactive")}reset role;
+    set role authenticated;${denied("users.accounts.suspend","admin_actor_inactive")}${bootstrapDenied}reset role;
     update auth.users set deleted_at=null where id='10000000-0000-4000-8000-000000000001';
     update private.admin_user_roles set revoked_at=now(),revoke_actor_kind='trusted_operator',revoke_operator_reference='disposable-task3',revoke_reason='MFA proof only',version=version+1 where user_id='10000000-0000-4000-8000-000000000001';
     set role authenticated;${denied("users.accounts.suspend","admin_capability_forbidden")}reset role;
