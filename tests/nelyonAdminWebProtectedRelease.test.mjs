@@ -431,6 +431,16 @@ test('reproducible npm install and build never receive the Cloudflare production
   assert.doesNotMatch(prestateSection, /npm ci|build:deployment/);
 });
 
+test('isolated Admin build resolves linked and shared sources without root Expo dependencies', () => {
+  const tsconfig = JSON.parse(readFileSync(new URL('../apps/admin-web/tsconfig.app.json', import.meta.url), 'utf8'));
+  const viteConfig = readFileSync(new URL('../apps/admin-web/vite.config.ts', import.meta.url), 'utf8');
+
+  assert.equal(tsconfig.compilerOptions?.preserveSymlinks, true);
+  assert.match(viteConfig, /tsconfigRaw:\s*JSON\.stringify\(/);
+  assert.match(viteConfig, /jsx:\s*["']react-jsx["']/);
+  assert.doesNotMatch(viteConfig, /tsconfigRaw:\s*\{\s*compilerOptions/);
+});
+
 test('Admin recovery refuses Cloudflare drift before the first upload mutation', () => {
   const workflow = readFileSync(new URL('../.github/workflows/nelyon-production-release.yml', import.meta.url), 'utf8');
   const verifyStart = workflow.indexOf('- name: Verify Admin recovery Cloudflare pre-state');
