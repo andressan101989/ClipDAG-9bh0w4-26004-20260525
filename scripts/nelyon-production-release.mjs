@@ -12,6 +12,7 @@ import {
   normalizeCronCommand,
   projectCronBaselineItems,
   projectProductionBaselineFinance,
+  verifyAdminRecoveryInfrastructurePostState,
   verifyProductionAdminRecoverySnapshot,
   verifyProductionPreSnapshot,
   verifyProductionRecoverySnapshot,
@@ -1564,6 +1565,46 @@ const EXPECTED_RECOVERY_SOURCES = [{
     'function:create-stream-upload',
     'function:get-stream-playback',
     'function:stream-webhook',
+  ],
+  premium_relation_security_sha256: 'a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0',
+  premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
+}, {
+  run_id: '41243646356',
+  run_attempt: 1,
+  release_id: 'SUPERUSER-CC-R1-RELEASE-20261031T212706Z',
+  source_sha: '58a71b66f07899d16b780f6f967279677dcc2ed4',
+  repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+  mutation_status: 'completed',
+  post_snapshot_status: 'success',
+  postcheck_status: 'success',
+  gate_artifact: {
+    id: '13058825109',
+    name: 'nelyon-gate-evidence-41243646356-1',
+    digest: 'sha256:a24a2f576a0ac9cc0758185f3b0a6af9d3a4951cb8e8d69cf293728bd1b42d61',
+  },
+  release_artifact: {
+    id: '13058620158',
+    name: 'nelyon-release-41243646356-1',
+    digest: 'sha256:405dbdf54a561f119fbf15d379219d2214dfe2e3ec72bd53dbe8ee750e50fce3',
+  },
+  manifest_sha256: 'f0cedb82c8b756eb847d4175ae6378a8fc6f7a13c21a0fc8b0992b2826069030',
+  pre_snapshot_evidence_sha256: 'e63a14dc49f18c081958b0f12999870dd2402d925fcc1dfd9615c87cbf932605',
+  post_snapshot_evidence_sha256: '465a51991e3494cd9280129ca59cc736b3c7a5e2b627f5d2ae7d2f8bc48bb420',
+  expected_migrations: [
+    { blob: '5452895cfd473513e99e15e35bff948a74080f44',
+      name: '20261031020113_superuser_control_center_mfa_aal2' },
+    { blob: '91e75126f636ac8f83d9e73798c66dac58d72608',
+      name: '20261031025722_superuser_control_center_cursor_terminal_truth' },
+    { blob: '9a2c821a314d7c6039ec31f534712784a94089e3',
+      name: '20261031032022_superuser_control_center_overview' },
+  ],
+  expected_migration_count: 364,
+  expected_latest_migration: '20261031032022_superuser_control_center_overview',
+  edge_functions: [],
+  productive_resources: [
+    'migration:20261031020113_superuser_control_center_mfa_aal2',
+    'migration:20261031025722_superuser_control_center_cursor_terminal_truth',
+    'migration:20261031032022_superuser_control_center_overview',
   ],
   premium_relation_security_sha256: 'a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0',
   premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
@@ -4774,6 +4815,14 @@ export function verifyPostcheckRecovery({
     manifest: recoveryManifest,
     adapterSourceSha256,
   });
+  const controlCenterRecovery = source.run_id === '41243646356';
+  if (controlCenterRecovery) {
+    try {
+      verifyAdminRecoveryInfrastructurePostState({ post: currentEvidence, policy });
+    } catch (error) {
+      deny(code, String(error?.message ?? 'Control Center recovery post-state verification failed'));
+    }
+  }
 
   const migrations = currentEvidence.migrations;
   const expectedMigrationRows = source.expected_migrations.map(expected => migrations.items.filter(item => (
@@ -4869,7 +4918,8 @@ export function verifyPostcheckRecovery({
   const reconstructedBaselineItems = [...baselineItems, ...removedStoriesFindings]
     .sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
   let baselineCronItems = currentEvidence.cron_security.cron.items;
-  const postF5Recovery = ['40324910390', '40473092474'].includes(source.run_id);
+  const postF5Recovery = ['40324910390', '40473092474', '41243646356']
+    .includes(source.run_id);
   if (postF5Recovery) {
     const currentCron = currentEvidence.cron_security.cron;
     const expectedJob = policy?.finance_authority_f5_transition?.cron_job;
@@ -4924,7 +4974,8 @@ export function verifyPostcheckRecovery({
     after: finance,
     windowRows: { complete: true, transactions: [], ledger_entries: [] },
     reconciliationResults: finance.reconciliation,
-    expectedPolicy: ['40268500711', '40324910390', '40473092474'].includes(source.run_id)
+    expectedPolicy: ['40268500711', '40324910390', '40473092474', '41243646356']
+      .includes(source.run_id)
       ? financePolicyShape(F4_GENERAL_FINANCE_AUTHORITY_TRANSITION.to_policy)
       : policy.supabase.finance_policy,
     releaseIdentity: { releaseId: source.release_id, runId: source.run_id, runAttempt: source.run_attempt },
@@ -4973,6 +5024,9 @@ export function verifyPostcheckRecovery({
     },
     premium_state: currentEvidence.premium_state,
     ...(storiesB1Recovery ? { stories_b1_state: currentEvidence.stories_b1_state } : {}),
+    ...(controlCenterRecovery
+      ? { superuser_control_center_state: currentEvidence.superuser_control_center_state }
+      : {}),
   };
 }
 
