@@ -962,10 +962,20 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          node scripts/nelyon-admin-production-release.mjs smoke \
-            --base-url https://nelyon.app \
-            --build admin-evidence/admin-web-build.json \
-            --output admin-evidence/admin-web-production-http.json
+          SMOKE_OK=false
+          for attempt in $(seq 1 12); do
+            ATTEMPT_OUTPUT="admin-evidence/admin-web-production-http-attempt-${attempt}.json"
+            if node scripts/nelyon-admin-production-release.mjs smoke \
+              --base-url https://nelyon.app \
+              --build admin-evidence/admin-web-build.json \
+              --output "${ATTEMPT_OUTPUT}"; then
+              mv "${ATTEMPT_OUTPUT}" admin-evidence/admin-web-production-http.json
+              SMOKE_OK=true
+              break
+            fi
+            if [ "${attempt}" -lt 12 ]; then sleep 5; fi
+          done
+          test "${SMOKE_OK}" = 'true'
           "$NELYON_WRANGLER" deployments status \
             --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
             > admin-evidence/admin-web-after-deployment.json
