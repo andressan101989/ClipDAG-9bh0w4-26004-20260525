@@ -348,6 +348,12 @@ test('canonical workflow exposes Admin plan but mutates Cloudflare only after HI
   );
   assert.match(previewSection, /nelyon-admin-production-release\.mjs smoke[\s\S]*--build admin-evidence\/admin-web-build\.json/);
   assert.match(finalizeSection, /nelyon-admin-production-release\.mjs smoke[\s\S]*--build admin-evidence\/admin-web-build\.json/);
+  assert.match(finalizeSection, /for attempt in \$\(seq 1 12\)/,
+    'production smoke must tolerate bounded Cloudflare route/version propagation');
+  assert.match(finalizeSection, /admin-web-production-http-attempt-\$\{attempt\}\.json/);
+  assert.match(finalizeSection, /sleep 5/);
+  assert.match(finalizeSection, /test "\$\{SMOKE_OK\}" = 'true'/,
+    'all bounded smoke attempts must still fail closed when production never converges');
   assert.ok(finalizeSection.indexOf('nelyon-admin-production-release.mjs smoke')
     < finalizeSection.indexOf('deployments status'), 'active version must be recaptured after the production smoke');
   assert.ok(finalizeSection.indexOf('nelyon-admin-production-release.mjs smoke')
