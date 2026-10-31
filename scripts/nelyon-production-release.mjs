@@ -4290,6 +4290,11 @@ const ADMIN_RECOVERY_FILES = [
   'admin-web-recovered-deployment.json',
   'admin-web-recovery.json',
 ];
+const POSTCHECK_RECOVERY_FILES = [
+  'postcheck-recovery-result.json',
+  'production-recovery.json',
+  'verified-source.json',
+];
 
 function assertSafeRecoveryDirectory(directory, allowed, required, code = 'UNSAFE_RECOVERY_ARTIFACT') {
   if (typeof directory !== 'string' || !isAbsolute(directory) || !existsSync(directory)) {
@@ -4438,6 +4443,22 @@ function requireAdminRecoveryArtifactMetadata({ artifacts, sourceRunId, sourceRu
   return selected;
 }
 
+function requireExactRunArtifactMetadata({ artifacts, names, code }) {
+  if (!Array.isArray(artifacts)) deny(code, 'source artifact metadata is unavailable');
+  const selected = {};
+  for (const [kind, name] of Object.entries(names)) {
+    const matches = artifacts.filter(item => item?.name === name);
+    if (matches.length !== 1) deny(code, `${kind} source artifact is missing or duplicated`);
+    const item = matches[0];
+    if (!Number.isSafeInteger(Number(item.id)) || Number(item.id) < 1 || item.expired !== false
+      || !/^sha256:[0-9a-f]{64}$/.test(item.digest ?? '')) {
+      deny(code, `${kind} source artifact metadata is invalid`);
+    }
+    selected[kind] = { id: String(item.id), name, digest: item.digest };
+  }
+  return selected;
+}
+
 function normalizedRecoveryRoutes(value, code) {
   if (!value || typeof value.zone_id !== 'string' || !Array.isArray(value.routes)) {
     deny(code, 'Admin route recovery evidence is incomplete');
@@ -4459,36 +4480,60 @@ export function verifyAdminRecoverySourceProvenance({
   releaseBundle,
   gateEvidence,
   adminEvidence,
+  postcheckRecoveryChain = null,
 }) {
   const code = 'ADMIN_RECOVERY_SOURCE_MISMATCH';
   validateRequest(recoveryRequest, policy);
-  const sourceRunId = String(recoveryRequest.recoverySourceRunId ?? '');
+  const declaredRecoveryRunId = String(recoveryRequest.recoverySourceRunId ?? '');
+  const chainedRecovery = postcheckRecoveryChain !== null;
+  const sourceRunId = chainedRecovery
+    ? String(postcheckRecoveryChain?.source_run_id ?? '')
+    : declaredRecoveryRunId;
   const sourceRunAttempt = Number(run?.run_attempt);
+  const expectedSourceSha = chainedRecovery
+    ? postcheckRecoveryChain?.source_sha
+    : recoveryRequest.approvedSha;
   if (recoveryRequest.mode !== 'admin_recovery'
     || recoveryRequest.scopeConfirmation !== policy.scope_confirmations?.admin_recovery
     || recoveryManifest?.identity?.mode !== 'admin_recovery'
     || recoveryManifest?.identity?.approved_sha !== recoveryRequest.approvedSha
     || recoveryManifest?.recovery?.kind !== 'admin_cloudflare_forward_completion'
-    || recoveryManifest?.recovery?.source_run_id !== sourceRunId
+    || recoveryManifest?.recovery?.source_run_id !== declaredRecoveryRunId
     || canonicalJson(recoveryManifest?.resources) !== canonicalJson({
       config_changed: false, function_contracts: [], functions: [], migrations: [],
     })) {
     deny(code, 'recovery request and zero-resource manifest are not exactly bound');
   }
+  if (chainedRecovery && (postcheckRecoveryChain?.schema_version !== 1
+    || postcheckRecoveryChain?.result !== 'ADMIN_RECOVERY_POSTCHECK_CHAIN_VERIFIED'
+    || postcheckRecoveryChain.recovery_run_id !== declaredRecoveryRunId
+    || postcheckRecoveryChain.current_sha !== recoveryRequest.approvedSha
+    || postcheckRecoveryChain.source_run_attempt !== sourceRunAttempt
+    || !/^[0-9a-f]{40}$/.test(expectedSourceSha ?? '')
+    || !/^[0-9a-f]{64}$/.test(postcheckRecoveryChain.source_manifest_sha256 ?? '')
+    || !/^[0-9a-f]{64}$/.test(postcheckRecoveryChain.source_observation_sha256 ?? '')
+    || !/^[0-9a-f]{64}$/.test(postcheckRecoveryChain.recovered_evidence_sha256 ?? '')
+    || !/^[0-9a-f]{64}$/.test(postcheckRecoveryChain.recovered_result_sha256 ?? ''))) {
+    deny(code, 'postcheck recovery chain is incomplete or does not match the Admin recovery request');
+  }
   if (!run || String(run.id) !== sourceRunId || !Number.isSafeInteger(sourceRunAttempt) || sourceRunAttempt < 1
     || run.status !== 'completed' || run.conclusion !== policy.admin_recovery.source_conclusion
     || run.event !== policy.admin_recovery.source_event || run.head_branch !== policy.default_branch
-    || run.head_sha !== recoveryRequest.approvedSha || run.path !== policy.workflow_path
+    || run.head_sha !== expectedSourceSha || run.path !== policy.workflow_path
     || run.repository?.full_name !== policy.repository) {
     deny(code, 'source run is not the exact failed main workflow_dispatch release');
   }
   const selectedArtifacts = requireAdminRecoveryArtifactMetadata({ artifacts, sourceRunId, sourceRunAttempt });
+  if (chainedRecovery && (selectedArtifacts.release.digest !== postcheckRecoveryChain.source_artifact_digests?.release
+    || selectedArtifacts.gate.digest !== postcheckRecoveryChain.source_artifact_digests?.gate)) {
+    deny(code, 'original release artifact digests differ from the verified postcheck recovery chain');
+  }
   const releaseDirectory = resolve(releaseBundle?.directory ?? '');
   const gateDirectory = resolve(gateEvidence?.directory ?? '');
   const adminDirectory = resolve(adminEvidence?.directory ?? '');
   assertSafeRecoveryDirectory(releaseDirectory, RECOVERY_RELEASE_FILES, ['bundle', 'remote-evidence.json', 'request.json'], code);
   assertSafeRecoveryDirectory(gateDirectory, RECOVERY_GATE_FILES,
-    ['release-observation.json', 'postcheck-result.json'], code);
+    chainedRecovery ? ['release-observation.json'] : ['release-observation.json', 'postcheck-result.json'], code);
   assertSafeRecoveryDirectory(adminDirectory, ADMIN_RECOVERY_FILES,
     ['admin-web-manifest.json', 'admin-web-manifest.sha256'], code);
   const bundleDirectory = join(releaseDirectory, 'bundle');
@@ -4504,16 +4549,16 @@ export function verifyAdminRecoverySourceProvenance({
   const sourceRequest = readFixedJson(releaseDirectory, 'request.json', code);
   const observation = readFixedJson(gateDirectory, 'release-observation.json', code);
   const postcheckPath = join(gateDirectory, 'postcheck-result.json');
-  const sourcePostcheck = readFixedJson(gateDirectory, 'postcheck-result.json', code);
+  const sourcePostcheck = chainedRecovery ? null : readFixedJson(gateDirectory, 'postcheck-result.json', code);
   if (sourceRequest.mode !== policy.admin_recovery.source_mode
     || sourceRequest.actor !== policy.owner || sourceRequest.triggeringActor !== policy.owner
     || sourceRequest.repository !== policy.repository || sourceRequest.ref !== policy.admin_recovery.source_ref
     || sourceRequest.workflowRef !== `${policy.repository}/${policy.workflow_path}@${policy.admin_recovery.source_ref}`
     || sourceRequest.scopeConfirmation !== policy.scope_confirmations.release_high_risk
-    || sourceRequest.approvedSha !== recoveryRequest.approvedSha || sourceRequest.mainSha !== recoveryRequest.approvedSha
+    || sourceRequest.approvedSha !== expectedSourceSha || sourceRequest.mainSha !== expectedSourceSha
     || String(sourceRequest.runId) !== sourceRunId || sourceRequest.runAttempt !== sourceRunAttempt
     || sourceManifest.identity?.mode !== policy.admin_recovery.source_mode
-    || sourceManifest.identity?.approved_sha !== recoveryRequest.approvedSha
+    || sourceManifest.identity?.approved_sha !== expectedSourceSha
     || sourceManifest.identity?.release_id !== sourceRequest.releaseId
     || sourceManifest.identity?.scope_confirmation !== policy.scope_confirmations.release_high_risk
     || sourceManifest.risk?.level !== 'HIGH' || sourceManifest.result !== 'PLAN READY'
@@ -4532,7 +4577,7 @@ export function verifyAdminRecoverySourceProvenance({
     || canonicalJson(sourceManifest.resources?.superuser_control_center_transition ?? null)
       !== canonicalJson({
         ...policy.superuser_control_center_transition,
-        approved_sha: recoveryRequest.approvedSha,
+        approved_sha: expectedSourceSha,
         baseline_descendant_verified: true,
         integration_base_descendant_verified: true,
         reviewed_bytes_verified: true,
@@ -4546,10 +4591,18 @@ export function verifyAdminRecoverySourceProvenance({
   const expectedMigrationVersions = policy.superuser_control_center_transition.migrations
     .map(item => item.version).sort();
   if (observation.schema_version !== 1 || observation.result !== 'INCOMPLETE_OR_FAILED'
-    || observation.steps?.post_snapshot !== policy.admin_recovery.supabase_post_snapshot_status
-    || observation.steps?.postcheck !== policy.admin_recovery.supabase_postcheck_status
     || observation.admin_web?.required !== policy.admin_recovery.admin_enabled_required
-    || observation.admin_web?.finalize === 'success'
+    || observation.admin_web?.finalize === 'success') {
+    deny(code, 'source release lifecycle does not permit forward Admin completion');
+  }
+  if (chainedRecovery) {
+    if (sourceManifestDigest !== postcheckRecoveryChain.source_manifest_sha256
+      || sha256Hex(canonicalJson(observation)) !== postcheckRecoveryChain.source_observation_sha256
+      || postcheckRecoveryChain.source_release_id !== sourceRequest.releaseId) {
+      deny(code, 'original release bytes differ from the verified postcheck recovery chain');
+    }
+  } else if (observation.steps?.post_snapshot !== policy.admin_recovery.supabase_post_snapshot_status
+    || observation.steps?.postcheck !== policy.admin_recovery.supabase_postcheck_status
     || !/^[0-9a-f]{64}$/.test(observation.post_evidence_sha256 ?? '')
     || observation.postcheck_file_sha256 !== sha256Hex(readFileSync(postcheckPath))
     || canonicalJson(Object.keys(sourcePostcheck).sort()) !== canonicalJson(expectedPostcheckKeys)
@@ -4568,7 +4621,7 @@ export function verifyAdminRecoverySourceProvenance({
   if (adminManifestBytes !== `${canonicalAdminManifest}\n`
     || readFileSync(join(adminDirectory, 'admin-web-manifest.sha256'), 'utf8').trim() !== adminManifestDigest
     || adminManifest.enabled !== true || adminManifest.release?.mode !== 'release'
-    || adminManifest.release?.approved_sha !== recoveryRequest.approvedSha
+    || adminManifest.release?.approved_sha !== expectedSourceSha
     || adminManifest.release?.release_id !== sourceRequest.releaseId
     || String(adminManifest.release?.run_id) !== sourceRunId
     || adminManifest.release?.run_attempt !== sourceRunAttempt
@@ -4580,7 +4633,7 @@ export function verifyAdminRecoverySourceProvenance({
   const buildPath = join(adminDirectory, 'admin-web-build.json');
   const build = existsSync(buildPath) ? readFixedJson(adminDirectory, 'admin-web-build.json', code) : null;
   if (observation.admin_web?.build === 'success'
-    && (!build || build.approved_sha !== recoveryRequest.approvedSha
+    && (!build || build.approved_sha !== expectedSourceSha
       || build.source_manifest_sha256 !== adminManifestDigest
       || !/^[0-9a-f]{64}$/.test(build.dist_sha256 ?? ''))) {
     deny(code, 'source Admin reproducible build evidence is invalid');
@@ -4620,10 +4673,18 @@ export function verifyAdminRecoverySourceProvenance({
   return {
     schema_version: 1,
     result: 'ADMIN_RECOVERY_SOURCE_VERIFIED',
-    source_run_id: sourceRunId,
-    source_run_attempt: sourceRunAttempt,
+    source_run_id: declaredRecoveryRunId,
+    source_run_attempt: chainedRecovery
+      ? postcheckRecoveryChain.recovery_run_attempt
+      : sourceRunAttempt,
     source_sha: recoveryRequest.approvedSha,
-    source_release_id: sourceRequest.releaseId,
+    source_release_id: chainedRecovery
+      ? postcheckRecoveryChain.recovery_release_id
+      : sourceRequest.releaseId,
+    original_source_run_id: sourceRunId,
+    original_source_run_attempt: sourceRunAttempt,
+    original_source_sha: expectedSourceSha,
+    original_source_release_id: sourceRequest.releaseId,
     source_manifest_sha256: sourceManifestDigest,
     source_admin_manifest_sha256: adminManifestDigest,
     source_admin_source_sha256: adminManifest.source.sha256,
@@ -4633,6 +4694,7 @@ export function verifyAdminRecoverySourceProvenance({
     source_manifest: sourceManifest,
     source_request: sourceRequest,
     source_observation: observation,
+    postcheck_recovery_chain: chainedRecovery ? postcheckRecoveryChain : null,
   };
 }
 
@@ -4911,6 +4973,175 @@ export function verifyPostcheckRecovery({
     },
     premium_state: currentEvidence.premium_state,
     ...(storiesB1Recovery ? { stories_b1_state: currentEvidence.stories_b1_state } : {}),
+  };
+}
+
+export function verifyAdminRecoveryPostcheckChainProvenance({
+  policy,
+  policySha256,
+  recoveryRequest,
+  recoveryManifest,
+  run,
+  artifacts,
+  releaseBundle,
+  gateEvidence,
+  recoveryEvidence,
+  adapterSourceSha256,
+}) {
+  const code = 'ADMIN_RECOVERY_POSTCHECK_CHAIN_MISMATCH';
+  const recoveryRunId = String(recoveryRequest?.recoverySourceRunId ?? '');
+  const recoveryRunAttempt = Number(run?.run_attempt);
+  if (recoveryRequest?.actor !== policy.owner || recoveryRequest?.triggeringActor !== policy.owner
+    || recoveryRequest?.repository !== policy.repository
+    || recoveryRequest?.ref !== `refs/heads/${policy.default_branch}`
+    || recoveryRequest?.workflowRef !== `${policy.repository}/${policy.workflow_path}@refs/heads/${policy.default_branch}`
+    || recoveryRequest?.approvedSha !== recoveryRequest?.mainSha
+    || recoveryRequest?.mode !== 'admin_recovery'
+    || recoveryRequest?.scopeConfirmation !== policy.scope_confirmations?.admin_recovery
+    || recoveryManifest?.identity?.mode !== 'admin_recovery'
+    || recoveryManifest?.identity?.approved_sha !== recoveryRequest.approvedSha
+    || recoveryManifest?.recovery?.kind !== 'admin_cloudflare_forward_completion'
+    || recoveryManifest?.recovery?.source_run_id !== recoveryRunId
+    || canonicalJson(recoveryManifest?.resources) !== canonicalJson({
+      config_changed: false, function_contracts: [], functions: [], migrations: [],
+    })) {
+    deny(code, 'Admin recovery request and zero-resource manifest are not exactly bound');
+  }
+  if (!run || String(run.id) !== recoveryRunId
+    || !Number.isSafeInteger(recoveryRunAttempt) || recoveryRunAttempt < 1
+    || run.status !== 'completed' || run.conclusion !== 'success'
+    || run.event !== 'workflow_dispatch' || run.head_branch !== policy.default_branch
+    || run.head_sha !== recoveryRequest.approvedSha || run.path !== policy.workflow_path
+    || run.repository?.full_name !== policy.repository) {
+    deny(code, 'declared Admin recovery source is not the exact successful postcheck recovery run');
+  }
+  const names = {
+    release: `nelyon-release-${recoveryRunId}-${recoveryRunAttempt}`,
+    gate: `nelyon-gate-evidence-${recoveryRunId}-${recoveryRunAttempt}`,
+    recovery: `nelyon-postcheck-recovery-${recoveryRunId}-${recoveryRunAttempt}`,
+  };
+  const selectedArtifacts = requireExactRunArtifactMetadata({ artifacts, names, code });
+  const releaseDirectory = resolve(releaseBundle?.directory ?? '');
+  const gateDirectory = resolve(gateEvidence?.directory ?? '');
+  const recoveryDirectory = resolve(recoveryEvidence?.directory ?? '');
+  assertSafeRecoveryDirectory(releaseDirectory, RECOVERY_RELEASE_FILES,
+    ['bundle', 'remote-evidence.json', 'request.json'], code);
+  assertSafeRecoveryDirectory(gateDirectory, RECOVERY_GATE_FILES, ['gate-proof.json'], code);
+  assertSafeRecoveryDirectory(recoveryDirectory, POSTCHECK_RECOVERY_FILES, POSTCHECK_RECOVERY_FILES, code);
+  const bundleDirectory = join(releaseDirectory, 'bundle');
+  assertSafeRecoveryDirectory(bundleDirectory, BUNDLE_FILES, BUNDLE_FILES, code);
+
+  const chainManifestBytes = readFileSync(join(bundleDirectory, 'manifest.json'), 'utf8');
+  const chainManifest = readFixedJson(bundleDirectory, 'manifest.json', code);
+  const chainManifestSha256 = sha256Hex(chainManifestBytes);
+  const chainRequest = readFixedJson(releaseDirectory, 'request.json', code);
+  if (canonicalJson(chainManifest) !== chainManifestBytes
+    || readFileSync(join(bundleDirectory, 'manifest.sha256'), 'utf8').trim() !== chainManifestSha256) {
+    deny(code, 'postcheck recovery manifest bytes or digest are invalid');
+  }
+  const sourceRunId = String(chainRequest.recoverySourceRunId ?? '');
+  const source = policy?.postcheck_recovery?.approved_sources?.find(item => item.run_id === sourceRunId);
+  if (!source || chainRequest.actor !== policy.owner || chainRequest.triggeringActor !== policy.owner
+    || chainRequest.mode !== 'postcheck_recovery'
+    || chainRequest.scopeConfirmation !== policy.scope_confirmations?.postcheck_recovery
+    || chainRequest.repository !== policy.repository
+    || chainRequest.ref !== policy.admin_recovery.source_ref
+    || chainRequest.workflowRef !== `${policy.repository}/${policy.workflow_path}@${policy.admin_recovery.source_ref}`
+    || chainRequest.approvedSha !== recoveryRequest.approvedSha
+    || chainRequest.mainSha !== recoveryRequest.approvedSha
+    || String(chainRequest.runId) !== recoveryRunId
+    || chainRequest.runAttempt !== recoveryRunAttempt
+    || !Array.isArray(chainRequest.productiveResources) || chainRequest.productiveResources.length !== 0
+    || chainManifest.identity?.mode !== 'postcheck_recovery'
+    || chainManifest.identity?.approved_sha !== recoveryRequest.approvedSha
+    || chainManifest.identity?.release_id !== chainRequest.releaseId
+    || String(chainManifest.identity?.run_id) !== recoveryRunId
+    || chainManifest.identity?.run_attempt !== recoveryRunAttempt
+    || chainManifest.compiler?.snapshot_adapter_sha256 !== adapterSourceSha256
+    || canonicalJson(chainManifest.resources) !== canonicalJson({
+      config_changed: false, function_contracts: [], functions: [], migrations: [],
+    })) {
+    deny(code, 'postcheck recovery request, manifest, or original release authority is invalid');
+  }
+
+  const gateProof = readFixedJson(gateDirectory, 'gate-proof.json', code);
+  if (!/^[0-9a-f]{64}$/.test(policySha256 ?? '')
+    || gateProof?.schema_version !== 1 || gateProof?.result !== 'GATE_VERIFIED'
+    || String(gateProof.run_id) !== recoveryRunId || gateProof.run_attempt !== recoveryRunAttempt
+    || gateProof.release_id !== chainRequest.releaseId
+    || gateProof.approved_sha !== recoveryRequest.approvedSha
+    || gateProof.policy_sha256 !== policySha256
+    || gateProof.manifest_sha256 !== chainManifestSha256
+    || gateProof.authorization_mode !== policy.environment?.authorization_mode) {
+    deny(code, 'postcheck recovery gate proof is not exact');
+  }
+
+  const verifiedSource = readFixedJson(recoveryDirectory, 'verified-source.json', code);
+  const currentEvidence = readFixedJson(recoveryDirectory, 'production-recovery.json', code);
+  const storedResult = readFixedJson(recoveryDirectory, 'postcheck-recovery-result.json', code);
+  if (!verifiedSource?.source_manifest || typeof verifiedSource.source_manifest !== 'object'
+    || !verifiedSource.source_request || typeof verifiedSource.source_request !== 'object'
+    || !verifiedSource.source_observation || typeof verifiedSource.source_observation !== 'object'
+    || !verifiedSource.source_artifact_digests || typeof verifiedSource.source_artifact_digests !== 'object') {
+    deny(code, 'postcheck recovery verified source is incomplete');
+  }
+  const sourceManifestSha256 = sha256Hex(canonicalJson(verifiedSource?.source_manifest));
+  const sourceRequest = verifiedSource?.source_request;
+  if (verifiedSource?.schema_version !== 1 || verifiedSource?.result !== 'RECOVERY_SOURCE_VERIFIED'
+    || verifiedSource.source_run_id !== source.run_id
+    || verifiedSource.source_release_id !== source.release_id
+    || verifiedSource.source_sha !== source.source_sha
+    || verifiedSource.manifest_sha256 !== source.manifest_sha256
+    || sourceManifestSha256 !== source.manifest_sha256
+    || canonicalJson(verifiedSource.source_artifact_digests) !== canonicalJson({
+      gate: source.gate_artifact.digest,
+      release: source.release_artifact.digest,
+    })
+    || sourceRequest?.mode !== 'release'
+    || sourceRequest?.recoverySourceRunId != null
+    || sourceRequest?.approvedSha !== source.source_sha
+    || sourceRequest?.mainSha !== source.source_sha
+    || sourceRequest?.releaseId !== source.release_id
+    || String(sourceRequest?.runId) !== source.run_id
+    || sourceRequest?.runAttempt !== source.run_attempt
+    || verifiedSource.source_manifest?.identity?.mode !== 'release'
+    || verifiedSource.source_observation?.result !== 'INCOMPLETE_OR_FAILED') {
+    deny(code, 'postcheck recovery verified source is not the exact original release');
+  }
+  let recomputedResult;
+  try {
+    recomputedResult = verifyPostcheckRecovery({
+      policy,
+      recoveryRequest: chainRequest,
+      recoveryManifest: chainManifest,
+      sourceManifest: verifiedSource.source_manifest,
+      sourceObservation: verifiedSource.source_observation,
+      currentEvidence,
+      adapterSourceSha256,
+    });
+  } catch (error) {
+    deny(code, `postcheck recovery evidence could not be recomputed: ${error?.code ?? error?.message ?? 'invalid evidence'}`);
+  }
+  if (canonicalJson(storedResult) !== canonicalJson(recomputedResult)) {
+    deny(code, 'stored postcheck recovery result differs from recomputed evidence');
+  }
+  return {
+    schema_version: 1,
+    result: 'ADMIN_RECOVERY_POSTCHECK_CHAIN_VERIFIED',
+    recovery_run_id: recoveryRunId,
+    recovery_run_attempt: recoveryRunAttempt,
+    recovery_release_id: chainRequest.releaseId,
+    current_sha: recoveryRequest.approvedSha,
+    source_run_id: source.run_id,
+    source_run_attempt: source.run_attempt,
+    source_release_id: source.release_id,
+    source_sha: source.source_sha,
+    source_manifest_sha256: source.manifest_sha256,
+    source_observation_sha256: sha256Hex(canonicalJson(verifiedSource.source_observation)),
+    source_artifact_digests: verifiedSource.source_artifact_digests,
+    recovery_artifacts: selectedArtifacts,
+    recovered_evidence_sha256: recomputedResult.current_evidence_sha256,
+    recovered_result_sha256: sha256Hex(canonicalJson(recomputedResult)),
   };
 }
 
@@ -5623,7 +5854,7 @@ function parseCliArguments(argv) {
 }
 
 function printHelp() {
-  process.stdout.write('Usage: nelyon-production-release.mjs <plan|revalidate|verify-gate|verify-dry-run|verify-pre-snapshot|verify-function-contract|postcheck|verify-recovery-source|postcheck-recovery|verify-admin-recovery-source|postcheck-admin-recovery|verify-admin-recovery-cloudflare-prestate> [options]\n');
+  process.stdout.write('Usage: nelyon-production-release.mjs <plan|revalidate|verify-gate|verify-dry-run|verify-pre-snapshot|verify-function-contract|postcheck|verify-recovery-source|postcheck-recovery|verify-admin-recovery-postcheck-chain|verify-admin-recovery-source|postcheck-admin-recovery|verify-admin-recovery-cloudflare-prestate> [options]\n');
 }
 
 async function runCli(argv) {
@@ -5632,6 +5863,29 @@ async function runCli(argv) {
     return 0;
   }
   const { command, values } = parseCliArguments(argv);
+  if (command === 'verify-admin-recovery-postcheck-chain') {
+    for (const required of ['policy', 'request', 'recovery-manifest', 'run', 'artifacts', 'release-bundle', 'gate-evidence', 'postcheck-recovery-evidence', 'output']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    const policyBytes = readFileSync(values.policy);
+    const policy = loadPolicy(values.policy);
+    const adapterPath = join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs');
+    const result = verifyAdminRecoveryPostcheckChainProvenance({
+      policy,
+      policySha256: sha256Hex(policyBytes),
+      recoveryRequest: JSON.parse(readFileSync(values.request, 'utf8')),
+      recoveryManifest: JSON.parse(readFileSync(values['recovery-manifest'], 'utf8')),
+      run: JSON.parse(readFileSync(values.run, 'utf8')),
+      artifacts: JSON.parse(readFileSync(values.artifacts, 'utf8')),
+      releaseBundle: { directory: resolve(values['release-bundle']) },
+      gateEvidence: { directory: resolve(values['gate-evidence']) },
+      recoveryEvidence: { directory: resolve(values['postcheck-recovery-evidence']) },
+      adapterSourceSha256: sha256Hex(readFileSync(adapterPath)),
+    });
+    writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
+    process.stdout.write(`ADMIN RECOVERY POSTCHECK CHAIN VERIFIED ${result.recovery_run_id} ${result.source_run_id}\n`);
+    return 0;
+  }
   if (command === 'verify-admin-recovery-source') {
     for (const required of ['policy', 'request', 'recovery-manifest', 'run', 'artifacts', 'release-bundle', 'gate-evidence', 'admin-evidence', 'output']) {
       if (!values[required]) throw new Error(`missing --${required}`);
@@ -5647,6 +5901,9 @@ async function runCli(argv) {
       releaseBundle: { directory: resolve(values['release-bundle']) },
       gateEvidence: { directory: resolve(values['gate-evidence']) },
       adminEvidence: { directory: resolve(values['admin-evidence']) },
+      postcheckRecoveryChain: values['postcheck-recovery-chain']
+        ? JSON.parse(readFileSync(values['postcheck-recovery-chain'], 'utf8'))
+        : null,
     });
     writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
     process.stdout.write(`ADMIN RECOVERY SOURCE VERIFIED ${result.source_run_id} ${result.source_manifest_sha256}\n`);

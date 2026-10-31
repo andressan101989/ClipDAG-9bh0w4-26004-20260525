@@ -383,6 +383,28 @@ test('canonical Admin recovery is forward-only, source-bound, and never invokes 
   assert.match(workflow, /Recover previous Admin production version and routes[\s\S]*mode == 'admin_recovery'/);
 });
 
+test('Admin recovery accepts only a verified one-hop postcheck recovery and downloads both evidence levels', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/nelyon-production-release.yml', import.meta.url), 'utf8');
+  const metadata = workflow.slice(
+    workflow.indexOf('- name: Fetch exact Admin recovery source metadata'),
+    workflow.indexOf('- name: Set up pinned Supabase CLI for an authorized release only'),
+  );
+  assert.match(metadata, /run\.conclusion === 'success'[\s\S]*\? 'postcheck_recovery'[\s\S]*source_kind=\$\{sourceKind\}/);
+  assert.match(metadata, /nelyon-postcheck-recovery-\$\{process\.env\.SOURCE_RUN_ID\}-\$\{attempt\}/);
+  assert.match(metadata, /verify-admin-recovery-postcheck-chain/);
+  assert.match(metadata, /postcheck-recovery-chain\.json/);
+  assert.match(metadata, /original_source_run_id/);
+  assert.match(metadata, /Download exact original Admin recovery source release artifact/);
+  assert.match(metadata, /Download exact original Admin recovery source gate artifact/);
+  assert.match(metadata, /Download exact original Admin recovery source Admin artifact/);
+  assert.match(metadata, /--postcheck-recovery-chain admin-recovery-evidence\/postcheck-recovery-chain\.json/);
+  assert.ok(metadata.indexOf('verify-admin-recovery-postcheck-chain')
+    < metadata.indexOf('original_source_run_id'), 'chain must be verified before original source outputs are trusted');
+  assert.ok(metadata.indexOf('original_source_run_id')
+    < metadata.indexOf('Download exact original Admin recovery source release artifact'));
+  assert.doesNotMatch(metadata, /supabase\s+(?:db\s+push|migration|functions\s+deploy)/);
+});
+
 test('reproducible npm install and build never receive the Cloudflare production token', () => {
   const workflow = readFileSync(new URL('../.github/workflows/nelyon-production-release.yml', import.meta.url), 'utf8');
   const packageJson = JSON.parse(readFileSync(new URL('../apps/admin-web/package.json', import.meta.url), 'utf8'));
