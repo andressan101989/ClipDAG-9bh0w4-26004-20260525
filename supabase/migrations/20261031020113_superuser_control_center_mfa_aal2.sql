@@ -1,11 +1,32 @@
 -- Control Center MFA policy v1. Extend the canonical catalog only.
--- No role mappings, domain data or financial records are changed.
+-- Enable only the approved nondelegable root refund capability. No domain data
+-- or financial records are changed, and no refund RPC is executed.
 alter table private.admin_capabilities
   add column required_aal text not null default 'aal1',
   add constraint admin_capabilities_required_aal_check check(required_aal in('aal1','aal2'));
 
 update private.admin_capabilities set required_aal='aal2'
 where is_sensitive and effect in('write','workflow');
+
+update private.admin_capabilities set required_aal='aal2'
+where capability_code='creator_premium.refunds.write';
+
+insert into private.admin_role_capabilities(role_code,capability_code)
+values('SUPER_ADMIN','creator_premium.refunds.write')
+on conflict(role_code,capability_code) do nothing;
+
+-- Fail closed on catalog drift; never broaden roles or rewrite delegation.
+do $$begin
+  if (select required_aal from private.admin_capabilities
+      where capability_code='creator_premium.refunds.write') is distinct from 'aal2'
+    or (select array_agg(role_code order by role_code) from private.admin_role_capabilities
+        where capability_code='creator_premium.refunds.write') is distinct from array['SUPER_ADMIN']
+    or not exists(select 1 from private.admin_roles
+      where role_code='SUPER_ADMIN' and is_root and is_exclusive and not is_assignable)
+    or exists(select 1 from private.admin_role_grant_rules where target_role_code='SUPER_ADMIN') then
+    raise exception 'control_center_refund_authority_invalid';
+  end if;
+end$$;
 
 alter table private.admin_capabilities
   add constraint admin_capabilities_sensitive_aal_check

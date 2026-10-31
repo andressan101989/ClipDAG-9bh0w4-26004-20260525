@@ -31,6 +31,8 @@ try{
   const foundation=readFileSync(new URL("../supabase/migrations/20260911162054_superuser_a3_canonical_authority_foundation.sql",import.meta.url),"utf8");
   const canonical=(name)=>{const found=foundation.match(new RegExp(`create function ${name.replaceAll(".","\\.")}\\([\\s\\S]*?\\$\\$;`));assert.ok(found,`canonical ${name}`);return found[0]};
   const catalog=foundation.slice(foundation.indexOf("create table private.admin_roles("),foundation.indexOf("create function private.admin_active_role_codes("));
+  const premium=readFileSync(new URL("../supabase/migrations/20261010053524_creator_premium_b7_full_functional_commercial_completion.sql",import.meta.url),"utf8");
+  const premiumCatalog=premium.slice(premium.indexOf("insert into private.admin_capabilities("),premium.indexOf("create function private.creator_premium_publication_blocker_v1"));
   console.log("Loading canonical catalog, helpers and synthetic Super Admin; reproducing the AAL1 write gap.");
   sql(`create role anon;create role authenticated;create role service_role;
     create schema auth;create schema private;create schema extensions;create extension pgcrypto with schema extensions;
@@ -38,6 +40,7 @@ try{
     create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
     create function auth.uid() returns uuid language sql stable as $$select (auth.jwt()->>'sub')::uuid$$;
     ${catalog}
+    ${premiumCatalog}
     ${canonical("private.admin_active_role_codes")}
     ${canonical("private.admin_role_set_is_valid")}
     ${canonical("private.admin_effective_capabilities")}
@@ -56,6 +59,7 @@ try{
     do $$begin
       if not public.admin_actor_has_capability('users.accounts.suspend') then raise exception 'baseline RED missing';end if;
       perform public.admin_require_capability('users.accounts.suspend');
+      if public.get_my_admin_access()->'capabilities' ? 'creator_premium.refunds.write' then raise exception 'refund exposed before mapping';end if;
     end$$;
   `);
   // A separate connection gets fresh temporary snapshots; persist them only in this isolated cluster.
@@ -63,7 +67,13 @@ try{
   const dir=new URL("../supabase/migrations/",import.meta.url);
   const name=readdirSync(dir).find((file)=>file.endsWith("_superuser_control_center_mfa_aal2.sql"));assert.ok(name);
   console.log(`Applying only ${name} to the isolated database.`);
-  sql(`begin;${readFileSync(new URL(name,dir),"utf8")}commit;`);
+  const migration=readFileSync(new URL(name,dir),"utf8");
+  sql(`begin;${migration}commit;`);
+  const refundPostcondition=migration.match(/-- Fail closed on catalog drift;[\s\S]*?end\$\$;/)?.[0];
+  assert.ok(refundPostcondition,"refund authority postcondition exists");
+  assert.throws(()=>sql(`begin;
+    insert into private.admin_role_capabilities(role_code,capability_code) values('PLATFORM_ADMIN','creator_premium.refunds.write');
+    ${refundPostcondition}rollback;`),/control_center_refund_authority_invalid/,"unsafe role mapping must fail closed; the synthetic transaction rolls back on disconnect");
   const claims=(id="10000000-0000-4000-8000-000000000001",aal="aal1")=>`select set_config('request.jwt.claims','${JSON.stringify({sub:id,aal})}',false);`;
   const denied=(capability,message)=>`do $$begin
     if public.admin_actor_has_capability('${capability}') then raise exception 'boolean guard allowed';end if;
@@ -80,6 +90,9 @@ try{
   console.log("Checking AAL1/AAL2, active accounts, roles, catalog constraints and security metadata.");
   sql(`
     do $$begin
+      if (select array_agg(role_code order by role_code) from private.admin_role_capabilities where capability_code='creator_premium.refunds.write') is distinct from array['SUPER_ADMIN'] then raise exception 'refund must map only SUPER_ADMIN';end if;
+      if (select required_aal from private.admin_capabilities where capability_code='creator_premium.refunds.write') is distinct from 'aal2' then raise exception 'refund requires AAL2';end if;
+      if not exists(select 1 from private.admin_roles where role_code='SUPER_ADMIN' and is_root and is_exclusive and not is_assignable) or exists(select 1 from private.admin_role_grant_rules where target_role_code='SUPER_ADMIN') then raise exception 'root delegation changed';end if;
       if exists(select 1 from private.admin_capabilities where required_aal<>case when is_sensitive and effect in('write','workflow') then 'aal2' else 'aal1' end) then raise exception 'incorrect mapping';end if;
       if exists(select 1 from private.proof_guards old join pg_proc p using(oid) where (old.proowner,old.proacl) is distinct from(p.proowner,p.proacl)) then raise exception 'owner or ACL changed';end if;
       if exists(select 1 from pg_proc where oid in(select oid from private.proof_guards) and (not prosecdef or proconfig<>array['search_path=pg_catalog, private, public'])) then raise exception 'definer/search path changed';end if;
@@ -90,10 +103,13 @@ try{
     ${claims()}set role authenticated;
     ${allowed("admin.shell.access")}${allowed("users.accounts.read")}
     do $$begin if (public.get_my_admin_access()->>'admin')::boolean is not true then raise exception 'AAL1 super admin locked out';end if;end$$;
+    do $$begin if not (public.get_my_admin_access()->'capabilities' ? 'creator_premium.refunds.write') then raise exception 'mapped capability absent in AAL1 bootstrap';end if;end$$;
+    ${denied("creator_premium.refunds.write","admin_aal2_required")}
     ${denied("users.accounts.suspend","admin_aal2_required")}
     ${denied("marketplace.disputes.resolve","admin_aal2_required")}
     reset role;${claims(undefined,"aal2")}set role authenticated;
     ${allowed("users.accounts.suspend")}${allowed("marketplace.disputes.resolve")}
+    ${allowed("creator_premium.refunds.write")}
     reset role;
     insert into private.admin_user_roles(user_id,role_code,grant_actor_kind,grant_operator_reference,grant_reason)
       values('10000000-0000-4000-8000-000000000001','SUPPORT','trusted_operator','disposable-task3','Invalid role set proof');
@@ -110,12 +126,26 @@ try{
     set role authenticated;${denied("users.accounts.suspend","admin_capability_forbidden")}reset role;
     ${claims("10000000-0000-4000-8000-000000000002","aal2")}set role authenticated;
     ${denied("users.accounts.suspend","admin_capability_forbidden")}reset role;
+    do $$declare proof_role text;begin
+      for proof_role in select role_code from private.admin_roles where role_code<>'SUPER_ADMIN' loop
+        delete from private.admin_user_roles where user_id='10000000-0000-4000-8000-000000000002';
+        insert into private.admin_user_roles(user_id,role_code,grant_actor_kind,grant_operator_reference,grant_reason) values('10000000-0000-4000-8000-000000000002',proof_role,'trusted_operator','disposable-task7','Role denial proof');
+        if 'creator_premium.refunds.write'=any(private.admin_effective_capabilities('10000000-0000-4000-8000-000000000002')) then raise exception 'nonroot refund authority: %',proof_role;end if;
+        perform set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000002","aal":"aal2"}',false);
+        if public.admin_actor_has_capability('creator_premium.refunds.write') then raise exception 'nonroot boolean guard allowed: %',proof_role;end if;
+        begin
+          perform public.admin_require_capability('creator_premium.refunds.write');raise exception 'nonroot throwing guard allowed: %',proof_role;
+        exception when sqlstate '42501' then if sqlerrm<>'admin_capability_forbidden' then raise;end if;end;
+        if public.get_my_admin_access()->'capabilities' ? 'creator_premium.refunds.write' then raise exception 'nonroot bootstrap exposed refund: %',proof_role;end if;
+      end loop;
+      delete from private.admin_user_roles where user_id='10000000-0000-4000-8000-000000000002';
+    end$$;
     select set_config('request.jwt.claims','{}',false);set role authenticated;
     do $$begin if public.admin_actor_has_capability('admin.shell.access') then raise exception 'anonymous allowed';end if;
       begin perform public.admin_require_capability('admin.shell.access');raise exception 'anonymous allowed';exception when sqlstate '28000' then null;end;
     end$$;reset role;
   `);
-  console.log("PASS: isolated PostgreSQL 17 canonical catalog/guard proof; baseline AAL1 write reproduced, migration enforces AAL2, reads/bootstrap preserved, inactive/revoked/unprivileged actors denied, ACL/owners/search paths/RLS unchanged.");
+  console.log("PASS: isolated PostgreSQL 17 canonical catalog/guard proof; SUPER_ADMIN-only refunds require AAL2; root remains nonassignable/nondelegable; AAL1 bootstrap reflects only mapped capability; all nonroot roles lack refunds; reads/bootstrap preserved; inactive/revoked/unprivileged actors denied; ACL/owners/search paths/RLS unchanged. Zero refund RPCs or financial movements executed.");
 }finally{
   if(started){
     invoke("pg_ctl",["-D",cluster,"-m","immediate","-w","stop"]);
