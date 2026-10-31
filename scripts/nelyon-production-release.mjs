@@ -4729,6 +4729,7 @@ export function verifyAdminRecoverySourceProvenance({
     source_manifest_sha256: sourceManifestDigest,
     source_admin_manifest_sha256: adminManifestDigest,
     source_admin_source_sha256: adminManifest.source.sha256,
+    source_admin_files: adminManifest.source.files,
     source_build_sha256: build?.dist_sha256 ?? null,
     source_cloudflare_prestate: sourceCloudflarePrestate,
     source_artifacts: selectedArtifacts,
@@ -5297,6 +5298,30 @@ export function verifyAdminRecoveryBuildBinding({
   currentBuild,
 }) {
   const code = 'ADMIN_RECOVERY_POSTCHECK_FAILED';
+  const exactSource = currentAdminManifest?.source?.sha256 === verifiedSource?.source_admin_source_sha256;
+  const sourceFiles = verifiedSource?.source_admin_files;
+  const currentFiles = currentAdminManifest?.source?.files;
+  let protectedWorkflowEvolution = false;
+  if (!exactSource && Array.isArray(sourceFiles) && Array.isArray(currentFiles)
+    && sourceFiles.length === currentFiles.length) {
+    const validateFiles = files => files.every(item => item && typeof item.path === 'string'
+      && Number.isSafeInteger(item.bytes) && item.bytes >= 0
+      && /^[0-9a-f]{64}$/.test(item.sha256 ?? ''))
+      && new Set(files.map(item => item.path)).size === files.length;
+    const sourceByPath = new Map(sourceFiles.map(item => [item.path, item]));
+    const currentByPath = new Map(currentFiles.map(item => [item.path, item]));
+    const pathsEqual = sourceByPath.size === currentByPath.size
+      && [...sourceByPath.keys()].every(path => currentByPath.has(path));
+    const changedPaths = pathsEqual ? [...sourceByPath.keys()].filter(path => (
+      canonicalJson(sourceByPath.get(path)) !== canonicalJson(currentByPath.get(path))
+    )) : [];
+    protectedWorkflowEvolution = validateFiles(sourceFiles) && validateFiles(currentFiles)
+      && pathsEqual
+      && sha256Hex(canonicalJson(sourceFiles).trimEnd()) === verifiedSource.source_admin_source_sha256
+      && sha256Hex(canonicalJson(currentFiles).trimEnd()) === currentAdminManifest.source.sha256
+      && changedPaths.length === 1
+      && changedPaths[0] === '.github/workflows/nelyon-production-release.yml';
+  }
   if (verifiedSource?.result !== 'ADMIN_RECOVERY_SOURCE_VERIFIED'
     || verifiedSource.source_run_id !== String(recoveryRequest?.recoverySourceRunId ?? '')
     || verifiedSource.source_sha !== recoveryRequest?.approvedSha
@@ -5304,7 +5329,7 @@ export function verifyAdminRecoveryBuildBinding({
     || currentAdminManifest?.enabled !== true || currentAdminManifest?.release?.mode !== 'admin_recovery'
     || currentAdminManifest?.release?.recovery_source_run_id !== verifiedSource.source_run_id
     || currentAdminManifest?.release?.approved_sha !== recoveryRequest?.approvedSha
-    || currentAdminManifest?.source?.sha256 !== verifiedSource.source_admin_source_sha256
+    || (!exactSource && !protectedWorkflowEvolution)
     || currentBuild?.approved_sha !== recoveryRequest?.approvedSha
     || currentBuild?.source_manifest_sha256 !== sha256Hex(canonicalJson(currentAdminManifest).trimEnd())
     || !/^[0-9a-f]{64}$/.test(currentBuild?.dist_sha256 ?? '')
