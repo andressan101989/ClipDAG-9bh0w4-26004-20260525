@@ -5,6 +5,14 @@ export default defineConfig({
   base: "/admin/",
   plugins: [react()],
   resolve: { dedupe: ["react", "react-dom", "hls.js"] },
+  esbuild: {
+    tsconfigRaw: JSON.stringify({
+      compilerOptions: {
+        useDefineForClassFields: true,
+        jsx: "react-jsx",
+      },
+    }),
+  },
   test: {
     include: ["src/**/*.test.{ts,tsx}"],
     environment: "jsdom",
