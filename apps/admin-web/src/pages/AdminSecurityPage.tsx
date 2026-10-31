@@ -57,11 +57,10 @@ export function AdminSecurityPage(){
     const assurance=await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
     if(assurance.error)throw assurance.error;
     if(factor.status==="verified"&&assurance.data.currentLevel!=="aal2")throw new Error("aal2_required");
-    if(version!==generation.current)return;
     const result=await supabase.auth.mfa.unenroll({factorId:factor.id});
     if(result.error)throw result.error;
-    if(version!==generation.current)return;
-    setEnrollment(null);setCode("");setRemoving(null);
+    // Unenroll only removes the factor. Session downgrade is mandatory even
+    // when navigation/unmount has invalidated this page's local generation.
     try{
       const refresh=await supabase.auth.refreshSession();
       if(refresh.error)throw refresh.error;
@@ -69,7 +68,10 @@ export function AdminSecurityPage(){
       // A removed factor must not leave the old elevated token active in the UI.
       await logout();return;
     }
-    await retry();await load();
+    await retry();
+    if(version!==generation.current)return;
+    setEnrollment(null);setCode("");await load();
+    if(version===generation.current)setRemoving(null);
   });
   const verified=factors?.filter((factor)=>factor.status==="verified")??[];
   return <div className="page-stack">
@@ -79,7 +81,7 @@ export function AdminSecurityPage(){
       <p role="status">{security?.currentLevel==="aal2"?"Sesión verificada · AAL2":security?.currentLevel==="aal1"?"Sesión con contraseña · AAL1":"Nivel de seguridad pendiente de verificar"}</p>
       <p>La consulta y la configuración permanecen disponibles. Las operaciones sensibles requieren un código del autenticador.</p>
       {security?.error&&<p role="alert">{security.error}</p>}
-      {error&&<p role="alert">{error}</p>}
+      {error&&!removing&&<p role="alert">{error}</p>}
       {notice&&<p role="status">{notice}</p>}
       {factors===null&&!error&&<p role="status">Consultando autenticadores…</p>}
       {factors!==null&&<>
@@ -98,7 +100,7 @@ export function AdminSecurityPage(){
         </form>}
         {factors.length>0&&<ul>{factors.map((factor)=><li key={factor.id}>{factor.friendly_name??"Autenticador"} · {factor.status==="verified"?"Verificado":"Configuración pendiente"} <button disabled={busy||factor.status==="verified"&&security?.currentLevel!=="aal2"} onClick={()=>setRemoving(factor)}>Eliminar autenticador</button></li>)}</ul>}
       </>}
-      <ConfirmDialog open={removing!==null} title="Eliminar autenticador" consequence="Tras eliminarlo, las operaciones sensibles requerirán configurar y verificar un autenticador." actionLabel="Confirmar eliminación" danger pending={busy} onCancel={()=>setRemoving(null)} onConfirm={()=>{if(removing)void remove(removing)}}/>
+      <ConfirmDialog open={removing!==null} title="Eliminar autenticador" consequence="Tras eliminarlo, las operaciones sensibles requerirán configurar y verificar un autenticador." actionLabel="Confirmar eliminación" danger pending={busy} error={error} onCancel={()=>setRemoving(null)} onConfirm={()=>{if(removing)void remove(removing)}}/>
       <button className="secondary" disabled={busy} onClick={()=>void run(async()=>{await retry();await load()})}>Reintentar seguridad</button>
       <p>¿Perdiste el dispositivo? Contacta al operador autorizado para recuperar el acceso. No compartas tu contraseña ni tu clave de configuración.</p>
     </section>

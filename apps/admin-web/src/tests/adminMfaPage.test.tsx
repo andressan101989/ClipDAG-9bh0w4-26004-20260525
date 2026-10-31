@@ -1,6 +1,6 @@
-import {act,cleanup,render,screen,waitFor} from "@testing-library/react";
+import {act,cleanup,render,screen,waitFor,within} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import {MemoryRouter} from "react-router-dom";
+import {MemoryRouter,useNavigate} from "react-router-dom";
 import {afterEach,beforeEach,expect,it,vi} from "vitest";
 import {App} from "../App";
 import {AdminAuthProvider} from "../auth/AdminAuthProvider";
@@ -11,7 +11,9 @@ vi.mock("../lib/adminApi",async(original)=>({...await original<typeof import("..
 vi.mock("../lib/supabase",()=>({supabase:{rpc:vi.fn().mockResolvedValue({data:null,error:{message:"unavailable"}}),auth:{getSession:vi.fn(),onAuthStateChange:vi.fn(),refreshSession:vi.fn(),signOut:vi.fn().mockResolvedValue({error:null}),stopAutoRefresh:vi.fn().mockResolvedValue(undefined),startAutoRefresh:vi.fn().mockResolvedValue(undefined),mfa:{getAuthenticatorAssuranceLevel:vi.fn(),listFactors:vi.fn(),enroll:vi.fn(),challenge:vi.fn(),verify:vi.fn(),unenroll:vi.fn()}}}}));
 const mfa=supabase.auth.mfa;
 const factor={id:"factor-one",factor_type:"totp",friendly_name:"Admin",status:"verified"};
-function mount(path="/system/security"){return render(<MemoryRouter initialEntries={[path]}><AdminAuthProvider><App/></AdminAuthProvider></MemoryRouter>)}
+let navigateTo:ReturnType<typeof useNavigate>;
+function NavigationProbe(){navigateTo=useNavigate();return null}
+function mount(path="/system/security"){return render(<MemoryRouter initialEntries={[path]}><AdminAuthProvider><App/><NavigationProbe/></AdminAuthProvider></MemoryRouter>)}
 beforeEach(()=>{vi.clearAllMocks();localStorage.clear();vi.mocked(getAdminAccess).mockResolvedValue({user_id:"one",username:"root",display_name:"Root",avatar_url:null,admin:true,roles:["SUPER_ADMIN"],capabilities:["admin.shell.access"],authority_version:"v1"});vi.mocked(supabase.auth.getSession).mockResolvedValue({data:{session:{user:{id:"one"},expires_at:Math.floor(Date.now()/1000)+3600} as never},error:null});vi.mocked(supabase.auth.onAuthStateChange).mockReturnValue({data:{subscription:{unsubscribe:vi.fn()}}} as never);vi.mocked(mfa.getAuthenticatorAssuranceLevel).mockResolvedValue({data:{currentLevel:"aal1",nextLevel:"aal1",currentAuthenticationMethods:[]},error:null});vi.mocked(mfa.listFactors).mockResolvedValue({data:{all:[],totp:[],phone:[]},error:null});vi.mocked(mfa.enroll).mockResolvedValue({data:{id:"new-factor",type:"totp",totp:{qr_code:"data:image/svg+xml;utf-8,%3Csvg%3E%3C/svg%3E",secret:"memory-only-secret",uri:"otpauth://test"}},error:null} as never);vi.mocked(mfa.challenge).mockResolvedValue({data:{id:"challenge",type:"totp",expires_at:9999999999},error:null} as never);vi.mocked(mfa.verify).mockResolvedValue({data:{} as never,error:null});vi.mocked(mfa.unenroll).mockResolvedValue({data:{id:"factor-one"},error:null});vi.mocked(supabase.auth.refreshSession).mockResolvedValue({data:{session:null,user:null},error:null});});
 afterEach(()=>{cleanup();vi.restoreAllMocks();adminLogoutFence.clearAfterPasswordLogin()});
 it("allows the existing AAL1 super admin to enroll and verify without storing the secret",async()=>{mount();await userEvent.click(await screen.findByRole("button",{name:"Configurar autenticador"}));expect(await screen.findByText("memory-only-secret")).toBeInTheDocument();expect(screen.getByRole("img",{name:"Código QR del autenticador"})).toBeInTheDocument();await userEvent.type(screen.getByLabelText("Código de 6 dígitos"),"123456");await userEvent.click(screen.getByRole("button",{name:"Verificar código"}));await waitFor(()=>expect(mfa.verify).toHaveBeenCalledWith({factorId:"new-factor",challengeId:"challenge",code:"123456"}));await waitFor(()=>expect(screen.queryByText("memory-only-secret")).not.toBeInTheDocument());expect(JSON.stringify(localStorage)).not.toContain("memory-only-secret");expect(JSON.stringify(sessionStorage)).not.toContain("memory-only-secret");expect(screen.getByText(/Protección de contraseñas filtradas/)).toBeInTheDocument();expect(screen.getByText(/No verificada/)).toBeInTheDocument();});
@@ -31,4 +33,29 @@ it("keeps failed post-removal logout fenced when stale Auth events arrive",async
 it("shows the failed durable-logout status on the real login page",async()=>{
   vi.mocked(mfa.listFactors).mockResolvedValue({data:{all:[factor],totp:[factor],phone:[]},error:null} as never);vi.mocked(mfa.getAuthenticatorAssuranceLevel).mockResolvedValue({data:{currentLevel:"aal2",nextLevel:"aal2",currentAuthenticationMethods:[]},error:null});vi.mocked(supabase.auth.refreshSession).mockResolvedValue({data:{session:null,user:null},error:{message:"refresh unavailable"}} as never);vi.mocked(supabase.auth.signOut).mockResolvedValue({error:{message:"logout unavailable"}} as never);
   mount();await userEvent.click(await screen.findByRole("button",{name:"Eliminar autenticador"}));vi.spyOn(Storage.prototype,"setItem").mockImplementation(()=>{throw new DOMException("quota","QuotaExceededError")});vi.spyOn(document,"cookie","get").mockReturnValue("");vi.spyOn(document,"cookie","set").mockImplementation(()=>undefined);await userEvent.click(screen.getByRole("button",{name:"Confirmar eliminación"}));await screen.findByLabelText("Correo");await waitFor(()=>expect(screen.getByRole("alert")).toHaveTextContent("No se pudo asegurar el cierre tras recargar"));expect(screen.getByRole("button",{name:"Reintentar cierre de sesión"})).toBeInTheDocument();
+});
+it.each([
+ ["unmount","success"],["navigate","success"],
+ ["unmount","returned error"],["navigate","returned error"],
+ ["unmount","thrown error"],["navigate","thrown error"],
+] as const)("finishes mandatory session cleanup after %s before unenroll resolves (refresh %s)",async(leave,refresh)=>{
+  vi.mocked(mfa.listFactors).mockResolvedValue({data:{all:[factor],totp:[factor],phone:[]},error:null} as never);
+  vi.mocked(mfa.getAuthenticatorAssuranceLevel).mockResolvedValue({data:{currentLevel:"aal2",nextLevel:"aal2",currentAuthenticationMethods:[]},error:null});
+  vi.mocked(supabase.auth.signOut).mockResolvedValue({error:null});
+  if(refresh==="returned error")vi.mocked(supabase.auth.refreshSession).mockResolvedValue({data:{session:null,user:null},error:{message:"private refresh detail"}} as never);
+  if(refresh==="thrown error")vi.mocked(supabase.auth.refreshSession).mockRejectedValue(new Error("private transport detail"));
+  let finish!:(value:Awaited<ReturnType<typeof mfa.unenroll>>)=>void;
+  vi.mocked(mfa.unenroll).mockImplementation(()=>new Promise(resolve=>{finish=resolve}));
+  const view=mount();await userEvent.click(await screen.findByRole("button",{name:"Eliminar autenticador"}));await userEvent.click(screen.getByRole("button",{name:"Confirmar eliminación"}));
+  await waitFor(()=>expect(mfa.unenroll).toHaveBeenCalledWith({factorId:"factor-one"}));expect(supabase.auth.refreshSession).not.toHaveBeenCalled();
+  if(leave==="unmount")view.unmount();else{await act(async()=>navigateTo("/system/integrations"));expect(screen.queryByRole("heading",{name:"Seguridad de la cuenta"})).not.toBeInTheDocument()}
+  await act(async()=>finish({data:{id:"factor-one"},error:null}));
+  await waitFor(()=>expect(supabase.auth.refreshSession).toHaveBeenCalledTimes(1));
+  if(refresh==="success")expect(supabase.auth.signOut).not.toHaveBeenCalled();
+  else{await waitFor(()=>expect(supabase.auth.signOut).toHaveBeenCalledTimes(1));expect(vi.mocked(supabase.auth.refreshSession).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(supabase.auth.signOut).mock.invocationCallOrder[0])}
+});
+it("keeps a sanitized unenroll rejection accessible inside the isolated confirmation",async()=>{
+ vi.mocked(mfa.listFactors).mockResolvedValue({data:{all:[factor],totp:[factor],phone:[]},error:null} as never);vi.mocked(mfa.getAuthenticatorAssuranceLevel).mockResolvedValue({data:{currentLevel:"aal2",nextLevel:"aal2",currentAuthenticationMethods:[]},error:null});vi.mocked(mfa.unenroll).mockResolvedValue({data:null,error:{message:"private provider detail"}} as never);
+ mount();await userEvent.click(await screen.findByRole("button",{name:"Eliminar autenticador"}));await userEvent.click(screen.getByRole("button",{name:"Confirmar eliminación"}));
+ const dialog=screen.getByRole("dialog",{name:"Eliminar autenticador"});expect(await within(dialog).findByRole("alert")).toHaveTextContent("No se pudo completar la operación.");expect(screen.queryByText("private provider detail")).not.toBeInTheDocument();expect(supabase.auth.refreshSession).not.toHaveBeenCalled();
 });
