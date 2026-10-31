@@ -25,7 +25,7 @@ when 'users' then
  pg_catalog.jsonb_build_object('key','last_sign_in','label','Usuarios cuyo último inicio de sesión está en el periodo','value',(select count(*) from auth.users where last_sign_in_at>=v_from and last_sign_in_at<v_until and deleted_at is null),'unit','count','source','auth.users.last_sign_in_at','reason',null),
  pg_catalog.jsonb_build_object('key','creators','label','Creadores (directorio global)','value',null,'unit','count','source','Sin autoridad de directorio global','reason','Publicar contenido o vender Premium no acredita una cuenta de creador; consultar Creator Commerce para atribución comercial.')
  ) into v_metrics;
- select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (created_at at time zone 'UTC')::date day,count(*) value from auth.users where created_at>=v_from and created_at<v_until and deleted_at is null group by 1) bucket;
+ select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (created_at at time zone 'UTC')::date as day,count(*) value from auth.users where created_at>=v_from and created_at<v_until and deleted_at is null group by 1) bucket;
 when 'content' then
  perform public.admin_require_capability('content.items.read');
 
@@ -34,21 +34,21 @@ when 'content' then
  pg_catalog.jsonb_build_object('key','safety','label','Alertas de seguridad abiertas del periodo','value',(select count(*) from private.content_safety_alerts where created_at>=v_from and created_at<v_until and status in ('open','in_review')),'unit','count','source','content_safety_alerts.status','reason',null),
  pg_catalog.jsonb_build_object('key','priority_safety','label','Alertas altas o críticas abiertas del periodo','value',(select count(*) from private.content_safety_alerts where created_at>=v_from and created_at<v_until and status in ('open','in_review') and severity in ('high','critical')),'unit','count','source','content_safety_alerts.status/severity','reason',null)
  ) into v_metrics;
- select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (created_at at time zone 'UTC')::date day,count(*) value from public.videos where created_at>=v_from and created_at<v_until group by 1) bucket;
+ select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (created_at at time zone 'UTC')::date as day,count(*) value from public.videos where created_at>=v_from and created_at<v_until group by 1) bucket;
 when 'stories' then
  perform public.admin_require_capability('stories.items.read');
 
  select pg_catalog.jsonb_build_array(
  pg_catalog.jsonb_build_object('key','stories','label','Stories creadas','value',(select count(*) from public.stories where created_at>=v_from and created_at<v_until),'unit','count','source','stories.created_at','reason',null)
  ) into v_metrics;
- select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (created_at at time zone 'UTC')::date day,count(*) value from public.stories where created_at>=v_from and created_at<v_until group by 1) bucket;
+ select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (created_at at time zone 'UTC')::date as day,count(*) value from public.stories where created_at>=v_from and created_at<v_until group by 1) bucket;
 when 'live' then
  perform public.admin_require_capability('live.sessions.read');
 
  select pg_catalog.jsonb_build_array(
  pg_catalog.jsonb_build_object('key','live','label','Sesiones LIVE iniciadas','value',(select count(*) from public.live_sessions where started_at>=v_from and started_at<v_until),'unit','count','source','live_sessions.started_at','reason',null)
  ) into v_metrics;
- select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (started_at at time zone 'UTC')::date day,count(*) value from public.live_sessions where started_at>=v_from and started_at<v_until group by 1) bucket;
+ select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (started_at at time zone 'UTC')::date as day,count(*) value from public.live_sessions where started_at>=v_from and started_at<v_until group by 1) bucket;
 when 'marketplace' then
  perform public.admin_require_capability('marketplace.overview.read');
 
@@ -57,7 +57,7 @@ when 'marketplace' then
  pg_catalog.jsonb_build_object('key','sales','label','Ventas confirmadas (BDAG)','value',(select coalesce(sum(total),0) from public.marketplace_orders where confirmed_at>=v_from and confirmed_at<v_until and currency='BDAG'),'unit','BDAG','source','marketplace_orders.confirmed_at; bruto histórico, incluye posteriores reembolsos','reason',null),
  pg_catalog.jsonb_build_object('key','sellers','label','Solicitudes de vendedor creadas','value',(select count(*) from public.marketplace_sellers where created_at>=v_from and created_at<v_until),'unit','count','source','marketplace_sellers.created_at','reason',null)
  ) into v_metrics;
- select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (created_at at time zone 'UTC')::date day,count(*) value from public.marketplace_orders where created_at>=v_from and created_at<v_until group by 1) bucket;
+ select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (created_at at time zone 'UTC')::date as day,count(*) value from public.marketplace_orders where created_at>=v_from and created_at<v_until group by 1) bucket;
 when 'finance' then
  perform public.admin_require_capability('finance.ledger.read');
 
@@ -67,7 +67,7 @@ when 'finance' then
  pg_catalog.jsonb_build_object('key','gifts','label','Regalos LIVE enviados','value',(select count(*) from public.live_gift_transactions where created_at>=v_from and created_at<v_until),'unit','count','source','live_gift_transactions.created_at','reason',null),
  pg_catalog.jsonb_build_object('key','gift_fees','label','Comisión bruta de regalos LIVE','value',(select coalesce(sum(platform_fee_coins),0) from public.live_gift_transactions where created_at>=v_from and created_at<v_until),'unit','BDAG','source','live_gift_transactions.platform_fee_coins; BDAG interno','reason',null)
  ) into v_metrics;
- select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (created_at at time zone 'UTC')::date day,count(*) value from public.financial_transactions where created_at>=v_from and created_at<v_until group by 1) bucket;
+ select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (created_at at time zone 'UTC')::date as day,count(*) value from public.financial_transactions where created_at>=v_from and created_at<v_until group by 1) bucket;
 when 'premium' then
  perform public.admin_require_capability('finance.ledger.read');
 
@@ -86,7 +86,7 @@ when 'ads' then
  pg_catalog.jsonb_build_object('key','businesses','label','Business Accounts creadas','value',(select count(*) from private.business_accounts where created_at>=v_from and created_at<v_until),'unit','count','source','business_accounts.created_at','reason',null),
  pg_catalog.jsonb_build_object('key','spend','label','Ads gasto reconocido','value',case when public.admin_actor_has_capability('advertising.billing.read') then (select coalesce(sum(amount_bdag),0) from private.advertising_financial_events where created_at>=v_from and created_at<v_until and event_type='spend') else null end,'unit','BDAG','source','advertising_financial_events.spend; solo con advertising.billing.read','reason','Sin advertising.billing.read el gasto no está disponible')
  ) into v_metrics;
- select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (created_at at time zone 'UTC')::date day,count(*) value from private.advertising_campaigns where created_at>=v_from and created_at<v_until group by 1) bucket;
+ select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('day',bucket.day,'value',bucket.value) order by bucket.day),'[]'::jsonb) into v_series from (select (created_at at time zone 'UTC')::date as day,count(*) value from private.advertising_campaigns where created_at>=v_from and created_at<v_until group by 1) bucket;
 when 'reports' then
  perform public.admin_require_capability('reports.cases.read');
 
@@ -129,6 +129,9 @@ set search_path = ''
 as $$
 declare
   v_limit integer := least(greatest(coalesce(p_limit, 50), 1), 100);
+  v_rows jsonb;
+  v_count integer;
+  v_last jsonb;
 begin
   perform public.admin_require_capability('content.items.read');
   if p_review_status is not null
