@@ -49,7 +49,7 @@ describe("UI-FINAL responsive Admin navigation", () => {
     const navigation = screen.getByRole("navigation", { name: "Administración global" });
     expect(within(navigation).getByRole("button", { name: "Marketplace" })).toHaveAttribute("aria-expanded", "true");
     expect(within(document.getElementById("admin-group-marketplace") as HTMLElement).getByRole("link", { name: "Resumen" })).toHaveAttribute("href", "/marketplace");
-    const search = screen.getByRole("textbox", { name: "Buscar módulos y secciones" });
+    const search = screen.getByRole("combobox", { name: "Buscar módulos y secciones" });
     await userEvent.type(search, "Pedidos");
     const results = screen.getByRole("listbox", { name: "Rutas autorizadas" });
     const routes = [

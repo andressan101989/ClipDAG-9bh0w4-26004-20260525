@@ -6,3 +6,7 @@ export function AdminMetricCard({label,value,detail,icon}:{label:string;value:Re
 export function AdminPanel({title,aside,children,className=""}:{title:string;aside?:ReactNode;children:ReactNode;className?:string}){return <section className={`dashboard-panel ${className}`.trim()}><header><h3>{title}</h3>{aside}</header>{children}</section>}
 
 export function AdminStatusBadge({children,tone="neutral"}:{children:ReactNode;tone?:"success"|"warning"|"danger"|"neutral"}){return <span className={`admin-status ${tone}`}><i/>{children}</span>}
+
+export {AdminBreadcrumbs,AdminChartPanel,AdminDataTable,AdminDateRangeFilter,AdminDetailDrawer,AdminFilterBar,AdminPageHeader,AdminPagination,AdminSearchInput,AdminSectionNavigation,AdminStatCard} from "./AdminControlCenter";
+export type {AdminDataTableColumn} from "./AdminControlCenter";
+export {AdminErrorBoundary} from "./AdminErrorBoundary";

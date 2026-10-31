@@ -24,21 +24,26 @@ function renderShell(path:string){
   return render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/" element={<AdminShell/>}><Route path="*" element={<p>Ruta activa</p>}/></Route></Routes></MemoryRouter>);
 }
 
-beforeEach(()=>vi.mocked(useAdminAuth).mockReturnValue(access(adminLinks.map((link)=>link.capability)) as never));
+beforeEach(()=>{localStorage.clear();vi.mocked(useAdminAuth).mockReturnValue(access(adminLinks.flatMap((link)=>[link.capability,...(link.additionalCapabilities??[])])) as never)});
 
 describe("ADMIN-SUPERPANEL-FULL-F1 navigation",()=>{
-  it("shows every grouped child, including Content Safety, for capability breadth without checking a role",()=>{
+  it("shows every child in the eight capability-derived groups without checking a role",async()=>{
     renderShell("/overview");
     const navigation=screen.getByRole("navigation",{name:"Administración global"});
     const expected={
+      overview:["Dashboard ejecutivo"],
+      community:["Usuarios","Reportes","Roles y permisos"],
+      content_safety:["Publicaciones","Stories","Creator Premium","Chat reportado","Media y Cloudflare","Alertas","Audio AI","Visual AI","Reglas"],
+      live:["Transmisiones LIVE","Batallas"],
       finance:["Resumen","Cuentas","Transacciones","Creator Premium","Reconciliación","Anomalías","Auditoría"],
       marketplace:["Resumen","Pedidos","Disputas","Vendedores","Productos","Creator Commerce","Promociones","Ads","Salud","Actividad"],
-      system:["Salud","Jobs","Auditoría"],
-      content_safety:["Alertas","Reglas"],
+      advertising:["Overview","Campaigns","Review Queue","Analytics","Health","Billing & Rates","Finance Health"],
+      system:["Auditoría administrativa","Salud","Jobs","Auditoría técnica"],
     };
+    const groupLabels={overview:"Overview",community:"Users & Community",content_safety:"Content Safety",live:"LIVE & Entertainment",marketplace:"Marketplace",advertising:"Advertising",finance:"Finance",system:"System"};
     for(const [group,labels] of Object.entries(expected)){
-      const groupLabel=group==="content_safety"?"Content Safety":group;
-      const button=within(navigation).getByRole("button",{name:new RegExp(`^${groupLabel}`,"i")});
+      const button=within(navigation).getByRole("button",{name:groupLabels[group as keyof typeof groupLabels]});
+      if(button.getAttribute("aria-expanded")==="false")await userEvent.click(button);
       expect(button).toHaveAttribute("aria-expanded","true");
       const children=document.getElementById(`admin-group-${group}`);
       expect(children).not.toBeNull();
