@@ -4479,7 +4479,7 @@ test('Admin recovery build binding rejects source, manifest, and rebuilt byte dr
   }
 });
 
-test('Admin recovery permits only protected workflow evolution when rebuilt bytes stay exact', async () => {
+test('Admin recovery permits only protected recovery authority evolution when rebuilt bytes stay exact', async () => {
   const { gate } = await loadGateAndPolicy();
   const recoveryRequest = request({ mode: 'admin_recovery', scopeConfirmation: 'ADMIN_RECOVERY_EXACT_SOURCE',
     recoverySourceRunId: '987654321', productiveResources: [] });
@@ -4489,10 +4489,12 @@ test('Admin recovery permits only protected workflow evolution when rebuilt byte
   };
   const sourceFiles = [
     { path: '.github/workflows/nelyon-production-release.yml', bytes: 100, sha256: '1'.repeat(64) },
-    { path: 'apps/admin-web/src/main.tsx', bytes: 200, sha256: '2'.repeat(64) },
+    { path: 'scripts/nelyon-admin-production-release.mjs', bytes: 150, sha256: '2'.repeat(64) },
+    { path: 'apps/admin-web/src/main.tsx', bytes: 200, sha256: '3'.repeat(64) },
   ];
   const currentFiles = structuredClone(sourceFiles);
-  currentFiles[0] = { ...currentFiles[0], bytes: 120, sha256: '3'.repeat(64) };
+  currentFiles[0] = { ...currentFiles[0], bytes: 120, sha256: '4'.repeat(64) };
+  currentFiles[1] = { ...currentFiles[1], bytes: 175, sha256: '5'.repeat(64) };
   const sourceDigest = gate.sha256Hex(gate.canonicalJson(sourceFiles).trimEnd());
   const currentDigest = gate.sha256Hex(gate.canonicalJson(currentFiles).trimEnd());
   const currentAdminManifest = {
@@ -4517,9 +4519,9 @@ test('Admin recovery permits only protected workflow evolution when rebuilt byte
     currentAdminManifest, currentBuild }), true);
 
   for (const mutate of [
-    value => { value.currentAdminManifest.source.files[1].sha256 = '4'.repeat(64); },
+    value => { value.currentAdminManifest.source.files[2].sha256 = '6'.repeat(64); },
     value => { value.currentAdminManifest.source.files.push({
-      path: 'apps/admin-web/src/rogue.ts', bytes: 1, sha256: '5'.repeat(64),
+      path: 'apps/admin-web/src/rogue.ts', bytes: 1, sha256: '7'.repeat(64),
     }); },
     value => { delete value.verifiedSource.source_admin_files; },
   ]) {

@@ -5301,7 +5301,7 @@ export function verifyAdminRecoveryBuildBinding({
   const exactSource = currentAdminManifest?.source?.sha256 === verifiedSource?.source_admin_source_sha256;
   const sourceFiles = verifiedSource?.source_admin_files;
   const currentFiles = currentAdminManifest?.source?.files;
-  let protectedWorkflowEvolution = false;
+  let protectedRecoveryEvolution = false;
   if (!exactSource && Array.isArray(sourceFiles) && Array.isArray(currentFiles)
     && sourceFiles.length === currentFiles.length) {
     const validateFiles = files => files.every(item => item && typeof item.path === 'string'
@@ -5315,12 +5315,16 @@ export function verifyAdminRecoveryBuildBinding({
     const changedPaths = pathsEqual ? [...sourceByPath.keys()].filter(path => (
       canonicalJson(sourceByPath.get(path)) !== canonicalJson(currentByPath.get(path))
     )) : [];
-    protectedWorkflowEvolution = validateFiles(sourceFiles) && validateFiles(currentFiles)
+    const allowedChangedPaths = new Set([
+      '.github/workflows/nelyon-production-release.yml',
+      'scripts/nelyon-admin-production-release.mjs',
+    ]);
+    protectedRecoveryEvolution = validateFiles(sourceFiles) && validateFiles(currentFiles)
       && pathsEqual
       && sha256Hex(canonicalJson(sourceFiles).trimEnd()) === verifiedSource.source_admin_source_sha256
       && sha256Hex(canonicalJson(currentFiles).trimEnd()) === currentAdminManifest.source.sha256
-      && changedPaths.length === 1
-      && changedPaths[0] === '.github/workflows/nelyon-production-release.yml';
+      && changedPaths.length === allowedChangedPaths.size
+      && changedPaths.every(path => allowedChangedPaths.has(path));
   }
   if (verifiedSource?.result !== 'ADMIN_RECOVERY_SOURCE_VERIFIED'
     || verifiedSource.source_run_id !== String(recoveryRequest?.recoverySourceRunId ?? '')
@@ -5329,7 +5333,7 @@ export function verifyAdminRecoveryBuildBinding({
     || currentAdminManifest?.enabled !== true || currentAdminManifest?.release?.mode !== 'admin_recovery'
     || currentAdminManifest?.release?.recovery_source_run_id !== verifiedSource.source_run_id
     || currentAdminManifest?.release?.approved_sha !== recoveryRequest?.approvedSha
-    || (!exactSource && !protectedWorkflowEvolution)
+    || (!exactSource && !protectedRecoveryEvolution)
     || currentBuild?.approved_sha !== recoveryRequest?.approvedSha
     || currentBuild?.source_manifest_sha256 !== sha256Hex(canonicalJson(currentAdminManifest).trimEnd())
     || !/^[0-9a-f]{64}$/.test(currentBuild?.dist_sha256 ?? '')

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  buildAdminCachePurgeRequest,
   buildAdminSourceManifest,
   canonicalJson,
   identifyUploadedVersion,
@@ -248,6 +249,18 @@ test('route recovery proves the exact prior Admin scope and rejects added routes
   assert.throws(() => verifyRecoveredRouteInventory({ before, after: { ...after, zone_id: 'zone-2' } }), /admin_route_recovery_mismatch/);
 });
 
+test('Admin cache invalidation is restricted to the exact production Admin prefix', () => {
+  const zoneId = 'a'.repeat(32);
+  assert.deepEqual(buildAdminCachePurgeRequest(zoneId), {
+    path: `/zones/${zoneId}/purge_cache`,
+    method: 'POST',
+    json: { prefixes: ['nelyon.app/admin'] },
+  });
+  for (const invalid of ['', 'zone-1', '../escape', 'b'.repeat(33)]) {
+    assert.throws(() => buildAdminCachePurgeRequest(invalid), /admin_cloudflare_zone_invalid/);
+  }
+});
+
 test('production HTTP matrix proves redirect, SPA documents, security headers, and a real 404 asset', () => {
   const headers = {
     'cache-control': 'no-store',
@@ -330,6 +343,7 @@ test('canonical workflow exposes Admin plan but mutates Cloudflare only after HI
   assert.match(workflow, /--build-manifest admin-evidence\/admin-web-build\.json/);
   assert.match(workflow, /versions deploy/);
   assert.match(workflow, /triggers deploy/);
+  assert.match(workflow, /Purge exact Admin production cache prefix/);
   assert.match(workflow, /Verify exact Admin production version, routes, and HTTP matrix/);
   assert.match(workflow, /Recover previous Admin production version and routes/);
   assert.doesNotMatch(workflow, /wrangler@4\.135\.0 deploy(?:\s|\\)/);
@@ -342,11 +356,28 @@ test('canonical workflow exposes Admin plan but mutates Cloudflare only after HI
     workflow.indexOf('- name: Verify exact Admin production version, routes, and HTTP matrix'),
     workflow.indexOf('- name: Recover previous Admin production version and routes'),
   );
+  const purgeSection = workflow.slice(
+    workflow.indexOf('- name: Purge exact Admin production cache prefix'),
+    workflow.indexOf('- name: Verify exact Admin production version, routes, and HTTP matrix'),
+  );
+  const recoverySection = workflow.slice(
+    workflow.indexOf('- name: Recover previous Admin production version and routes'),
+    workflow.indexOf('- name: Require complete protected release success'),
+  );
   const previewSection = workflow.slice(
     workflow.indexOf('- name: Attest and smoke the exact uploaded Admin version'),
     workflow.indexOf('- name: Promote the exact smoked Admin version'),
   );
   assert.match(previewSection, /nelyon-admin-production-release\.mjs smoke[\s\S]*--build admin-evidence\/admin-web-build\.json/);
+  assert.ok(workflow.indexOf('- name: Purge exact Admin production cache prefix')
+    > workflow.indexOf('- name: Apply exact Admin production routes'),
+  'cache invalidation must run only after the exact routes are applied');
+  assert.match(purgeSection, /nelyon-admin-production-release\.mjs purge-admin-cache[\s\S]*admin-web-cache-purge\.json/);
+  assert.match(purgeSection, /id: admin_cache_purge/);
+  assert.match(workflow, /steps\.admin_cache_purge\.outcome == 'success'/);
+  assert.match(recoverySection, /restore-routes[\s\S]*purge-admin-cache[\s\S]*admin-web-recovery-cache-purge\.json/,
+    'rollback must evict candidate Admin cache entries after restoring the previous deployment');
+  assert.doesNotMatch(workflow, /purge_everything/);
   assert.match(finalizeSection, /nelyon-admin-production-release\.mjs smoke[\s\S]*--build admin-evidence\/admin-web-build\.json/);
   assert.match(finalizeSection, /for attempt in \$\(seq 1 12\)/,
     'production smoke must tolerate bounded Cloudflare route/version propagation');
