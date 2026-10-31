@@ -2,6 +2,7 @@ import type { Session } from "@supabase/supabase-js";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getAdminAccess, type AdminAccess } from "../lib/adminApi";
 import { supabase } from "../lib/supabase";
+import {adminLogoutFence,logoutFenceKey} from "./adminLogoutFence";
 
 /* eslint-disable react-refresh/only-export-components */
 
@@ -13,12 +14,6 @@ const unknownSecurity:SecurityState={currentLevel:null,nextLevel:null,error:null
 const expired=(session:Session)=>session.expires_at!==undefined&&session.expires_at*1000<=Date.now();
 const forbidden=(message:string)=>/forbidden|denegado|admin_role_set_invalid|admin_actor_inactive|admin_auth_required/.test(message);
 const authenticationFailure=(error:unknown)=>!!error&&typeof error==="object"&&"code" in error&&["42501","28000","PGRST301","PGRST302","PGRST303"].includes(String(error.code));
-// This stores logout intent only, never a token or factor. The pinned Auth client
-// retains its session after a remote signOut error, so automatic restoration must
-// remain blocked across provider remounts/reloads until password sign-in succeeds.
-const logoutFenceKey="nelyon.admin.logout-intent.v1";
-function readLogoutFence(){try{return localStorage.getItem(logoutFenceKey)==="blocked"}catch{return true}}
-function persistLogoutFence(blocked:boolean){try{if(blocked)localStorage.setItem(logoutFenceKey,"blocked");else localStorage.removeItem(logoutFenceKey)}catch{/* The in-memory fence remains closed when storage is unavailable. */}}
 
 export function AdminAuthProvider({children}:{children:ReactNode}){
   const [session,setSession]=useState<Session|null>(null),[admin,setAdmin]=useState<AdminAccess|null>(null),[loading,setLoading]=useState(true),[refreshing,setRefreshing]=useState(false),[denied,setDenied]=useState(false),[error,setError]=useState<string|null>(null),[security,setSecurity]=useState<SecurityState>(unknownSecurity);
@@ -26,11 +21,11 @@ export function AdminAuthProvider({children}:{children:ReactNode}){
   const invalidate=useCallback(()=>{generation.current++;intent.current++},[]);
   const authorize=useCallback(async(next:Session|null)=>{
     const version=++generation.current;
-    const blocked=logoutBlocked.current||readLogoutFence();
+    const blocked=logoutBlocked.current||adminLogoutFence.isBlocked();
     if(blocked){logoutBlocked.current=true;next=null}
     const sameUser=!!next&&sessionRef.current?.user.id===next.user.id;
     const preserve=sameUser&&!!adminRef.current&&next!==null&&!expired(next);
-    sessionRef.current=next;setSession(next);setDenied(false);setError(blocked?"Sesión cerrada en este portal. Inicia sesión de nuevo con tu contraseña.":null);
+    sessionRef.current=next;setSession(next);setDenied(false);setError(blocked?"El acceso local está bloqueado. Inicia sesión de nuevo con tu contraseña.":null);
     if(!preserve){adminRef.current=null;setAdmin(null);setSecurity(unknownSecurity)}
     setLoading(!!next&&!preserve);setRefreshing(!!next&&preserve);
     if(!next)return;
@@ -58,7 +53,7 @@ export function AdminAuthProvider({children}:{children:ReactNode}){
   },[]);
   useEffect(()=>{
     const initial=generation.current;
-    if(readLogoutFence()){logoutBlocked.current=true;void Promise.resolve(supabase.auth.stopAutoRefresh()).catch(()=>undefined)}
+    if(adminLogoutFence.isBlocked()){logoutBlocked.current=true;void Promise.resolve(supabase.auth.stopAutoRefresh()).catch(()=>undefined)}
     void supabase.auth.getSession().then(({data,error:sessionError})=>{
       if(generation.current!==initial)return;
       if(sessionError){setError("No se pudo recuperar la sesión. Reintenta el acceso.");setLoading(false);return}
@@ -68,7 +63,7 @@ export function AdminAuthProvider({children}:{children:ReactNode}){
     return()=>{invalidate();data.subscription.unsubscribe()};
   },[authorize,invalidate]);
   useEffect(()=>{
-    const onStorage=(event:StorageEvent)=>{if(event.key===logoutFenceKey&&event.newValue==="blocked"){logoutBlocked.current=true;intent.current++;void authorize(null);void Promise.resolve(supabase.auth.stopAutoRefresh()).catch(()=>undefined)}};
+    const onStorage=(event:StorageEvent)=>{if(event.key===logoutFenceKey&&(event.newValue==="blocked"||event.newValue?.startsWith("blocked:"))){adminLogoutFence.observeLogout();logoutBlocked.current=true;intent.current++;void authorize(null);void Promise.resolve(supabase.auth.stopAutoRefresh()).catch(()=>undefined)}};
     window.addEventListener("storage",onStorage);return()=>window.removeEventListener("storage",onStorage);
   },[authorize]);
   useEffect(()=>{
@@ -83,19 +78,19 @@ export function AdminAuthProvider({children}:{children:ReactNode}){
       if(attempt!==intent.current)return;
       if(authError)throw authError;
       if(!data.session)throw new Error("No se pudo iniciar sesión.");
-      logoutBlocked.current=false;persistLogoutFence(false);
+      logoutBlocked.current=false;adminLogoutFence.clearAfterPasswordLogin();
       await authorize(data.session);
       if(attempt===intent.current)await supabase.auth.startAutoRefresh();
     }catch(e){if(attempt===intent.current)setLoading(false);throw e}
   },[authorize]);
   const logout=useCallback(async()=>{
-    intent.current++;logoutBlocked.current=true;persistLogoutFence(true);void authorize(null);
+    intent.current++;logoutBlocked.current=true;const durable=adminLogoutFence.block();void authorize(null);
     try{await supabase.auth.stopAutoRefresh()}catch{/* Keep the fence even if refresh cleanup fails. */}
     try{const {error:signOutError}=await supabase.auth.signOut();if(signOutError)throw signOutError}
-    catch{if(logoutBlocked.current)setError("Acceso local cerrado. No se pudo confirmar el cierre remoto; vuelve a ingresar con tu contraseña.")}
+    catch{if(logoutBlocked.current)setError(durable?"Acceso local bloqueado. No se pudo confirmar el cierre remoto; vuelve a ingresar con tu contraseña.":"No se pudo asegurar el cierre tras recargar. El acceso permanece bloqueado en esta página; reintenta cerrar sesión antes de recargar.")}
   },[authorize]);
   const retry=useCallback(async()=>{
-    if(logoutBlocked.current||readLogoutFence()){await authorize(null);return}
+    if(logoutBlocked.current||adminLogoutFence.isBlocked()){await authorize(null);return}
     const version=generation.current;
     try{const {data,error:sessionError}=await supabase.auth.getSession();if(version!==generation.current)return;if(sessionError)throw sessionError;await authorize(data.session)}
     catch(e){if(version!==generation.current)return;if(authenticationFailure(e))await authorize(null);else setError("No se pudo recuperar la sesión.")}
