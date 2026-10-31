@@ -1,9 +1,13 @@
+import {readFileSync} from "node:fs";
+import {join} from "node:path";
 import {useState,type ComponentType, type ReactNode} from "react";
 import {render,screen,waitFor,within} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {MemoryRouter} from "react-router-dom";
 import {describe,expect,it,vi} from "vitest";
 import * as dashboard from "../components/AdminDashboard";
+
+const adminCss=readFileSync(join(process.cwd(),"src","styles","admin.css"),"utf8");
 
 type ControlCenterModule={
   AdminPageHeader:ComponentType<{eyebrow?:string;title:string;description?:string;actions?:ReactNode}>;
@@ -58,19 +62,61 @@ describe("Admin Control Center reusable presentation",()=>{
     expect(screen.getByRole("button",{name:"Página siguiente"})).toBeDisabled();
   });
 
-  it("exposes section links and an Escape-dismissible detail drawer without losing focus",async()=>{
+  it("contains modal focus in both directions, isolates the background, and restores focus",async()=>{
     expect(ui.AdminDetailDrawer).toBeTypeOf("function");
-    expect(ui.AdminSectionNavigation).toBeTypeOf("function");
-    function Harness(){const [open,setOpen]=useState(false);return <><button onClick={()=>setOpen(true)}>Abrir detalle</button><ui.AdminSectionNavigation label="Secciones financieras" items={[{to:"/finance",label:"Resumen"},{to:"/finance/transactions",label:"Transacciones"}]}/><ui.AdminDetailDrawer open={open} title="Detalle de transacción" onClose={()=>setOpen(false)}><p>Contenido seguro</p></ui.AdminDetailDrawer></>}
-    render(<MemoryRouter><Harness/></MemoryRouter>);
+    function Harness(){const [open,setOpen]=useState(false);return <><button onClick={()=>setOpen(true)}>Abrir detalle</button><ui.AdminDetailDrawer open={open} title="Detalle de transacción" onClose={()=>setOpen(false)}><button>Primera acción</button><button>Última acción</button><button style={{display:"none"}}>Acción oculta</button></ui.AdminDetailDrawer></>}
+    render(<Harness/>);
     const trigger=screen.getByRole("button",{name:"Abrir detalle"});
     await userEvent.click(trigger);
     expect(screen.getByRole("dialog",{name:"Detalle de transacción"})).toBeInTheDocument();
-    await waitFor(()=>expect(screen.getByRole("button",{name:"Cerrar detalle"})).toHaveFocus());
+    const close=screen.getByRole("button",{name:"Cerrar detalle"}),first=screen.getByRole("button",{name:"Primera acción"}),last=screen.getByRole("button",{name:"Última acción"});
+    await waitFor(()=>expect(close).toHaveFocus());
+    expect(trigger.closest("[inert]")).not.toBeNull();
+    await userEvent.tab({shift:true});
+    expect(last).toHaveFocus();
+    await userEvent.tab();
+    expect(close).toHaveFocus();
+    await userEvent.tab();
+    expect(first).toHaveFocus();
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
-    expect(screen.getByRole("navigation",{name:"Secciones financieras"})).toHaveTextContent("Transacciones");
+    expect(trigger.closest("[inert]")).toBeNull();
+  });
+
+  it("marks only the exact current section when a summary route prefixes a child route",()=>{
+    expect(ui.AdminSectionNavigation).toBeTypeOf("function");
+    render(<MemoryRouter initialEntries={["/finance/transactions"]}><ui.AdminSectionNavigation label="Secciones financieras" items={[{to:"/finance",label:"Resumen"},{to:"/finance/transactions",label:"Transacciones"}]}/></MemoryRouter>);
+    const navigation=screen.getByRole("navigation",{name:"Secciones financieras"});
+    expect(within(navigation).getAllByRole("link").filter((link)=>link.hasAttribute("aria-current"))).toEqual([within(navigation).getByRole("link",{name:"Transacciones"})]);
+  });
+
+  it("keeps existing light controls and dashboard labels legible while preserving the dark login artwork",()=>{
+    const stylesheet=document.createElement("style");
+    stylesheet.textContent=adminCss;
+    document.head.append(stylesheet);
+    try{
+      render(<><button aria-label="Cerrar sesión" className="icon-button" style={{backgroundColor:"#f2f6fc"}}>×</button><button aria-label="Abrir navegación" className="nav-toggle" style={{backgroundColor:"#f2f6fc"}}>☰</button><article className="dashboard-metric" style={{backgroundColor:"#ffffff"}}><span className="dashboard-icon">i</span><div><span>Usuarios activos</span><strong>12</strong><small>Hoy</small></div></article><aside className="login-art" style={{background:"#0c1f4f"}}><div/><div><h2>Precise control.</h2><p>Administración segura.</p></div></aside></>);
+      expect(getComputedStyle(screen.getByRole("button",{name:"Cerrar sesión"})).color).toBe("var(--admin-text-secondary)");
+      const navigationToggle=document.querySelector<HTMLButtonElement>(".nav-toggle");
+      expect(navigationToggle).not.toBeNull();
+      expect(getComputedStyle(navigationToggle as HTMLButtonElement).color).toBe("var(--admin-text-secondary)");
+      expect(getComputedStyle(screen.getByText("Usuarios activos")).color).toBe("var(--admin-text-secondary)");
+      expect(getComputedStyle(screen.getByRole("heading",{name:"Precise control."})).color).toBe("rgb(255, 255, 255)");
+      expect(getComputedStyle(screen.getByText("Administración segura.")).color).toBe("rgb(197, 213, 233)");
+    }finally{stylesheet.remove()}
+  });
+
+  it("keeps adjacent legacy controls and secondary copy legible on their migrated surfaces",()=>{
+    const stylesheet=document.createElement("style");
+    stylesheet.textContent=adminCss;
+    document.head.append(stylesheet);
+    try{
+      render(<><div className="user-picker-results"><button>Usuario encontrado</button></div><section className="detail-hero"><p>Detalle protegido</p></section><section className="score-board"><span>Puntuación</span></section><section className="platform-revenue"><div className="platform-revenue-heading"><p>Ingreso reconciliado</p></div><div className="revenue-periods">Periodo vigente</div></section><section className="ads-prelaunch-banner"><p>Entrega detenida</p></section><p className="discipline-attention">Requiere atención</p></>);
+      expect(getComputedStyle(screen.getByRole("button",{name:"Usuario encontrado"})).color).toBe("var(--admin-text-secondary)");
+      for(const copy of ["Detalle protegido","Puntuación","Ingreso reconciliado","Periodo vigente","Entrega detenida"])expect(getComputedStyle(screen.getByText(copy)).color).toBe("rgb(197, 213, 233)");
+      expect(getComputedStyle(screen.getByText("Requiere atención")).color).toBe("var(--admin-danger)");
+    }finally{stylesheet.remove()}
   });
 
   it("contains an unexpected module crash and lets the operator retry",async()=>{
