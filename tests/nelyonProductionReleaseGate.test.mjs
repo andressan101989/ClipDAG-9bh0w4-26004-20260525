@@ -135,6 +135,19 @@ test('Control Center policy freezes exactly three migration-only resources and r
   assert.equal(transition.removed_functions[0], 'public.search_admin_advertising_ads(text,integer)');
   assert.equal(transition.index_attestation.valid, true);
   assert.equal(transition.index_attestation.ready, true);
+  assert.equal(Object.hasOwn(transition.index_attestation, 'production_cardinality'), false);
+  assert.equal(Object.hasOwn(transition.index_attestation, 'production_relation_bytes'), false);
+  assert.deepEqual(transition.index_attestation.plan, {
+    access_method: 'btree', key_columns: ['submitted_at', 'id'],
+    probe_order: ['submitted_at', 'id'], probe_limit: 1001,
+    create_mode: 'nonconcurrent', lock_mode: 'SHARE',
+  });
+  assert.deepEqual(transition.bounded_postcheck.resources,
+    ['auth.mfa_factors', 'private.admin_action_audit', 'private.advertising_ads']);
+  assert.equal(transition.bounded_postcheck.finance_authority,
+    'canonical_finance_snapshot_and_reconciliation');
+  assert.equal(transition.bounded_postcheck.advertising_ads_probe_must_not_saturate, true);
+  assert.equal(Object.hasOwn(transition, 'unchanged_inventories'), false);
   assert.deepEqual(transition.security_advisor.transition, {
     before_count: 597,
     before_sha256: 'd0e52c1a329d52b48f9926d4355e2cf2247e8463e6fcf683b63150fb251c2eee',
@@ -174,7 +187,8 @@ test('Control Center Git attestation binds exact LF bytes, ancestry, and three-p
     migrations: transition.migrations.map(item => ({ path: item.path, version: item.version })),
     affectedFunctions: [], runGit,
   });
-  assert.equal(result.attestation.reviewed_source_descendant_verified, true);
+  assert.equal(result.attestation.reviewed_bytes_verified, true);
+  assert.equal(Object.hasOwn(result.attestation, 'reviewed_source_descendant_verified'), false);
   assert.deepEqual(result.migrations.map(item => ({ path: item.path, blob: item.blob, sha256: item.sha256 })),
     transition.migrations.map(item => ({ path: item.path, blob: item.blob, sha256: item.sha256 })));
   for (const source of transition.migrations) {
@@ -203,6 +217,40 @@ test('Control Center Git attestation binds exact LF bytes, ancestry, and three-p
     migrations: transition.migrations.map(item => ({ path: item.path, version: item.version })),
     affectedFunctions: [], runGit: alteredBytes,
   }), 'INVALID_SUPERUSER_CONTROL_CENTER_TRANSITION');
+
+  const rebasedSha = 'e'.repeat(40);
+  let reviewedAncestryAttempted = false;
+  const rebasedRunGit = args => {
+    if (args[0] === 'cat-file' && args[2] === `${rebasedSha}^{commit}`) return '';
+    if (args[0] === 'merge-base' && args[1] === '--is-ancestor') {
+      if (args[2] === transition.reviewed_source_sha && args[3] === rebasedSha) {
+        reviewedAncestryAttempted = true;
+        throw new Error('reviewed branch commit is intentionally not an ancestor after rebase merge');
+      }
+      if (args[2] === transition.integration_base_sha && args[3] === rebasedSha) return '';
+    }
+    if (args[0] === 'rev-parse' && args[1]?.startsWith(`${rebasedSha}:`)) {
+      return runGit(['rev-parse', `${transition.reviewed_source_sha}:${args[1].slice(41)}`]);
+    }
+    if (args[0] === 'show' && args[1]?.startsWith(`${rebasedSha}:`)) {
+      return runGit(['show', `${transition.reviewed_source_sha}:${args[1].slice(41)}`]);
+    }
+    if (args[0] === 'ls-tree' && args[2] === rebasedSha) {
+      return runGit(['ls-tree', '-z', transition.reviewed_source_sha, '--', args[4]]);
+    }
+    if (args[0] === 'diff' && args.includes(rebasedSha)) {
+      return Buffer.from(`${transition.productive_paths.map(path => `A\0${path}`).join('\0')}\0`);
+    }
+    return runGit(args);
+  };
+  const rebased = gate.attestSuperuserControlCenterTransition({
+    cwd: root, policy, mode: 'plan_only', approvedSha: rebasedSha, changes,
+    migrations: transition.migrations.map(item => ({ path: item.path, version: item.version })),
+    affectedFunctions: [], runGit: rebasedRunGit,
+  });
+  assert.equal(rebased.attestation.approved_sha, rebasedSha);
+  assert.equal(rebased.attestation.reviewed_bytes_verified, true);
+  assert.equal(reviewedAncestryAttempted, false);
 });
 
 test('Control Center manifest permits exactly three frozen migrations and zero Edge or config resources', async () => {
@@ -212,7 +260,7 @@ test('Control Center manifest permits exactly three frozen migrations and zero E
   const changes = transition.productive_paths.map(path => ({ status: 'A', path, fileType: 'file' }));
   const attestation = { ...structuredClone(transition), approved_sha: approvedSha,
     baseline_descendant_verified: true, integration_base_descendant_verified: true,
-    reviewed_source_descendant_verified: true };
+    reviewed_bytes_verified: true };
   const input = manifestInput(policy, {
     request: request({ approvedSha, mainSha: approvedSha }),
     gitState: { baselineSha: transition.baseline_sha, approvedSha, originMainSha: approvedSha, changes },
@@ -3665,9 +3713,16 @@ test('every database migration is high risk before any release authorization', a
   assert.ok(result.findings.some(finding => finding.code === 'DATABASE_MIGRATION' && finding.path === path));
 });
 
-test('Admin Web production inputs are high risk without becoming Supabase resources', async () => {
+test('Admin Web production inputs share the exact external catalog and remain high risk', async () => {
   const { gate } = await loadGateAndPolicy();
-  const paths = ['apps/admin-web/src/main.tsx', 'shared/web-deployment/cloudflare-pages.json'];
+  const paths = [
+    'apps/admin-web/src/main.tsx',
+    'shared/web-deployment/cloudflare-pages.json',
+    'shared/web-media/src/BrowserVideoPreview.tsx',
+    'shared/adsOperationalTruth.ts',
+    'shared/adsErrorPresentation.ts',
+    'assets/branding/nelyon/v1/nelyon-wordmark-on-dark.png',
+  ];
   const result = gate.classifyRisk({
     affectedFunctions: [], changedPaths: paths, configBefore: {}, configAfter: {},
   });

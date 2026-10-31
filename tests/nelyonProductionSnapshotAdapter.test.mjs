@@ -179,16 +179,14 @@ function controlCenterMigrations(installed) {
     sha256: sha256(canonicalJson(base)) };
 }
 
-function controlCenterState(transition, { installed, inventories } = {}) {
+function controlCenterState(transition, { installed, concurrentDelta = 0 } = {}) {
   const predecessor = transition.security_advisor.predecessor_exception;
   const oldFunction = {
     identity: 'public.search_admin_advertising_ads(text,integer)',
     ...predecessor.attestation,
     volatility: 's',
   };
-  const normalizedInventories = inventories ?? transition.unchanged_inventories.map((identity, index) => ({
-    identity, count: index, sha256: String(index + 1).repeat(64).slice(0, 64),
-  }));
+  const probeLimit = transition.bounded_postcheck.probe_limit;
   return {
     schema_version: 1,
     complete: true,
@@ -211,13 +209,17 @@ function controlCenterState(transition, { installed, inventories } = {}) {
       unique: transition.index_attestation.unique,
       primary: transition.index_attestation.primary,
     } : null,
-    advertising_ads_cardinality: transition.index_attestation.production_cardinality,
-    advertising_ads_relation_bytes: transition.index_attestation.production_relation_bytes,
-    inventories: normalizedInventories,
+    bounded_observations: {
+      probe_limit: probeLimit,
+      mfa_factors: { observed_rows: concurrentDelta, saturated: false },
+      admin_action_audit: { observed_rows: 112 + concurrentDelta, saturated: false },
+      advertising_ads: { observed_rows: 5 + concurrentDelta, saturated: false },
+      admin_audit_release_attributed: false,
+    },
   };
 }
 
-test('Control Center snapshot freezes catalog, ACL, index, inventories, and Advisor phase', async () => {
+test('Control Center snapshot uses bounded provenance, permits concurrency, and rejects release attribution', async () => {
   const adapter = await loadAdapter();
   const transition = installedPolicy.superuser_control_center_transition;
   assert.equal(adapter.assertReadOnlySql(adapter.SUPERUSER_CONTROL_CENTER_STATE_SQL), true);
@@ -227,7 +229,7 @@ test('Control Center snapshot freezes catalog, ACL, index, inventories, and Advi
     resources: { superuser_control_center_transition: {
       ...structuredClone(transition), approved_sha: approvedSha,
       baseline_descendant_verified: true, integration_base_descendant_verified: true,
-      reviewed_source_descendant_verified: true,
+      reviewed_bytes_verified: true,
     } },
   };
   const preMigrations = controlCenterMigrations(false);
@@ -243,8 +245,12 @@ test('Control Center snapshot freezes catalog, ACL, index, inventories, and Advi
   assert.equal(postRequirement.required, true);
   assert.equal(postRequirement.installed, true);
   assert.equal(preRequirement.query, adapter.SUPERUSER_CONTROL_CENTER_STATE_SQL);
+  assert.doesNotMatch(adapter.SUPERUSER_CONTROL_CENTER_STATE_SQL,
+    /jsonb_agg\s*\(\s*pg_catalog\.to_jsonb\s*\(\s*x\s*\)/iu);
+  assert.doesNotMatch(adapter.SUPERUSER_CONTROL_CENTER_STATE_SQL,
+    /from\s+(?:public\.)?financial_transactions|from\s+(?:public\.)?ledger_entries|from\s+(?:private\.)?creator_premium_purchase_receipts|from\s+(?:private\.)?creator_premium_subscription_periods/iu);
   const pre = controlCenterState(transition, { installed: false });
-  const post = controlCenterState(transition, { installed: true, inventories: pre.inventories });
+  const post = controlCenterState(transition, { installed: true, concurrentDelta: 1 });
   assert.equal(adapter.validateSuperuserControlCenterStateTransition(pre, post, transition), true);
   const preExceptions = adapter.advisorExceptionsForPhase(installedPolicy, manifest, 'pre', {
     migrations: preMigrations,
@@ -265,8 +271,11 @@ test('Control Center snapshot freezes catalog, ACL, index, inventories, and Advi
     value => { value.functions[0].definition_sha256 = '0'.repeat(64); },
     value => { value.functions[0].acl.push({ grantee: 'PUBLIC', privilege_type: 'EXECUTE', is_grantable: false }); },
     value => { value.index.ready = false; },
-    value => { value.inventories[0].sha256 = 'f'.repeat(64); },
-    value => { value.advertising_ads_cardinality += 1; },
+    value => { value.bounded_observations.admin_audit_release_attributed = true; },
+    value => { value.bounded_observations.probe_limit += 1; },
+    value => { value.bounded_observations.advertising_ads.observed_rows = value.bounded_observations.probe_limit + 1; },
+    value => { value.bounded_observations.advertising_ads.observed_rows = value.bounded_observations.probe_limit;
+      value.bounded_observations.advertising_ads.saturated = true; },
   ]) {
     const hostile = structuredClone(post); mutate(hostile);
     assert.throws(() => adapter.validateSuperuserControlCenterStateTransition(pre, hostile, transition),

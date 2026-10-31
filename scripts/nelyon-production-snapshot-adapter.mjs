@@ -1737,21 +1737,23 @@ export const SUPERUSER_CONTROL_CENTER_STATE_SQL = `with expected(identity) as (
   join pg_catalog.pg_index x on x.indexrelid=i.oid join pg_catalog.pg_class t on t.oid=x.indrelid
   join pg_catalog.pg_roles owner_role on owner_role.oid=i.relowner
   where n.nspname='private' and i.relname='advertising_ads_submitted_cursor_idx'
-), inventory_rows as (
-  select 'auth.mfa_factors' identity,pg_catalog.count(*)::integer count,
-    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') sha256 from auth.mfa_factors x
-  union all select 'private.admin_action_audit',pg_catalog.count(*)::integer,
-    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') from private.admin_action_audit x
-  union all select 'public.financial_transactions',pg_catalog.count(*)::integer,
-    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') from public.financial_transactions x
-  union all select 'public.ledger_accounts',pg_catalog.count(*)::integer,
-    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') from public.ledger_accounts x
-  union all select 'public.ledger_entries',pg_catalog.count(*)::integer,
-    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') from public.ledger_entries x
-  union all select 'private.creator_premium_purchase_receipts',pg_catalog.count(*)::integer,
-    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') from private.creator_premium_purchase_receipts x
-  union all select 'private.creator_premium_subscription_periods',pg_catalog.count(*)::integer,
-    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') from private.creator_premium_subscription_periods x
+), bounded_observations as (
+  select
+    (select pg_catalog.count(*)::integer from (
+      select 1 from auth.mfa_factors order by created_at desc,id desc limit 1001
+    ) bounded_mfa) mfa_rows,
+    (select pg_catalog.count(*)::integer from (
+      select 1 from private.admin_action_audit order by created_at desc,id desc limit 1001
+    ) bounded_audit) audit_rows,
+    (select pg_catalog.count(*)::integer from (
+      select 1 from private.advertising_ads order by submitted_at nulls last,id limit 1001
+    ) bounded_ads) ads_rows,
+    exists(select 1 from private.admin_action_audit audit
+      where (($1::text<>'' and pg_catalog.strpos(pg_catalog.concat_ws('|',audit.idempotency_scope,
+        audit.idempotency_key::text,audit.target_ref,audit.metadata::text,audit.reason,audit.action),$1::text)>0)
+        or ($2::text<>'' and pg_catalog.strpos(pg_catalog.concat_ws('|',audit.idempotency_scope,
+        audit.idempotency_key::text,audit.target_ref,audit.metadata::text,audit.reason,audit.action),$2::text)>0))
+      limit 1) admin_audit_release_attributed
 ), install_state as (
   select exists(select 1 from pg_catalog.pg_attribute a
     where a.attrelid='private.admin_capabilities'::pg_catalog.regclass and a.attname='required_aal'
@@ -1762,7 +1764,7 @@ export const SUPERUSER_CONTROL_CENTER_STATE_SQL = `with expected(identity) as (
 )
 select pg_catalog.jsonb_build_object(
   'schema_version',1,'complete',(select capability_count from capability_state)=54
-    and (select pg_catalog.count(*) from root_role)=1 and (select pg_catalog.count(*) from inventory_rows)=7,
+    and (select pg_catalog.count(*) from root_role)=1,
   'installed',install_state.has_required_aal and install_state.has_functions
     and install_state.predecessor_removed and install_state.has_index,
   'capability_count',(select capability_count from capability_state),
@@ -1777,11 +1779,16 @@ select pg_catalog.jsonb_build_object(
   'predecessor_function',(select pg_catalog.to_jsonb(predecessor_row) from predecessor_row),
   'index',(select pg_catalog.jsonb_build_object('schema',schema_name,'table',table_name,'name',name,
     'owner',owner,'definition',definition,'valid',valid,'ready',ready,'unique',unique_index,'primary',primary_index) from index_row),
-  'advertising_ads_cardinality',(select pg_catalog.count(*)::integer from private.advertising_ads),
-  'advertising_ads_relation_bytes',pg_catalog.pg_relation_size('private.advertising_ads'::pg_catalog.regclass),
-  'inventories',(select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
-    'identity',identity,'count',count,'sha256',sha256) order by identity) from inventory_rows)
-) snapshot from install_state;`;
+  'bounded_observations',pg_catalog.jsonb_build_object(
+    'probe_limit',1001,
+    'mfa_factors',pg_catalog.jsonb_build_object('observed_rows',bounded_observations.mfa_rows,
+      'saturated',bounded_observations.mfa_rows=1001),
+    'admin_action_audit',pg_catalog.jsonb_build_object('observed_rows',bounded_observations.audit_rows,
+      'saturated',bounded_observations.audit_rows=1001),
+    'advertising_ads',pg_catalog.jsonb_build_object('observed_rows',bounded_observations.ads_rows,
+      'saturated',bounded_observations.ads_rows=1001),
+    'admin_audit_release_attributed',bounded_observations.admin_audit_release_attributed)
+) snapshot from install_state cross join bounded_observations;`;
 
 function fail(code, message) {
   const error = new Error(`${code}: ${message}`);
@@ -2301,7 +2308,7 @@ function superuserControlCenterTransition(policy, manifest) {
     approved_sha: manifest?.identity?.approved_sha,
     baseline_descendant_verified: true,
     integration_base_descendant_verified: true,
-    reviewed_source_descendant_verified: true,
+    reviewed_bytes_verified: true,
   })) {
     fail('INVALID_SUPERUSER_CONTROL_CENTER_TRANSITION',
       'Superuser Control Center manifest attestation differs from policy');
@@ -2389,19 +2396,27 @@ function normalizeControlCenterIndex(index) {
   return { ...index };
 }
 
-function normalizeControlCenterInventories(inventories) {
+function normalizeControlCenterBoundedObservations(observations) {
   const code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED';
-  if (!Array.isArray(inventories)) fail(code, 'Control Center inventories are unavailable');
-  const items = inventories.map(item => {
-    exactKeys(item, ['count','identity','sha256'], code);
-    if (typeof item.identity !== 'string' || !Number.isInteger(item.count) || item.count < 0
-      || !HASH_PATTERN.test(item.sha256 ?? '')) fail(code, 'Control Center inventory is malformed');
-    return { ...item };
-  }).sort((left, right) => left.identity.localeCompare(right.identity));
-  if (new Set(items.map(item => item.identity)).size !== items.length) {
-    fail(code, 'Control Center inventory identities are duplicate');
+  exactKeys(observations, ['admin_action_audit','admin_audit_release_attributed',
+    'advertising_ads','mfa_factors','probe_limit'], code);
+  if (!Number.isInteger(observations.probe_limit) || observations.probe_limit < 1
+    || typeof observations.admin_audit_release_attributed !== 'boolean') {
+    fail(code, 'Control Center bounded observation envelope is malformed');
   }
-  return items;
+  const probes = {};
+  for (const key of ['mfa_factors','admin_action_audit','advertising_ads']) {
+    const probe = observations[key];
+    exactKeys(probe, ['observed_rows','saturated'], code);
+    if (!Number.isInteger(probe.observed_rows) || probe.observed_rows < 0
+      || probe.observed_rows > observations.probe_limit || typeof probe.saturated !== 'boolean'
+      || probe.saturated !== (probe.observed_rows === observations.probe_limit)) {
+      fail(code, 'Control Center bounded observation exceeds its fixed probe');
+    }
+    probes[key] = { observed_rows: probe.observed_rows, saturated: probe.saturated };
+  }
+  return { probe_limit: observations.probe_limit, ...probes,
+    admin_audit_release_attributed: observations.admin_audit_release_attributed };
 }
 
 export function normalizeSuperuserControlCenterState(snapshot) {
@@ -2409,15 +2424,13 @@ export function normalizeSuperuserControlCenterState(snapshot) {
   const withDigest = Object.hasOwn(snapshot ?? {}, 'sha256');
   exactKeys(snapshot, ['schema_version','complete','installed','capability_count','aal2_codes',
     'refund_roles','root_role','root_grant_rule_count','functions','predecessor_function','index',
-    'advertising_ads_cardinality','advertising_ads_relation_bytes','inventories',
+    'bounded_observations',
     ...(withDigest ? ['sha256'] : [])], code);
   if (snapshot.schema_version !== 1 || snapshot.complete !== true || typeof snapshot.installed !== 'boolean'
     || !Number.isInteger(snapshot.capability_count) || snapshot.capability_count < 1
     || !Array.isArray(snapshot.aal2_codes) || snapshot.aal2_codes.some(item => typeof item !== 'string')
     || !Array.isArray(snapshot.refund_roles) || snapshot.refund_roles.some(item => typeof item !== 'string')
-    || !Number.isInteger(snapshot.root_grant_rule_count) || snapshot.root_grant_rule_count < 0
-    || !Number.isInteger(snapshot.advertising_ads_cardinality) || snapshot.advertising_ads_cardinality < 0
-    || !Number.isInteger(snapshot.advertising_ads_relation_bytes) || snapshot.advertising_ads_relation_bytes < 0) {
+    || !Number.isInteger(snapshot.root_grant_rule_count) || snapshot.root_grant_rule_count < 0) {
     fail(code, 'Control Center snapshot shape is invalid');
   }
   exactKeys(snapshot.root_role, ['is_assignable','is_exclusive','is_root','role_code'], code);
@@ -2436,9 +2449,7 @@ export function normalizeSuperuserControlCenterState(snapshot) {
     predecessor_function: snapshot.predecessor_function === null ? null
       : normalizeControlCenterFunctions([snapshot.predecessor_function])[0],
     index: normalizeControlCenterIndex(snapshot.index),
-    advertising_ads_cardinality: snapshot.advertising_ads_cardinality,
-    advertising_ads_relation_bytes: snapshot.advertising_ads_relation_bytes,
-    inventories: normalizeControlCenterInventories(snapshot.inventories),
+    bounded_observations: normalizeControlCenterBoundedObservations(snapshot.bounded_observations),
   };
   const digest = sha256(canonicalJson(unsigned));
   if (withDigest && snapshot.sha256 !== digest) fail(code, 'Control Center snapshot digest differs');
@@ -2458,7 +2469,7 @@ export function validateSuperuserControlCenterInstalledState(snapshot, transitio
   const expectedIndex = index && { schema: index.schema, table: index.table, name: index.name,
     owner: index.owner, definition: index.definition, valid: index.valid, ready: index.ready,
     unique: index.unique, primary: index.primary };
-  const expectedInventories = [...(transition?.unchanged_inventories ?? [])].sort();
+  const bounded = transition?.bounded_postcheck;
   if (state.installed !== true
     || state.capability_count !== transition?.required_aal_catalog?.capability_count
     || canonicalJson(state.aal2_codes) !== canonicalJson([...transition.required_aal_catalog.aal2_codes].sort())
@@ -2468,9 +2479,12 @@ export function validateSuperuserControlCenterInstalledState(snapshot, transitio
     || canonicalJson(state.functions) !== canonicalJson(expectedControlCenterFunctionRows(transition.function_definitions))
     || state.predecessor_function !== null
     || canonicalJson(state.index) !== canonicalJson(expectedIndex)
-    || state.advertising_ads_cardinality !== transition.index_attestation.production_cardinality
-    || state.advertising_ads_relation_bytes !== transition.index_attestation.production_relation_bytes
-    || canonicalJson(state.inventories.map(item => item.identity)) !== canonicalJson(expectedInventories)) {
+    || state.bounded_observations.probe_limit !== bounded?.probe_limit
+    || state.bounded_observations.admin_audit_release_attributed !== false
+    || bounded?.admin_audit_release_attribution_required_zero !== true
+    || bounded?.advertising_ads_probe_must_not_saturate !== true
+    || state.bounded_observations.advertising_ads.saturated !== false
+    || transition?.index_attestation?.plan?.probe_limit !== bounded?.probe_limit) {
     fail(code, 'Control Center installed authority differs from the reviewed catalog');
   }
   return state;
@@ -2485,7 +2499,7 @@ function validateSuperuserControlCenterPreState(snapshot, transition) {
     ...predecessor.attestation,
     volatility: 's',
   }])[0];
-  const expectedInventories = [...(transition?.unchanged_inventories ?? [])].sort();
+  const bounded = transition?.bounded_postcheck;
   if (state.installed !== false || state.capability_count !== transition?.required_aal_catalog?.capability_count
     || canonicalJson(state.aal2_codes) !== canonicalJson([])
     || canonicalJson(state.refund_roles) !== canonicalJson([])
@@ -2493,21 +2507,19 @@ function validateSuperuserControlCenterPreState(snapshot, transition) {
     || state.root_grant_rule_count !== transition.required_aal_catalog.root_grant_rule_count
     || canonicalJson(state.predecessor_function) !== canonicalJson(expectedPredecessor)
     || state.index !== null
-    || state.advertising_ads_cardinality !== transition.index_attestation.production_cardinality
-    || state.advertising_ads_relation_bytes !== transition.index_attestation.production_relation_bytes
-    || canonicalJson(state.inventories.map(item => item.identity)) !== canonicalJson(expectedInventories)) {
+    || state.bounded_observations.probe_limit !== bounded?.probe_limit
+    || state.bounded_observations.admin_audit_release_attributed !== false
+    || bounded?.admin_audit_release_attribution_required_zero !== true
+    || bounded?.advertising_ads_probe_must_not_saturate !== true
+    || state.bounded_observations.advertising_ads.saturated !== false) {
     fail(code, 'Control Center predecessor differs from the exact production authority');
   }
   return state;
 }
 
 export function validateSuperuserControlCenterStateTransition(preSnapshot, postSnapshot, transition) {
-  const code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED';
-  const pre = validateSuperuserControlCenterPreState(preSnapshot, transition);
-  const post = validateSuperuserControlCenterInstalledState(postSnapshot, transition);
-  if (canonicalJson(pre.inventories) !== canonicalJson(post.inventories)) {
-    fail(code, 'Control Center transition mutated protected data or lacks exact predecessor evidence');
-  }
+  validateSuperuserControlCenterPreState(preSnapshot, transition);
+  validateSuperuserControlCenterInstalledState(postSnapshot, transition);
   return true;
 }
 
@@ -5250,7 +5262,8 @@ export async function captureProductionSnapshot({
     ? singleSnapshot(await sql(storiesQaRequirement.query, null, 'Stories QA C1 authority state'),
       normalizeStoriesQaC1State, 'Stories QA C1 authority state') : null;
   const superuserControlCenterState = controlCenterRequirement.required
-    ? singleSnapshot(await sql(controlCenterRequirement.query, null, 'Superuser Control Center authority state'),
+    ? singleSnapshot(await sql(controlCenterRequirement.query, [identity.release_id, identity.run_id],
+      'Superuser Control Center authority state'),
       normalizeSuperuserControlCenterState, 'Superuser Control Center authority state') : null;
   const rpcSecurity = normalizeRpcSecurityAttestations(rpcSecurityBody);
   validateRpcIdentitySet(rpcSecurity, phaseExceptions);
