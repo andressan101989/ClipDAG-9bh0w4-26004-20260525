@@ -23,7 +23,14 @@ test("both canonical guards reject inactive actors and enforce AAL coherently wi
     assert.match(sql,new RegExp(`grant execute on function public\\.${name}\\(text\\) to authenticated`));
   }
   assert.match(sql,/errcode='42501',message='admin_aal2_required'/);
-  assert.doesNotMatch(sql,/create or replace function public.get_my_admin_access/);
+});
+test("canonical bootstrap validates active accounts without imposing AAL2 and preserves its privilege boundary",()=>{
+  const body=sql.match(/create or replace function public\.get_my_admin_access\(\)[\s\S]*?\$\$;/)?.[0]??"";
+  assert.match(body,/security definer/);assert.match(body,/set search_path to 'pg_catalog','private','public'/);
+  assert.match(body,/auth\.users/);assert.match(body,/deleted_at is null/);assert.match(body,/banned_until/);assert.match(body,/admin_actor_inactive/);
+  assert.match(body,/admin_role_set_is_valid/);assert.match(body,/admin_effective_capabilities/);assert.doesNotMatch(body,/admin_aal2_required/);
+  assert.match(sql,/revoke all on function public\.get_my_admin_access\(\) from public,anon,authenticated,service_role/);
+  assert.match(sql,/grant execute on function public\.get_my_admin_access\(\) to authenticated/);
 });
 test("moderation prepare denies SQL 42501 before reconciliation can mutate Auth",()=>{
   const edge=readFileSync(new URL("../supabase/functions/admin-user-moderation/index.ts",import.meta.url),"utf8");
