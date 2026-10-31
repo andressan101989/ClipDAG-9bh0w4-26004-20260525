@@ -49,7 +49,8 @@ describe("Admin Control Center shell",()=>{
     vi.mocked(useAdminAuth).mockReturnValue(access(["admin.shell.access","marketplace.orders.read"]) as never);
     renderShell("/marketplace/orders");
     const sidebar=screen.getByRole("navigation",{name:"Administración global"});
-    expect(within(sidebar).getAllByRole("button")).toHaveLength(2);
+    // Shell access also exposes self-service MFA under System at AAL1.
+    expect(within(sidebar).getAllByRole("button")).toHaveLength(3);
     expect(within(sidebar).getByRole("button",{name:"Marketplace"})).toBeInTheDocument();
     expect(within(sidebar).queryByRole("button",{name:"Finance"})).not.toBeInTheDocument();
     const marketplace=document.getElementById("admin-group-marketplace") as HTMLElement;
