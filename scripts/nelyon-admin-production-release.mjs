@@ -28,6 +28,7 @@ const WORKER_NAME = 'nelyon-admin-web';
 const WRANGLER_VERSION = '4.135.0';
 const PRODUCTION_ORIGIN = 'https://nelyon.app';
 const ADMIN_ROUTES = ['nelyon.app/admin', 'nelyon.app/admin/*'];
+const ADMIN_CACHE_PREFIX = 'nelyon.app/admin';
 const ADMIN_PREFIXES = ['apps/admin-web/', 'shared/web-deployment/', 'shared/web-media/'];
 const ADMIN_IDENTITY_PATHS = [
   '.github/workflows/nelyon-production-release.yml',
@@ -450,12 +451,13 @@ async function captureHttpMatrix(baseUrl, buildManifest) {
   return { matrix, artifacts };
 }
 
-async function cloudflareRequest(path, { method = 'GET' } = {}) {
+async function cloudflareRequest(path, { method = 'GET', json = null } = {}) {
   const token = process.env.CLOUDFLARE_API_TOKEN;
   if (typeof token !== 'string' || token.length < 20) fail('admin_cloudflare_token_required');
   const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
     method,
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    ...(json === null ? {} : { body: canonicalJson(json) }),
   });
   const body = await response.json().catch(() => null);
   if (!response.ok || body?.success !== true) fail('admin_cloudflare_api_failed', `${method}:${path}:HTTP_${response.status}`);
@@ -466,6 +468,28 @@ async function findZone() {
   const zones = await cloudflareRequest('/zones?name=nelyon.app&status=active&per_page=50');
   if (!Array.isArray(zones) || zones.length !== 1 || zones[0]?.name !== 'nelyon.app') fail('admin_cloudflare_zone_invalid');
   return zones[0].id;
+}
+
+export function buildAdminCachePurgeRequest(zoneId) {
+  if (!/^[0-9a-f]{32}$/.test(zoneId ?? '')) fail('admin_cloudflare_zone_invalid');
+  return {
+    path: `/zones/${zoneId}/purge_cache`,
+    method: 'POST',
+    json: { prefixes: [ADMIN_CACHE_PREFIX] },
+  };
+}
+
+async function purgeAdminCache() {
+  const zoneId = await findZone();
+  const request = buildAdminCachePurgeRequest(zoneId);
+  const result = await cloudflareRequest(request.path, { method: request.method, json: request.json });
+  if (result?.id !== zoneId) fail('admin_cache_purge_response_invalid');
+  return {
+    schema_version: 1,
+    result: 'ADMIN_CACHE_PURGE_VERIFIED',
+    zone_id: zoneId,
+    prefixes: request.json.prefixes,
+  };
 }
 
 async function captureRoutes() {
@@ -655,6 +679,12 @@ async function main(argv = process.argv.slice(2)) {
     const restored = await restoreRoutes(before);
     writeCanonical(requireArg(values, 'output'), restored);
     process.stdout.write('ADMIN ROUTES RECOVERED\n');
+    return;
+  }
+  if (command === 'purge-admin-cache') {
+    const evidence = await purgeAdminCache();
+    writeCanonical(requireArg(values, 'output'), evidence);
+    process.stdout.write('ADMIN CACHE PURGE VERIFIED\n');
     return;
   }
   if (command === 'smoke') {
