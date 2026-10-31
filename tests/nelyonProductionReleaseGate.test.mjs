@@ -4479,6 +4479,64 @@ test('Admin recovery build binding rejects source, manifest, and rebuilt byte dr
   }
 });
 
+test('Admin recovery permits only protected workflow evolution when rebuilt bytes stay exact', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const recoveryRequest = request({ mode: 'admin_recovery', scopeConfirmation: 'ADMIN_RECOVERY_EXACT_SOURCE',
+    recoverySourceRunId: '987654321', productiveResources: [] });
+  const recoveryManifest = {
+    identity: { mode: 'admin_recovery', approved_sha: MAIN_SHA },
+    recovery: { source_run_id: '987654321' },
+  };
+  const sourceFiles = [
+    { path: '.github/workflows/nelyon-production-release.yml', bytes: 100, sha256: '1'.repeat(64) },
+    { path: 'apps/admin-web/src/main.tsx', bytes: 200, sha256: '2'.repeat(64) },
+  ];
+  const currentFiles = structuredClone(sourceFiles);
+  currentFiles[0] = { ...currentFiles[0], bytes: 120, sha256: '3'.repeat(64) };
+  const sourceDigest = gate.sha256Hex(gate.canonicalJson(sourceFiles).trimEnd());
+  const currentDigest = gate.sha256Hex(gate.canonicalJson(currentFiles).trimEnd());
+  const currentAdminManifest = {
+    enabled: true,
+    release: { mode: 'admin_recovery', recovery_source_run_id: '987654321', approved_sha: MAIN_SHA },
+    source: { files: currentFiles, sha256: currentDigest },
+  };
+  const currentBuild = {
+    approved_sha: MAIN_SHA,
+    source_manifest_sha256: gate.sha256Hex(gate.canonicalJson(currentAdminManifest).trimEnd()),
+    dist_sha256: 'b'.repeat(64),
+  };
+  const verifiedSource = {
+    result: 'ADMIN_RECOVERY_SOURCE_VERIFIED',
+    source_run_id: '987654321',
+    source_sha: MAIN_SHA,
+    source_admin_source_sha256: sourceDigest,
+    source_admin_files: sourceFiles,
+    source_build_sha256: 'b'.repeat(64),
+  };
+  assert.equal(gate.verifyAdminRecoveryBuildBinding({ recoveryRequest, recoveryManifest, verifiedSource,
+    currentAdminManifest, currentBuild }), true);
+
+  for (const mutate of [
+    value => { value.currentAdminManifest.source.files[1].sha256 = '4'.repeat(64); },
+    value => { value.currentAdminManifest.source.files.push({
+      path: 'apps/admin-web/src/rogue.ts', bytes: 1, sha256: '5'.repeat(64),
+    }); },
+    value => { delete value.verifiedSource.source_admin_files; },
+  ]) {
+    const hostile = { recoveryRequest: structuredClone(recoveryRequest), recoveryManifest: structuredClone(recoveryManifest),
+      verifiedSource: structuredClone(verifiedSource), currentAdminManifest: structuredClone(currentAdminManifest),
+      currentBuild: structuredClone(currentBuild) };
+    mutate(hostile);
+    hostile.currentAdminManifest.source.sha256 = gate.sha256Hex(
+      gate.canonicalJson(hostile.currentAdminManifest.source.files).trimEnd(),
+    );
+    hostile.currentBuild.source_manifest_sha256 = gate.sha256Hex(
+      gate.canonicalJson(hostile.currentAdminManifest).trimEnd(),
+    );
+    assertDenied(() => gate.verifyAdminRecoveryBuildBinding(hostile), 'ADMIN_RECOVERY_POSTCHECK_FAILED');
+  }
+});
+
 function manifestInput(policy, overrides = {}) {
   const result = {
     request: request(),
