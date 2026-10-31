@@ -89,14 +89,18 @@ export function AdminAdvertisingReviewPage(){
   const [reason,setReason]=useState<Record<string,string>>({});
   const [note,setNote]=useState<Record<string,string>>({});
   const [confirmation,setConfirmation]=useState<{item:AdsReviewItem;action:"approve"|"reject"}|null>(null);
-  const fetchItems=useCallback(()=>searchAdminAdvertisingAds(filter),[filter]);
-  const load=useCallback((clear=false)=>{
-    const generation=++readGeneration.current,requestedFilter=filter;
+  const load=useCallback(async(clear=false)=>{
+    const generation=++readGeneration.current,requestedFilter=filterRef.current;
     const current=()=>generation===readGeneration.current&&requestedFilter===filterRef.current;
-    if(clear)setItems(null);setError(null);setReadError(null);setLoading(true);
-    void fetchItems().then(value=>{if(current()){setItems(value);setReadError(null)}}).catch(value=>{if(current())setReadError(presentAdsError(value,{operation:"read",resource:"review queue"}).message)}).finally(()=>{if(current())setLoading(false)});
-  },[fetchItems,filter]);
-  useEffect(()=>{load(true);const generation=readGeneration;return()=>{generation.current++}},[load]);
+    if(clear)setItems(null);setReadError(null);setLoading(true);
+    try{
+      const value=await searchAdminAdvertisingAds(requestedFilter);
+      if(current()){setItems(value);setReadError(null);return true}
+    }catch(value){
+      if(current()){setReadError(presentAdsError(value,{operation:"read",resource:"review queue"}).message);return false}
+    }finally{if(current())setLoading(false)}
+  },[]);
+  useEffect(()=>{void load(true);const generation=readGeneration;return()=>{generation.current++}},[filter,load]);
 
   const decide=async(item:AdsReviewItem,action:"approve"|"reject")=>{
     const reasonCode=action==="reject"?(reason[item.id]??"policy_violation"):null;
@@ -111,15 +115,14 @@ export function AdminAdvertisingReviewPage(){
         mutate:(idempotencyKey)=>reviewAdvertisingAd({adId:item.id,action,reasonCode:reasonCode??undefined,note:internalNote??undefined,idempotencyKey}),
         reconcile:async()=>reconcileAdminDecision(await searchAdminAdvertisingAds(""),intent),
       });
-      let refreshFailed=false;
-      try{const generation=++readGeneration.current,requestedFilter=filter;const next=await fetchItems();if(generation===readGeneration.current&&requestedFilter===filterRef.current)setItems(next)}catch{refreshFailed=true}
+      const refreshFailed=await load(false)===false;
       if(result.state==="uncertain"||result.state==="conflict") setError(result.message);
       else{
         setNotice(refreshFailed ? "The review was saved, but the latest queue could not be loaded. Try again." : action==="approve"?"Ad approved.":"Ad rejected.");
       }
       setConfirmation(null);
     }catch(value){
-      try{setItems(await fetchItems())}catch{/* preserve the decision error */}
+      await load(false);
       setError(adminReviewMessage(value));
     }
     finally{setBusy(null);}
@@ -226,7 +229,7 @@ export function AdminAdvertisingBillingPage(){
   const save=()=>{const intent=JSON.stringify({editingRateId,objective,eventType,placement,scope,campaignId,rate,effectiveFrom,effectiveTo});const payload={objective,billableEventType:eventType,placementCode:placement,scope,scopeCampaignId:scope==="canary_campaign"?campaignId:null,rateBdag:rate,effectiveFrom:new Date(effectiveFrom).toISOString(),effectiveTo:effectiveTo?new Date(effectiveTo).toISOString():null,idempotencyKey:keyFor(`${editingRateId?"update":"create"}:${intent}`)};void runMutation(`${editingRateId?"update":"create"}:${intent}`,async()=>{const result=editingRateId?await updateAdminAdvertisingBillingRateDraft(editingRateId,payload):await createAdminAdvertisingBillingRateDraft(payload);clearDraft();return result})};
   const edit=(item:AdsBillingRate)=>{const local=(value:string)=>{const date=new Date(value);return new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,16)};setEditingRateId(item.id);setObjective(item.objective);setEventType(item.billable_event_type);setPlacement(item.placement_code);setScope(item.scope);setCampaignId(item.scope_campaign_id??"");setRate(String(item.rate_bdag));setEffectiveFrom(local(item.effective_from));setEffectiveTo(item.effective_to?local(item.effective_to):"")};
   const transition=()=>{if(!confirmation)return;const {item,action}=confirmation,intent=`${action}:${item.id}:${reason.trim()}`;void runMutation(intent,async()=>{const result=action==="publish"?await publishAdminAdvertisingBillingRate(item.id,reason.trim(),keyFor(intent)):await retireAdminAdvertisingBillingRate(item.id,reason.trim(),keyFor(intent));setConfirmation(null);setReason("");return result})};
-  if((health.error&&!health.data)||(rates.error&&!rates.data))return <ErrorState message={health.error??rates.error??"Ads billing unavailable"} onRetry={()=>{health.reload();rates.reload()}}/>;
+  if((health.error&&!health.data)||(rates.error&&!rates.data))return <><ErrorState message={health.error??rates.error??"Ads billing unavailable"} onRetry={()=>{health.reload();rates.reload()}}/><AdminCursorPagination state={rates}/></>;
   if(!health.data||!rates.data)return <LoadingState label="Loading Ads billing control plane…"/>;
   const healthRoot=health.data;
   const coverageRows=Array.isArray(healthRoot.production_rate_coverage_by_placement)?healthRoot.production_rate_coverage_by_placement.map((value)=>obj(value)):[];
