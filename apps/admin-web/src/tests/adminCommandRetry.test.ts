@@ -2,14 +2,14 @@ import {expect,it} from "vitest";
 import {createAdminCommandCoordinator} from "../lib/adminCommandRetry";
 const uncertain=()=>Promise.reject(new TypeError("response lost"));
 it.each([
- {status:500},{status:503},{status:408},{status:429},{status:499},{code:"08006"},{code:"57014"},{code:"PGRST000"},new TypeError("Failed to fetch"),new DOMException("timeout","AbortError"),new Error("Respuesta inválida"),
+ {status:400},{status:401},{status:403},{status:409},{status:500},{status:503},{status:408},{status:429},{status:499},{code:"08006"},{code:"57014"},{code:"PGRST000"},new TypeError("Failed to fetch"),new DOMException("timeout","AbortError"),new Error("Respuesta inválida"),
 ])("retains the UUID when the result is uncertain: %o",async(error)=>{
  let sequence=0;const commands=createAdminCommandCoordinator(()=>`key-${++sequence}`),keys:string[]=[];
  commands.observe("actor",{warning:{id:"resource",reason:"reason"}});
  for(let i=0;i<2;i++)await expect(commands.run("warning",{id:"resource",reason:"reason"},async key=>{keys.push(key);throw error})).rejects.toBe(error);
  expect(keys).toEqual(["key-1","key-1"]);
 });
-it.each([{status:400},{status:401},{status:403},{status:409},{code:"42501"},{code:"P0001"},{code:"23505"},{code:"PGRST301"}])("retires the UUID on a definitive denial: %o",async(error)=>{
+it.each([{status:400,rejectionCode:"invalid_request"},{status:401,rejectionCode:"unauthorized"},{status:403,rejectionCode:"forbidden"},{status:409,rejectionCode:"idempotency_conflict"},{code:"42501"},{code:"P0001"},{code:"23505"},{code:"PGRST301"}])("retires the UUID on a definitive denial: %o",async(error)=>{
  let sequence=0;const commands=createAdminCommandCoordinator(()=>`key-${++sequence}`),keys:string[]=[];
  for(let i=0;i<2;i++)await expect(commands.run("command",{},async key=>{keys.push(key);throw error})).rejects.toBe(error);
  expect(keys).toEqual(["key-1","key-2"]);
