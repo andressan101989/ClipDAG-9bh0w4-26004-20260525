@@ -21,13 +21,15 @@ For `mode=release`, the protected `production` Environment and the existing HIGH
 4. builds twice and requires byte-identical output inventories;
 5. records the current single-version Cloudflare deployment and current route inventory.
 
-Only after the Supabase postcheck succeeds does the workflow upload one immutable Worker Version. It smokes the exact Version preview URL, promotes that exact Version ID at 100%, proves active-version equality, applies the two explicit routes, and verifies the production HTTP matrix. `wrangler deploy` is not an authorized production path.
+The reproducible install and build step never receives `CLOUDFLARE_API_TOKEN`; Cloudflare pre-state capture is a separate, later step. Only after the Supabase postcheck succeeds does the workflow upload one immutable Worker Version. It smokes the exact Version preview URL by comparing `index.html` and every built artifact byte-for-byte with `admin-web-build.json`, promotes that exact Version ID at 100%, applies the two explicit routes, and repeats the complete artifact smoke against production. Active-version and route equality are recaptured after that production smoke. `wrangler deploy` is not an authorized production path.
+
+Every Admin response, including redirects, static assets, missing resources, and rejected methods, must emit `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`. Both preview and production smoke evidence enforce these headers together with `no-store` and `noindex`.
 
 ## Fail-closed and recovery
 
 The workflow stops before upload if the Worker lacks one unambiguous 100% prior version, if preview hosting cannot prove the exact uploaded Version, if route ownership conflicts, or if the reproducible build differs.
 
-If any step after candidate attestation fails, the workflow redeploys the exact prior Version ID at 100%, removes only Admin routes added by the failed attempt, verifies the restored route state, and records a separate recovery artifact. A recovered failed run remains failed and must be investigated; recovery is not a PASS.
+If any step after candidate attestation fails, the workflow redeploys the exact prior Version ID at 100%, removes only Admin routes added by the failed attempt, rejects any extra route owned by `nelyon-admin-web`, verifies the exact prior logical route state and zone, and records a separate recovery artifact. A recovered failed run remains failed and must be investigated; recovery is not a PASS.
 
 ## External prerequisites
 

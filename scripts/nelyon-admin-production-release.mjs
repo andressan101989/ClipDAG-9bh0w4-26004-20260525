@@ -28,10 +28,15 @@ const WORKER_NAME = 'nelyon-admin-web';
 const WRANGLER_VERSION = '4.135.0';
 const PRODUCTION_ORIGIN = 'https://nelyon.app';
 const ADMIN_ROUTES = ['nelyon.app/admin', 'nelyon.app/admin/*'];
-const ADMIN_PREFIXES = ['apps/admin-web/', 'shared/web-deployment/'];
+const ADMIN_PREFIXES = ['apps/admin-web/', 'shared/web-deployment/', 'shared/web-media/'];
 const ADMIN_IDENTITY_PATHS = [
   '.github/workflows/nelyon-production-release.yml',
   'scripts/nelyon-admin-production-release.mjs',
+];
+const ADMIN_EXTERNAL_BUILD_PATHS = [
+  'shared/adsOperationalTruth.ts',
+  'shared/adsErrorPresentation.ts',
+  'assets/branding/nelyon/v1/nelyon-wordmark-on-dark.png',
 ];
 
 function fail(code, details = '') {
@@ -69,7 +74,11 @@ function git(args, cwd = REPOSITORY_ROOT) {
 }
 
 function defaultTrackedFiles() {
-  const pathspecs = [...ADMIN_PREFIXES.map((item) => item.replace(/\/$/, '')), ...ADMIN_IDENTITY_PATHS];
+  const pathspecs = [
+    ...ADMIN_PREFIXES.map((item) => item.replace(/\/$/, '')),
+    ...ADMIN_IDENTITY_PATHS,
+    ...ADMIN_EXTERNAL_BUILD_PATHS,
+  ];
   const names = git(['ls-files', '-z', '--', ...pathspecs]).toString('utf8').split('\0').filter(Boolean).sort();
   if (names.length === 0) fail('admin_source_inventory_empty');
   for (const required of [
@@ -94,7 +103,7 @@ function defaultTrackedFiles() {
 }
 
 function isAdminChange(path) {
-  return ADMIN_PREFIXES.some((prefix) => path.startsWith(prefix));
+  return ADMIN_PREFIXES.some((prefix) => path.startsWith(prefix)) || ADMIN_EXTERNAL_BUILD_PATHS.includes(path);
 }
 
 export function buildAdminSourceManifest({ approvedSha, releaseManifest, readTrackedFiles = defaultTrackedFiles }) {
@@ -290,6 +299,9 @@ export function verifyRouteInventory(routes) {
     fail('admin_route_inventory_mismatch');
   }
   if (desired.some((route) => route.script !== WORKER_NAME)) fail('admin_route_owner_mismatch');
+  if (routes.some((route) => route?.script === WORKER_NAME && !ADMIN_ROUTES.includes(route?.pattern))) {
+    fail('admin_route_scope_drift');
+  }
   return ADMIN_ROUTES.map((pattern) => desired.find((route) => route.pattern === pattern));
 }
 
@@ -300,12 +312,34 @@ function verifyPreRouteInventory(routes) {
     fail('admin_route_inventory_mismatch');
   }
   const extraOwned = routes.filter((route) => route?.script === WORKER_NAME && !ADMIN_ROUTES.includes(route?.pattern));
-  if (extraOwned.length > 0) fail('admin_route_scope_mismatch');
+  if (extraOwned.length > 0) fail('admin_route_scope_drift');
   return desired;
+}
+
+export function verifyRecoveredRouteInventory({ before, after }) {
+  if (typeof before?.zone_id !== 'string' || before.zone_id.length === 0 || before.zone_id !== after?.zone_id) {
+    fail('admin_route_recovery_mismatch');
+  }
+  verifyPreRouteInventory(before.routes);
+  verifyPreRouteInventory(after.routes);
+  const select = (inventory) => inventory.routes
+    .filter((route) => ADMIN_ROUTES.includes(route.pattern))
+    .map((route) => `${route.pattern}:${route.script}`)
+    .sort();
+  if (canonicalJson(select(before)) !== canonicalJson(select(after))) fail('admin_route_recovery_mismatch');
+  return true;
 }
 
 function normalizedHeaders(headers = {}) {
   return Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), String(value)]));
+}
+
+function hasAdminSecurityHeaders(entry) {
+  const headers = normalizedHeaders(entry?.headers);
+  return /^no-store(?:,|$)/i.test(headers['cache-control'] ?? '')
+    && /(?:^|;)\s*frame-ancestors\s+'none'\s*(?:;|$)/i.test(headers['content-security-policy'] ?? '')
+    && /^deny$/i.test(headers['x-frame-options'] ?? '')
+    && /noindex/i.test(headers['x-robots-tag'] ?? '');
 }
 
 export function verifyProductionHttpMatrix(matrix, { expectedOrigin = PRODUCTION_ORIGIN } = {}) {
@@ -321,43 +355,86 @@ export function verifyProductionHttpMatrix(matrix, { expectedOrigin = PRODUCTION
   const shell = matrix?.['/admin/'];
   const deep = matrix?.['/admin/system'];
   const missing = matrix?.['/admin/__nelyon_missing_asset__.js'];
-  const secure = (entry) => {
-    const headers = normalizedHeaders(entry?.headers);
-    return /^no-store(?:,|$)/i.test(headers['cache-control'] ?? '')
-      && /noindex/i.test(headers['x-robots-tag'] ?? '');
-  };
   const redirectLocation = redirect?.location ?? normalizedHeaders(redirect?.headers).location;
   const valid = redirect?.status === 308
     && (redirectLocation === '/admin/' || redirectLocation === `${origin}/admin/`)
     && shell?.status === 200 && /^text\/html\b/i.test(shell?.content_type ?? '')
     && deep?.status === 200 && /^text\/html\b/i.test(deep?.content_type ?? '')
     && missing?.status === 404
-    && [redirect, shell, deep, missing].every(secure);
+    && [redirect, shell, deep, missing].every(hasAdminSecurityHeaders);
   if (!valid) fail('admin_http_matrix_mismatch');
   return true;
 }
 
-async function captureHttpMatrix(baseUrl) {
+function adminArtifactUrlPath(path) {
+  if (typeof path !== 'string' || path.length === 0 || path.includes('\\') || path.includes('\0')
+    || path.startsWith('/') || posix.normalize(path) !== path || path === '..' || path.startsWith('../')) {
+    fail('admin_remote_build_mismatch');
+  }
+  if (path === 'index.html') return '/admin/';
+  return `/admin/${path.split('/').map((part) => encodeURIComponent(part)).join('/')}`;
+}
+
+export function verifyRemoteBuildArtifacts({ buildManifest, artifacts }) {
+  const expected = buildManifest?.files;
+  if (!SHA256_PATTERN.test(buildManifest?.dist_sha256 ?? '') || !Array.isArray(expected)
+    || expected.length === 0 || !Array.isArray(artifacts) || artifacts.length !== expected.length) {
+    fail('admin_remote_build_mismatch');
+  }
+  if (new Set(expected.map((item) => item?.path)).size !== expected.length
+    || new Set(artifacts.map((item) => item?.path)).size !== artifacts.length) {
+    fail('admin_remote_build_mismatch');
+  }
+  for (const file of expected) {
+    const remote = artifacts.find((item) => item?.path === file?.path);
+    const expectedUrlPath = adminArtifactUrlPath(file?.path);
+    if (!Number.isSafeInteger(file?.bytes) || file.bytes < 0 || !SHA256_PATTERN.test(file?.sha256 ?? '')
+      || !remote || remote.url_path !== expectedUrlPath || remote.status !== 200
+      || remote.bytes !== file.bytes || remote.body_sha256 !== file.sha256
+      || !hasAdminSecurityHeaders(remote)
+      || (file.path === 'index.html' && !/^text\/html\b/i.test(remote.content_type ?? ''))) {
+      fail('admin_remote_build_mismatch', file?.path ?? 'unknown');
+    }
+  }
+  return true;
+}
+
+async function fetchHttpEvidence(url, headers) {
+  const response = await fetch(url, { redirect: 'manual', headers });
+  const body = Buffer.from(await response.arrayBuffer());
+  return {
+    status: response.status,
+    location: response.headers.get('location'),
+    content_type: response.headers.get('content-type'),
+    headers: {
+      'cache-control': response.headers.get('cache-control'),
+      'content-security-policy': response.headers.get('content-security-policy'),
+      'x-frame-options': response.headers.get('x-frame-options'),
+      'x-robots-tag': response.headers.get('x-robots-tag'),
+    },
+    body_sha256: sha256(body),
+    bytes: body.length,
+  };
+}
+
+async function captureHttpMatrix(baseUrl, buildManifest) {
   const base = new URL(baseUrl);
   if (base.protocol !== 'https:') fail('admin_smoke_url_invalid');
-  const result = {};
+  const matrix = {};
   for (const path of ['/admin', '/admin/', '/admin/system', '/admin/__nelyon_missing_asset__.js']) {
-    const response = await fetch(new URL(path, base), { redirect: 'manual', headers: { Accept: path.endsWith('.js') ? '*/*' : 'text/html' } });
-    const body = Buffer.from(await response.arrayBuffer());
-    result[path] = {
-      status: response.status,
-      location: response.headers.get('location'),
-      content_type: response.headers.get('content-type'),
-      headers: {
-        'cache-control': response.headers.get('cache-control'),
-        'x-robots-tag': response.headers.get('x-robots-tag'),
-      },
-      body_sha256: sha256(body),
-      bytes: body.length,
-    };
+    matrix[path] = await fetchHttpEvidence(new URL(path, base), { Accept: path.endsWith('.js') ? '*/*' : 'text/html' });
   }
-  verifyProductionHttpMatrix(result, { expectedOrigin: base.origin });
-  return result;
+  verifyProductionHttpMatrix(matrix, { expectedOrigin: base.origin });
+  const artifacts = [];
+  for (const file of buildManifest?.files ?? []) {
+    const urlPath = adminArtifactUrlPath(file?.path);
+    const evidence = file.path === 'index.html'
+      ? matrix['/admin/']
+      : await fetchHttpEvidence(new URL(urlPath, base), { Accept: '*/*' });
+    artifacts.push({ path: file.path, url_path: urlPath, ...evidence });
+  }
+  verifyRemoteBuildArtifacts({ buildManifest, artifacts });
+  return { matrix, artifacts };
 }
 
 async function cloudflareRequest(path, { method = 'GET' } = {}) {
@@ -392,15 +469,15 @@ async function captureRoutes() {
 async function restoreRoutes(before) {
   const current = await captureRoutes();
   verifyPreRouteInventory(before.routes);
+  verifyPreRouteInventory(current.routes);
+  if (before.zone_id !== current.zone_id) fail('admin_route_recovery_mismatch');
   const beforeKeys = new Set(before.routes.filter((route) => ADMIN_ROUTES.includes(route.pattern)).map((route) => `${route.pattern}:${route.script}`));
   const added = current.routes.filter((route) => route.script === WORKER_NAME
     && ADMIN_ROUTES.includes(route.pattern)
     && !beforeKeys.has(`${route.pattern}:${route.script}`));
   for (const route of added) await cloudflareRequest(`/zones/${encodeURIComponent(current.zone_id)}/workers/routes/${encodeURIComponent(route.id)}`, { method: 'DELETE' });
   const restored = await captureRoutes();
-  const expected = before.routes.filter((route) => ADMIN_ROUTES.includes(route.pattern)).map((route) => `${route.pattern}:${route.script}`).sort();
-  const actual = restored.routes.filter((route) => ADMIN_ROUTES.includes(route.pattern)).map((route) => `${route.pattern}:${route.script}`).sort();
-  if (canonicalJson(expected) !== canonicalJson(actual)) fail('admin_route_recovery_mismatch');
+  verifyRecoveredRouteInventory({ before, after: restored });
   return restored;
 }
 
@@ -568,9 +645,17 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
   if (command === 'smoke') {
-    const matrix = await captureHttpMatrix(requireArg(values, 'base-url'));
+    const build = readJson(requireArg(values, 'build'));
+    const { matrix, artifacts } = await captureHttpMatrix(requireArg(values, 'base-url'), build);
     const candidatePath = values.candidate;
-    const output = candidatePath ? { version_id: readJson(candidatePath).version_id, matrix } : { matrix };
+    const candidate = candidatePath ? readJson(candidatePath) : null;
+    if (candidate && candidate.build_sha256 !== build.dist_sha256) fail('admin_remote_build_identity_mismatch');
+    const output = {
+      ...(candidate ? { version_id: candidate.version_id } : {}),
+      build_sha256: build.dist_sha256,
+      matrix,
+      artifacts,
+    };
     writeCanonical(requireArg(values, 'output'), output);
     process.stdout.write('ADMIN HTTP MATRIX VERIFIED\n');
     return;
@@ -587,7 +672,9 @@ async function main(argv = process.argv.slice(2)) {
     const routes = readJson(requireArg(values, 'routes'));
     verifyRouteInventory(routes.routes);
     const http = readJson(requireArg(values, 'http'));
+    if (http.build_sha256 !== build.dist_sha256) fail('admin_remote_build_identity_mismatch');
     verifyProductionHttpMatrix(http.matrix ?? http);
+    verifyRemoteBuildArtifacts({ buildManifest: build, artifacts: http.artifacts });
     const evidence = {
       schema_version: 1,
       result: 'ADMIN_RELEASE_VERIFIED',
@@ -608,8 +695,7 @@ async function main(argv = process.argv.slice(2)) {
     if (active !== expected) fail('admin_recovery_version_mismatch');
     const before = readJson(requireArg(values, 'before-routes'));
     const after = readJson(requireArg(values, 'after-routes'));
-    const select = (inventory) => inventory.routes.filter((route) => ADMIN_ROUTES.includes(route.pattern)).map((route) => `${route.pattern}:${route.script}`).sort();
-    if (canonicalJson(select(before)) !== canonicalJson(select(after))) fail('admin_route_recovery_mismatch');
+    verifyRecoveredRouteInventory({ before, after });
     writeCanonical(requireArg(values, 'output'), { schema_version: 1, result: 'ADMIN_RECOVERY_VERIFIED', version_id: active, routes_restored: true });
     process.stdout.write(`ADMIN RECOVERY VERIFIED ${active}\n`);
     return;

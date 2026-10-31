@@ -82,3 +82,17 @@ test('rejects mutation methods and applies shared headers', async () => {
   assert.equal(shell.headers.get('cache-control'), 'no-store');
   assert.equal(shell.headers.get('x-robots-tag'), 'noindex, nofollow, noarchive');
 });
+
+test('denies framing for redirects, documents, assets, missing files, and rejected methods', async () => {
+  const responses = [
+    await worker.fetch(request('/admin'), environment()),
+    await worker.fetch(request('/admin/advertising', { destination: 'document' }), environment()),
+    await worker.fetch(request('/admin/assets/admin-a1b2c3.js'), environment()),
+    await worker.fetch(request('/admin/assets/missing.js'), environment()),
+    await worker.fetch(request('/admin/advertising', { method: 'POST' }), environment()),
+  ];
+  for (const response of responses) {
+    assert.equal(response.headers.get('content-security-policy'), "frame-ancestors 'none'");
+    assert.equal(response.headers.get('x-frame-options'), 'DENY');
+  }
+});
