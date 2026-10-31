@@ -507,14 +507,11 @@ jobs:
             --api-keys "$KEY_FILE" \
             --github-env "$GITHUB_ENV"
 
-      - name: Build Admin reproducibly and capture Cloudflare pre-state
+      - name: Build Admin reproducibly
         id: admin_build
         if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN"
           npm ci --prefix apps/admin-web
           npm --prefix apps/admin-web run build:deployment
           node scripts/nelyon-admin-production-release.mjs build-manifest \
@@ -533,6 +530,15 @@ jobs:
             --first admin-evidence/admin-web-build-first.json \
             --second admin-evidence/admin-web-build-second.json \
             --output admin-evidence/admin-web-build.json
+
+      - name: Capture Cloudflare pre-state
+        id: admin_prestate
+        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_build.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
           npx --yes wrangler@4.135.0 deployments status \
             --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
             > admin-evidence/admin-web-before-deployment.json
@@ -657,6 +663,7 @@ jobs:
           node scripts/nelyon-admin-production-release.mjs smoke \
             --base-url "$PREVIEW_URL" \
             --candidate admin-evidence/admin-web-candidate.json \
+            --build admin-evidence/admin-web-build.json \
             --output admin-evidence/admin-web-preview-http.json
 
       - name: Promote the exact smoked Admin version
@@ -699,15 +706,16 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
+          node scripts/nelyon-admin-production-release.mjs smoke \
+            --base-url https://nelyon.app \
+            --build admin-evidence/admin-web-build.json \
+            --output admin-evidence/admin-web-production-http.json
           npx --yes wrangler@4.135.0 deployments status \
             --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
             > admin-evidence/admin-web-after-deployment.json
           node scripts/nelyon-admin-production-release.mjs capture-routes \
             --phase post \
             --output admin-evidence/admin-web-after-routes.json
-          node scripts/nelyon-admin-production-release.mjs smoke \
-            --base-url https://nelyon.app \
-            --output admin-evidence/admin-web-production-http.json
           node scripts/nelyon-admin-production-release.mjs finalize \
             --source-manifest admin-release-artifact/admin-web-manifest.json \
             --candidate admin-evidence/admin-web-candidate.json \
