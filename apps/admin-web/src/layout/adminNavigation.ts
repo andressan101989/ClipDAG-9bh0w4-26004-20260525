@@ -68,5 +68,6 @@ export const adminLinks:AdminLink[]=[
   {to:"/audit",label:"Audit",capability:"admin.audit.read",icon:"audit",primary:true,group:"system",sectionLabel:"Auditoría administrativa"},
   {to:"/system",label:"System",capability:"system.health.read",icon:"system",primary:true,end:true,group:"system",sectionLabel:"Salud"},
   {to:"/system/jobs",label:"System · Jobs",capability:"system.jobs.read",icon:"system",group:"system",sectionLabel:"Jobs"},
+  {to:"/system/security",label:"System · Seguridad",capability:"admin.shell.access",icon:"system",group:"system",sectionLabel:"Seguridad de la cuenta"},
   {to:"/system/audit",label:"System · Auditoría",capability:"system.audit.read",icon:"system",group:"system",sectionLabel:"Auditoría técnica"},
 ];

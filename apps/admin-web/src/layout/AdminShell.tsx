@@ -17,7 +17,7 @@ function readGroupState():Partial<Record<AdminNavigationGroup,boolean>>{
 }
 
 export function AdminShell(){
-  const {admin,hasCapability,logout}=useAdminAuth(),location=useLocation(),navigate=useNavigate();
+  const {admin,hasCapability,logout,security,refreshing,error,retry}=useAdminAuth(),location=useLocation(),navigate=useNavigate();
   const [navigationOpen,setNavigationOpen]=useState(false),[query,setQuery]=useState(""),[activeResult,setActiveResult]=useState(0),[groupOverrides,setGroupOverrides]=useState<Partial<Record<AdminNavigationGroup,boolean>>>(readGroupState),searchRef=useRef<HTMLInputElement>(null);
   const authorized=useMemo(()=>adminLinks.filter((link)=>[link.capability,...(link.additionalCapabilities??[])].every(hasCapability)),[hasCapability]);
   const groups=useMemo(()=>adminNavigationGroups.filter((group)=>authorized.some((link)=>link.group===group.id)),[authorized]);
@@ -61,7 +61,12 @@ export function AdminShell(){
         <div className="current-module"><span>{match?.label??"Admin Console"}</span></div>
         <div className="admin-identity"><span className="avatar">{initials(identity)}</span><div><strong>{identity}</strong><small>{role}</small></div><button aria-label="Cerrar sesión" className="icon-button" onClick={()=>void logout()} title="Cerrar sesión" type="button"><AdminIcon name="logout"/></button></div>
       </header>
-      <main className="content">{breadcrumbItems.length>0&&<AdminBreadcrumbs items={breadcrumbItems}/>}<Outlet/></main>
+      <main className="content">{breadcrumbItems.length>0&&<AdminBreadcrumbs items={breadcrumbItems}/>}
+        {refreshing&&<p role="status">Actualizando acceso administrativo…</p>}
+        {error&&<div role="status"><p>{error}</p><button onClick={()=>void retry()}>Reintentar acceso</button></div>}
+        {security?.currentLevel==="aal1"&&location.pathname!=="/system/security"&&<p role="status"><NavLink to="/system/security">{security.nextLevel==="aal2"?"Verificar autenticador para operaciones sensibles":"Configurar autenticador para operaciones sensibles"}</NavLink></p>}
+        <Outlet/>
+      </main>
     </div>
   </div>
 }
