@@ -1666,6 +1666,123 @@ select pg_catalog.jsonb_build_object(
     'deferrable',trigger_row.deferrable,'initially_deferred',trigger_row.initially_deferred) from trigger_row)
 ) snapshot;`;
 
+export const SUPERUSER_CONTROL_CENTER_STATE_SQL = `with expected(identity) as (
+  values
+    ('public.admin_actor_has_capability(text)'),
+    ('public.admin_require_capability(text)'),
+    ('public.get_my_admin_access()'),
+    ('public.search_admin_finance_audit(text,uuid,text,uuid,text,timestampwithtimezone,timestampwithtimezone,timestampwithtimezone,uuid,integer)'),
+    ('public.search_admin_financial_transactions(text,text,text,text,timestampwithtimezone,timestampwithtimezone,timestampwithtimezone,uuid,integer)'),
+    ('public.search_admin_global_audit(text,text,uuid,text,uuid,text,boolean,timestampwithtimezone,timestampwithtimezone,timestampwithtimezone,uuid,integer)'),
+    ('public.search_admin_ledger_accounts(text,text,boolean,uuid,timestampwithtimezone,uuid,integer)'),
+    ('public.search_admin_system_audit(text,text,timestampwithtimezone,uuid,integer)'),
+    ('public.get_admin_control_center_overview_v1(text,date,date)'),
+    ('public.search_admin_advertising_ads(text,integer,timestampwithtimezone,uuid,uuid)')
+), function_rows as (
+  select n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' identity,
+    owner_role.rolname owner,p.provolatile volatility,p.prosecdef security_definer,
+    coalesce(pg_catalog.to_jsonb(p.proconfig),'[]'::jsonb) search_path,
+    pg_catalog.jsonb_build_object(
+      'anon',pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE'),
+      'authenticated',pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE'),
+      'public',pg_catalog.has_function_privilege('public',p.oid,'EXECUTE'),
+      'service_role',pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE')) execute,
+    coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable)
+      order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,acl.privilege_type,acl.is_grantable)
+      from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+      left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee),'[]'::jsonb) acl,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex') definition_sha256
+  from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
+  join expected e on e.identity=n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')'
+), predecessor_row as (
+  select n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' identity,
+    owner_role.rolname owner,p.provolatile volatility,p.prosecdef security_definer,
+    coalesce(pg_catalog.to_jsonb(p.proconfig),'[]'::jsonb) search_path,
+    pg_catalog.jsonb_build_object(
+      'anon',pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE'),
+      'authenticated',pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE'),
+      'public',pg_catalog.has_function_privilege('public',p.oid,'EXECUTE'),
+      'service_role',pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE')) execute,
+    coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable)
+      order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,acl.privilege_type,acl.is_grantable)
+      from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+      left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee),'[]'::jsonb) acl,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex') definition_sha256
+  from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
+  where n.nspname='public' and p.proname='search_admin_advertising_ads'
+    and pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')='text,integer'
+), capability_state as (
+  select pg_catalog.count(*)::integer capability_count,
+    coalesce(pg_catalog.jsonb_agg(c.capability_code order by c.capability_code)
+      filter(where coalesce(pg_catalog.to_jsonb(c)->>'required_aal','aal1')='aal2'),'[]'::jsonb) aal2_codes
+  from private.admin_capabilities c
+), refund_roles as (
+  select coalesce(pg_catalog.jsonb_agg(rc.role_code order by rc.role_code),'[]'::jsonb) items
+  from private.admin_role_capabilities rc where rc.capability_code='creator_premium.refunds.write'
+), root_role as (
+  select pg_catalog.jsonb_build_object('role_code',r.role_code,'is_root',r.is_root,
+    'is_exclusive',r.is_exclusive,'is_assignable',r.is_assignable) item
+  from private.admin_roles r where r.role_code='SUPER_ADMIN'
+), index_row as (
+  select n.nspname schema_name,t.relname table_name,i.relname name,owner_role.rolname owner,
+    pg_catalog.pg_get_indexdef(i.oid) definition,x.indisvalid valid,x.indisready ready,
+    x.indisunique unique_index,x.indisprimary primary_index
+  from pg_catalog.pg_class i join pg_catalog.pg_namespace n on n.oid=i.relnamespace
+  join pg_catalog.pg_index x on x.indexrelid=i.oid join pg_catalog.pg_class t on t.oid=x.indrelid
+  join pg_catalog.pg_roles owner_role on owner_role.oid=i.relowner
+  where n.nspname='private' and i.relname='advertising_ads_submitted_cursor_idx'
+), inventory_rows as (
+  select 'auth.mfa_factors' identity,pg_catalog.count(*)::integer count,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') sha256 from auth.mfa_factors x
+  union all select 'private.admin_action_audit',pg_catalog.count(*)::integer,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') from private.admin_action_audit x
+  union all select 'public.financial_transactions',pg_catalog.count(*)::integer,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') from public.financial_transactions x
+  union all select 'public.ledger_accounts',pg_catalog.count(*)::integer,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') from public.ledger_accounts x
+  union all select 'public.ledger_entries',pg_catalog.count(*)::integer,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') from public.ledger_entries x
+  union all select 'private.creator_premium_purchase_receipts',pg_catalog.count(*)::integer,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') from private.creator_premium_purchase_receipts x
+  union all select 'private.creator_premium_subscription_periods',pg_catalog.count(*)::integer,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(x) order by pg_catalog.to_jsonb(x)::text),'[]'::jsonb)::text,'UTF8')),'hex') from private.creator_premium_subscription_periods x
+), install_state as (
+  select exists(select 1 from pg_catalog.pg_attribute a
+    where a.attrelid='private.admin_capabilities'::pg_catalog.regclass and a.attname='required_aal'
+      and a.attnum>0 and not a.attisdropped) has_required_aal,
+    (select pg_catalog.count(*) from function_rows)=10 has_functions,
+    not exists(select 1 from predecessor_row) predecessor_removed,
+    exists(select 1 from index_row) has_index
+)
+select pg_catalog.jsonb_build_object(
+  'schema_version',1,'complete',(select capability_count from capability_state)=54
+    and (select pg_catalog.count(*) from root_role)=1 and (select pg_catalog.count(*) from inventory_rows)=7,
+  'installed',install_state.has_required_aal and install_state.has_functions
+    and install_state.predecessor_removed and install_state.has_index,
+  'capability_count',(select capability_count from capability_state),
+  'aal2_codes',(select aal2_codes from capability_state),
+  'refund_roles',(select items from refund_roles),
+  'root_role',(select item from root_role),
+  'root_grant_rule_count',(select pg_catalog.count(*)::integer from private.admin_role_grant_rules where target_role_code='SUPER_ADMIN'),
+  'functions',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+    'identity',identity,'owner',owner,'volatility',volatility,'security_definer',security_definer,
+    'search_path',search_path,'execute',execute,'acl',acl,'definition_sha256',definition_sha256) order by identity)
+    from function_rows),'[]'::jsonb),
+  'predecessor_function',(select pg_catalog.to_jsonb(predecessor_row) from predecessor_row),
+  'index',(select pg_catalog.jsonb_build_object('schema',schema_name,'table',table_name,'name',name,
+    'owner',owner,'definition',definition,'valid',valid,'ready',ready,'unique',unique_index,'primary',primary_index) from index_row),
+  'advertising_ads_cardinality',(select pg_catalog.count(*)::integer from private.advertising_ads),
+  'advertising_ads_relation_bytes',pg_catalog.pg_relation_size('private.advertising_ads'::pg_catalog.regclass),
+  'inventories',(select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+    'identity',identity,'count',count,'sha256',sha256) order by identity) from inventory_rows)
+) snapshot from install_state;`;
+
 function fail(code, message) {
   const error = new Error(`${code}: ${message}`);
   error.code = code;
@@ -2171,6 +2288,225 @@ export function validateStoriesQaC1CapturedEvidence(evidence, policy, manifest, 
     }
     validateStoriesSafetyC2InstalledState(evidence.stories_safety_c2_state,
       effectiveStoriesSafetyC2Transition(policy, manifest, phase, { request, migrations }));
+  }
+  return true;
+}
+
+function superuserControlCenterTransition(policy, manifest) {
+  const expected = policy?.superuser_control_center_transition;
+  const attestation = manifest?.resources?.superuser_control_center_transition;
+  if (!attestation) return null;
+  if (!expected || canonicalJson(attestation) !== canonicalJson({
+    ...expected,
+    approved_sha: manifest?.identity?.approved_sha,
+    baseline_descendant_verified: true,
+    integration_base_descendant_verified: true,
+    reviewed_source_descendant_verified: true,
+  })) {
+    fail('INVALID_SUPERUSER_CONTROL_CENTER_TRANSITION',
+      'Superuser Control Center manifest attestation differs from policy');
+  }
+  return expected;
+}
+
+export function superuserControlCenterStateRequirement(policy, manifest, phase, context = {}) {
+  const code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED';
+  if (!['pre', 'post', 'recovery'].includes(phase)) fail(code, 'Control Center phase is invalid');
+  const authority = policy?.superuser_control_center_transition;
+  const transition = superuserControlCenterTransition(policy, manifest);
+  const expected = (authority?.migrations ?? []).map(item => ({ version: item.version,
+    name: item.path.split('/').at(-1).replace(/^\d{14}_|\.sql$/gu, '') }));
+  const finalMigration = authority?.migrations?.at(-1)?.path?.split('/').at(-1)?.replace(/\.sql$/u, '');
+  const promoted = Boolean(finalMigration)
+    && String(policy?.baseline?.latest_migration ?? '') >= finalMigration;
+  let items = null;
+  if (context.migrations !== undefined && context.migrations !== null) {
+    try {
+      items = validateNormalizedMigrations(context.migrations).items;
+    } catch (error) {
+      if (transition || promoted) throw error;
+    }
+  }
+  const installedCount = expected.filter(expectedItem => items?.some(item => (
+    item.version === expectedItem.version && item.name === expectedItem.name
+  ))).length;
+  const claimedCount = expected.filter(expectedItem => items?.some(item => (
+    item.version === expectedItem.version || item.name === expectedItem.name
+  ))).length;
+  if (claimedCount !== 0 && claimedCount !== expected.length) {
+    fail(code, 'Control Center migration inventory is partially installed or has inconsistent identity');
+  }
+  const observedInstalled = expected.length === 3 && installedCount === expected.length;
+  if (transition && phase === 'pre' && observedInstalled) {
+    fail(code, 'Control Center pre state already contains the transition migrations');
+  }
+  if (transition && phase === 'post' && !observedInstalled) {
+    fail(code, 'Control Center post state lacks one or more reviewed migrations');
+  }
+  if (promoted && items && !observedInstalled) {
+    fail(code, 'promoted Control Center baseline lacks exact migration evidence');
+  }
+  const installed = promoted || (observedInstalled && phase !== 'pre');
+  return {
+    required: Boolean(transition) || installed,
+    installed,
+    transition,
+    query: SUPERUSER_CONTROL_CENTER_STATE_SQL,
+    query_id: 'nelyon-superuser-control-center-state-v1',
+  };
+}
+
+function normalizeControlCenterFunctions(rows) {
+  const code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED';
+  if (!Array.isArray(rows)) fail(code, 'Control Center function evidence must be an array');
+  const items = rows.map(row => {
+    exactKeys(row, ['acl','definition_sha256','execute','identity','owner','search_path',
+      'security_definer','volatility'], code);
+    exactKeys(row.execute, ['anon','authenticated','public','service_role'], code);
+    if (typeof row.identity !== 'string' || !HASH_PATTERN.test(row.definition_sha256 ?? '')
+      || typeof row.owner !== 'string' || !['i','s','v'].includes(row.volatility)
+      || typeof row.security_definer !== 'boolean' || !Array.isArray(row.search_path)
+      || row.search_path.some(item => typeof item !== 'string')
+      || Object.values(row.execute).some(value => typeof value !== 'boolean')) {
+      fail(code, 'Control Center function evidence is malformed');
+    }
+    return { ...row, search_path: [...row.search_path].sort(), acl: normalizeAcl(row.acl, code) };
+  }).sort((left, right) => left.identity.localeCompare(right.identity));
+  if (new Set(items.map(item => item.identity)).size !== items.length) {
+    fail(code, 'Control Center function identities are duplicate');
+  }
+  return items;
+}
+
+function normalizeControlCenterIndex(index) {
+  const code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED';
+  if (index === null) return null;
+  exactKeys(index, ['definition','name','owner','primary','ready','schema','table','unique','valid'], code);
+  if (['definition','name','owner','schema','table'].some(key => typeof index[key] !== 'string')
+    || ['primary','ready','unique','valid'].some(key => typeof index[key] !== 'boolean')) {
+    fail(code, 'Control Center index evidence is malformed');
+  }
+  return { ...index };
+}
+
+function normalizeControlCenterInventories(inventories) {
+  const code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED';
+  if (!Array.isArray(inventories)) fail(code, 'Control Center inventories are unavailable');
+  const items = inventories.map(item => {
+    exactKeys(item, ['count','identity','sha256'], code);
+    if (typeof item.identity !== 'string' || !Number.isInteger(item.count) || item.count < 0
+      || !HASH_PATTERN.test(item.sha256 ?? '')) fail(code, 'Control Center inventory is malformed');
+    return { ...item };
+  }).sort((left, right) => left.identity.localeCompare(right.identity));
+  if (new Set(items.map(item => item.identity)).size !== items.length) {
+    fail(code, 'Control Center inventory identities are duplicate');
+  }
+  return items;
+}
+
+export function normalizeSuperuserControlCenterState(snapshot) {
+  const code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED';
+  const withDigest = Object.hasOwn(snapshot ?? {}, 'sha256');
+  exactKeys(snapshot, ['schema_version','complete','installed','capability_count','aal2_codes',
+    'refund_roles','root_role','root_grant_rule_count','functions','predecessor_function','index',
+    'advertising_ads_cardinality','advertising_ads_relation_bytes','inventories',
+    ...(withDigest ? ['sha256'] : [])], code);
+  if (snapshot.schema_version !== 1 || snapshot.complete !== true || typeof snapshot.installed !== 'boolean'
+    || !Number.isInteger(snapshot.capability_count) || snapshot.capability_count < 1
+    || !Array.isArray(snapshot.aal2_codes) || snapshot.aal2_codes.some(item => typeof item !== 'string')
+    || !Array.isArray(snapshot.refund_roles) || snapshot.refund_roles.some(item => typeof item !== 'string')
+    || !Number.isInteger(snapshot.root_grant_rule_count) || snapshot.root_grant_rule_count < 0
+    || !Number.isInteger(snapshot.advertising_ads_cardinality) || snapshot.advertising_ads_cardinality < 0
+    || !Number.isInteger(snapshot.advertising_ads_relation_bytes) || snapshot.advertising_ads_relation_bytes < 0) {
+    fail(code, 'Control Center snapshot shape is invalid');
+  }
+  exactKeys(snapshot.root_role, ['is_assignable','is_exclusive','is_root','role_code'], code);
+  if (typeof snapshot.root_role.role_code !== 'string'
+    || ['is_assignable','is_exclusive','is_root'].some(key => typeof snapshot.root_role[key] !== 'boolean')) {
+    fail(code, 'Control Center root role evidence is malformed');
+  }
+  const unsigned = {
+    schema_version: 1, complete: true, installed: snapshot.installed,
+    capability_count: snapshot.capability_count,
+    aal2_codes: [...snapshot.aal2_codes].sort(),
+    refund_roles: [...snapshot.refund_roles].sort(),
+    root_role: { ...snapshot.root_role },
+    root_grant_rule_count: snapshot.root_grant_rule_count,
+    functions: normalizeControlCenterFunctions(snapshot.functions),
+    predecessor_function: snapshot.predecessor_function === null ? null
+      : normalizeControlCenterFunctions([snapshot.predecessor_function])[0],
+    index: normalizeControlCenterIndex(snapshot.index),
+    advertising_ads_cardinality: snapshot.advertising_ads_cardinality,
+    advertising_ads_relation_bytes: snapshot.advertising_ads_relation_bytes,
+    inventories: normalizeControlCenterInventories(snapshot.inventories),
+  };
+  const digest = sha256(canonicalJson(unsigned));
+  if (withDigest && snapshot.sha256 !== digest) fail(code, 'Control Center snapshot digest differs');
+  return { ...unsigned, sha256: digest };
+}
+
+function expectedControlCenterFunctionRows(items) {
+  return items.map(item => ({ ...item, search_path: [...item.search_path].sort(),
+    acl: normalizeAcl(item.acl, 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED') }))
+    .sort((left, right) => left.identity.localeCompare(right.identity));
+}
+
+export function validateSuperuserControlCenterInstalledState(snapshot, transition) {
+  const code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED';
+  const state = normalizeSuperuserControlCenterState(snapshot);
+  const index = transition?.index_attestation;
+  const expectedIndex = index && { schema: index.schema, table: index.table, name: index.name,
+    owner: index.owner, definition: index.definition, valid: index.valid, ready: index.ready,
+    unique: index.unique, primary: index.primary };
+  const expectedInventories = [...(transition?.unchanged_inventories ?? [])].sort();
+  if (state.installed !== true
+    || state.capability_count !== transition?.required_aal_catalog?.capability_count
+    || canonicalJson(state.aal2_codes) !== canonicalJson([...transition.required_aal_catalog.aal2_codes].sort())
+    || canonicalJson(state.refund_roles) !== canonicalJson(transition.required_aal_catalog.refund_roles)
+    || canonicalJson(state.root_role) !== canonicalJson(transition.required_aal_catalog.root_role)
+    || state.root_grant_rule_count !== transition.required_aal_catalog.root_grant_rule_count
+    || canonicalJson(state.functions) !== canonicalJson(expectedControlCenterFunctionRows(transition.function_definitions))
+    || state.predecessor_function !== null
+    || canonicalJson(state.index) !== canonicalJson(expectedIndex)
+    || state.advertising_ads_cardinality !== transition.index_attestation.production_cardinality
+    || state.advertising_ads_relation_bytes !== transition.index_attestation.production_relation_bytes
+    || canonicalJson(state.inventories.map(item => item.identity)) !== canonicalJson(expectedInventories)) {
+    fail(code, 'Control Center installed authority differs from the reviewed catalog');
+  }
+  return state;
+}
+
+function validateSuperuserControlCenterPreState(snapshot, transition) {
+  const code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED';
+  const state = normalizeSuperuserControlCenterState(snapshot);
+  const predecessor = transition?.security_advisor?.predecessor_exception;
+  const expectedPredecessor = predecessor && expectedControlCenterFunctionRows([{
+    identity: 'public.search_admin_advertising_ads(text,integer)',
+    ...predecessor.attestation,
+    volatility: 's',
+  }])[0];
+  const expectedInventories = [...(transition?.unchanged_inventories ?? [])].sort();
+  if (state.installed !== false || state.capability_count !== transition?.required_aal_catalog?.capability_count
+    || canonicalJson(state.aal2_codes) !== canonicalJson([])
+    || canonicalJson(state.refund_roles) !== canonicalJson([])
+    || canonicalJson(state.root_role) !== canonicalJson(transition.required_aal_catalog.root_role)
+    || state.root_grant_rule_count !== transition.required_aal_catalog.root_grant_rule_count
+    || canonicalJson(state.predecessor_function) !== canonicalJson(expectedPredecessor)
+    || state.index !== null
+    || state.advertising_ads_cardinality !== transition.index_attestation.production_cardinality
+    || state.advertising_ads_relation_bytes !== transition.index_attestation.production_relation_bytes
+    || canonicalJson(state.inventories.map(item => item.identity)) !== canonicalJson(expectedInventories)) {
+    fail(code, 'Control Center predecessor differs from the exact production authority');
+  }
+  return state;
+}
+
+export function validateSuperuserControlCenterStateTransition(preSnapshot, postSnapshot, transition) {
+  const code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED';
+  const pre = validateSuperuserControlCenterPreState(preSnapshot, transition);
+  const post = validateSuperuserControlCenterInstalledState(postSnapshot, transition);
+  if (canonicalJson(pre.inventories) !== canonicalJson(post.inventories)) {
+    fail(code, 'Control Center transition mutated protected data or lacks exact predecessor evidence');
   }
   return true;
 }
@@ -3010,6 +3346,12 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     migrations: evidence?.migrations,
   });
   const requireStoriesQaC1 = storiesQaRequirement.required;
+  const controlCenterRequirement = superuserControlCenterStateRequirement(policy, manifest, phase, {
+    evidence,
+    request,
+    migrations: evidence?.migrations,
+  });
+  const requireControlCenter = controlCenterRequirement.required;
   exactKeys(evidence, [
     'adapter', 'backup', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
     'health', 'identity', 'migrations', 'observed_at', 'phase', 'premium_state', 'project_ref',
@@ -3019,6 +3361,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     ...(requireStoriesSafetyC1 ? ['stories_safety_c1_state'] : []),
     ...(requireStoriesSafetyC2 ? ['stories_safety_c2_state'] : []),
     ...(requireStoriesQaC1 ? ['stories_qa_c1_state'] : []),
+    ...(requireControlCenter ? ['superuser_control_center_state'] : []),
   ], 'INVALID_SNAPSHOT');
   const { evidence_sha256: claimedDigest, ...unsigned } = evidence;
   if (!HASH_PATTERN.test(claimedDigest ?? '') || claimedDigest !== sha256(canonicalJson(unsigned))) {
@@ -3057,6 +3400,10 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       id: storiesQaRequirement.query_id,
       sha256: sha256(storiesQaRequirement.query),
     }] : []),
+    ...(requireControlCenter ? [{
+      id: controlCenterRequirement.query_id,
+      sha256: sha256(controlCenterRequirement.query),
+    }] : []),
   ];
   if (!HASH_PATTERN.test(adapterSourceSha256 ?? '')
     || evidence.adapter.source_sha256 !== adapterSourceSha256
@@ -3082,6 +3429,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   if (requireStoriesSafetyC1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (requireStoriesSafetyC2) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (requireStoriesQaC1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
+  if (requireControlCenter) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (!Array.isArray(evidence.requests) || evidence.requests.length !== expectedRequests.length
     || evidence.requests.some((receipt, index) => {
       try {
@@ -3160,6 +3508,24 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     request,
     migrations: evidence.migrations,
   });
+  if (requireControlCenter) {
+    const matching = evidence.adapter.queries.filter(item => item?.id === controlCenterRequirement.query_id);
+    if (matching.length !== 1 || matching[0].sha256 !== sha256(controlCenterRequirement.query)) {
+      fail('SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED',
+        'Control Center query receipt differs from the fixed authority');
+    }
+    if (controlCenterRequirement.installed) {
+      validateSuperuserControlCenterInstalledState(
+        evidence.superuser_control_center_state,
+        policy?.superuser_control_center_transition,
+      );
+    } else {
+      validateSuperuserControlCenterPreState(
+        evidence.superuser_control_center_state,
+        policy?.superuser_control_center_transition,
+      );
+    }
+  }
   return evidence;
 }
 
@@ -3651,6 +4017,30 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
   }).required) {
     validateStoriesQaC1InstalledState(post.stories_qa_c1_state,
       policy?.stories_qa_c1_transition);
+  }
+  const controlCenterTransition = superuserControlCenterTransition(policy, manifest);
+  if (controlCenterTransition) {
+    validateSuperuserControlCenterStateTransition(
+      pre.superuser_control_center_state,
+      post.superuser_control_center_state,
+      controlCenterTransition,
+    );
+    const advisorTransition = controlCenterTransition.security_advisor.transition;
+    if (pre.cron_security.advisors.count !== advisorTransition.before_count
+      || pre.cron_security.advisors.sha256 !== advisorTransition.before_sha256
+      || post.cron_security.advisors.count !== advisorTransition.after_count
+      || post.cron_security.advisors.sha256 !== advisorTransition.after_sha256) {
+      fail('SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED',
+        'Control Center Security Advisor transition differs from the exact canonical digest');
+    }
+  } else if (superuserControlCenterStateRequirement(policy, manifest, 'post', {
+    request,
+    migrations: post.migrations,
+  }).required) {
+    validateSuperuserControlCenterInstalledState(
+      post.superuser_control_center_state,
+      policy?.superuser_control_center_transition,
+    );
   }
   validatePremiumStateTransition(pre.premium_state, post.premium_state, manifest, policy);
   if (Date.parse(post.observed_at) < Date.parse(pre.observed_at)
@@ -4376,6 +4766,30 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
     const fingerprints = new Set(additions.map(item => item.advisor_fingerprint));
     result = [...result.filter(item => !fingerprints.has(item?.advisor_fingerprint)), ...additions];
   }
+  const controlCenterRequirement = superuserControlCenterStateRequirement(policy, manifest, phase, context);
+  if (controlCenterRequirement.required) {
+    const authority = policy?.superuser_control_center_transition;
+    const predecessor = authority?.security_advisor?.predecessor_exception;
+    const additions = authority?.security_advisor?.introduced_exceptions;
+    if (predecessor?.advisor_fingerprint
+        !== 'b1b08a6ee6057c6e739057eb823c034e95b6be56a2a6ed33ce73d11969b76713'
+      || !Array.isArray(additions) || additions.length !== 2
+      || new Set(additions.map(item => item?.advisor_fingerprint)).size !== additions.length) {
+      fail('RPC_SECURITY_ATTESTATION_FAILED', 'Control Center Advisor authority is unavailable');
+    }
+    const predecessorMatches = result.filter(item => item?.advisor_fingerprint === predecessor.advisor_fingerprint);
+    if (!controlCenterRequirement.installed) {
+      if (predecessorMatches.length > 1 || (predecessorMatches.length === 1
+        && canonicalJson(predecessorMatches[0]) !== canonicalJson(predecessor))) {
+        fail('RPC_SECURITY_ATTESTATION_FAILED', 'Control Center predecessor Advisor authority is inconsistent');
+      }
+      if (predecessorMatches.length === 0) result = [...result, predecessor];
+    } else {
+      const additionFingerprints = new Set(additions.map(item => item.advisor_fingerprint));
+      result = [...result.filter(item => item?.advisor_fingerprint !== predecessor.advisor_fingerprint
+        && !additionFingerprints.has(item?.advisor_fingerprint)), ...additions];
+    }
+  }
   return phaseBoundRpcExceptions(result, manifest, phase, { policy, migrations: context.migrations });
 }
 
@@ -4778,10 +5192,14 @@ export async function captureProductionSnapshot({
   const storiesSafetyC2Requirement = storiesSafetyC2StateRequirement(policy, manifest, phase, { request, migrations });
   const storiesSafetyC2Authority = storiesSafetyC2AuthorityForPhase(policy, manifest, phase, { request, migrations });
   const storiesQaRequirement = storiesQaC1StateRequirement(policy, manifest, phase, { request, migrations });
+  const controlCenterRequirement = superuserControlCenterStateRequirement(
+    policy, manifest, phase, { request, migrations },
+  );
   if (storiesRequirement.required) assertReadOnlySql(storiesQuery);
   if (storiesSafetyRequirement.required) assertReadOnlySql(storiesSafetyRequirement.query);
   if (storiesSafetyC2Requirement.required) assertReadOnlySql(storiesSafetyC2Authority.query);
   if (storiesQaRequirement.required) assertReadOnlySql(storiesQaRequirement.query);
+  if (controlCenterRequirement.required) assertReadOnlySql(controlCenterRequirement.query);
   const financeQueries = selectFinanceSnapshotQueries(migrations);
   const requireFinanceAuthority = Boolean(activeFinanceAuthorityTransition(policy, manifest)) || financeQueries.phase !== 'legacy';
   const functionsBody = await get(`${base}/functions`, 'function inventory');
@@ -4831,6 +5249,9 @@ export async function captureProductionSnapshot({
   const storiesQaC1State = storiesQaRequirement.required
     ? singleSnapshot(await sql(storiesQaRequirement.query, null, 'Stories QA C1 authority state'),
       normalizeStoriesQaC1State, 'Stories QA C1 authority state') : null;
+  const superuserControlCenterState = controlCenterRequirement.required
+    ? singleSnapshot(await sql(controlCenterRequirement.query, null, 'Superuser Control Center authority state'),
+      normalizeSuperuserControlCenterState, 'Superuser Control Center authority state') : null;
   const rpcSecurity = normalizeRpcSecurityAttestations(rpcSecurityBody);
   validateRpcIdentitySet(rpcSecurity, phaseExceptions);
   const evidence = {
@@ -4865,6 +5286,10 @@ export async function captureProductionSnapshot({
           id: storiesQaRequirement.query_id,
           sha256: sha256(storiesQaRequirement.query),
         }] : []),
+        ...(controlCenterRequirement.required ? [{
+          id: controlCenterRequirement.query_id,
+          sha256: sha256(controlCenterRequirement.query),
+        }] : []),
       ],
     },
     observed_at: new Date(observedAt).toISOString(),
@@ -4887,6 +5312,9 @@ export async function captureProductionSnapshot({
       : {}),
     ...(storiesSafetyC2Requirement.required ? { stories_safety_c2_state: storiesSafetyC2State } : {}),
     ...(storiesQaRequirement.required ? { stories_qa_c1_state: storiesQaC1State } : {}),
+    ...(controlCenterRequirement.required
+      ? { superuser_control_center_state: superuserControlCenterState }
+      : {}),
     requests: calls,
   };
   return { ...evidence, evidence_sha256: sha256(canonicalJson(evidence)) };

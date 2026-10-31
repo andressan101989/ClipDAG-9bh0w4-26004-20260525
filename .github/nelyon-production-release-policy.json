@@ -3908,5 +3908,585 @@
     },
     "finance_policy": { "platform_fee_bps": 2000, "purchase_enabled": true, "refunds_enabled": true, "subscription_enabled": true },
     "requires_separate_baseline_promotion": true
+  },
+  "superuser_control_center_transition": {
+    "id": "superuser-control-center-desktop-v1",
+    "from_phase": "stories_v2_qa_c1_question_answer",
+    "to_phase": "superuser_control_center_desktop",
+    "baseline_sha": "3246a502f8d350f43edbd78314b3be9e1609935d",
+    "reviewed_source_sha": "045ebbc81013d520e7f0730580f8d7eaec97414d",
+    "integration_base_sha": "409dd334c050eed7f5624964ef9b16ad2eb6e76c",
+    "approved_sha_ancestry": "verified_integration_base",
+    "migrations": [
+      {
+        "version": "20261031020113",
+        "path": "supabase/migrations/20261031020113_superuser_control_center_mfa_aal2.sql",
+        "blob": "5452895cfd473513e99e15e35bff948a74080f44",
+        "sha256": "6cc83d43fdb2a8bc22990a04fd237342c92967b83318d6fa6addba8d270ce3c2",
+        "byte_length": 6839
+      },
+      {
+        "version": "20261031025722",
+        "path": "supabase/migrations/20261031025722_superuser_control_center_cursor_terminal_truth.sql",
+        "blob": "91e75126f636ac8f83d9e73798c66dac58d72608",
+        "sha256": "d26c790a5ddc9aea14b72cd3c64810d49298f67c41db12ba6418ae00b141d3f9",
+        "byte_length": 15456
+      },
+      {
+        "version": "20261031032022",
+        "path": "supabase/migrations/20261031032022_superuser_control_center_overview.sql",
+        "blob": "9a2c821a314d7c6039ec31f534712784a94089e3",
+        "sha256": "dbef7f15d6caefa536fd81391154107503b01b16b93fbd69a5fb5e54d30c1bd6",
+        "byte_length": 20968
+      }
+    ],
+    "productive_paths": [
+      "supabase/migrations/20261031020113_superuser_control_center_mfa_aal2.sql",
+      "supabase/migrations/20261031025722_superuser_control_center_cursor_terminal_truth.sql",
+      "supabase/migrations/20261031032022_superuser_control_center_overview.sql"
+    ],
+    "functions": [],
+    "config_changed": false,
+    "required_aal_catalog": {
+      "capability_count": 54,
+      "aal2_codes": [
+        "admin.roles.assign",
+        "admin.roles.revoke",
+        "advertising.rates.manage",
+        "advertising.rollout.manage",
+        "battles.sessions.moderate",
+        "chat.abuse_reports.moderate",
+        "content.items.hide",
+        "content.items.moderate",
+        "content.items.restore",
+        "creator_premium.refunds.write",
+        "creator_premium.review.moderate",
+        "live.sessions.moderate",
+        "live.sessions.terminate",
+        "marketplace.disputes.resolve",
+        "marketplace.products.moderate",
+        "marketplace.sellers.moderate",
+        "media.assets.moderate",
+        "reports.cases.resolve",
+        "reports.cases.review",
+        "stories.items.moderate",
+        "users.accounts.moderate",
+        "users.accounts.restore",
+        "users.accounts.suspend"
+      ],
+      "refund_roles": [
+        "SUPER_ADMIN"
+      ],
+      "root_role": {
+        "role_code": "SUPER_ADMIN",
+        "is_root": true,
+        "is_exclusive": true,
+        "is_assignable": false
+      },
+      "root_grant_rule_count": 0
+    },
+    "function_definitions": [
+      {
+        "identity": "public.admin_actor_has_capability(text)",
+        "definition_sha256": "17b76f7b04e0446d40c823b38151114068dc9433d3ab7d4119582b7a691162ef",
+        "owner": "postgres",
+        "volatility": "s",
+        "security_definer": true,
+        "search_path": [
+          "search_path=pg_catalog, private, public"
+        ],
+        "execute": {
+          "anon": false,
+          "authenticated": true,
+          "public": false,
+          "service_role": false
+        },
+        "acl": [
+          {
+            "grantee": "authenticated",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          },
+          {
+            "grantee": "postgres",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          }
+        ]
+      },
+      {
+        "identity": "public.admin_require_capability(text)",
+        "definition_sha256": "317d4e2f7947babb9711ce37bc081dfc00aff46b7757ac983536e54830c5722a",
+        "owner": "postgres",
+        "volatility": "s",
+        "security_definer": true,
+        "search_path": [
+          "search_path=pg_catalog, private, public"
+        ],
+        "execute": {
+          "anon": false,
+          "authenticated": true,
+          "public": false,
+          "service_role": false
+        },
+        "acl": [
+          {
+            "grantee": "authenticated",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          },
+          {
+            "grantee": "postgres",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          }
+        ]
+      },
+      {
+        "identity": "public.get_my_admin_access()",
+        "definition_sha256": "6e422c6af4d7bcd7a765ebba343dd26f3f2422148904b368effb73bb34d65a89",
+        "owner": "postgres",
+        "volatility": "s",
+        "security_definer": true,
+        "search_path": [
+          "search_path=pg_catalog, private, public"
+        ],
+        "execute": {
+          "anon": false,
+          "authenticated": true,
+          "public": false,
+          "service_role": false
+        },
+        "acl": [
+          {
+            "grantee": "authenticated",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          },
+          {
+            "grantee": "postgres",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          }
+        ]
+      },
+      {
+        "identity": "public.search_admin_finance_audit(text,uuid,text,uuid,text,timestampwithtimezone,timestampwithtimezone,timestampwithtimezone,uuid,integer)",
+        "definition_sha256": "7e03bc7e7ed0207e330c99d5b579dda474196b7308efe6cc191162bed6133668",
+        "owner": "postgres",
+        "volatility": "s",
+        "security_definer": true,
+        "search_path": [
+          "search_path=\"\""
+        ],
+        "execute": {
+          "anon": false,
+          "authenticated": true,
+          "public": false,
+          "service_role": false
+        },
+        "acl": [
+          {
+            "grantee": "authenticated",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          },
+          {
+            "grantee": "postgres",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          }
+        ]
+      },
+      {
+        "identity": "public.search_admin_financial_transactions(text,text,text,text,timestampwithtimezone,timestampwithtimezone,timestampwithtimezone,uuid,integer)",
+        "definition_sha256": "f76cf682b23b9dcc91c62595dd6b52b5eca208e9d8049be72d872412323fd0d8",
+        "owner": "postgres",
+        "volatility": "s",
+        "security_definer": true,
+        "search_path": [
+          "search_path=\"\""
+        ],
+        "execute": {
+          "anon": false,
+          "authenticated": true,
+          "public": false,
+          "service_role": false
+        },
+        "acl": [
+          {
+            "grantee": "authenticated",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          },
+          {
+            "grantee": "postgres",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          }
+        ]
+      },
+      {
+        "identity": "public.search_admin_global_audit(text,text,uuid,text,uuid,text,boolean,timestampwithtimezone,timestampwithtimezone,timestampwithtimezone,uuid,integer)",
+        "definition_sha256": "a671384901cc2d58248d891ecb23395fb47fcf75da4a5800dbf70935bbaa24cd",
+        "owner": "postgres",
+        "volatility": "s",
+        "security_definer": true,
+        "search_path": [
+          "search_path=\"\""
+        ],
+        "execute": {
+          "anon": false,
+          "authenticated": true,
+          "public": false,
+          "service_role": false
+        },
+        "acl": [
+          {
+            "grantee": "authenticated",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          },
+          {
+            "grantee": "postgres",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          }
+        ]
+      },
+      {
+        "identity": "public.search_admin_ledger_accounts(text,text,boolean,uuid,timestampwithtimezone,uuid,integer)",
+        "definition_sha256": "8c9791439d96a4ba864900c94e3ac1ff151550c99219c33ea8a51efc4c110169",
+        "owner": "postgres",
+        "volatility": "s",
+        "security_definer": true,
+        "search_path": [
+          "search_path=\"\""
+        ],
+        "execute": {
+          "anon": false,
+          "authenticated": true,
+          "public": false,
+          "service_role": false
+        },
+        "acl": [
+          {
+            "grantee": "authenticated",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          },
+          {
+            "grantee": "postgres",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          }
+        ]
+      },
+      {
+        "identity": "public.search_admin_system_audit(text,text,timestampwithtimezone,uuid,integer)",
+        "definition_sha256": "ce81f276e0453867cf9b08f12de978f323b56ccca8b0a398672e2f4e8f23b59d",
+        "owner": "postgres",
+        "volatility": "s",
+        "security_definer": true,
+        "search_path": [
+          "search_path=\"\""
+        ],
+        "execute": {
+          "anon": false,
+          "authenticated": true,
+          "public": false,
+          "service_role": false
+        },
+        "acl": [
+          {
+            "grantee": "authenticated",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          },
+          {
+            "grantee": "postgres",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          }
+        ]
+      },
+      {
+        "identity": "public.get_admin_control_center_overview_v1(text,date,date)",
+        "definition_sha256": "e1775b76cdb41f46a48a99015029e979897503d00e1ef34023062dec1ea93814",
+        "owner": "postgres",
+        "volatility": "s",
+        "security_definer": true,
+        "search_path": [
+          "search_path=\"\""
+        ],
+        "execute": {
+          "anon": false,
+          "authenticated": true,
+          "public": false,
+          "service_role": false
+        },
+        "acl": [
+          {
+            "grantee": "authenticated",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          },
+          {
+            "grantee": "postgres",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          }
+        ]
+      },
+      {
+        "identity": "public.search_admin_advertising_ads(text,integer,timestampwithtimezone,uuid,uuid)",
+        "definition_sha256": "306538cfcddf24a259249614e57e8fef723127f366b62d6624bbe6b3686d745f",
+        "owner": "postgres",
+        "volatility": "s",
+        "security_definer": true,
+        "search_path": [
+          "search_path=\"\""
+        ],
+        "execute": {
+          "anon": false,
+          "authenticated": true,
+          "public": false,
+          "service_role": false
+        },
+        "acl": [
+          {
+            "grantee": "authenticated",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          },
+          {
+            "grantee": "postgres",
+            "privilege_type": "EXECUTE",
+            "is_grantable": false
+          }
+        ]
+      }
+    ],
+    "removed_functions": [
+      "public.search_admin_advertising_ads(text,integer)"
+    ],
+    "index_attestation": {
+      "schema": "private",
+      "table": "advertising_ads",
+      "name": "advertising_ads_submitted_cursor_idx",
+      "owner": "postgres",
+      "definition": "CREATE INDEX advertising_ads_submitted_cursor_idx ON private.advertising_ads USING btree (submitted_at, id)",
+      "valid": true,
+      "ready": true,
+      "unique": false,
+      "primary": false,
+      "production_cardinality": 5,
+      "production_relation_bytes": 131072,
+      "lock_risk": "bounded_reviewed_nonconcurrent_btree_create"
+    },
+    "unchanged_inventories": [
+      "auth.mfa_factors",
+      "private.admin_action_audit",
+      "public.financial_transactions",
+      "public.ledger_accounts",
+      "public.ledger_entries",
+      "private.creator_premium_purchase_receipts",
+      "private.creator_premium_subscription_periods"
+    ],
+    "security_advisor": {
+      "provider": {
+        "source": "supabase/splinter",
+        "commit": "fccca4b1c4d8b48b8ccd69bd6b30e84adcb92975",
+        "sql_sha256": "d8d558baad3e03832e521c527907fa50a9a172fabd899dd0f5c2504a5a0e9349"
+      },
+      "transition": {
+        "before_count": 597,
+        "before_sha256": "d0e52c1a329d52b48f9926d4355e2cf2247e8463e6fcf683b63150fb251c2eee",
+        "after_count": 598,
+        "after_sha256": "21e73c054d9e2ba1de93ebda2b4c423f3d1b9c7f97a857478ab175d1a5de8dae"
+      },
+      "predecessor_exception": {
+        "advisor_fingerprint": "b1b08a6ee6057c6e739057eb823c034e95b6be56a2a6ed33ce73d11969b76713",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": {
+          "schema": "public",
+          "name": "search_admin_advertising_ads",
+          "argument_types": [
+            "text",
+            "integer"
+          ],
+          "identity_arguments": "p_review_status text, p_limit integer"
+        },
+        "attestation": {
+          "security_definer": true,
+          "owner": "postgres",
+          "search_path": [
+            "search_path=\"\""
+          ],
+          "acl": [
+            {
+              "grantee": "authenticated",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            },
+            {
+              "grantee": "postgres",
+              "privilege_type": "EXECUTE",
+              "is_grantable": false
+            }
+          ],
+          "execute": {
+            "anon": false,
+            "authenticated": true,
+            "public": false,
+            "service_role": false
+          },
+          "definition_sha256": "99583f9ce0778c15a304bf55206810693f5d12b320fd8787a8f5cee97650c4d1"
+        },
+        "authorization": {
+          "functional_reason": "Capability-gated bounded Ads review read authority.",
+          "controls": [
+            "authenticated_session",
+            "capability_guard",
+            "bounded_result",
+            "read_only"
+          ],
+          "negative_test_evidence_sha256": "8aacf715fff647902687149955343148c5016fafa6a93d204c4d221336da11a1"
+        },
+        "origin": {
+          "migration": "20260923190702_ads_v2_j_admin_analytics_production_closure",
+          "migration_blob": "cb5164d4b5a1fe3620e739fbdf2aa85139b94165",
+          "source_sha": "6b0313a1954af82ba27b0aa9a946fb5729c6878b"
+        },
+        "technical_approval": "verified"
+      },
+      "introduced_exceptions": [
+        {
+          "advisor_fingerprint": "71d58bfc1f9846818b995f013a16afc233ebfca99a3aa9485bd3d7e8686b45f1",
+          "advisor_type": "authenticated_security_definer_function_executable",
+          "advisor_severity": "WARN",
+          "object": {
+            "schema": "public",
+            "name": "search_admin_advertising_ads",
+            "argument_types": [
+              "text",
+              "integer",
+              "timestamp with time zone",
+              "uuid",
+              "uuid"
+            ],
+            "identity_arguments": "p_review_status text, p_limit integer, p_cursor_submitted_at timestamp with time zone, p_cursor_id uuid, p_ad_id uuid"
+          },
+          "attestation": {
+            "security_definer": true,
+            "owner": "postgres",
+            "search_path": [
+              "search_path=\"\""
+            ],
+            "acl": [
+              {
+                "grantee": "authenticated",
+                "privilege_type": "EXECUTE",
+                "is_grantable": false
+              },
+              {
+                "grantee": "postgres",
+                "privilege_type": "EXECUTE",
+                "is_grantable": false
+              }
+            ],
+            "execute": {
+              "anon": false,
+              "authenticated": true,
+              "public": false,
+              "service_role": false
+            },
+            "definition_sha256": "306538cfcddf24a259249614e57e8fef723127f366b62d6624bbe6b3686d745f"
+          },
+          "authorization": {
+            "functional_reason": "Capability-gated bounded Ads review read authority with exact cursor and ad lookup.",
+            "controls": [
+              "authenticated_session",
+              "capability_guard",
+              "bounded_result",
+              "read_only"
+            ],
+            "negative_test_evidence_sha256": "8aacf715fff647902687149955343148c5016fafa6a93d204c4d221336da11a1"
+          },
+          "origin": {
+            "migration": "20261031032022_superuser_control_center_overview",
+            "migration_blob": "9a2c821a314d7c6039ec31f534712784a94089e3",
+            "source_sha": "045ebbc81013d520e7f0730580f8d7eaec97414d"
+          },
+          "technical_approval": "verified"
+        },
+        {
+          "advisor_fingerprint": "aafdbe9029cad2382befedf5f1233d98088d6f5c3d4bf42ec2cf371a3d85b477",
+          "advisor_type": "authenticated_security_definer_function_executable",
+          "advisor_severity": "WARN",
+          "object": {
+            "schema": "public",
+            "name": "get_admin_control_center_overview_v1",
+            "argument_types": [
+              "text",
+              "date",
+              "date"
+            ],
+            "identity_arguments": "p_module text, p_from date, p_to date"
+          },
+          "attestation": {
+            "security_definer": true,
+            "owner": "postgres",
+            "search_path": [
+              "search_path=\"\""
+            ],
+            "acl": [
+              {
+                "grantee": "authenticated",
+                "privilege_type": "EXECUTE",
+                "is_grantable": false
+              },
+              {
+                "grantee": "postgres",
+                "privilege_type": "EXECUTE",
+                "is_grantable": false
+              }
+            ],
+            "execute": {
+              "anon": false,
+              "authenticated": true,
+              "public": false,
+              "service_role": false
+            },
+            "definition_sha256": "e1775b76cdb41f46a48a99015029e979897503d00e1ef34023062dec1ea93814"
+          },
+          "authorization": {
+            "functional_reason": "Capability-gated bounded aggregate dashboard projection without identity exports.",
+            "controls": [
+              "authenticated_session",
+              "capability_guard",
+              "bounded_date_range",
+              "aggregate_only",
+              "read_only"
+            ],
+            "negative_test_evidence_sha256": "8aacf715fff647902687149955343148c5016fafa6a93d204c4d221336da11a1"
+          },
+          "origin": {
+            "migration": "20261031032022_superuser_control_center_overview",
+            "migration_blob": "9a2c821a314d7c6039ec31f534712784a94089e3",
+            "source_sha": "045ebbc81013d520e7f0730580f8d7eaec97414d"
+          },
+          "technical_approval": "verified"
+        }
+      ]
+    },
+    "finance_policy": {
+      "platform_fee_bps": 2000,
+      "purchase_enabled": true,
+      "refunds_enabled": true,
+      "subscription_enabled": true
+    },
+    "requires_separate_baseline_promotion": true
   }
 }
