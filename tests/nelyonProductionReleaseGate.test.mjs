@@ -3909,6 +3909,13 @@ test('Admin recovery source provenance fails closed on SHA, artifacts, postcheck
   assert.equal(verified.result, 'ADMIN_RECOVERY_SOURCE_VERIFIED');
   assert.equal(verified.source_run_id, fixture.recoveryRequest.recoverySourceRunId);
   assert.equal(verified.source_build_sha256, '6'.repeat(64));
+  assert.deepEqual(verified.source_cloudflare_prestate, {
+    active_version_id: '11111111-1111-4111-8111-111111111111',
+    zone_id: 'zone-1',
+    routes_sha256: gate.sha256Hex(gate.canonicalJson([
+      { pattern: 'nelyon.app/admin', script: 'nelyon-admin-web' },
+    ]).trimEnd()),
+  });
   for (const [label, mutate] of [
     ['sha', value => { value.run.head_sha = 'f'.repeat(40); }],
     ['run', value => { value.run.event = 'push'; }],
@@ -3949,6 +3956,34 @@ test('Admin recovery source provenance fails closed on SHA, artifacts, postcheck
   }
   writeFileSync(postcheckPath, gate.canonicalJson(originalPostcheck));
   writeFileSync(observationPath, gate.canonicalJson(fixture.observation));
+});
+
+test('Admin recovery Cloudflare pre-state is source-bound and rejects version, zone, or route drift', async (t) => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = adminRecoverySourceFixture(t, gate, policy);
+  const verifiedSource = gate.verifyAdminRecoverySourceProvenance(fixture);
+  const currentPrevious = { version_id: '11111111-1111-4111-8111-111111111111' };
+  const currentRoutes = {
+    zone_id: 'zone-1',
+    routes: [{ id: 'current', pattern: 'nelyon.app/admin', script: 'nelyon-admin-web' }],
+  };
+  const result = gate.verifyAdminRecoveryCloudflarePrestate({ verifiedSource, currentPrevious, currentRoutes });
+  assert.deepEqual(result, {
+    schema_version: 1,
+    result: 'ADMIN_RECOVERY_CLOUDFLARE_PRESTATE_VERIFIED',
+    active_version_id: currentPrevious.version_id,
+    zone_id: currentRoutes.zone_id,
+    routes_sha256: verifiedSource.source_cloudflare_prestate.routes_sha256,
+  });
+  for (const hostile of [
+    { currentPrevious: { version_id: '22222222-2222-4222-8222-222222222222' }, currentRoutes },
+    { currentPrevious, currentRoutes: { ...currentRoutes, zone_id: 'zone-2' } },
+    { currentPrevious, currentRoutes: { ...currentRoutes,
+      routes: [{ pattern: 'nelyon.app/admin', script: 'rogue-worker' }] } },
+  ]) {
+    assertDenied(() => gate.verifyAdminRecoveryCloudflarePrestate({ verifiedSource, ...hostile }),
+      'ADMIN_RECOVERY_CLOUDFLARE_PRESTATE_MISMATCH');
+  }
 });
 
 test('Admin recovery build binding rejects source, manifest, and rebuilt byte drift', async () => {

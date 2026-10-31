@@ -385,6 +385,13 @@ test('canonical Admin recovery is forward-only, source-bound, and never invokes 
 
 test('reproducible npm install and build never receive the Cloudflare production token', () => {
   const workflow = readFileSync(new URL('../.github/workflows/nelyon-production-release.yml', import.meta.url), 'utf8');
+  const packageJson = JSON.parse(readFileSync(new URL('../apps/admin-web/package.json', import.meta.url), 'utf8'));
+  const packageLock = JSON.parse(readFileSync(new URL('../apps/admin-web/package-lock.json', import.meta.url), 'utf8'));
+  assert.equal(packageJson.devDependencies?.wrangler, '4.135.0');
+  assert.equal(packageLock.packages?.['node_modules/wrangler']?.version, '4.135.0');
+  assert.match(packageLock.packages?.['node_modules/wrangler']?.integrity ?? '', /^sha512-/);
+  assert.match(workflow, /NELYON_WRANGLER: apps\/admin-web\/node_modules\/\.bin\/wrangler/);
+  assert.doesNotMatch(workflow, /npx\s+--yes\s+wrangler/);
   const deployStart = workflow.indexOf('  deploy:');
   const deploySteps = workflow.indexOf('    steps:', deployStart);
   assert.doesNotMatch(workflow.slice(deployStart, deploySteps), /CLOUDFLARE_API_TOKEN/);
@@ -400,6 +407,20 @@ test('reproducible npm install and build never receive the Cloudflare production
   const prestateSection = workflow.slice(prestateStart, prestateEnd);
   assert.match(prestateSection, /CLOUDFLARE_API_TOKEN/);
   assert.doesNotMatch(prestateSection, /npm ci|build:deployment/);
+});
+
+test('Admin recovery refuses Cloudflare drift before the first upload mutation', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/nelyon-production-release.yml', import.meta.url), 'utf8');
+  const verifyStart = workflow.indexOf('- name: Verify Admin recovery Cloudflare pre-state');
+  const uploadStart = workflow.indexOf('- name: Upload one immutable Admin version');
+  assert.ok(verifyStart > 0 && uploadStart > verifyStart);
+  const verification = workflow.slice(verifyStart, uploadStart);
+  assert.match(verification, /verify-admin-recovery-cloudflare-prestate/);
+  assert.match(verification, /verified-source\.json/);
+  assert.match(verification, /admin-web-previous\.json/);
+  assert.match(verification, /admin-web-before-routes\.json/);
+  const upload = workflow.slice(uploadStart, workflow.indexOf('- name: Attest and smoke the exact uploaded Admin version'));
+  assert.match(upload, /steps\.admin_recovery_cloudflare_prestate\.outcome == 'success'/);
 });
 
 test('workflow pins exact routes, version tag, immutable upload, exact promotion, and recovery evidence', () => {

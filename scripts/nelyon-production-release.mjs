@@ -4585,13 +4585,23 @@ export function verifyAdminRecoverySourceProvenance({
       || !/^[0-9a-f]{64}$/.test(build.dist_sha256 ?? ''))) {
     deny(code, 'source Admin reproducible build evidence is invalid');
   }
+  const previous = readFixedJson(adminDirectory, 'admin-web-previous.json', code);
+  const beforeRoutes = readFixedJson(adminDirectory, 'admin-web-before-routes.json', code);
+  const normalizedBeforeRoutes = normalizedRecoveryRoutes(beforeRoutes, code);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(previous?.version_id ?? '') || beforeRoutes.zone_id.length < 1) {
+    deny(code, 'source Cloudflare pre-state is invalid');
+  }
+  const sourceCloudflarePrestate = {
+    active_version_id: previous.version_id,
+    zone_id: beforeRoutes.zone_id,
+    routes_sha256: sha256Hex(canonicalJson(normalizedBeforeRoutes).trimEnd()),
+  };
   const requiresRollback = ['candidate', 'promote'].some(step => observation.admin_web?.[step] === 'success');
   if (requiresRollback && policy.admin_recovery.rollback_required_after_candidate_or_promote) {
     for (const name of ['admin-web-recovered-routes.json', 'admin-web-recovered-deployment.json', 'admin-web-recovery.json']) {
       if (!existsSync(join(adminDirectory, name))) deny(code, 'required source Cloudflare rollback evidence is missing');
     }
-    const previous = readFixedJson(adminDirectory, 'admin-web-previous.json', code);
-    const beforeRoutes = readFixedJson(adminDirectory, 'admin-web-before-routes.json', code);
     const recoveredRoutes = readFixedJson(adminDirectory, 'admin-web-recovered-routes.json', code);
     const recoveredDeployment = readFixedJson(adminDirectory, 'admin-web-recovered-deployment.json', code);
     const recovery = readFixedJson(adminDirectory, 'admin-web-recovery.json', code);
@@ -4618,10 +4628,37 @@ export function verifyAdminRecoverySourceProvenance({
     source_admin_manifest_sha256: adminManifestDigest,
     source_admin_source_sha256: adminManifest.source.sha256,
     source_build_sha256: build?.dist_sha256 ?? null,
+    source_cloudflare_prestate: sourceCloudflarePrestate,
     source_artifacts: selectedArtifacts,
     source_manifest: sourceManifest,
     source_request: sourceRequest,
     source_observation: observation,
+  };
+}
+
+export function verifyAdminRecoveryCloudflarePrestate({
+  verifiedSource,
+  currentPrevious,
+  currentRoutes,
+}) {
+  const code = 'ADMIN_RECOVERY_CLOUDFLARE_PRESTATE_MISMATCH';
+  const expected = verifiedSource?.source_cloudflare_prestate;
+  const routes = normalizedRecoveryRoutes(currentRoutes, code);
+  const routesSha256 = sha256Hex(canonicalJson(routes).trimEnd());
+  if (verifiedSource?.result !== 'ADMIN_RECOVERY_SOURCE_VERIFIED'
+    || !expected || typeof expected.active_version_id !== 'string'
+    || typeof expected.zone_id !== 'string' || !/^[0-9a-f]{64}$/.test(expected.routes_sha256 ?? '')
+    || currentPrevious?.version_id !== expected.active_version_id
+    || currentRoutes?.zone_id !== expected.zone_id
+    || routesSha256 !== expected.routes_sha256) {
+    deny(code, 'current Cloudflare Admin pre-state differs from the exact recovered source state');
+  }
+  return {
+    schema_version: 1,
+    result: 'ADMIN_RECOVERY_CLOUDFLARE_PRESTATE_VERIFIED',
+    active_version_id: currentPrevious.version_id,
+    zone_id: currentRoutes.zone_id,
+    routes_sha256: routesSha256,
   };
 }
 
@@ -5586,7 +5623,7 @@ function parseCliArguments(argv) {
 }
 
 function printHelp() {
-  process.stdout.write('Usage: nelyon-production-release.mjs <plan|revalidate|verify-gate|verify-dry-run|verify-pre-snapshot|verify-function-contract|postcheck|verify-recovery-source|postcheck-recovery|verify-admin-recovery-source|postcheck-admin-recovery> [options]\n');
+  process.stdout.write('Usage: nelyon-production-release.mjs <plan|revalidate|verify-gate|verify-dry-run|verify-pre-snapshot|verify-function-contract|postcheck|verify-recovery-source|postcheck-recovery|verify-admin-recovery-source|postcheck-admin-recovery|verify-admin-recovery-cloudflare-prestate> [options]\n');
 }
 
 async function runCli(argv) {
@@ -5613,6 +5650,19 @@ async function runCli(argv) {
     });
     writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
     process.stdout.write(`ADMIN RECOVERY SOURCE VERIFIED ${result.source_run_id} ${result.source_manifest_sha256}\n`);
+    return 0;
+  }
+  if (command === 'verify-admin-recovery-cloudflare-prestate') {
+    for (const required of ['verified-source', 'previous', 'routes', 'output']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    const result = verifyAdminRecoveryCloudflarePrestate({
+      verifiedSource: JSON.parse(readFileSync(values['verified-source'], 'utf8')),
+      currentPrevious: JSON.parse(readFileSync(values.previous, 'utf8')),
+      currentRoutes: JSON.parse(readFileSync(values.routes, 'utf8')),
+    });
+    writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
+    process.stdout.write(`ADMIN RECOVERY CLOUDFLARE PRESTATE VERIFIED ${result.active_version_id} ${result.routes_sha256}\n`);
     return 0;
   }
   if (command === 'postcheck-admin-recovery') {
