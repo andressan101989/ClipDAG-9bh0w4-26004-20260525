@@ -300,7 +300,9 @@ describe("ADS-V2-J Admin Web",()=>{
     vi.mocked(useAdminAuth).mockReturnValue(access(["advertising.billing.read","advertising.rollout.manage"]) as never);
     vi.mocked(getAdminAdvertisingRolloutControl).mockResolvedValue({...rolloutControl,launch_mode:"PRODUCTION",global_delivery_enabled:true,production_ready:true,blockers:[],placements:rolloutPlacements.map((row)=>({...row,production_rollout_bps:1000,rollout_percent:10,effective_runtime_enabled:true}))});
     render(<MemoryRouter><AdminAdvertisingBillingPage/></MemoryRouter>);
-    fireEvent.click(await screen.findByLabelText("Global delivery pause"));
+    await screen.findByLabelText("Global delivery pause");
+    await act(async()=>{}); // Let the authoritative initial draft hydrate before editing.
+    fireEvent.click(screen.getByLabelText("Global delivery pause"));
     fireEvent.click(screen.getByLabelText("Stories kill switch"));
     fireEvent.click(screen.getByRole("button",{name:"Save configuration"}));
     expect(setAdminAdvertisingProductionRollout).not.toHaveBeenCalled();
