@@ -60,6 +60,7 @@ type VideoGrant={hlsUrl:string;thumbnailUrl:string;expiresAt:string};
 export function AdminCreatorPremiumDetailPage(){
   const {id=""}=useParams(),{hasCapability,session,security}=useAdminAuth(),actorId=session?.user.id??"";
   const [detail,setDetail]=useState<Record<string,unknown>|null>(null),[imageGrant,setImageGrant]=useState<ImageGrant|null>(null),[videoGrant,setVideoGrant]=useState<VideoGrant|null>(null),[grantError,setGrantError]=useState<string|null>(null),[reason,setReason]=useState(""),[refundReason,setRefundReason]=useState(""),[refundCandidates,setRefundCandidates]=useState<Record<string,unknown>|null>(null),[error,setError]=useState<string|null>(null),[operationResult,setOperationResult]=useState<string|null>(null),[busy,setBusy]=useState(false),[nonce,setNonce]=useState(0);
+  const candidateReadGeneration=useRef(0);
   const operationInFlightRef=useRef<string|null>(null),operationGenerationRef=useRef(0),reviewAttemptRef=useRef<AdminCommandAttempt|null>(null),refundAttemptRef=useRef<AdminCommandAttempt|null>(null),actorRef=useRef(actorId),contentRef=useRef(id);
   actorRef.current=actorId;contentRef.current=id;
   useEffect(()=>()=>{operationGenerationRef.current+=1;operationInFlightRef.current=null},[]);
@@ -67,7 +68,7 @@ export function AdminCreatorPremiumDetailPage(){
   useEffect(()=>{let active=true;setError(null);setImageGrant(null);setVideoGrant(null);setRefundCandidates(null);void getAdminCreatorPremiumContent(id).then((value)=>{if(active)setDetail(value)}).catch((cause)=>{if(active)setError(cause instanceof Error?cause.message:"No se pudo cargar el contenido")});return()=>{active=false;setImageGrant(null);setVideoGrant(null)}},[id,nonce]);
   useEffect(()=>{if(!detail)return;let active=true;setGrantError(null);const load=detail.content_kind==="video"?getAdminCreatorPremiumVideoGrant(id):getAdminCreatorPremiumImageGrant(id);void load.then((grant)=>{if(!active)return;if("hlsUrl" in grant)setVideoGrant(grant);else setImageGrant(grant)}).catch(()=>{if(active)setGrantError("El original privado no está disponible para revisión.")});return()=>{active=false;setImageGrant(null);setVideoGrant(null)}},[detail,id]);
   const policy=asRecord(detail?.finance_policy),refundsEnabled=bool(policy.refunds_enabled),refundAssured=security?.currentLevel==="aal2",canRefund=hasCapability("creator_premium.refunds.write")&&refundsEnabled&&refundAssured;
-  useEffect(()=>{if(!canRefund||!detail)return;let active=true;void getAdminCreatorPremiumRefundCandidates(id).then((value)=>{if(active)setRefundCandidates(value)}).catch(()=>{if(active)setRefundCandidates(null)});return()=>{active=false}},[canRefund,detail,id]);
+  useEffect(()=>{const generation=++candidateReadGeneration.current;if(!canRefund||!detail)return;let active=true;void getAdminCreatorPremiumRefundCandidates(id).then((value)=>{if(active&&generation===candidateReadGeneration.current)setRefundCandidates(value)}).catch(()=>{if(active&&generation===candidateReadGeneration.current)setRefundCandidates(null)});return()=>{active=false;candidateReadGeneration.current+=1}},[canRefund,detail,id]);
   const lifecycle=text(detail?.lifecycle_status),allowedActions=useMemo(()=>lifecycle==="published"?["quarantine","remove"]:lifecycle==="rejected"?["restore"]:lifecycle==="quarantined"?["remove","restore"]:lifecycle==="removed"?["restore"]:[],[lifecycle]);
   const reverification=asRecord(detail?.reverification),reverificationReady=bool(reverification.ready),reverificationReason=text(reverification.reason_code),currentScanAlertCount=Number(reverification.current_scan_alert_count),blockingAlertCount=Number(reverification.blocking_alert_count),actionableAlertCount=Number(reverification.actionable_alert_count),terminalUnfavorableAlertCount=Number(reverification.terminal_unfavorable_alert_count);
   const review=async(action:"quarantine"|"remove"|"restore")=>{
@@ -110,6 +111,7 @@ export function AdminCreatorPremiumDetailPage(){
         :await refundAdminCreatorPremiumSubscriptionPeriod({periodId:targetId,reason:code,idempotencyKey:attempt.idempotencyKey});
       if(!isCurrent())return;
       refundAttemptRef.current=null;
+      candidateReadGeneration.current+=1;setRefundCandidates(null);
       setOperationResult(receipt.money_moved?"Reembolso efectuado.":"Reembolso ya realizado; no se movieron fondos.");
       setNonce((value)=>value+1);
     }catch(cause){

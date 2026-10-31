@@ -107,13 +107,31 @@ test("Admin Web exposes every A8 route behind its exact capability",()=>{
   }
 });
 
-test("Admin Web observability API calls only A8 read RPCs",()=>{
+const readFunctions=[...publicFunctions,"get_admin_platform_revenue","get_admin_creator_premium_finance_activation_v1","search_admin_creator_premium_finance_v1"];
+function assertReadApi(source){
+  assert.doesNotMatch(source,/\.(?:insert|upsert|update|delete)\s*\(|\.functions\.invoke\s*\(/i);
+  for(const [,name] of source.matchAll(/\brpc\(\s*["']([^"']+)["']/g))assert.ok(readFunctions.includes(name),`unexpected financial/cron RPC ${name}`);
+  assert.doesNotMatch(source,/\b(?:admin_refund_|settle_|reverse_|reconcile_|schedule_|unschedule_|updateUserById)\w*\s*\(/i);
+}
+test("Admin Web observability API calls only canonical read RPCs, including refund-status projections",()=>{
   for(const name of publicFunctions)assert.match(api,new RegExp(`"${name}"`));
-  assert.doesNotMatch(api,/insert\(|update\(|delete\(|reconcile_|refund|settle|reverse/i);
+  assertReadApi(api);
+  for(const mutation of ['rpc("admin_refund_creator_premium_purchase_v1")','rpc("settle_admin_finance")','supabase.from("ledger").update({})','supabase.functions.invoke("run-cron")'])assert.throws(()=>assertReadApi(api+mutation));
 });
 
+function assertReadUi(source){
+  assertReadApi(source);
+  assert.doesNotMatch(source,/\bsupabase\b|\.rpc\s*\(|\.from\s*\(/);
+  assert.doesNotMatch(source,/\b(?:refundAdmin|settleAdmin|reverseAdmin|reconcileAdmin|runAdmin|retryAdmin|fixAdmin|repairAdmin|adjustAdmin|creditAdmin|debitAdmin|scheduleAdmin)\w*\s*\(/);
+  // Search and bounded read pagination are allowed; every inline handler is
+  // still restricted, so a financial action cannot hide behind a new button.
+  for(const [,handler] of source.matchAll(/onClick=\{([^}]+)\}/g))assert.equal(handler,"()=>void loadMore()");
+  for(const [,handler] of source.matchAll(/onSubmit=\{([^}]+)\}/g))assert.equal(handler,"applySearch");
+  for(const [,name] of source.matchAll(/\b(?:await|void)\s+((?:get|search|refund|settle|reverse|reconcile|run|schedule)Admin\w+)\s*\(/g))assert.match(name,/^(?:get|search)Admin/);
+}
 test("A8 UI contains no mutating financial or cron controls",()=>{
-  assert.doesNotMatch(pages,/onClick=|<button|updateUserById|schedule_|reconcile_/i);
+  assertReadUi(pages);
+  for(const mutation of ['refundAdminCreatorPremiumPurchase()','<button onClick={()=>void settleAdminFunds()}/>','supabase.rpc("schedule_job")','<form onSubmit={runAdminCron}/>'])assert.throws(()=>assertReadUi(pages+mutation));
   assert.match(pages,/READ ONLY|OBSERVATION ONLY/);
 });
 

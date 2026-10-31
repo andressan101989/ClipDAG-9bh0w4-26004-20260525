@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {existsSync,readFileSync} from "node:fs";
+import {createRequire} from "node:module";
+const require=createRequire(import.meta.url),ts=require("../apps/admin-web/node_modules/typescript");
+const navigation=readFileSync(new URL("../apps/admin-web/src/layout/adminNavigation.ts",import.meta.url),"utf8");
+const {adminLinks}=await import(`data:text/javascript;base64,${Buffer.from(ts.transpileModule(navigation,{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText).toString("base64")}`);
 
 const migration=readFileSync(new URL("../supabase/migrations/20260911180713_superuser_a4_users_reports_provisioning.sql",import.meta.url),"utf8");
 const edge=readFileSync(new URL("../supabase/functions/admin-user-moderation/index.ts",import.meta.url),"utf8");
@@ -30,7 +34,15 @@ test("global provider uses get_my_admin_access and capability guards cover every
   assert.match(app,/CapabilityRoute capability="reports\.cases\.read"/);
   assert.match(app,/CapabilityRoute capability="admin\.roles\.read"/);
   for(const cap of ["marketplace.overview.read","marketplace.orders.read","marketplace.disputes.read","marketplace.sellers.read","marketplace.products.read","marketplace.creators.read","marketplace.promotions.read","marketplace.ads.read","marketplace.health.read","marketplace.audit.read"])assert.match(app,new RegExp(cap.replaceAll(".","\\.")));
-  assert.match(shell,/hasCapability\(link\.capability\)/);
+  const expression=shell.match(/adminLinks\.filter\(\(link\)=>(\[link\.capability,[^;]+?\.every\(hasCapability\))\)/)?.[1];
+  assert.ok(expression,"shell filters on every required primary and additional capability");
+  const allowed=new Function("link","hasCapability",`return ${expression}`);
+  for(const link of adminLinks){
+    assert.ok(app.includes(`path="${link.to.slice(1)}"`)||app.includes(`path="${link.to}"`),`real route for ${link.to}`);
+    const required=[link.capability,...(link.additionalCapabilities??[])];
+    assert.equal(allowed(link,cap=>required.includes(cap)),true,link.to);
+    for(const missing of required)assert.equal(allowed(link,cap=>required.includes(cap)&&cap!==missing),false,`${link.to} denies without ${missing}`);
+  }
 });
 
 test("Users list/detail are bounded capability RPCs with explicit safe projections",()=>{

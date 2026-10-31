@@ -21,6 +21,12 @@ it("preserves ordinary local storage logout and clears only owned markers on pas
   localStorage.setItem("unrelated","keep");const fence=createAdminLogoutFence();expect(fence.isBlocked()).toBe(false);expect(fence.block()).toBe(true);expect(createAdminLogoutFence().isBlocked()).toBe(true);
   fence.clearAfterPasswordLogin();expect(fence.isBlocked()).toBe(false);expect(localStorage.getItem(logoutFenceKey)).toBeNull();expect(localStorage.getItem("unrelated")).toBe("keep");
 });
+it("a retained read-only old marker permits explicit login but a newer logout intent still blocks",()=>{
+  const old="blocked:old-intent";localStorage.setItem(logoutFenceKey,old);
+  vi.spyOn(Storage.prototype,"removeItem").mockImplementation(()=>{throw new DOMException("readonly","SecurityError")});
+  const fence=createAdminLogoutFence();expect(fence.isBlocked()).toBe(true);fence.clearAfterPasswordLogin();expect(localStorage.getItem(logoutFenceKey)).toBe(old);expect(fence.isBlocked()).toBe(false);
+  localStorage.setItem(logoutFenceKey,"blocked:new-intent");expect(fence.isBlocked()).toBe(true);expect(createAdminLogoutFence().isBlocked()).toBe(true);
+});
 it("scopes the fallback to the admin path with SameSite protection and no Domain attribute",()=>{
   vi.spyOn(Storage.prototype,"setItem").mockImplementation(()=>{throw new DOMException("quota","QuotaExceededError")});const assignments:string[]=[];
   const original=Object.getOwnPropertyDescriptor(Document.prototype,"cookie")!;vi.spyOn(document,"cookie","set").mockImplementation((value)=>{assignments.push(value);original.set!.call(document,value)});

@@ -1,4 +1,4 @@
-import {fireEvent,render,screen,waitFor} from "@testing-library/react";
+import {act,fireEvent,render,screen,waitFor} from "@testing-library/react";
 import {MemoryRouter,Route,Routes} from "react-router-dom";
 import {beforeEach,expect,it,vi} from "vitest";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
@@ -66,4 +66,31 @@ it("sanitizes definitive server denial and creates a fresh key only for a new ac
   expect(screen.getByRole("alert")).toHaveTextContent("Operación rechazada por la autoridad financiera.");expect(screen.queryByText(/private financial information/)).not.toBeInTheDocument();expect(screen.queryByRole("status")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button",{name:"Reembolsar periodo"}));await waitFor(()=>expect(refundCalls()).toHaveLength(2));
   expect(refundCalls()[0][1]).toMatchObject({p_period_id:periodId});expect(refundCalls()[1][1]?.p_idempotency_key).not.toBe(refundCalls()[0][1]?.p_idempotency_key);
+});
+it("fences a pre-refund candidate response while canonical success detail refresh is deferred",async()=>{
+  const original=rpc.getMockImplementation()!;let resolveCandidates!:(value:Awaited<ReturnType<typeof original>>)=>void,resolveDetail!:(value:Awaited<ReturnType<typeof original>>)=>void;
+  const view=renderPage();await ready();
+  level="aal1";view.rerender(<MemoryRouter initialEntries={[`/creator-premium/${contentId}`]}><Routes><Route path="/creator-premium/:id" element={<AdminCreatorPremiumDetailPage/>}/></Routes></MemoryRouter>);
+  rpc.mockImplementation((...args)=>args[0]==="get_admin_creator_premium_refund_candidates_v1"?new Promise(resolve=>{resolveCandidates=resolve}):original(...args));
+  level="aal2";view.rerender(<MemoryRouter initialEntries={[`/creator-premium/${contentId}`]}><Routes><Route path="/creator-premium/:id" element={<AdminCreatorPremiumDetailPage/>}/></Routes></MemoryRouter>);
+  await waitFor(()=>expect(resolveCandidates).toBeTypeOf("function"));
+  rpc.mockImplementation((...args)=>args[0]==="get_admin_creator_premium_content_v1"?new Promise(resolve=>{resolveDetail=resolve}):args[0]==="get_admin_creator_premium_refund_candidates_v1"?Promise.resolve({data:{purchases:[],subscription_periods:[]},error:null}):original(...args));
+  fireEvent.click(screen.getByRole("button",{name:"Reembolsar compra"}));await screen.findByRole("status");await waitFor(()=>expect(resolveDetail).toBeTypeOf("function"));
+  await act(async()=>resolveCandidates(await original("get_admin_creator_premium_refund_candidates_v1")));
+  expect(screen.queryByRole("button",{name:"Reembolsar compra"})).not.toBeInTheDocument();expect(screen.queryByRole("button",{name:"Reembolsar periodo"})).not.toBeInTheDocument();
+  await act(async()=>resolveDetail(await original("get_admin_creator_premium_content_v1")));await waitFor(()=>expect(rpc.mock.calls.filter(([name])=>name==="get_admin_creator_premium_refund_candidates_v1")).toHaveLength(3));
+  expect(screen.queryByRole("button",{name:"Reembolsar compra"})).not.toBeInTheDocument();expect(refundCalls()).toHaveLength(1);
+});
+it("a dynamic AAL downgrade removes pending financial controls and ignores its candidate read",async()=>{
+  const original=rpc.getMockImplementation()!;let resolve!:(value:Awaited<ReturnType<typeof original>>)=>void;
+  rpc.mockImplementation((...args)=>args[0]==="get_admin_creator_premium_refund_candidates_v1"?new Promise(r=>{resolve=r}):original(...args));
+  const view=renderPage();await waitFor(()=>expect(resolve).toBeTypeOf("function"));level="aal1";
+  view.rerender(<MemoryRouter initialEntries={[`/creator-premium/${contentId}`]}><Routes><Route path="/creator-premium/:id" element={<AdminCreatorPremiumDetailPage/>}/></Routes></MemoryRouter>);
+  await act(async()=>resolve(await original("get_admin_creator_premium_refund_candidates_v1")));
+  expect(screen.getByText(/reembolsos requieren.*AAL2/i)).toBeInTheDocument();expect(screen.queryByRole("button",{name:/Reembolsar/})).not.toBeInTheDocument();expect(window.confirm).not.toHaveBeenCalled();expect(refundCalls()).toHaveLength(0);
+});
+it("a dynamic AAL downgrade immediately removes already loaded refund actions",async()=>{
+  const view=renderPage();await ready();level="aal1";
+  view.rerender(<MemoryRouter initialEntries={[`/creator-premium/${contentId}`]}><Routes><Route path="/creator-premium/:id" element={<AdminCreatorPremiumDetailPage/>}/></Routes></MemoryRouter>);
+  expect(screen.getByText(/reembolsos requieren.*AAL2/i)).toBeInTheDocument();expect(screen.queryByRole("button",{name:/Reembolsar/})).not.toBeInTheDocument();expect(window.confirm).not.toHaveBeenCalled();expect(refundCalls()).toHaveLength(0);
 });

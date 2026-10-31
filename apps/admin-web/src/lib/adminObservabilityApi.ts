@@ -55,8 +55,25 @@ const creatorPremiumReconciliationKeys=[
 
 const isRecord=(value:unknown):value is JsonRecord=>value!==null&&typeof value==="object"&&!Array.isArray(value);
 const record=(value:unknown,name:string):JsonRecord=>{if(!isRecord(value))throw new Error(`Respuesta inválida: ${name}`);return value};
-const page=(value:unknown,name:string):JsonPage=>{const parsed=record(value,name);if(!Array.isArray(parsed.items)||!parsed.items.every(isRecord))throw new Error(`Respuesta inválida: ${name}.items`);return{items:parsed.items,next_cursor:parsed.next_cursor===null?null:record(parsed.next_cursor,`${name}.next_cursor`)}};
-async function rpc(name:string,args:JsonRecord={}){const {data,error}=await supabase.rpc(name,args);if(error)throw new Error(error.message||`No se pudo ejecutar ${name}`);return data as unknown}
+const page=(value:unknown,name:string):JsonPage=>{
+  const parsed=record(value,name);if(!Array.isArray(parsed.items)||!parsed.items.every(isRecord))throw new Error(`Respuesta inválida: ${name}.items`);
+  const cursor=parsed.next_cursor===null?null:exactRecord(parsed.next_cursor,`${name}.next_cursor`,["created_at","id"]);
+  return{items:parsed.items,next_cursor:cursor===null?null:{created_at:cursorTimestamp(cursor.created_at,`${name}.next_cursor.created_at`),id:requiredUuid(cursor.id,`${name}.next_cursor.id`)}};
+};
+const cursorArgs=(filters:JsonRecord)=>{
+  const at=filters.p_cursor_created_at,id=filters.p_cursor_id;
+  if(at===undefined&&id===undefined||at===null&&id===null)return filters;
+  cursorTimestamp(at,"cursor.created_at");requiredUuid(id,"cursor.id");return filters;
+};
+async function rpc(name:string,args:JsonRecord={},safeError=false){
+  const {data,error,status}=await supabase.rpc(name,args);
+  if(error){
+    const code=typeof error.code==="string"&&/^(?:[0-9A-Z]{5}|PGRST\d{3})$/.test(error.code)?error.code:undefined;
+    const errorStatus=(error as unknown as JsonRecord).status,httpStatus=typeof status==="number"&&status>=400&&status<=599?status:typeof errorStatus==="number"&&Number.isInteger(errorStatus)&&errorStatus>=400&&errorStatus<=599?errorStatus:undefined;
+    throw Object.assign(new Error(safeError?"No se pudo consultar esta fuente.":error.message||`No se pudo ejecutar ${name}`),{code,status:httpStatus});
+  }
+  return data as unknown;
+}
 
 const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const decimalPattern=/^(?:0|[1-9][0-9]{0,29})\.[0-9]{8}$/;
@@ -71,6 +88,11 @@ const nullableString=(value:unknown,name:string)=>value===null?null:requiredStri
 const requiredUuid=(value:unknown,name:string)=>{const parsed=requiredString(value,name);if(!uuidPattern.test(parsed))throw new Error(`Respuesta inválida: ${name}`);return parsed};
 const nullableUuid=(value:unknown,name:string)=>value===null?null:requiredUuid(value,name);
 const timestamp=(value:unknown,name:string)=>{const parsed=requiredString(value,name);if(!timestampPattern.test(parsed)||Number.isNaN(Date.parse(parsed)))throw new Error(`Respuesta inválida: ${name}`);return parsed};
+const cursorTimestamp=(value:unknown,name:string)=>{
+  const parsed=timestamp(value,name),day=parsed.slice(0,10),clock=parsed.slice(11,19).split(":").map(Number);
+  if(new Date(`${day}T00:00:00Z`).toISOString().slice(0,10)!==day||clock[0]>23||clock[1]>59||clock[2]>59)throw new Error(`Respuesta inválida: ${name}`);
+  return parsed;
+};
 const timestampMicros=(value:string,name:string)=>{const parsed=timestamp(value,name),fraction=/\.(\d{1,6})/.exec(parsed)?.[1]??"",remainder=BigInt((fraction.padEnd(6,"0")||"0"))%1000n;return BigInt(Date.parse(parsed))*1000n+remainder};
 const nullableTimestamp=(value:unknown,name:string)=>value===null?null:timestamp(value,name);
 const nonNegativeInteger=(value:unknown,name:string)=>{if(!Number.isInteger(value)||Number(value)<0)throw new Error(`Respuesta inválida: ${name}`);return Number(value)};
@@ -220,15 +242,15 @@ export async function searchAdminCreatorPremiumFinance(filters:AdminCreatorPremi
 }
 
 export const getAdminFinanceOverview=async()=>record(await rpc("get_admin_finance_overview"),"finance_overview");
-export const getAdminPlatformRevenue=async(period:"today"|"month"|"year"|"all"="year")=>record(await rpc("get_admin_platform_revenue",{p_period:period}),"platform_revenue");
-export const searchAdminLedgerAccounts=async(filters:JsonRecord={})=>page(await rpc("search_admin_ledger_accounts",filters),"ledger_accounts");
-export const searchAdminFinancialTransactions=async(filters:JsonRecord={})=>page(await rpc("search_admin_financial_transactions",filters),"financial_transactions");
+export const getAdminPlatformRevenue=async(period:"today"|"month"|"year"|"all"="year")=>record(await rpc("get_admin_platform_revenue",{p_period:period},true),"platform_revenue");
+export const searchAdminLedgerAccounts=async(filters:JsonRecord={})=>page(await rpc("search_admin_ledger_accounts",cursorArgs(filters)),"ledger_accounts");
+export const searchAdminFinancialTransactions=async(filters:JsonRecord={})=>page(await rpc("search_admin_financial_transactions",cursorArgs(filters)),"financial_transactions");
 export const getAdminFinancialTransactionDetail=async(id:string)=>record(await rpc("get_admin_financial_transaction_detail",{p_transaction_id:id}),"financial_transaction_detail");
 export const getAdminFinanceReconciliation=async()=>record(await rpc("get_admin_finance_reconciliation"),"finance_reconciliation");
 export const searchAdminFinanceAnomalies=async(filters:JsonRecord={})=>record(await rpc("search_admin_finance_anomalies",filters),"finance_anomalies");
-export const searchAdminGlobalAudit=async(filters:JsonRecord={})=>page(await rpc("search_admin_global_audit",filters),"global_audit");
-export const searchAdminFinanceAudit=async(filters:JsonRecord={})=>page(await rpc("search_admin_finance_audit",filters),"finance_audit");
-export const searchAdminSystemAudit=async(filters:JsonRecord={})=>page(await rpc("search_admin_system_audit",filters),"system_audit");
-export const getAdminSystemHealth=async()=>record(await rpc("get_admin_system_health"),"system_health");
+export const searchAdminGlobalAudit=async(filters:JsonRecord={})=>page(await rpc("search_admin_global_audit",cursorArgs(filters)),"global_audit");
+export const searchAdminFinanceAudit=async(filters:JsonRecord={})=>page(await rpc("search_admin_finance_audit",cursorArgs(filters)),"finance_audit");
+export const searchAdminSystemAudit=async(filters:JsonRecord={})=>page(await rpc("search_admin_system_audit",cursorArgs(filters)),"system_audit");
+export const getAdminSystemHealth=async()=>record(await rpc("get_admin_system_health",{},true),"system_health");
 export const searchAdminSystemJobs=async(filters:JsonRecord={})=>record(await rpc("search_admin_system_jobs",filters),"system_jobs");
 export const getAdminSystemJobDetail=async(id:string)=>record(await rpc("get_admin_system_job_detail",{p_job_id:Number(id)}),"system_job_detail");
