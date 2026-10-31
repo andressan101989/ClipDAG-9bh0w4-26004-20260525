@@ -2773,17 +2773,15 @@ export function attestSuperuserControlCenterTransition({
     runGit(['merge-base', '--is-ancestor', transition.baseline_sha, transition.integration_base_sha], { cwd });
     runGit(['merge-base', '--is-ancestor', transition.integration_base_sha, approvedSha], { cwd });
     for (const source of transition.migrations) {
-      for (const ref of [transition.reviewed_source_sha, approvedSha]) {
-        if (gitText(runGit, ['rev-parse', `${ref}:${source.path}`], cwd) !== source.blob
-          || fileTypeAtCommit(runGit, cwd, ref, source.path) !== 'file') {
-          deny(code, `Superuser Control Center migration blob/type differs from reviewed Git bytes: ${source.path}`);
-        }
-        const bytes = runGit(['show', `${ref}:${source.path}`], { cwd });
-        if (sha256Hex(bytes) !== source.sha256
-          || Buffer.from(bytes).byteLength !== source.byte_length
-          || Buffer.from(bytes).includes(13)) {
-          deny(code, `Superuser Control Center migration is not the exact reviewed Git-LF source: ${source.path}`);
-        }
+      if (gitText(runGit, ['rev-parse', `${approvedSha}:${source.path}`], cwd) !== source.blob
+        || fileTypeAtCommit(runGit, cwd, approvedSha, source.path) !== 'file') {
+        deny(code, `Superuser Control Center migration blob/type differs from reviewed Git bytes: ${source.path}`);
+      }
+      const bytes = runGit(['show', `${approvedSha}:${source.path}`], { cwd });
+      if (sha256Hex(bytes) !== source.sha256
+        || Buffer.from(bytes).byteLength !== source.byte_length
+        || Buffer.from(bytes).includes(13)) {
+        deny(code, `Superuser Control Center migration is not the exact reviewed Git-LF source: ${source.path}`);
       }
     }
     const actualChanges = parseNameStatusZ(runGit([
@@ -3539,7 +3537,8 @@ export function classifyRisk({ affectedFunctions = [], changedPaths = [], config
     if (path === '.github/nelyon-production-release-policy.json'
       || path === '.github/workflows/nelyon-production-release.yml'
       || path === 'scripts/nelyon-production-release.mjs'
-      || path === 'scripts/nelyon-production-snapshot-adapter.mjs') {
+      || path === 'scripts/nelyon-production-snapshot-adapter.mjs'
+      || path === 'scripts/nelyon-admin-production-release.mjs') {
       add(riskFinding('GATE_AUTHORITY_CHANGE', 'release-gate', path, 'release authority changed'));
     }
   }

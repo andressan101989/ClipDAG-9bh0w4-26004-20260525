@@ -221,6 +221,10 @@ test('Control Center Git attestation binds exact LF bytes, ancestry, and three-p
   const rebasedSha = 'e'.repeat(40);
   let reviewedAncestryAttempted = false;
   const rebasedRunGit = args => {
+    if (['rev-parse', 'show', 'ls-tree', 'cat-file'].includes(args[0])
+      && args.some(value => typeof value === 'string' && value.startsWith(transition.reviewed_source_sha))) {
+      throw new Error('reviewed branch object is unavailable after protected rebase merge');
+    }
     if (args[0] === 'cat-file' && args[2] === `${rebasedSha}^{commit}`) return '';
     if (args[0] === 'merge-base' && args[1] === '--is-ancestor') {
       if (args[2] === transition.reviewed_source_sha && args[3] === rebasedSha) {
@@ -3853,6 +3857,16 @@ test('Admin Web production inputs share the exact external catalog and remain hi
   assert.deepEqual(result.findings.filter(item => item.code === 'ADMIN_WEB_PRODUCTION_RESOURCE')
     .map(item => item.path).sort(), [...paths].sort());
   assert.deepEqual(gate.classifyChangedPaths(paths.map(path => ({ status: 'M', path, fileType: 'file' }))).productive, []);
+});
+
+test('Admin production release authority is HIGH risk without triggering an Admin deployment by itself', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const path = 'scripts/nelyon-admin-production-release.mjs';
+  const changes = [{ status: 'M', path, fileType: 'file' }];
+  const risk = gate.classifyRisk({ affectedFunctions: [], changedPaths: [path], configBefore: {}, configAfter: {} });
+  assert.equal(risk.level, 'HIGH');
+  assert.ok(risk.findings.some(finding => finding.code === 'GATE_AUTHORITY_CHANGE' && finding.path === path));
+  assert.deepEqual(gate.classifyChangedPaths(changes).productive, []);
 });
 
 test('Admin recovery request and manifest are source-bound and carry no Supabase resources', async () => {
