@@ -1964,6 +1964,76 @@ function adminRecoverySourceFixture(t, gate, policy) {
     adminEvidence: { directory: adminDirectory }, sourceManifest, observation, names };
 }
 
+function bindAdminSourceFixtureToPostcheckChain(fixture, gate) {
+  const originalSourceSha = 'e'.repeat(40);
+  const recoveryRunId = '777777777';
+  fixture.recoveryRequest.recoverySourceRunId = recoveryRunId;
+  fixture.recoveryManifest.recovery.source_run_id = recoveryRunId;
+  fixture.run.head_sha = originalSourceSha;
+
+  fixture.sourceManifest.identity.approved_sha = originalSourceSha;
+  fixture.sourceManifest.resources.superuser_control_center_transition.approved_sha = originalSourceSha;
+  const sourceManifestBytes = gate.canonicalJson(fixture.sourceManifest);
+  const sourceManifestSha256 = gate.sha256Hex(sourceManifestBytes);
+  const bundleDirectory = join(fixture.releaseBundle.directory, 'bundle');
+  writeFileSync(join(bundleDirectory, 'manifest.json'), sourceManifestBytes);
+  writeFileSync(join(bundleDirectory, 'manifest.sha256'), `${sourceManifestSha256}\n`);
+
+  const sourceRequestPath = join(fixture.releaseBundle.directory, 'request.json');
+  const sourceRequest = JSON.parse(readFileSync(sourceRequestPath, 'utf8'));
+  sourceRequest.approvedSha = originalSourceSha;
+  sourceRequest.mainSha = originalSourceSha;
+  writeFileSync(sourceRequestPath, gate.canonicalJson(sourceRequest));
+
+  const adminManifestPath = join(fixture.adminEvidence.directory, 'admin-web-manifest.json');
+  const adminManifest = JSON.parse(readFileSync(adminManifestPath, 'utf8'));
+  adminManifest.release.approved_sha = originalSourceSha;
+  adminManifest.release.manifest_sha256 = gate.sha256Hex(gate.canonicalJson(fixture.sourceManifest).trimEnd());
+  const adminManifestCanonical = gate.canonicalJson(adminManifest).trimEnd();
+  writeFileSync(adminManifestPath, `${adminManifestCanonical}\n`);
+  writeFileSync(join(fixture.adminEvidence.directory, 'admin-web-manifest.sha256'),
+    `${gate.sha256Hex(adminManifestCanonical)}\n`);
+  const buildPath = join(fixture.adminEvidence.directory, 'admin-web-build.json');
+  const build = JSON.parse(readFileSync(buildPath, 'utf8'));
+  build.approved_sha = originalSourceSha;
+  build.source_manifest_sha256 = gate.sha256Hex(adminManifestCanonical);
+  writeFileSync(buildPath, gate.canonicalJson(build));
+
+  fixture.observation.steps.postcheck = 'failure';
+  fixture.observation.postcheck_file_sha256 = null;
+  writeFileSync(join(fixture.gateEvidence.directory, 'release-observation.json'),
+    gate.canonicalJson(fixture.observation));
+  rmSync(join(fixture.gateEvidence.directory, 'postcheck-result.json'));
+
+  const artifactsByName = new Map(fixture.artifacts.map(item => [item.name, item]));
+  const chain = {
+    schema_version: 1,
+    result: 'ADMIN_RECOVERY_POSTCHECK_CHAIN_VERIFIED',
+    recovery_run_id: recoveryRunId,
+    recovery_run_attempt: 1,
+    recovery_release_id: 'nelyon-postcheck-recovery-20261031',
+    current_sha: fixture.recoveryRequest.approvedSha,
+    source_run_id: String(fixture.run.id),
+    source_run_attempt: fixture.run.run_attempt,
+    source_release_id: sourceRequest.releaseId,
+    source_sha: originalSourceSha,
+    source_manifest_sha256: sourceManifestSha256,
+    source_observation_sha256: gate.sha256Hex(gate.canonicalJson(fixture.observation)),
+    source_artifact_digests: {
+      release: artifactsByName.get(fixture.names.release).digest,
+      gate: artifactsByName.get(fixture.names.gate).digest,
+    },
+    recovery_artifacts: {
+      release: { id: '701', name: `nelyon-release-${recoveryRunId}-1`, digest: `sha256:${'3'.repeat(64)}` },
+      gate: { id: '702', name: `nelyon-gate-evidence-${recoveryRunId}-1`, digest: `sha256:${'4'.repeat(64)}` },
+      recovery: { id: '703', name: `nelyon-postcheck-recovery-${recoveryRunId}-1`, digest: `sha256:${'5'.repeat(64)}` },
+    },
+    recovered_evidence_sha256: '9'.repeat(64),
+    recovered_result_sha256: '8'.repeat(64),
+  };
+  return { fixture, chain, originalSourceSha, recoveryRunId };
+}
+
 async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
   const adapter = await import(`${adapterUrl.href}?recovery=${Date.now()}-${Math.random()}`);
   const requestedSource = policy.postcheck_recovery.approved_sources[sourceIndex];
@@ -2559,6 +2629,150 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     post_evidence_sha256: source.post_snapshot_evidence_sha256,
   };
   return { adapterSourceSha256, controlledPolicy, recoveryRequest, recoveryManifest, sourceManifest, sourceObservation, currentEvidence };
+}
+
+async function adminPostcheckRecoveryChainFixture(t, gate, policy) {
+  const state = await recoveryStateFixture(t, gate, policy, 0);
+  const root = mkdtempSync(join(tmpdir(), 'nelyon-admin-postcheck-chain-'));
+  t.after(() => rmSync(root, { force: true, recursive: true }));
+  const releaseDirectory = join(root, 'release');
+  const gateDirectory = join(root, 'gate');
+  const recoveryDirectory = join(root, 'recovery');
+  const bundleDirectory = join(releaseDirectory, 'bundle');
+  mkdirSync(bundleDirectory, { recursive: true });
+  mkdirSync(gateDirectory, { recursive: true });
+  mkdirSync(recoveryDirectory, { recursive: true });
+
+  const chainRequest = structuredClone(state.recoveryRequest);
+  const chainManifest = structuredClone(state.recoveryManifest);
+  const chainManifestBytes = gate.canonicalJson(chainManifest);
+  const chainManifestSha256 = gate.sha256Hex(chainManifestBytes);
+  writeFileSync(join(bundleDirectory, 'manifest.json'), chainManifestBytes);
+  writeFileSync(join(bundleDirectory, 'manifest.sha256'), `${chainManifestSha256}\n`);
+  writeFileSync(join(bundleDirectory, 'summary.md'), '# postcheck recovery source\n');
+  writeFileSync(join(releaseDirectory, 'request.json'), gate.canonicalJson(chainRequest));
+  writeFileSync(join(releaseDirectory, 'remote-evidence.json'), '{}\n');
+
+  const policySha256 = '7'.repeat(64);
+  const gateProof = {
+    schema_version: 1,
+    result: 'GATE_VERIFIED',
+    run_id: chainRequest.runId,
+    run_attempt: chainRequest.runAttempt,
+    environment: { id: state.controlledPolicy.environment.id, name: state.controlledPolicy.environment.name },
+    release_id: chainRequest.releaseId,
+    approved_sha: chainRequest.approvedSha,
+    policy_sha256: policySha256,
+    manifest_sha256: chainManifestSha256,
+    authorization_mode: state.controlledPolicy.environment.authorization_mode,
+    auto_deploy_expectation: { declared_state: 'OFF' },
+    approval_token_sha256: null,
+  };
+  writeFileSync(join(gateDirectory, 'gate-proof.json'), gate.canonicalJson(gateProof));
+
+  const source = state.controlledPolicy.postcheck_recovery.approved_sources[0];
+  const sourceManifestSha256 = gate.sha256Hex(gate.canonicalJson(state.sourceManifest));
+  source.manifest_sha256 = sourceManifestSha256;
+  const verifiedSource = {
+    schema_version: 1,
+    result: 'RECOVERY_SOURCE_VERIFIED',
+    source_run_id: source.run_id,
+    source_release_id: source.release_id,
+    source_sha: source.source_sha,
+    manifest_sha256: source.manifest_sha256,
+    source_artifact_digests: {
+      gate: source.gate_artifact.digest,
+      release: source.release_artifact.digest,
+    },
+    source_manifest: state.sourceManifest,
+    source_request: {
+      actor: state.controlledPolicy.owner,
+      triggeringActor: state.controlledPolicy.owner,
+      repository: state.controlledPolicy.repository,
+      ref: 'refs/heads/main',
+      workflowRef: `${state.controlledPolicy.repository}/${state.controlledPolicy.workflow_path}@refs/heads/main`,
+      approvedSha: source.source_sha,
+      mainSha: source.source_sha,
+      releaseId: source.release_id,
+      mode: 'release',
+      scopeConfirmation: 'RELEASE_HIGH_RISK',
+      runId: source.run_id,
+      runAttempt: source.run_attempt,
+    },
+    source_observation: state.sourceObservation,
+  };
+  const recoveryResult = gate.verifyPostcheckRecovery({
+    policy: state.controlledPolicy,
+    recoveryRequest: chainRequest,
+    recoveryManifest: chainManifest,
+    sourceManifest: state.sourceManifest,
+    sourceObservation: state.sourceObservation,
+    currentEvidence: state.currentEvidence,
+    adapterSourceSha256: state.adapterSourceSha256,
+  });
+  writeFileSync(join(recoveryDirectory, 'verified-source.json'), gate.canonicalJson(verifiedSource));
+  writeFileSync(join(recoveryDirectory, 'production-recovery.json'), gate.canonicalJson(state.currentEvidence));
+  writeFileSync(join(recoveryDirectory, 'postcheck-recovery-result.json'), gate.canonicalJson(recoveryResult));
+
+  const chainRunId = String(chainRequest.runId);
+  const chainRunAttempt = chainRequest.runAttempt;
+  const names = {
+    release: `nelyon-release-${chainRunId}-${chainRunAttempt}`,
+    gate: `nelyon-gate-evidence-${chainRunId}-${chainRunAttempt}`,
+    recovery: `nelyon-postcheck-recovery-${chainRunId}-${chainRunAttempt}`,
+  };
+  const artifacts = Object.values(names).map((name, index) => ({
+    id: index + 700,
+    name,
+    expired: false,
+    digest: `sha256:${String(index + 3).repeat(64).slice(0, 64)}`,
+  }));
+  const run = {
+    id: Number(chainRunId),
+    run_attempt: chainRunAttempt,
+    status: 'completed',
+    conclusion: 'success',
+    event: 'workflow_dispatch',
+    head_sha: chainRequest.approvedSha,
+    head_branch: 'main',
+    path: state.controlledPolicy.workflow_path,
+    repository: { full_name: state.controlledPolicy.repository },
+  };
+  const recoveryRequest = request({
+    runId: '223456789',
+    releaseId: 'nelyon-admin-chain-recovery-20261031',
+    mode: 'admin_recovery',
+    scopeConfirmation: 'ADMIN_RECOVERY_EXACT_SOURCE',
+    recoverySourceRunId: chainRunId,
+    productiveResources: [],
+  });
+  const recoveryManifest = {
+    identity: {
+      approved_sha: recoveryRequest.approvedSha,
+      mode: 'admin_recovery',
+      release_id: recoveryRequest.releaseId,
+      run_id: recoveryRequest.runId,
+      run_attempt: recoveryRequest.runAttempt,
+    },
+    recovery: { kind: 'admin_cloudflare_forward_completion', source_run_id: chainRunId },
+    resources: { config_changed: false, function_contracts: [], functions: [], migrations: [] },
+  };
+  return {
+    policy: state.controlledPolicy,
+    policySha256,
+    recoveryRequest,
+    recoveryManifest,
+    run,
+    artifacts,
+    releaseBundle: { directory: releaseDirectory },
+    gateEvidence: { directory: gateDirectory },
+    recoveryEvidence: { directory: recoveryDirectory },
+    adapterSourceSha256: state.adapterSourceSha256,
+    names,
+    source,
+    verifiedSource,
+    recoveryResult,
+  };
 }
 
 test('policy accepts the exact repository owner project modes and managed functions', async () => {
@@ -3958,6 +4172,99 @@ test('Admin recovery source provenance fails closed on SHA, artifacts, postcheck
   writeFileSync(observationPath, gate.canonicalJson(fixture.observation));
 });
 
+test('Admin recovery accepts only an exact successful postcheck recovery chain and recomputes its evidence', async (t) => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = await adminPostcheckRecoveryChainFixture(t, gate, policy);
+  const verified = gate.verifyAdminRecoveryPostcheckChainProvenance(fixture);
+  assert.equal(verified.result, 'ADMIN_RECOVERY_POSTCHECK_CHAIN_VERIFIED');
+  assert.equal(verified.recovery_run_id, fixture.recoveryRequest.recoverySourceRunId);
+  assert.equal(verified.source_run_id, fixture.source.run_id);
+  assert.equal(verified.source_sha, fixture.source.source_sha);
+  assert.equal(verified.recovered_evidence_sha256, fixture.recoveryResult.current_evidence_sha256);
+  assert.deepEqual(verified.source_artifact_digests, fixture.verifiedSource.source_artifact_digests);
+
+  for (const [label, mutate, expectedCode = 'ADMIN_RECOVERY_POSTCHECK_CHAIN_MISMATCH'] of [
+    ['run conclusion', value => { value.run.conclusion = 'failure'; }],
+    ['run sha', value => { value.run.head_sha = 'f'.repeat(40); }],
+    ['artifact digest format', value => { value.artifacts[0].digest = 'sha256:invalid'; }],
+    ['request source', value => {
+      const path = join(value.releaseBundle.directory, 'request.json');
+      const body = JSON.parse(readFileSync(path, 'utf8'));
+      body.recoverySourceRunId = '1';
+      writeFileSync(path, gate.canonicalJson(body));
+    }],
+    ['nested source', value => {
+      const path = join(value.recoveryEvidence.directory, 'verified-source.json');
+      const body = JSON.parse(readFileSync(path, 'utf8'));
+      body.source_request.mode = 'postcheck_recovery';
+      body.source_request.recoverySourceRunId = '1';
+      writeFileSync(path, gate.canonicalJson(body));
+    }],
+    ['missing source manifest', value => {
+      const path = join(value.recoveryEvidence.directory, 'verified-source.json');
+      const body = JSON.parse(readFileSync(path, 'utf8'));
+      delete body.source_manifest;
+      writeFileSync(path, gate.canonicalJson(body));
+    }],
+    ['snapshot', value => {
+      const path = join(value.recoveryEvidence.directory, 'production-recovery.json');
+      const body = JSON.parse(readFileSync(path, 'utf8'));
+      body.evidence_sha256 = '0'.repeat(64);
+      writeFileSync(path, gate.canonicalJson(body));
+    }],
+    ['stored result', value => {
+      const path = join(value.recoveryEvidence.directory, 'postcheck-recovery-result.json');
+      const body = JSON.parse(readFileSync(path, 'utf8'));
+      body.current_evidence_sha256 = '0'.repeat(64);
+      writeFileSync(path, gate.canonicalJson(body));
+    }],
+  ]) {
+    const hostile = await adminPostcheckRecoveryChainFixture(t, gate, policy);
+    mutate(hostile);
+    try {
+      assertDenied(() => gate.verifyAdminRecoveryPostcheckChainProvenance(hostile), expectedCode);
+    } catch (error) {
+      error.message = `${label}: ${error.message}`;
+      throw error;
+    }
+  }
+});
+
+test('Admin recovery uses a verified postcheck recovery chain for DB proof without weakening direct recovery', async (t) => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const direct = adminRecoverySourceFixture(t, gate, policy);
+  const { fixture, chain, originalSourceSha, recoveryRunId } = bindAdminSourceFixtureToPostcheckChain(direct, gate);
+
+  assertDenied(() => gate.verifyAdminRecoverySourceProvenance(fixture), 'ADMIN_RECOVERY_SOURCE_MISMATCH');
+  const verified = gate.verifyAdminRecoverySourceProvenance({
+    ...fixture,
+    postcheckRecoveryChain: chain,
+  });
+  assert.equal(verified.result, 'ADMIN_RECOVERY_SOURCE_VERIFIED');
+  assert.equal(verified.source_run_id, recoveryRunId);
+  assert.equal(verified.source_sha, fixture.recoveryRequest.approvedSha);
+  assert.equal(verified.original_source_run_id, String(fixture.run.id));
+  assert.equal(verified.original_source_sha, originalSourceSha);
+  assert.equal(verified.source_cloudflare_prestate.active_version_id,
+    '11111111-1111-4111-8111-111111111111');
+
+  for (const mutate of [
+    value => { value.recovery_run_id = '1'; },
+    value => { value.current_sha = 'f'.repeat(40); },
+    value => { value.source_run_id = '1'; },
+    value => { value.source_manifest_sha256 = '0'.repeat(64); },
+    value => { value.source_observation_sha256 = '0'.repeat(64); },
+    value => { value.source_artifact_digests.release = `sha256:${'0'.repeat(64)}`; },
+  ]) {
+    const hostile = structuredClone(chain);
+    mutate(hostile);
+    assertDenied(() => gate.verifyAdminRecoverySourceProvenance({
+      ...fixture,
+      postcheckRecoveryChain: hostile,
+    }), 'ADMIN_RECOVERY_SOURCE_MISMATCH');
+  }
+});
+
 test('Admin recovery Cloudflare pre-state is source-bound and rejects version, zone, or route drift', async (t) => {
   const { gate, policy } = await loadGateAndPolicy();
   const fixture = adminRecoverySourceFixture(t, gate, policy);
@@ -4935,13 +5242,18 @@ test('postcheck recovery permits reconciled concurrent finance rows but rejects 
 
 test('recovery CLI dispatchers expose only fixed read-only verification inputs', () => {
   const source = readFileSync(gateUrl, 'utf8');
+  const adminChainStart = source.indexOf("if (command === 'verify-admin-recovery-postcheck-chain')");
   const adminVerifyStart = source.indexOf("if (command === 'verify-admin-recovery-source')");
   const adminPostcheckStart = source.indexOf("if (command === 'postcheck-admin-recovery')");
   const verifyStart = source.indexOf("if (command === 'verify-recovery-source')");
   const postcheckStart = source.indexOf("if (command === 'postcheck-recovery')");
   const nextCommand = source.indexOf("if (command === 'verify-function-contract')", postcheckStart);
-  assert.ok(adminVerifyStart > 0 && adminPostcheckStart > adminVerifyStart && verifyStart > adminPostcheckStart
+  assert.ok(adminChainStart > 0 && adminVerifyStart > adminChainStart
+    && adminPostcheckStart > adminVerifyStart && verifyStart > adminPostcheckStart
     && postcheckStart > verifyStart && nextCommand > postcheckStart);
+  const adminChainDispatcher = source.slice(adminChainStart, adminVerifyStart);
+  assert.match(adminChainDispatcher, /verifyAdminRecoveryPostcheckChainProvenance/);
+  assert.doesNotMatch(adminChainDispatcher, /execFileSync|spawn|supabase\s+(?:db|migration|functions)|--command|child_process/);
   const adminRecoveryDispatcher = source.slice(adminVerifyStart, verifyStart);
   assert.match(adminRecoveryDispatcher, /verifyAdminRecoverySourceProvenance/);
   assert.match(adminRecoveryDispatcher, /verifyAdminRecoveryPostcheck/);
@@ -4951,6 +5263,7 @@ test('recovery CLI dispatchers expose only fixed read-only verification inputs',
   assert.match(recoveryDispatcher, /verifyPostcheckRecovery/);
   assert.doesNotMatch(recoveryDispatcher, /execFileSync|spawn|supabase\s+(?:db|migration|functions)|--command|child_process/);
   assert.match(source, /verify-recovery-source\|postcheck-recovery/);
+  assert.match(source, /verify-admin-recovery-postcheck-chain\|verify-admin-recovery-source/);
   assert.match(source, /verify-admin-recovery-source\|postcheck-admin-recovery/);
 });
 
