@@ -4765,6 +4765,100 @@ export function verifyAdminRecoveryCloudflarePrestate({
   };
 }
 
+export function reconstructHistoricalAdvisorBaselineForRecovery({
+  policy,
+  migrations,
+  advisorItems,
+  recoveryExceptions,
+  code = 'RECOVERY_POSTCHECK_FAILED',
+}) {
+  if (!Array.isArray(migrations?.items) || !Array.isArray(advisorItems)
+    || !Array.isArray(recoveryExceptions)) {
+    deny(code, 'Security Advisor recovery inputs are incomplete');
+  }
+  const installedMigrationNames = new Set(
+    migrations.items.map(item => `${item?.version}_${item?.name}`),
+  );
+  const transitionIsInstalled = (paths, label) => {
+    if (!Array.isArray(paths) || paths.length < 1
+      || paths.some(path => typeof path !== 'string' || !path.endsWith('.sql'))) {
+      deny(code, `${label} migration authority is incomplete`);
+    }
+    const states = paths.map(path => (
+      installedMigrationNames.has(path.split('/').at(-1).replace(/\.sql$/, ''))
+    ));
+    if (states.some(Boolean) && !states.every(Boolean)) {
+      deny(code, `${label} migration authority is only partially installed`);
+    }
+    return states.every(Boolean);
+  };
+  const restoredHistoricalFindings = [];
+  const appendHistoricalFinding = (finding, label) => {
+    const projected = {
+      fingerprint: finding?.fingerprint ?? finding?.advisor_fingerprint,
+      level: finding?.level ?? finding?.advisor_severity,
+      resource_kind: finding?.resource_kind ?? finding?.advisor_type,
+    };
+    if (!/^[0-9a-f]{64}$/.test(projected.fingerprint ?? '')
+      || typeof projected.level !== 'string' || projected.level.length < 1
+      || typeof projected.resource_kind !== 'string' || projected.resource_kind.length < 1
+      || restoredHistoricalFindings.some(item => item.fingerprint === projected.fingerprint)) {
+      deny(code, `${label} historical Advisor finding is malformed or duplicated`);
+    }
+    restoredHistoricalFindings.push(projected);
+  };
+  if (transitionIsInstalled(
+    [policy?.stories_b1_transition?.migration_path],
+    'Stories B1',
+  )) {
+    const transition = policy?.stories_b1_transition?.security_advisor;
+    if (!Array.isArray(transition?.introduced_exceptions)
+      || transition.introduced_exceptions.length !== 15
+      || !Array.isArray(transition?.removed_findings)
+      || transition.removed_findings.length !== 2) {
+      deny(code, 'Stories B1 Advisor transition is incomplete');
+    }
+    transition.removed_findings.forEach(item => appendHistoricalFinding(item, 'Stories B1'));
+  }
+  if (transitionIsInstalled(
+    [policy?.stories_qa_c1_transition?.migration_path],
+    'Stories QA C1',
+  )) {
+    appendHistoricalFinding(
+      policy?.stories_qa_c1_transition?.rpc_predecessor_exception,
+      'Stories QA C1',
+    );
+  }
+  if (transitionIsInstalled(
+    policy?.superuser_control_center_transition?.migrations?.map(item => item?.path),
+    'Superuser Control Center',
+  )) {
+    appendHistoricalFinding(
+      policy?.superuser_control_center_transition?.security_advisor?.predecessor_exception,
+      'Superuser Control Center',
+    );
+  }
+
+  const exceptionFingerprints = new Set(
+    recoveryExceptions.map(item => item?.advisor_fingerprint),
+  );
+  if (exceptionFingerprints.has(undefined)
+    || exceptionFingerprints.size !== recoveryExceptions.length) {
+    deny(code, 'Security Advisor recovery exceptions are malformed or duplicated');
+  }
+  for (const historical of restoredHistoricalFindings) {
+    const present = advisorItems.filter(item => item?.fingerprint === historical.fingerprint);
+    if (present.length > 1 || (present.length === 1
+      && !exceptionFingerprints.has(historical.fingerprint))) {
+      deny(code, 'a replaced historical Advisor finding remains active without exact approval');
+    }
+  }
+  return [
+    ...advisorItems.filter(item => !exceptionFingerprints.has(item?.fingerprint)),
+    ...restoredHistoricalFindings,
+  ].sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+}
+
 export function verifyPostcheckRecovery({
   policy,
   recoveryRequest,
@@ -4816,6 +4910,7 @@ export function verifyPostcheckRecovery({
     adapterSourceSha256,
   });
   const controlCenterRecovery = source.run_id === '41243646356';
+  const storiesB1Recovery = source.run_id === '40473092474';
   if (controlCenterRecovery) {
     try {
       verifyAdminRecoveryInfrastructurePostState({ post: currentEvidence, policy });
@@ -4897,26 +4992,13 @@ export function verifyPostcheckRecovery({
   const exceptionFingerprints = new Set(recoveryExceptions.map(item => item.advisor_fingerprint));
   const exceptionByFingerprint = new Map(recoveryExceptions.map(item => [item.advisor_fingerprint, item]));
   const presentExceptions = advisorItems.filter(item => exceptionFingerprints.has(item.fingerprint));
-  const baselineItems = advisorItems.filter(item => !exceptionFingerprints.has(item.fingerprint));
-  const storiesB1Recovery = source.run_id === '40473092474';
-  const storiesAdvisorTransition = storiesB1Recovery
-    ? policy?.stories_b1_transition?.security_advisor
-    : null;
-  const removedStoriesFindings = storiesB1Recovery
-    ? storiesAdvisorTransition?.removed_findings?.map(item => ({
-      fingerprint: item.fingerprint,
-      level: item.level,
-      resource_kind: item.resource_kind,
-    }))
-    : [];
-  if (storiesB1Recovery && (!Array.isArray(storiesAdvisorTransition?.introduced_exceptions)
-    || storiesAdvisorTransition.introduced_exceptions.length !== 15
-    || !Array.isArray(removedStoriesFindings) || removedStoriesFindings.length !== 2
-    || removedStoriesFindings.some(item => advisorItems.some(current => current.fingerprint === item.fingerprint)))) {
-    deny(code, 'Stories B1 Advisor transition is incomplete or a replaced finding is still present');
-  }
-  const reconstructedBaselineItems = [...baselineItems, ...removedStoriesFindings]
-    .sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+  const reconstructedBaselineItems = reconstructHistoricalAdvisorBaselineForRecovery({
+    policy,
+    migrations,
+    advisorItems,
+    recoveryExceptions,
+    code,
+  });
   let baselineCronItems = currentEvidence.cron_security.cron.items;
   const postF5Recovery = ['40324910390', '40473092474', '41243646356']
     .includes(source.run_id);
@@ -4950,7 +5032,15 @@ export function verifyPostcheckRecovery({
     })
     || reconstructedBaselineItems.length !== policy.security_advisor.baseline.count
     || sha256Hex(canonicalJson(reconstructedBaseline)) !== policy.security_advisor.baseline.cron_security_sha256) {
-    deny(code, 'current Security Advisor set is not the historical baseline plus the exact approved exceptions');
+    deny(code, 'current Security Advisor set is not the historical baseline plus the exact approved exceptions', {
+      expected_exception_count: exceptionFingerprints.size,
+      present_exception_count: presentExceptions.length,
+      current_advisor_count: advisorItems.length,
+      expected_baseline_count: policy.security_advisor.baseline.count,
+      reconstructed_baseline_count: reconstructedBaselineItems.length,
+      expected_baseline_sha256: policy.security_advisor.baseline.cron_security_sha256,
+      reconstructed_baseline_sha256: sha256Hex(canonicalJson(reconstructedBaseline)),
+    });
   }
 
   if (canonicalJson(currentEvidence.premium_state.legacy) !== canonicalJson(source.premium_legacy)

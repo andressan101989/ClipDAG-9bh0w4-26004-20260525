@@ -2632,6 +2632,20 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     level: 'WARN',
     resource_kind: 'table',
   }));
+  const replacedHistoricalAdvisorFindings = isControlCenterRecovery ? [
+    {
+      fingerprint: controlledPolicy.superuser_control_center_transition.security_advisor
+        .predecessor_exception.advisor_fingerprint,
+      level: controlledPolicy.superuser_control_center_transition.security_advisor
+        .predecessor_exception.advisor_severity,
+      resource_kind: controlledPolicy.superuser_control_center_transition.security_advisor
+        .predecessor_exception.advisor_type,
+    },
+  ] : [];
+  if (replacedHistoricalAdvisorFindings.length > 0) {
+    baselineAdvisorItems.splice(0, replacedHistoricalAdvisorFindings.length,
+      ...replacedHistoricalAdvisorFindings);
+  }
   const expectedF5RelationFindings = isPostF5Recovery ? [
     {
       fingerprint: '70d2706125a8861824f9c876848c472a28bde6db0813543ba97ec3409516967f',
@@ -2645,11 +2659,18 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     },
   ] : [];
   const selectedFingerprints = new Set(recoveryExceptions.map(exception => exception.advisor_fingerprint));
-  const advisorItems = [...baselineAdvisorItems, ...recoveryExceptions.map(exception => ({
+  const replacedHistoricalFingerprints = new Set(
+    replacedHistoricalAdvisorFindings.map(item => item.fingerprint),
+  );
+  const advisorItems = [
+    ...baselineAdvisorItems.filter(item => !replacedHistoricalFingerprints.has(item.fingerprint)),
+    ...recoveryExceptions.map(exception => ({
     fingerprint: exception.advisor_fingerprint,
     level: exception.advisor_severity,
     resource_kind: exception.advisor_type,
-  })), ...expectedF5RelationFindings.filter(item => !selectedFingerprints.has(item.fingerprint))]
+    })),
+    ...expectedF5RelationFindings.filter(item => !selectedFingerprints.has(item.fingerprint)),
+  ]
     .sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
   currentEvidence.cron_security.advisors = {
     complete: true,
@@ -2707,7 +2728,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       level: item.level,
       resource_kind: item.resource_kind,
     }))].sort((left, right) => left.fingerprint.localeCompare(right.fingerprint))
-    : baselineAdvisorItems;
+    : [...baselineAdvisorItems].sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
   controlledPolicy.security_advisor.baseline.cron_security_sha256 = gate.sha256Hex(gate.canonicalJson({
     complete: true,
     cron: adapter.projectCronBaselineItems(reviewedCronItems, true),
@@ -5207,6 +5228,74 @@ test('Stories B1 recovery verifies exact deployed state, 552 plus two Advisor re
   assertDenied(() => verify(attributed), 'RELEASE_ATTRIBUTED_FINANCE');
 });
 
+test('recovery reconstructs all installed Advisor predecessors while retaining the approved QA exception', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const project = finding => ({
+    fingerprint: finding.fingerprint ?? finding.advisor_fingerprint,
+    level: finding.level ?? finding.advisor_severity,
+    resource_kind: finding.resource_kind ?? finding.advisor_type,
+  });
+  const restored = [
+    ...policy.stories_b1_transition.security_advisor.removed_findings.map(project),
+    project(policy.stories_qa_c1_transition.rpc_predecessor_exception),
+    project(policy.superuser_control_center_transition.security_advisor.predecessor_exception),
+  ];
+  const filler = Array.from({ length: policy.security_advisor.baseline.count - restored.length },
+    (_, index) => ({
+      fingerprint: gate.sha256Hex(`historical-advisor-${index}`),
+      level: 'WARN',
+      resource_kind: 'table',
+    }));
+  const historicalBaseline = [...filler, ...restored]
+    .sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+  const qaPredecessor = policy.stories_qa_c1_transition.rpc_predecessor_exception;
+  const absentCurrentFingerprints = new Set([
+    ...policy.stories_b1_transition.security_advisor.removed_findings
+      .map(item => item.fingerprint),
+    policy.superuser_control_center_transition.security_advisor.predecessor_exception
+      .advisor_fingerprint,
+  ]);
+  const currentAdvisorItems = historicalBaseline
+    .filter(item => !absentCurrentFingerprints.has(item.fingerprint));
+  assert.ok(currentAdvisorItems.some(item => item.fingerprint === qaPredecessor.advisor_fingerprint),
+    'QA predecessor remains an exact approved current exception');
+  const transitionPaths = [
+    policy.stories_b1_transition.migration_path,
+    policy.stories_qa_c1_transition.migration_path,
+    ...policy.superuser_control_center_transition.migrations.map(item => item.path),
+  ];
+  const migrations = {
+    items: transitionPaths.map(path => {
+      const identity = path.split('/').at(-1).replace(/\.sql$/, '');
+      return { version: identity.slice(0, 14), name: identity.slice(15) };
+    }),
+  };
+  assert.deepEqual(gate.reconstructHistoricalAdvisorBaselineForRecovery({
+    policy,
+    migrations,
+    advisorItems: currentAdvisorItems,
+    recoveryExceptions: [qaPredecessor],
+  }), historicalBaseline);
+
+  const stalePredecessor = [
+    ...currentAdvisorItems,
+    project(policy.stories_b1_transition.security_advisor.removed_findings[0]),
+  ];
+  assert.throws(() => gate.reconstructHistoricalAdvisorBaselineForRecovery({
+    policy,
+    migrations,
+    advisorItems: stalePredecessor,
+    recoveryExceptions: [qaPredecessor],
+  }), /replaced historical Advisor finding remains active without exact approval/);
+
+  assert.throws(() => gate.reconstructHistoricalAdvisorBaselineForRecovery({
+    policy,
+    migrations: { items: migrations.items.slice(0, -1) },
+    advisorItems: currentAdvisorItems,
+    recoveryExceptions: [qaPredecessor],
+  }), /Superuser Control Center migration authority is only partially installed/);
+});
+
 test('Control Center recovery verifies exact installed authority, three-migration append, and post-F5 finance', async t => {
   const { gate, policy } = await loadGateAndPolicy();
   const adapter = await import(`${adapterUrl.href}?control-center-recovery=${Date.now()}-${Math.random()}`);
@@ -5231,8 +5320,18 @@ test('Control Center recovery verifies exact installed authority, three-migratio
     { request: fixture.recoveryRequest, migrations: fixture.currentEvidence.migrations },
   );
   const recoveryFingerprints = new Set(recoveryExceptions.map(item => item.advisor_fingerprint));
-  const reconstructedAdvisorItems = fixture.currentEvidence.cron_security.advisors.items
-    .filter(item => !recoveryFingerprints.has(item.fingerprint));
+  const reconstructedAdvisorItems = [
+    ...fixture.currentEvidence.cron_security.advisors.items
+      .filter(item => !recoveryFingerprints.has(item.fingerprint)),
+    {
+      fingerprint: fixture.controlledPolicy.superuser_control_center_transition.security_advisor
+        .predecessor_exception.advisor_fingerprint,
+      level: fixture.controlledPolicy.superuser_control_center_transition.security_advisor
+        .predecessor_exception.advisor_severity,
+      resource_kind: fixture.controlledPolicy.superuser_control_center_transition.security_advisor
+        .predecessor_exception.advisor_type,
+    },
+  ].sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
   assert.equal(reconstructedAdvisorItems.length,
     fixture.controlledPolicy.security_advisor.baseline.count);
   assert.equal(gate.sha256Hex(gate.canonicalJson({
