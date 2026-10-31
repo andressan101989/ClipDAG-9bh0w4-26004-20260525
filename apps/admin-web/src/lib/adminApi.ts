@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import {adminFunctionRejectionCode,type AdminFunctionRejectionCode} from "./adminCommandRetry";
 
 export const ranges = ["7d", "30d", "90d", "all"] as const;
 export type AdminRange = (typeof ranges)[number];
@@ -43,8 +44,20 @@ const money=(value:unknown,name:string):Money=>(typeof value==="string"||typeof 
 const nullableMoney=(value:unknown,name:string)=>value===null?null:money(value,name);
 const range=(value:unknown):AdminRange=>ranges.includes(value as AdminRange)?value as AdminRange:invalid("range");
 
-export class AdminRpcError extends Error{code:string|null;status:number|undefined;constructor(message:string,code?:string|null,status?:number){super(message);this.name="AdminRpcError";this.code=code||null;this.status=status}}
-function adminFunctionFailure(error:{message?:string;context?:unknown},fallback:string){const context=error.context;const status=context&&typeof context==="object"&&"status" in context&&typeof context.status==="number"?context.status:undefined;return new AdminRpcError(error.message||fallback,null,status)}
+export class AdminRpcError extends Error{code:string|null;status:number|undefined;rejectionCode:AdminFunctionRejectionCode|null;constructor(message:string,code?:string|null,status?:number,rejectionCode:AdminFunctionRejectionCode|null=null){super(message);this.name="AdminRpcError";this.code=code||null;this.status=status;this.rejectionCode=rejectionCode}}
+async function adminFunctionFailure(error:{message?:string;context?:unknown},fallback:string){
+  const context=error.context;
+  const status=context&&typeof context==="object"&&"status" in context&&typeof context.status==="number"?context.status:undefined;
+  let rejectionCode:AdminFunctionRejectionCode|null=null;
+  if(context instanceof Response){
+    try{
+      const body:unknown=await context.clone().json();
+      if(body&&typeof body==="object"&&"error" in body)rejectionCode=adminFunctionRejectionCode(status,body.error);
+    }catch{ /* Missing/unreadable response remains uncertain. */ }
+  }
+  // Retain only an allowlisted discriminator; never expose response SQL/details.
+  return new AdminRpcError(error.message||fallback,null,status,rejectionCode);
+}
 async function rpc(name:string,args:Record<string,unknown>={}){const {data,error}=await supabase.rpc(name,args);if(error)throw new AdminRpcError(error.message||"No se pudo consultar Marketplace",error.code);return data as unknown;}
 export function isAmbiguousAdminMutationError(error:unknown){return!(error instanceof AdminRpcError)||!error.code||/^PGRST00[0-3]$/.test(error.code)}
 
@@ -301,14 +314,14 @@ export async function getAdminUserDetail(id:string):Promise<AdminUserDetail>{
 export async function moderateAdminUser(input:{targetUserId:string;action:"suspend"|"restore";reason:string;idempotencyKey:string}){
   uuid(input.targetUserId,"targetUserId");uuid(input.idempotencyKey,"idempotencyKey");
   const {data,error}=await supabase.functions.invoke("admin-user-moderation",{body:{target_user_id:input.targetUserId,action:input.action,reason:input.reason,idempotency_key:input.idempotencyKey}});
-  if(error)throw adminFunctionFailure(error,"No se pudo moderar la cuenta");
+  if(error)throw await adminFunctionFailure(error,"No se pudo moderar la cuenta");
   return object(data,"user_moderation_receipt");
 }
 
 export async function issueAdminUserWarning(input:{targetUserId:string;reason:string;internalNote?:string;evidenceType?:string;evidenceId?:string;evidenceNote?:string;idempotencyKey:string}){
   uuid(input.targetUserId,"targetUserId");uuid(input.idempotencyKey,"idempotencyKey");if(input.evidenceId)uuid(input.evidenceId,"evidenceId");
   const {data,error}=await supabase.functions.invoke("admin-user-moderation",{body:{target_user_id:input.targetUserId,action:"issue_warning",reason:input.reason,internal_note:input.internalNote||null,evidence_type:input.evidenceType||null,evidence_id:input.evidenceId||null,evidence_note:input.evidenceNote||null,idempotency_key:input.idempotencyKey}});
-  if(error)throw adminFunctionFailure(error,"No se pudo emitir la advertencia");
+  if(error)throw await adminFunctionFailure(error,"No se pudo emitir la advertencia");
   return object(data,"user_warning_receipt");
 }
 

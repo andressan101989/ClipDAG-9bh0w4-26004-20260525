@@ -13,14 +13,33 @@ export function acquireAdminCommandAttempt(
   return { signature, idempotencyKey: createId() };
 }
 
+// Verified pre-mutation/domain responses from the canonical user-moderation Edge.
+// warning_failed, prepare_failed and command_mismatch do not prove non-application.
+const adminFunctionRejections = {
+  invalid_request: 400,
+  warning_limit_reached: 400,
+  unauthorized: 401,
+  forbidden: 403,
+  idempotency_conflict: 409,
+} as const;
+export type AdminFunctionRejectionCode = keyof typeof adminFunctionRejections;
+
+export function adminFunctionRejectionCode(status: number | undefined, code: unknown): AdminFunctionRejectionCode | null {
+  if (typeof code !== "string" || !Object.prototype.hasOwnProperty.call(adminFunctionRejections, code)) return null;
+  const recognized = code as AdminFunctionRejectionCode;
+  return adminFunctionRejections[recognized] === status ? recognized : null;
+}
+
 // Only positive evidence of a rejection retires an uncertain command. Transport
 // errors (including malformed/lost receipts), timeouts and server failures keep it.
 export function isDefinitiveAdminCommandFailure(cause: unknown): boolean {
   if (!cause || typeof cause !== "object") return false;
-  const error = cause as { code?: unknown; status?: unknown };
+  const error = cause as { code?: unknown; status?: unknown; rejectionCode?: unknown };
   const status = Number(error.status);
   if (status >= 500 || status === 408 || status === 429) return false;
-  if (status >= 400 && status < 500) return [400, 401, 403, 404, 405, 406, 409, 410, 413, 415, 422].includes(status);
+  // HTTP status alone is not proof: this Edge also returns 400 after an
+  // upstream RPC response is lost, even when the warning already committed.
+  if (adminFunctionRejectionCode(status, error.rejectionCode)) return true;
   const code = String(error.code ?? "");
   if (["42501", "28000", "28P01", "PGRST301", "PGRST302", "PGRST303"].includes(code)) return true;
   // Connection, transaction, cancellation and availability failures stay uncertain.
