@@ -57,6 +57,9 @@ jobs:
       artifact_name: ${{ steps.expose.outputs.artifact_name }}
       recovery_release_artifact_name: ${{ steps.expose.outputs.recovery_release_artifact_name }}
       recovery_gate_artifact_name: ${{ steps.expose.outputs.recovery_gate_artifact_name }}
+      admin_enabled: ${{ steps.expose.outputs.admin_enabled }}
+      admin_digest: ${{ steps.expose.outputs.admin_digest }}
+      admin_artifact_name: ${{ steps.expose.outputs.admin_artifact_name }}
     steps:
       - name: Checkout exact approved SHA
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -147,6 +150,16 @@ jobs:
             --evidence-output release-input/remote-evidence.json \
             --output release-artifact/bundle
 
+      - name: Create immutable Admin Web manifest
+        run: |
+          set -euo pipefail
+          mkdir -p admin-release-artifact
+          node scripts/nelyon-admin-production-release.mjs plan \
+            --approved-sha "${{ inputs.approved_sha }}" \
+            --release-manifest release-artifact/bundle/manifest.json \
+            --output admin-release-artifact/admin-web-manifest.json \
+            --digest-output admin-release-artifact/admin-web-manifest.sha256
+
       - name: Expose non-secret plan outputs
         id: expose
         env:
@@ -158,6 +171,7 @@ jobs:
           node --input-type=module <<'NODE'
           import { appendFileSync, readFileSync } from 'node:fs';
           const manifest = JSON.parse(readFileSync('release-artifact/bundle/manifest.json', 'utf8'));
+          const admin = JSON.parse(readFileSync('admin-release-artifact/admin-web-manifest.json', 'utf8'));
           const policy = JSON.parse(readFileSync('.github/nelyon-production-release-policy.json', 'utf8'));
           const request = JSON.parse(readFileSync('release-input/request.json', 'utf8'));
           const digest = readFileSync('release-artifact/bundle/manifest.sha256', 'utf8').trim();
@@ -169,12 +183,21 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT, `blocked=${manifest.result === 'DENY'}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `compiler_sha256=${manifest.compiler.sha256}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `artifact_name=nelyon-release-${process.env.RUN_ID}-${process.env.RUN_ATTEMPT}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `admin_enabled=${admin.enabled}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `admin_digest=${readFileSync('admin-release-artifact/admin-web-manifest.sha256', 'utf8').trim()}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `admin_artifact_name=nelyon-admin-plan-${process.env.RUN_ID}-${process.env.RUN_ATTEMPT}\n`);
           const recoverySource = policy.postcheck_recovery.approved_sources.find(item => item.run_id === request.recoverySourceRunId);
           if (process.env.INPUT_MODE === 'postcheck_recovery' && !recoverySource) throw new Error('approved recovery source is unavailable');
           appendFileSync(process.env.GITHUB_OUTPUT, `recovery_release_artifact_name=${recoverySource?.release_artifact?.name ?? ''}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `recovery_gate_artifact_name=${recoverySource?.gate_artifact?.name ?? ''}\n`);
           NODE
           cat release-artifact/bundle/summary.md >> "$GITHUB_STEP_SUMMARY"
+          node --input-type=module <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          import { readFileSync } from 'node:fs';
+          const admin = JSON.parse(readFileSync('admin-release-artifact/admin-web-manifest.json', 'utf8'));
+          const digest = readFileSync('admin-release-artifact/admin-web-manifest.sha256', 'utf8').trim();
+          process.stdout.write(`\n## Admin Web production manifest\n\n- Required: \`${admin.enabled}\`\n- Source SHA-256: \`${admin.source.sha256}\`\n- Manifest SHA-256: \`${digest}\`\n`);
+          NODE
 
       - name: Package current-run evidence
         run: |
@@ -191,6 +214,15 @@ jobs:
           retention-days: 90
           compression-level: 0
 
+      - name: Upload immutable Admin Web plan artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ steps.expose.outputs.admin_artifact_name }}
+          path: admin-release-artifact
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
   deploy:
     name: Protected production gate
     needs: plan
@@ -201,11 +233,15 @@ jobs:
        fromJSON(needs.plan.outputs.productive_change_count) == 0 &&
        needs.plan.outputs.blocked == 'false') ||
       (needs.plan.outputs.mode == 'release' &&
-       needs.plan.outputs.result == 'PLAN READY' &&
-       fromJSON(needs.plan.outputs.productive_change_count) > 0 &&
+       (needs.plan.outputs.admin_enabled != 'true' || needs.plan.outputs.risk == 'HIGH') &&
+       ((needs.plan.outputs.result == 'PLAN READY' &&
+         fromJSON(needs.plan.outputs.productive_change_count) > 0) ||
+        (needs.plan.outputs.admin_enabled == 'true' &&
+         needs.plan.outputs.result == 'NO PRODUCTIVE CHANGES' &&
+         fromJSON(needs.plan.outputs.productive_change_count) == 0)) &&
        needs.plan.outputs.blocked == 'false')
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     environment: production
     concurrency:
       group: nelyon-supabase-production
@@ -235,6 +271,14 @@ jobs:
         with:
           name: ${{ needs.plan.outputs.artifact_name }}
           path: release-artifact
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download exact Admin Web plan artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ${{ needs.plan.outputs.admin_artifact_name }}
+          path: admin-release-artifact
           run-id: ${{ github.run_id }}
           github-token: ${{ github.token }}
 
@@ -286,6 +330,15 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin main
           node "$NELYON_HELPER" revalidate --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json --output gate-evidence/revalidation.json
+
+      - name: Verify immutable Admin Web manifest
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-admin-production-release.mjs verify-plan \
+            --approved-sha "${{ inputs.approved_sha }}" \
+            --release-manifest release-artifact/bundle/manifest.json \
+            --manifest admin-release-artifact/admin-web-manifest.json \
+            --digest admin-release-artifact/admin-web-manifest.sha256
 
       - name: Verify gate proof without deployment secrets
         if: needs.plan.outputs.mode == 'gate_proof'
@@ -439,6 +492,60 @@ jobs:
             --pre-snapshot gate-evidence/production-pre.json \
             --output gate-evidence/pre-snapshot-verification.json
 
+      - name: Resolve canonical public Admin build environment
+        id: admin_build_env
+        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p admin-evidence
+          KEY_FILE="$RUNNER_TEMP/nelyon-public-api-keys.json"
+          trap 'rm -f "$KEY_FILE"' EXIT
+          supabase projects api-keys --project-ref "$NELYON_PROJECT_REF" --output json > "$KEY_FILE"
+          node scripts/nelyon-admin-production-release.mjs build-env \
+            --api-keys "$KEY_FILE" \
+            --github-env "$GITHUB_ENV"
+
+      - name: Build Admin reproducibly and capture Cloudflare pre-state
+        id: admin_build
+        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          npm ci --prefix apps/admin-web
+          npm --prefix apps/admin-web run build:deployment
+          node scripts/nelyon-admin-production-release.mjs build-manifest \
+            --approved-sha "${{ inputs.approved_sha }}" \
+            --source-manifest admin-release-artifact/admin-web-manifest.json \
+            --dist apps/admin-web/dist \
+            --output admin-evidence/admin-web-build-first.json
+          node --input-type=module -e "import { rmSync } from 'node:fs'; rmSync('apps/admin-web/dist',{recursive:true,force:true})"
+          npm --prefix apps/admin-web run build:deployment
+          node scripts/nelyon-admin-production-release.mjs build-manifest \
+            --approved-sha "${{ inputs.approved_sha }}" \
+            --source-manifest admin-release-artifact/admin-web-manifest.json \
+            --dist apps/admin-web/dist \
+            --output admin-evidence/admin-web-build-second.json
+          node scripts/nelyon-admin-production-release.mjs compare-builds \
+            --first admin-evidence/admin-web-build-first.json \
+            --second admin-evidence/admin-web-build-second.json \
+            --output admin-evidence/admin-web-build.json
+          npx --yes wrangler@4.135.0 deployments status \
+            --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
+            > admin-evidence/admin-web-before-deployment.json
+          node scripts/nelyon-admin-production-release.mjs active-version \
+            --deployment admin-evidence/admin-web-before-deployment.json \
+            --output admin-evidence/admin-web-previous.json
+          npx --yes wrangler@4.135.0 versions list \
+            --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
+            > admin-evidence/admin-web-before-versions.json
+          node scripts/nelyon-admin-production-release.mjs capture-routes \
+            --phase pre \
+            --output admin-evidence/admin-web-before-routes.json
+
       - name: Verify exact remote migration dry-run before mutation
         id: migration_dry_run
         if: needs.plan.outputs.mode == 'release'
@@ -497,7 +604,153 @@ jobs:
         if: always() && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success' && steps.post_snapshot.outcome == 'success'
         run: |
           set -euo pipefail
-          node "$NELYON_HELPER" postcheck --policy "$NELYON_POLICY" --request release-artifact/request.json --manifest release-artifact/bundle/manifest.json --pre-snapshot gate-evidence/production-pre.json --post-snapshot gate-evidence/production-post.json --output gate-evidence/postcheck-result.json && echo "RELEASE SUCCESS" >> "$GITHUB_STEP_SUMMARY"
+          node "$NELYON_HELPER" postcheck --policy "$NELYON_POLICY" --request release-artifact/request.json --manifest release-artifact/bundle/manifest.json --pre-snapshot gate-evidence/production-pre.json --post-snapshot gate-evidence/production-post.json --output gate-evidence/postcheck-result.json
+          echo "SUPABASE POSTCHECK SUCCESS" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload one immutable Admin version
+        id: admin_upload
+        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.postcheck.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION_TAG="$(node -p "JSON.parse(require('fs').readFileSync('admin-release-artifact/admin-web-manifest.json','utf8')).worker.version_tag")"
+          PREVIEW_ALIAS="$(node -p "JSON.parse(require('fs').readFileSync('admin-release-artifact/admin-web-manifest.json','utf8')).worker.preview_alias")"
+          BUILD_DIGEST="$(node -p "JSON.parse(require('fs').readFileSync('admin-evidence/admin-web-build.json','utf8')).dist_sha256")"
+          npx --yes wrangler@4.135.0 versions upload \
+            --config apps/admin-web/deployment/wrangler.preview.jsonc \
+            --strict \
+            --tag "$VERSION_TAG" \
+            --message "b:${BUILD_DIGEST}" \
+            --preview-alias "$PREVIEW_ALIAS" \
+            > admin-evidence/admin-web-upload.log 2>&1
+          npx --yes wrangler@4.135.0 versions list \
+            --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
+            > admin-evidence/admin-web-after-versions.json
+          node scripts/nelyon-admin-production-release.mjs identify-upload \
+            --source-manifest admin-release-artifact/admin-web-manifest.json \
+            --before admin-evidence/admin-web-before-versions.json \
+            --after admin-evidence/admin-web-after-versions.json \
+            --upload-log admin-evidence/admin-web-upload.log \
+            --output admin-evidence/admin-web-candidate-id.json
+
+      - name: Attest and smoke the exact uploaded Admin version
+        id: admin_candidate
+        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_upload.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION_ID="$(node -p "JSON.parse(require('fs').readFileSync('admin-evidence/admin-web-candidate-id.json','utf8')).version_id")"
+          npx --yes wrangler@4.135.0 versions view "$VERSION_ID" \
+            --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
+            > admin-evidence/admin-web-version.json
+          node scripts/nelyon-admin-production-release.mjs identify-upload \
+            --source-manifest admin-release-artifact/admin-web-manifest.json \
+            --before admin-evidence/admin-web-before-versions.json \
+            --after admin-evidence/admin-web-after-versions.json \
+            --version-view admin-evidence/admin-web-version.json \
+            --upload-log admin-evidence/admin-web-upload.log \
+            --build-manifest admin-evidence/admin-web-build.json \
+            --output admin-evidence/admin-web-candidate.json
+          PREVIEW_URL="$(node -p "JSON.parse(require('fs').readFileSync('admin-evidence/admin-web-candidate.json','utf8')).preview_url")"
+          node scripts/nelyon-admin-production-release.mjs smoke \
+            --base-url "$PREVIEW_URL" \
+            --candidate admin-evidence/admin-web-candidate.json \
+            --output admin-evidence/admin-web-preview-http.json
+
+      - name: Promote the exact smoked Admin version
+        id: admin_promote
+        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION_ID="$(node -p "JSON.parse(require('fs').readFileSync('admin-evidence/admin-web-candidate.json','utf8')).version_id")"
+          npx --yes wrangler@4.135.0 versions deploy \
+            --config apps/admin-web/deployment/wrangler.preview.jsonc \
+            --name nelyon-admin-web \
+            --version-id "$VERSION_ID" \
+            --percentage 100 \
+            --message "Nelyon protected release ${{ inputs.release_id }}" \
+            --yes
+          npx --yes wrangler@4.135.0 deployments status \
+            --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
+            > admin-evidence/admin-web-promoted-deployment.json
+          node scripts/nelyon-admin-production-release.mjs active-version \
+            --deployment admin-evidence/admin-web-promoted-deployment.json \
+            --expected-version "$VERSION_ID" \
+            --output admin-evidence/admin-web-promoted-version.json
+
+      - name: Apply exact Admin production routes
+        id: admin_routes
+        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_promote.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.135.0 triggers deploy \
+            --config apps/admin-web/deployment/wrangler.route.jsonc
+
+      - name: Verify exact Admin production version, routes, and HTTP matrix
+        id: admin_finalize
+        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_routes.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.135.0 deployments status \
+            --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
+            > admin-evidence/admin-web-after-deployment.json
+          node scripts/nelyon-admin-production-release.mjs capture-routes \
+            --phase post \
+            --output admin-evidence/admin-web-after-routes.json
+          node scripts/nelyon-admin-production-release.mjs smoke \
+            --base-url https://nelyon.app \
+            --output admin-evidence/admin-web-production-http.json
+          node scripts/nelyon-admin-production-release.mjs finalize \
+            --source-manifest admin-release-artifact/admin-web-manifest.json \
+            --candidate admin-evidence/admin-web-candidate.json \
+            --deployment admin-evidence/admin-web-after-deployment.json \
+            --routes admin-evidence/admin-web-after-routes.json \
+            --http admin-evidence/admin-web-production-http.json \
+            --build admin-evidence/admin-web-build.json \
+            --output admin-evidence/admin-web-release-result.json
+
+      - name: Recover previous Admin production version and routes
+        id: admin_recovery
+        if: always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success' && steps.admin_finalize.outcome != 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          PREVIOUS_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('admin-evidence/admin-web-previous.json','utf8')).version_id")"
+          npx --yes wrangler@4.135.0 versions deploy \
+            --config apps/admin-web/deployment/wrangler.preview.jsonc \
+            --name nelyon-admin-web \
+            --version-id "$PREVIOUS_VERSION" \
+            --percentage 100 \
+            --message "Recovery for failed Nelyon release ${{ inputs.release_id }}" \
+            --yes
+          node scripts/nelyon-admin-production-release.mjs restore-routes \
+            --before admin-evidence/admin-web-before-routes.json \
+            --output admin-evidence/admin-web-recovered-routes.json
+          npx --yes wrangler@4.135.0 deployments status \
+            --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
+            > admin-evidence/admin-web-recovered-deployment.json
+          node scripts/nelyon-admin-production-release.mjs verify-recovery \
+            --previous admin-evidence/admin-web-previous.json \
+            --deployment admin-evidence/admin-web-recovered-deployment.json \
+            --before-routes admin-evidence/admin-web-before-routes.json \
+            --after-routes admin-evidence/admin-web-recovered-routes.json \
+            --output admin-evidence/admin-web-recovery.json
+
+      - name: Require complete protected release success
+        id: release_complete
+        if: always() && needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success' && (needs.plan.outputs.admin_enabled != 'true' || steps.admin_finalize.outcome == 'success')
+        run: |
+          set -euo pipefail
+          echo "RELEASE SUCCESS" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record sanitized release observation
         if: always() && needs.plan.outputs.mode == 'release'
@@ -509,6 +762,15 @@ jobs:
           FUNCTIONS_OUTCOME: ${{ steps.deploy_functions.outcome }}
           POST_SNAPSHOT_OUTCOME: ${{ steps.post_snapshot.outcome }}
           POSTCHECK_OUTCOME: ${{ steps.postcheck.outcome }}
+          RELEASE_COMPLETE_OUTCOME: ${{ steps.release_complete.outcome }}
+          ADMIN_ENABLED: ${{ needs.plan.outputs.admin_enabled }}
+          ADMIN_BUILD_OUTCOME: ${{ steps.admin_build.outcome }}
+          ADMIN_UPLOAD_OUTCOME: ${{ steps.admin_upload.outcome }}
+          ADMIN_CANDIDATE_OUTCOME: ${{ steps.admin_candidate.outcome }}
+          ADMIN_PROMOTE_OUTCOME: ${{ steps.admin_promote.outcome }}
+          ADMIN_ROUTES_OUTCOME: ${{ steps.admin_routes.outcome }}
+          ADMIN_FINALIZE_OUTCOME: ${{ steps.admin_finalize.outcome }}
+          ADMIN_RECOVERY_OUTCOME: ${{ steps.admin_recovery.outcome }}
         run: |
           node --input-type=module <<'NODE'
           import { createHash } from 'node:crypto';
@@ -523,7 +785,7 @@ jobs:
             : null;
           const observation = {
             schema_version: 1,
-            result: process.env.POSTCHECK_OUTCOME === 'success' ? 'SUCCESS' : 'INCOMPLETE_OR_FAILED',
+            result: process.env.RELEASE_COMPLETE_OUTCOME === 'success' ? 'SUCCESS' : 'INCOMPLETE_OR_FAILED',
             steps: {
               pre_snapshot: process.env.PRE_SNAPSHOT_OUTCOME,
               pre_verification: process.env.PRE_VERIFY_OUTCOME,
@@ -533,12 +795,47 @@ jobs:
               post_snapshot: process.env.POST_SNAPSHOT_OUTCOME,
               postcheck: process.env.POSTCHECK_OUTCOME,
             },
+            admin_web: {
+              required: process.env.ADMIN_ENABLED === 'true',
+              build: process.env.ADMIN_BUILD_OUTCOME,
+              upload: process.env.ADMIN_UPLOAD_OUTCOME,
+              candidate: process.env.ADMIN_CANDIDATE_OUTCOME,
+              promote: process.env.ADMIN_PROMOTE_OUTCOME,
+              routes: process.env.ADMIN_ROUTES_OUTCOME,
+              finalize: process.env.ADMIN_FINALIZE_OUTCOME,
+              recovery: process.env.ADMIN_RECOVERY_OUTCOME,
+              result_sha256: safeFileDigest('admin-evidence/admin-web-release-result.json'),
+              recovery_sha256: safeFileDigest('admin-evidence/admin-web-recovery.json'),
+            },
             pre_evidence_sha256: safeDigest('gate-evidence/production-pre.json'),
             post_evidence_sha256: safeDigest('gate-evidence/production-post.json'),
             postcheck_file_sha256: safeFileDigest('gate-evidence/postcheck-result.json'),
           };
           writeFileSync('gate-evidence/release-observation.json', `${JSON.stringify(observation)}\n`, { flag: 'wx' });
           NODE
+
+      - name: Upload sanitized Admin Web release evidence
+        if: always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nelyon-admin-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            admin-release-artifact/admin-web-manifest.json
+            admin-release-artifact/admin-web-manifest.sha256
+            admin-evidence/admin-web-build.json
+            admin-evidence/admin-web-previous.json
+            admin-evidence/admin-web-before-routes.json
+            admin-evidence/admin-web-candidate.json
+            admin-evidence/admin-web-preview-http.json
+            admin-evidence/admin-web-promoted-version.json
+            admin-evidence/admin-web-after-routes.json
+            admin-evidence/admin-web-production-http.json
+            admin-evidence/admin-web-release-result.json
+            admin-evidence/admin-web-recovered-routes.json
+            admin-evidence/admin-web-recovery.json
+          if-no-files-found: warn
+          retention-days: 90
+          compression-level: 0
 
       - name: Upload sanitized gate evidence
         if: always()
