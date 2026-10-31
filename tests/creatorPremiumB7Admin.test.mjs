@@ -136,7 +136,7 @@ test('admin command attempts reuse one UUID for the same intent and rotate for a
 });
 
 test('admin Premium mutations fence double clicks, account/content changes, and ambiguous retries', () => {
-  assert.match(pages, /\{hasCapability,session\}\s*=\s*useAdminAuth\(\)/i);
+  assert.match(pages, /\{hasCapability,session,security\}\s*=\s*useAdminAuth\(\)/i);
   assert.match(pages, /operationInFlightRef\s*=\s*useRef<[^>]+>\(null\)/i);
   assert.match(pages, /reviewAttemptRef\s*=\s*useRef<AdminCommandAttempt\|null>\(null\)/i);
   assert.match(pages, /refundAttemptRef\s*=\s*useRef<AdminCommandAttempt\|null>\(null\)/i);

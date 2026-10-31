@@ -10,7 +10,14 @@ test("versioned AAL policy extends the existing catalog and protects future sens
   assert.match(sql,/required_aal in\('aal1','aal2'\)/);
   assert.match(sql,/update private\.admin_capabilities set required_aal='aal2'\s+where is_sensitive and effect in\('write','workflow'\)/);
   assert.match(sql,/check\(not \(is_sensitive and effect in\('write','workflow'\)\) or required_aal='aal2'\)/);
-  assert.doesNotMatch(sql,/creator_premium\.refunds\.write|create table|update public\./i);
+  assert.doesNotMatch(sql,/create table|update public\./i);
+});
+test("refund activation is exactly SUPER_ADMIN-only and explicitly AAL2 without changing delegation",()=>{
+  assert.match(sql,/insert into private\.admin_role_capabilities\(role_code,capability_code\)\s+values\('SUPER_ADMIN','creator_premium\.refunds\.write'\)/);
+  assert.match(sql,/update private\.admin_capabilities set required_aal='aal2'\s+where capability_code='creator_premium\.refunds\.write'/);
+  assert.doesNotMatch(sql,/update private\.admin_roles|insert into private\.admin_role_grant_rules|create (?:or replace )?function[^;]*refund/i);
+  assert.equal((sql.match(/insert into private\.admin_role_capabilities/gi)??[]).length,1);
+  assert.match(sql,/raise exception 'control_center_refund_authority_invalid'/);
 });
 test("both canonical guards reject inactive actors and enforce AAL coherently without changing read access",()=>{
   for(const name of ["admin_actor_has_capability","admin_require_capability"]){
