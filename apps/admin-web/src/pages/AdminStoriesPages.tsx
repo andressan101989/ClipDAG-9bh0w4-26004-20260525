@@ -1,3 +1,5 @@
+import {useAdminCursorPage,useAdminUrlFilter} from "../lib/useAdminCursorPage";
+import {AdminCursorPagination} from "../components/AdminCursorPagination";
 import {useEffect,useRef,useState} from "react";
 import {Link,useParams} from "react-router-dom";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
@@ -24,7 +26,6 @@ import {
   searchAdminStories,
   type AdminStoryMediaOrigin,
   type AdminStoryModerationAction,
-  type AdminStorySummary,
 } from "../lib/adminApi";
 
 const trustedMediaOrigins=new Set<AdminStoryMediaOrigin>(["story_asset","shared_stream_asset","shared_r2_asset"]);
@@ -75,13 +76,14 @@ function StoryCompositionDetails({value}:{value:Record<string,unknown>}){
 }
 
 export function AdminStoriesPage(){
-  const [query,setQuery]=useState(""),[visibility,setVisibility]=useState(""),[items,setItems]=useState<AdminStorySummary[]|null>(null),[error,setError]=useState<string|null>(null),[nonce,setNonce]=useState(0);
-  useEffect(()=>{let active=true;setItems(null);setError(null);void searchAdminStories({query,visibility}).then((page)=>{if(active)setItems(page.items)}).catch((reason)=>{if(active)setError(reason instanceof Error?reason.message:"Error")});return()=>{active=false}},[query,visibility,nonce]);
+  const [query,setQuery]=useAdminUrlFilter("query"),[visibility,setVisibility]=useAdminUrlFilter("visibility");
+  const pagination=useAdminCursorPage({query,visibility},(filters,cursor: {created_at:string;id:string}|undefined,limit)=>searchAdminStories({...filters,cursor,limit}));
+  const {items,error}=pagination;
   return <>
     <div className="page-heading"><div><p className="eyebrow">TRUST &amp; SAFETY</p><h2>Stories</h2><p>Inspección segura de media directa, contenido compartido y moderación reversible.</p></div></div>
     <div className="filters"><label className="search"><span>⌕</span><input aria-label="Buscar Stories" placeholder="ID o autor" value={query} onChange={(event)=>setQuery(event.target.value)}/></label><select aria-label="Visibilidad de Story" value={visibility} onChange={(event)=>setVisibility(event.target.value)}><option value="">Toda visibilidad</option><option value="visible">Visible</option><option value="hidden">Oculta</option></select></div>
-    {error?<ErrorState message={error} onRetry={()=>setNonce((value)=>value+1)}/>:!items?<LoadingState label="Buscando Stories…"/>:items.length===0?<EmptyState title="Sin Stories" detail="No hay Stories para estos filtros."/>:<section className="table-panel"><table className="human-table"><thead><tr><th>Preview</th><th>Story</th><th>Autor</th><th>Origen</th><th>Reportes</th><th>Expira</th><th>Estado</th><th>Creada</th></tr></thead><tbody>{items.map((story)=>{const preview=story.source_status==="available"?projectedUrl(story.preview_url,story.media_origin):null;return <tr key={story.id}><td><Link className={`admin-media-thumb ${story.resolved_media_kind??story.media_type}`} to={`/stories/${story.id}`} aria-label="Abrir Story">{preview?<img src={preview} alt="Vista previa de la Story"/>:<span>{mediaLabel(story.resolved_media_kind??story.media_type)}</span>}</Link></td><td><Link to={`/stories/${story.id}`}><strong>{storyKindLabel(story.story_kind)}</strong><small>{mediaLabel(story.resolved_media_kind??story.media_type)} · {shortId(story.id)}</small></Link></td><td><AdminIdentity value={story.owner} compact/></td><td><em className={`badge ${story.source_status==="available"?"success":"warn"}`}>{sourceStatusLabel(story.source_status)}</em>{story.shared_content_type?<small className="table-secondary">{story.shared_content_type}</small>:null}{story.shared_video_id?<small className="table-secondary mono">{shortId(story.shared_video_id)}</small>:null}</td><td>{story.report_count>0?<em className="badge warn">{story.report_count}</em>:"0"}</td><td>{formatDate(story.expires_at)}</td><td><em className={`badge ${story.visibility==="hidden"?"warn":"success"}`}>{story.visibility==="hidden"?"Oculta":"Visible"}</em></td><td>{formatDate(story.created_at)}</td></tr>})}</tbody></table></section>}
-  </>;
+    {error?<ErrorState message={error} onRetry={pagination.retry}/>:!items?<LoadingState label="Buscando Stories…"/>:items.length===0?<EmptyState title="Sin Stories" detail="No hay Stories para estos filtros."/>:<section className="table-panel"><table className="human-table"><thead><tr><th>Preview</th><th>Story</th><th>Autor</th><th>Origen</th><th>Reportes</th><th>Expira</th><th>Estado</th><th>Creada</th></tr></thead><tbody>{items.map((story)=>{const preview=story.source_status==="available"?projectedUrl(story.preview_url,story.media_origin):null;return <tr key={story.id}><td><Link className={`admin-media-thumb ${story.resolved_media_kind??story.media_type}`} to={`/stories/${story.id}`} aria-label="Abrir Story">{preview?<img src={preview} alt="Vista previa de la Story"/>:<span>{mediaLabel(story.resolved_media_kind??story.media_type)}</span>}</Link></td><td><Link to={`/stories/${story.id}`}><strong>{storyKindLabel(story.story_kind)}</strong><small>{mediaLabel(story.resolved_media_kind??story.media_type)} · {shortId(story.id)}</small></Link></td><td><AdminIdentity value={story.owner} compact/></td><td><em className={`badge ${story.source_status==="available"?"success":"warn"}`}>{sourceStatusLabel(story.source_status)}</em>{story.shared_content_type?<small className="table-secondary">{story.shared_content_type}</small>:null}{story.shared_video_id?<small className="table-secondary mono">{shortId(story.shared_video_id)}</small>:null}</td><td>{story.report_count>0?<em className="badge warn">{story.report_count}</em>:"0"}</td><td>{formatDate(story.expires_at)}</td><td><em className={`badge ${story.visibility==="hidden"?"warn":"success"}`}>{story.visibility==="hidden"?"Oculta":"Visible"}</em></td><td>{formatDate(story.created_at)}</td></tr>})}</tbody></table></section>}
+  <AdminCursorPagination state={pagination}/></>;
 }
 
 export function AdminStoryDetailPage(){

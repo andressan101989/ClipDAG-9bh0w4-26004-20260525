@@ -1,3 +1,5 @@
+import {useAdminCursorPage,useAdminUrlFilter} from "../lib/useAdminCursorPage";
+import {AdminCursorPagination} from "../components/AdminCursorPagination";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAdminAuth } from "../auth/AdminAuthProvider";
@@ -12,30 +14,13 @@ import {
   reviewAdminReport,
   searchAdminReports,
   type AdminReportDetail,
-  type AdminReportSummary,
 } from "../lib/adminApi";
 
 export function AdminChatReportsPage() {
-  const [status, setStatus] = useState(""),
-    [items, setItems] = useState<AdminReportSummary[] | null>(null),
-    [error, setError] = useState<string | null>(null),
-    [nonce, setNonce] = useState(0);
-  useEffect(() => {
-    let active = true;
-    setItems(null);
-    setError(null);
-    void searchAdminReports({ status, contentType: "message" })
-      .then((page) => {
-        if (active) setItems(page.items);
-      })
-      .catch((e) => {
-        if (active) setError(e instanceof Error ? e.message : "Error");
-      });
-    return () => {
-      active = false;
-    };
-  }, [status, nonce]);
-  return (
+  const [status,setStatus]=useAdminUrlFilter("status");
+  const pagination=useAdminCursorPage({status},(filters,cursor: {created_at:string;id:string}|undefined,limit)=>searchAdminReports({...filters,contentType:"message",cursor,limit}));
+  const {items,error}=pagination;
+return (
     <>
       <div className="page-heading">
         <div>
@@ -60,7 +45,7 @@ export function AdminChatReportsPage() {
         </select>
       </div>
       {error ? (
-        <ErrorState message={error} onRetry={() => setNonce((x) => x + 1)} />
+        <ErrorState message={error} onRetry={pagination.retry} />
       ) : !items ? (
         <LoadingState label="Buscando casos de Chat…" />
       ) : items.length === 0 ? (
@@ -105,7 +90,7 @@ export function AdminChatReportsPage() {
           </div>
         </section>
       )}
-    </>
+    <AdminCursorPagination state={pagination}/></>
   );
 }
 
