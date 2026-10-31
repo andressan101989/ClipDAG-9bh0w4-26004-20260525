@@ -2,6 +2,13 @@ begin;
 
 -- Bounded projection of facts absent from existing custom-date aggregate APIs.
 -- Existing module authorities remain the detailed operational sources. No data writes.
+-- The existing review_status partial index serves pending/rejected only.
+-- Disposable PostgreSQL17 EXPLAIN on 100k synthetic ads showed approved/all
+-- scanning and disk-sorting the full queue before LIMIT. This shared order
+-- supports those pages and their keysets without changing review authority.
+create index advertising_ads_submitted_cursor_idx
+  on private.advertising_ads(submitted_at asc nulls last,id);
+
 create function public.get_admin_control_center_overview_v1(p_module text,p_from date,p_to date)
 returns jsonb language plpgsql stable security definer set search_path = ''
 as $$

@@ -4,7 +4,7 @@ import {beforeEach,expect,it,vi} from "vitest";
 import {useAdminAuth} from "../auth/AdminAuthProvider";
 import {AdminOverviewPage} from "../pages/AdminOverviewPage";
 import {getAdminControlCenterOverview,controlCenterRange} from "../lib/adminControlCenterApi";
-import {getAdminPlatformRevenue} from "../lib/adminObservabilityApi";
+import {getAdminPlatformRevenue,getAdminSystemHealth} from "../lib/adminObservabilityApi";
 vi.mock("../auth/AdminAuthProvider",()=>({useAdminAuth:vi.fn()}));
 vi.mock("../lib/adminControlCenterApi",async original=>({...await original<object>(),getAdminControlCenterOverview:vi.fn()}));
 vi.mock("../lib/adminObservabilityApi",()=>({getAdminPlatformRevenue:vi.fn(),getAdminSystemHealth:vi.fn().mockResolvedValue({cron:{non_successes_24h:0,active_jobs:3,total_jobs:4}})}));
@@ -59,4 +59,12 @@ it("retries only the failed source and keeps server denial distinct",async()=>{
  const reads=vi.mocked(getAdminControlCenterOverview).mock.calls.filter(([module])=>module==="users").length;
  vi.mocked(getAdminControlCenterOverview).mockImplementation(async module=>snapshot(module) as never);fireEvent.click(within(stories).getByRole("button",{name:"Reintentar"}));
  expect(await within(stories).findByRole("article",{name:"stories count"})).toHaveTextContent("0");expect(vi.mocked(getAdminControlCenterOverview).mock.calls.filter(([module])=>module==="users")).toHaveLength(reads);
+});
+it.each(["revenue","health"])("renders a post-authorization SQLSTATE denial for %s without raw details",async source=>{
+ vi.mocked(useAdminAuth).mockReturnValue({hasCapability:(cap:string)=>["finance.ledger.read","system.health.read"].includes(cap)} as never);
+ const read=source==="revenue"?getAdminPlatformRevenue:getAdminSystemHealth;
+ vi.mocked(read).mockRejectedValueOnce(Object.assign(new Error("private SQL detail"),{code:"42501",status:403}));
+ render(<MemoryRouter><AdminOverviewPage/></MemoryRouter>);
+ const region=screen.getByLabelText(source==="revenue"?"Ingresos reconocidos":"Salud del sistema");
+ expect(await within(region).findByText(/Sin permiso/)).toBeInTheDocument();expect(within(region).queryByRole("alert")).not.toBeInTheDocument();expect(region).not.toHaveTextContent("private SQL detail");
 });
