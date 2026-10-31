@@ -1343,8 +1343,23 @@
     "plan_only",
     "gate_proof",
     "release",
+    "admin_recovery",
     "postcheck_recovery"
   ],
+  "admin_recovery": {
+    "source_event": "workflow_dispatch",
+    "source_ref": "refs/heads/main",
+    "source_mode": "release",
+    "source_conclusion": "failure",
+    "same_approved_sha_required": true,
+    "supabase_post_snapshot_status": "success",
+    "supabase_postcheck_status": "success",
+    "admin_enabled_required": true,
+    "admin_finalize_status": "not_success",
+    "rollback_required_after_candidate_or_promote": true,
+    "productive_resources": [],
+    "supabase_mutation_allowed": false
+  },
   "owner": "andressan101989",
   "postcheck_recovery": {
     "approved_sources": [
@@ -1844,6 +1859,7 @@
   "repository": "andressan101989/ClipDAG-9bh0w4-26004-20260525",
   "schema_version": 2,
   "scope_confirmations": {
+    "admin_recovery": "ADMIN_RECOVERY_EXACT_SOURCE",
     "gate_proof": "GATE_PROOF_NO_MUTATION",
     "plan_only": "PLAN_ONLY",
     "postcheck_recovery": "POSTCHECK_RECOVERY_READ_ONLY",

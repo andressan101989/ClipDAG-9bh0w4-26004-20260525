@@ -24,9 +24,10 @@ on:
           - plan_only
           - gate_proof
           - release
+          - admin_recovery
           - postcheck_recovery
       recovery_source_run_id:
-        description: Approved source run ID, only for postcheck_recovery
+        description: Exact source run ID, only for an explicit recovery mode
         required: false
         type: string
 
@@ -94,12 +95,17 @@ jobs:
           mkdir -p release-input release-artifact/bundle
           node --input-type=module <<'NODE'
           import { writeFileSync } from 'node:fs';
-          const recoveryMode = process.env.INPUT_MODE === 'postcheck_recovery';
-          if (recoveryMode) {
+          const postcheckRecovery = process.env.INPUT_MODE === 'postcheck_recovery';
+          const adminRecovery = process.env.INPUT_MODE === 'admin_recovery';
+          const recoveryMode = postcheckRecovery || adminRecovery;
+          if (postcheckRecovery) {
             if (!/^[1-9][0-9]*$/.test(process.env.INPUT_RECOVERY_SOURCE_RUN_ID ?? '')) throw new Error('postcheck_recovery requires a numeric approved source run');
             if (process.env.INPUT_SCOPE_CONFIRMATION !== 'POSTCHECK_RECOVERY_READ_ONLY') throw new Error('postcheck_recovery requires POSTCHECK_RECOVERY_READ_ONLY');
+          } else if (adminRecovery) {
+            if (!/^[1-9][0-9]*$/.test(process.env.INPUT_RECOVERY_SOURCE_RUN_ID ?? '')) throw new Error('admin_recovery requires a numeric exact source run');
+            if (process.env.INPUT_SCOPE_CONFIRMATION !== 'ADMIN_RECOVERY_EXACT_SOURCE') throw new Error('admin_recovery requires ADMIN_RECOVERY_EXACT_SOURCE');
           } else if (process.env.INPUT_RECOVERY_SOURCE_RUN_ID) {
-            throw new Error('recovery_source_run_id is valid only for postcheck_recovery');
+            throw new Error('recovery_source_run_id is valid only for an explicit recovery mode');
           }
           const request = {
             actor: process.env.ACTOR,
@@ -228,6 +234,12 @@ jobs:
     needs: plan
     if: >-
       needs.plan.outputs.mode == 'gate_proof' ||
+      (needs.plan.outputs.mode == 'admin_recovery' &&
+       needs.plan.outputs.risk == 'HIGH' &&
+       needs.plan.outputs.admin_enabled == 'true' &&
+       needs.plan.outputs.result == 'NO PRODUCTIVE CHANGES' &&
+       fromJSON(needs.plan.outputs.productive_change_count) == 0 &&
+       needs.plan.outputs.blocked == 'false') ||
       (needs.plan.outputs.mode == 'postcheck_recovery' &&
        needs.plan.outputs.result == 'NO PRODUCTIVE CHANGES' &&
        fromJSON(needs.plan.outputs.productive_change_count) == 0 &&
@@ -354,12 +366,90 @@ jobs:
           node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
 
       - name: Verify release gate and required Environment secrets
-        if: needs.plan.outputs.mode == 'release'
+        if: needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
           node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
+
+      - name: Fetch exact Admin recovery source metadata
+        id: admin_recovery_metadata
+        if: needs.plan.outputs.mode == 'admin_recovery'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          API_URL: ${{ github.api_url }}
+          SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p admin-recovery-evidence
+          node --input-type=module <<'NODE'
+          import { appendFileSync, writeFileSync } from 'node:fs';
+          const headers = { Accept: 'application/vnd.github+json', Authorization: `Bearer ${process.env.GH_TOKEN}`, 'X-GitHub-Api-Version': '2022-11-28' };
+          const get = async url => {
+            const response = await fetch(url, { headers });
+            if (!response.ok) throw new Error(`${url} HTTP ${response.status}`);
+            return response.json();
+          };
+          const run = await get(`${process.env.API_URL}/repos/${process.env.REPOSITORY}/actions/runs/${process.env.SOURCE_RUN_ID}`);
+          writeFileSync('admin-recovery-evidence/source-run.json', JSON.stringify(run));
+          const artifacts = [];
+          for (let page = 1; ; page += 1) {
+            const body = await get(`${process.env.API_URL}/repos/${process.env.REPOSITORY}/actions/runs/${process.env.SOURCE_RUN_ID}/artifacts?per_page=100&page=${page}`);
+            const items = body.artifacts ?? [];
+            artifacts.push(...items);
+            if (items.length < 100) break;
+          }
+          writeFileSync('admin-recovery-evidence/source-artifacts.json', JSON.stringify(artifacts));
+          const attempt = Number(run.run_attempt);
+          if (!Number.isSafeInteger(attempt) || attempt < 1) throw new Error('invalid source run attempt');
+          appendFileSync(process.env.GITHUB_OUTPUT, `release_artifact_name=nelyon-release-${process.env.SOURCE_RUN_ID}-${attempt}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `gate_artifact_name=nelyon-gate-evidence-${process.env.SOURCE_RUN_ID}-${attempt}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `admin_artifact_name=nelyon-admin-evidence-${process.env.SOURCE_RUN_ID}-${attempt}\n`);
+          NODE
+
+      - name: Download exact Admin recovery source release artifact
+        if: needs.plan.outputs.mode == 'admin_recovery'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ${{ steps.admin_recovery_metadata.outputs.release_artifact_name }}
+          path: admin-recovery-evidence/source-release
+          run-id: ${{ inputs.recovery_source_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download exact Admin recovery source gate artifact
+        if: needs.plan.outputs.mode == 'admin_recovery'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ${{ steps.admin_recovery_metadata.outputs.gate_artifact_name }}
+          path: admin-recovery-evidence/source-gate
+          run-id: ${{ inputs.recovery_source_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download exact Admin recovery source Admin artifact
+        if: needs.plan.outputs.mode == 'admin_recovery'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ${{ steps.admin_recovery_metadata.outputs.admin_artifact_name }}
+          path: admin-recovery-evidence/source-admin
+          run-id: ${{ inputs.recovery_source_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify exact Admin recovery source provenance
+        if: needs.plan.outputs.mode == 'admin_recovery'
+        run: |
+          set -euo pipefail
+          node "$NELYON_HELPER" verify-admin-recovery-source \
+            --policy "$NELYON_POLICY" \
+            --request release-artifact/request.json \
+            --recovery-manifest release-artifact/bundle/manifest.json \
+            --run admin-recovery-evidence/source-run.json \
+            --artifacts admin-recovery-evidence/source-artifacts.json \
+            --release-bundle admin-recovery-evidence/source-release \
+            --gate-evidence admin-recovery-evidence/source-gate \
+            --admin-evidence admin-recovery-evidence/source-admin \
+            --output admin-recovery-evidence/verified-source.json
 
       - name: Download exact approved source release artifact
         if: needs.plan.outputs.mode == 'postcheck_recovery'
@@ -461,7 +551,7 @@ jobs:
           compression-level: 0
 
       - name: Set up pinned Supabase CLI for an authorized release only
-        if: needs.plan.outputs.mode == 'release'
+        if: needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery'
         uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359
         with:
           version: '2.120.0'
@@ -494,7 +584,7 @@ jobs:
 
       - name: Resolve canonical public Admin build environment
         id: admin_build_env
-        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true'
+        if: (needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery') && needs.plan.outputs.admin_enabled == 'true'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
@@ -509,7 +599,7 @@ jobs:
 
       - name: Build Admin reproducibly
         id: admin_build
-        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true'
+        if: (needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery') && needs.plan.outputs.admin_enabled == 'true'
         run: |
           set -euo pipefail
           npm ci --prefix apps/admin-web
@@ -531,9 +621,42 @@ jobs:
             --second admin-evidence/admin-web-build-second.json \
             --output admin-evidence/admin-web-build.json
 
+      - name: Capture Admin recovery read-only production post-state
+        id: admin_recovery_snapshot
+        if: needs.plan.outputs.mode == 'admin_recovery' && steps.admin_build.outcome == 'success'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-production-snapshot-adapter.mjs capture \
+            --phase post \
+            --policy "$NELYON_POLICY" \
+            --request release-artifact/request.json \
+            --manifest release-artifact/bundle/manifest.json \
+            --output admin-recovery-evidence/control-center-post-state.json
+
+      - name: Require Admin recovery source and production post-state
+        id: admin_recovery_postcheck
+        if: needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_snapshot.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node "$NELYON_HELPER" postcheck-admin-recovery \
+            --policy "$NELYON_POLICY" \
+            --request release-artifact/request.json \
+            --recovery-manifest release-artifact/bundle/manifest.json \
+            --verified-source admin-recovery-evidence/verified-source.json \
+            --current-snapshot admin-recovery-evidence/control-center-post-state.json \
+            --admin-manifest admin-release-artifact/admin-web-manifest.json \
+            --build admin-evidence/admin-web-build.json \
+            --output admin-recovery-evidence/postcheck-admin-recovery-result.json
+          echo "ADMIN RECOVERY POSTCHECK SUCCESS" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Capture Cloudflare pre-state
         id: admin_prestate
-        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_build.outcome == 'success'
+        if: >-
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_build.outcome == 'success' &&
+          ((needs.plan.outputs.mode == 'release') ||
+           (needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_postcheck.outcome == 'success'))
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -615,7 +738,10 @@ jobs:
 
       - name: Upload one immutable Admin version
         id: admin_upload
-        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.postcheck.outcome == 'success'
+        if: >-
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_prestate.outcome == 'success' &&
+          ((needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success') ||
+           (needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_postcheck.outcome == 'success'))
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -642,7 +768,7 @@ jobs:
 
       - name: Attest and smoke the exact uploaded Admin version
         id: admin_candidate
-        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_upload.outcome == 'success'
+        if: (needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery') && needs.plan.outputs.admin_enabled == 'true' && steps.admin_upload.outcome == 'success'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -668,7 +794,7 @@ jobs:
 
       - name: Promote the exact smoked Admin version
         id: admin_promote
-        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success'
+        if: (needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery') && needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -691,7 +817,7 @@ jobs:
 
       - name: Apply exact Admin production routes
         id: admin_routes
-        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_promote.outcome == 'success'
+        if: (needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery') && needs.plan.outputs.admin_enabled == 'true' && steps.admin_promote.outcome == 'success'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -701,7 +827,7 @@ jobs:
 
       - name: Verify exact Admin production version, routes, and HTTP matrix
         id: admin_finalize
-        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_routes.outcome == 'success'
+        if: (needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery') && needs.plan.outputs.admin_enabled == 'true' && steps.admin_routes.outcome == 'success'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -727,7 +853,7 @@ jobs:
 
       - name: Recover previous Admin production version and routes
         id: admin_recovery
-        if: always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success' && steps.admin_finalize.outcome != 'success'
+        if: always() && (needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery') && needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success' && steps.admin_finalize.outcome != 'success'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -755,7 +881,12 @@ jobs:
 
       - name: Require complete protected release success
         id: release_complete
-        if: always() && needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success' && (needs.plan.outputs.admin_enabled != 'true' || steps.admin_finalize.outcome == 'success')
+        if: >-
+          always() &&
+          ((needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success' &&
+            (needs.plan.outputs.admin_enabled != 'true' || steps.admin_finalize.outcome == 'success')) ||
+           (needs.plan.outputs.mode == 'admin_recovery' &&
+            steps.admin_recovery_postcheck.outcome == 'success' && steps.admin_finalize.outcome == 'success'))
         run: |
           set -euo pipefail
           echo "RELEASE SUCCESS" >> "$GITHUB_STEP_SUMMARY"
@@ -822,25 +953,35 @@ jobs:
           writeFileSync('gate-evidence/release-observation.json', `${JSON.stringify(observation)}\n`, { flag: 'wx' });
           NODE
 
+      - name: Stage sanitized Admin Web release evidence
+        if: always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p admin-source-evidence
+          for path in \
+            admin-release-artifact/admin-web-manifest.json \
+            admin-release-artifact/admin-web-manifest.sha256 \
+            admin-evidence/admin-web-build.json \
+            admin-evidence/admin-web-previous.json \
+            admin-evidence/admin-web-before-routes.json \
+            admin-evidence/admin-web-candidate.json \
+            admin-evidence/admin-web-preview-http.json \
+            admin-evidence/admin-web-promoted-version.json \
+            admin-evidence/admin-web-after-routes.json \
+            admin-evidence/admin-web-production-http.json \
+            admin-evidence/admin-web-release-result.json \
+            admin-evidence/admin-web-recovered-routes.json \
+            admin-evidence/admin-web-recovered-deployment.json \
+            admin-evidence/admin-web-recovery.json; do
+            if test -f "$path"; then cp "$path" admin-source-evidence/; fi
+          done
+
       - name: Upload sanitized Admin Web release evidence
         if: always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nelyon-admin-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            admin-release-artifact/admin-web-manifest.json
-            admin-release-artifact/admin-web-manifest.sha256
-            admin-evidence/admin-web-build.json
-            admin-evidence/admin-web-previous.json
-            admin-evidence/admin-web-before-routes.json
-            admin-evidence/admin-web-candidate.json
-            admin-evidence/admin-web-preview-http.json
-            admin-evidence/admin-web-promoted-version.json
-            admin-evidence/admin-web-after-routes.json
-            admin-evidence/admin-web-production-http.json
-            admin-evidence/admin-web-release-result.json
-            admin-evidence/admin-web-recovered-routes.json
-            admin-evidence/admin-web-recovery.json
+          path: admin-source-evidence
           if-no-files-found: warn
           retention-days: 90
           compression-level: 0
@@ -859,6 +1000,33 @@ jobs:
             gate-evidence/pre-function-revalidation.json
             gate-evidence/postcheck-result.json
             gate-evidence/release-observation.json
+          if-no-files-found: warn
+          retention-days: 90
+          compression-level: 0
+
+      - name: Upload immutable Admin recovery evidence
+        if: always() && needs.plan.outputs.mode == 'admin_recovery'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nelyon-admin-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            admin-recovery-evidence/verified-source.json
+            admin-recovery-evidence/control-center-post-state.json
+            admin-recovery-evidence/postcheck-admin-recovery-result.json
+            admin-release-artifact/admin-web-manifest.json
+            admin-release-artifact/admin-web-manifest.sha256
+            admin-evidence/admin-web-build.json
+            admin-evidence/admin-web-previous.json
+            admin-evidence/admin-web-before-routes.json
+            admin-evidence/admin-web-candidate.json
+            admin-evidence/admin-web-preview-http.json
+            admin-evidence/admin-web-promoted-version.json
+            admin-evidence/admin-web-after-routes.json
+            admin-evidence/admin-web-production-http.json
+            admin-evidence/admin-web-release-result.json
+            admin-evidence/admin-web-recovered-routes.json
+            admin-evidence/admin-web-recovered-deployment.json
+            admin-evidence/admin-web-recovery.json
           if-no-files-found: warn
           retention-days: 90
           compression-level: 0

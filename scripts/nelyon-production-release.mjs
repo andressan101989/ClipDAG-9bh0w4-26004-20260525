@@ -12,6 +12,7 @@ import {
   normalizeCronCommand,
   projectCronBaselineItems,
   projectProductionBaselineFinance,
+  verifyProductionAdminRecoverySnapshot,
   verifyProductionPreSnapshot,
   verifyProductionRecoverySnapshot,
   verifyProductionSnapshotPair,
@@ -1174,7 +1175,25 @@ export const F3_FINAL_LEDGER_PROVISIONING_NEGATIVE_AUTHORIZATION_EVIDENCE_SHA256
 export const F3_REMOTE_BDAG_LEDGER_EZBR_SHA256 =
   'd039819170e2c347ac8a6c88f77fa4461dfae4091a9e937ed47897b2c115e56c';
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
-const EXACT_MODES = ['plan_only', 'gate_proof', 'release', 'postcheck_recovery'];
+const EXACT_MODES = ['plan_only', 'gate_proof', 'release', 'admin_recovery', 'postcheck_recovery'];
+const ADMIN_RECOVERY_POLICY = Object.freeze({
+  source_event: 'workflow_dispatch',
+  source_ref: 'refs/heads/main',
+  source_mode: 'release',
+  source_conclusion: 'failure',
+  same_approved_sha_required: true,
+  supabase_post_snapshot_status: 'success',
+  supabase_postcheck_status: 'success',
+  admin_enabled_required: true,
+  admin_finalize_status: 'not_success',
+  rollback_required_after_candidate_or_promote: true,
+  productive_resources: [],
+  supabase_mutation_allowed: false,
+});
+
+function isReadOnlyRecoveryMode(mode) {
+  return mode === 'postcheck_recovery' || mode === 'admin_recovery';
+}
 const A2_NEGATIVE_TEST_EVIDENCE_SHA256 = '47f15e3fa7f5b377738a171f56632d72ed2d1fe8924d42417cca38371f17798e';
 const B7_MIGRATION = '20261010053524_creator_premium_b7_full_functional_commercial_completion';
 const B7_MIGRATION_BLOB = '43f014260e0ecfa6f0634e61e1646594bcf13e1d';
@@ -1852,6 +1871,7 @@ export function validatePolicy(policy) {
   );
   const confirmations = policy.scope_confirmations ?? {};
   const expectedConfirmations = {
+    admin_recovery: 'ADMIN_RECOVERY_EXACT_SOURCE',
     plan_only: 'PLAN_ONLY',
     gate_proof: 'GATE_PROOF_NO_MUTATION',
     release_standard: 'RELEASE_STANDARD',
@@ -1860,6 +1880,9 @@ export function validatePolicy(policy) {
   };
   if (canonicalJson(confirmations) !== canonicalJson(expectedConfirmations)) {
     deny('INVALID_POLICY_CONFIRMATIONS', 'scope confirmations do not match');
+  }
+  if (canonicalJson(policy.admin_recovery ?? null) !== canonicalJson(ADMIN_RECOVERY_POLICY)) {
+    deny('INVALID_ADMIN_RECOVERY_POLICY', 'Admin recovery policy must remain exact and forward-only');
   }
   const expectedEnvironment = {
     allow_admin_bypass: false,
@@ -1992,6 +2015,7 @@ function expectedConfirmation(request, policy) {
     return policy.scope_confirmations.release_standard;
   }
   if (request.mode === 'postcheck_recovery') return policy.scope_confirmations.postcheck_recovery;
+  if (request.mode === 'admin_recovery') return policy.scope_confirmations.admin_recovery;
   return null;
 }
 
@@ -2033,8 +2057,15 @@ export function validateRequest(request, policy) {
       item.run_id === String(request.recoverySourceRunId ?? '')
     ));
     if (!source) deny('INVALID_RECOVERY_SOURCE', 'recovery source run is not an exact approved authority');
+  } else if (request.mode === 'admin_recovery') {
+    if (!/^[1-9][0-9]*$/.test(String(request.recoverySourceRunId ?? ''))) {
+      deny('INVALID_RECOVERY_SOURCE', 'Admin recovery requires one exact numeric source run');
+    }
+    if (!Array.isArray(request.productiveResources) || request.productiveResources.length !== 0) {
+      deny('ADMIN_RECOVERY_MUTATION_FORBIDDEN', 'Admin recovery cannot carry productive Supabase resources');
+    }
   } else if (request.recoverySourceRunId !== undefined && request.recoverySourceRunId !== null) {
-    deny('INVALID_RECOVERY_SOURCE', 'recovery source run is valid only for postcheck recovery');
+    deny('INVALID_RECOVERY_SOURCE', 'recovery source run is valid only for an explicit recovery mode');
   }
   return Object.freeze({ ...request });
 }
@@ -2336,7 +2367,7 @@ export function attestManagedScopeTransition({
   affectedFunctions,
   runGit,
 }) {
-  if (mode === 'postcheck_recovery') return { migrations, attestation: null };
+  if (isReadOnlyRecoveryMode(mode)) return { migrations, attestation: null };
   if (policy?.baseline?.sha !== F2_MANAGED_SCOPE_TRANSITION.baseline_sha) {
     return { migrations, attestation: null };
   }
@@ -2379,7 +2410,7 @@ export function attestStoriesB1Transition({
   affectedFunctions,
   runGit,
 }) {
-  if (mode === 'postcheck_recovery') return { migrations, attestation: null };
+  if (isReadOnlyRecoveryMode(mode)) return { migrations, attestation: null };
   const transition = STORIES_B1_RELEASE_TRANSITION;
   const expectedFunctions = transition.functions.map(item => item.name).sort();
   const supabaseChanges = (changes ?? [])
@@ -2463,7 +2494,7 @@ export function attestStoriesSafetyC1Transition({
   affectedFunctions,
   runGit,
 }) {
-  if (mode === 'postcheck_recovery') return { migrations, attestation: null };
+  if (isReadOnlyRecoveryMode(mode)) return { migrations, attestation: null };
   const transition = STORIES_SAFETY_C1_RELEASE_TRANSITION;
   const supabaseChanges = (changes ?? [])
     .filter(item => item?.path?.startsWith('supabase/'))
@@ -2541,7 +2572,7 @@ export function attestStoriesSafetyC2Transition({
   affectedFunctions,
   runGit,
 }) {
-  if (mode === 'postcheck_recovery') return { migrations, attestation: null };
+  if (isReadOnlyRecoveryMode(mode)) return { migrations, attestation: null };
   const transition = STORIES_SAFETY_C2_RELEASE_TRANSITION;
   const supabaseChanges = (changes ?? [])
     .filter(item => item?.path?.startsWith('supabase/'))
@@ -2623,7 +2654,7 @@ export function attestStoriesQaC1Transition({
   affectedFunctions,
   runGit,
 }) {
-  if (mode === 'postcheck_recovery') return { migrations, attestation: null };
+  if (isReadOnlyRecoveryMode(mode)) return { migrations, attestation: null };
   const transition = STORIES_QA_C1_RELEASE_TRANSITION;
   const supabaseChanges = (changes ?? [])
     .filter(item => item?.path?.startsWith('supabase/'))
@@ -2704,7 +2735,7 @@ export function attestSuperuserControlCenterTransition({
   affectedFunctions,
   runGit,
 }) {
-  if (mode === 'postcheck_recovery') return { migrations, attestation: null };
+  if (isReadOnlyRecoveryMode(mode)) return { migrations, attestation: null };
   const transition = SUPERUSER_CONTROL_CENTER_RELEASE_TRANSITION;
   const supabaseChanges = (changes ?? [])
     .filter(item => item?.path?.startsWith('supabase/'))
@@ -2790,7 +2821,7 @@ export function attestSuperuserControlCenterTransition({
 }
 
 export function attestFinanceAuthorityTransition({ mode, policy, approvedSha, changes, migrations, affectedFunctions, runGit, cwd }) {
-  if (mode === 'postcheck_recovery') return { migrations, attestation: null };
+  if (isReadOnlyRecoveryMode(mode)) return { migrations, attestation: null };
   const f5 = F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION;
   const f5Candidate = migrations?.some(item => item.version === '20261026072512' || item.path === f5?.migration_path)
     || changes?.some(item => item.path === f5?.migration_path);
@@ -3677,9 +3708,12 @@ export function buildManifest({
   generatedAt,
 }) {
   validateRequest(request, policy);
-  const recoveryMode = request.mode === 'postcheck_recovery';
+  const recoveryMode = isReadOnlyRecoveryMode(request.mode);
   if (!risk || !['STANDARD', 'HIGH'].includes(risk.level) || !Array.isArray(risk.findings)) {
     deny('INVALID_RISK_CLASSIFICATION', 'manifest risk classification is incomplete');
+  }
+  if (request.mode === 'admin_recovery' && risk.level !== 'HIGH') {
+    deny('INVALID_RISK_CLASSIFICATION', 'Admin recovery is always a HIGH-risk Cloudflare production operation');
   }
   if (request.mode === 'release') {
     const requiredConfirmation = risk.level === 'HIGH'
@@ -4069,6 +4103,12 @@ export function buildManifest({
       mode: request.mode,
       scope_confirmation: request.scopeConfirmation,
     },
+    ...(request.mode === 'admin_recovery' ? {
+      recovery: {
+        kind: 'admin_cloudflare_forward_completion',
+        source_run_id: String(request.recoverySourceRunId),
+      },
+    } : {}),
     baseline: {
       state: policy.baseline.state,
       sha: gitState.baselineSha,
@@ -4235,6 +4275,22 @@ const RECOVERY_GATE_FILES = [
   'revalidation.json',
   'release-observation.json',
 ];
+const ADMIN_RECOVERY_FILES = [
+  'admin-web-manifest.json',
+  'admin-web-manifest.sha256',
+  'admin-web-build.json',
+  'admin-web-previous.json',
+  'admin-web-before-routes.json',
+  'admin-web-candidate.json',
+  'admin-web-preview-http.json',
+  'admin-web-promoted-version.json',
+  'admin-web-after-routes.json',
+  'admin-web-production-http.json',
+  'admin-web-release-result.json',
+  'admin-web-recovered-routes.json',
+  'admin-web-recovered-deployment.json',
+  'admin-web-recovery.json',
+];
 
 function assertSafeRecoveryDirectory(directory, allowed, required, code = 'UNSAFE_RECOVERY_ARTIFACT') {
   if (typeof directory !== 'string' || !isAbsolute(directory) || !existsSync(directory)) {
@@ -4356,6 +4412,215 @@ export function verifyRecoveryArtifactProvenance({ source, run, artifacts, relea
       release: source.release_artifact.digest,
     },
     source_manifest: manifest,
+    source_request: sourceRequest,
+    source_observation: observation,
+  };
+}
+
+function requireAdminRecoveryArtifactMetadata({ artifacts, sourceRunId, sourceRunAttempt }) {
+  const code = 'ADMIN_RECOVERY_SOURCE_MISMATCH';
+  if (!Array.isArray(artifacts)) deny(code, 'source artifact metadata is unavailable');
+  const names = {
+    release: `nelyon-release-${sourceRunId}-${sourceRunAttempt}`,
+    gate: `nelyon-gate-evidence-${sourceRunId}-${sourceRunAttempt}`,
+    admin: `nelyon-admin-evidence-${sourceRunId}-${sourceRunAttempt}`,
+  };
+  const selected = {};
+  for (const [kind, name] of Object.entries(names)) {
+    const matches = artifacts.filter(item => item?.name === name);
+    if (matches.length !== 1) deny(code, `${kind} source artifact is missing or duplicated`);
+    const item = matches[0];
+    if (!Number.isSafeInteger(Number(item.id)) || Number(item.id) < 1 || item.expired !== false
+      || !/^sha256:[0-9a-f]{64}$/.test(item.digest ?? '')) {
+      deny(code, `${kind} source artifact metadata is invalid`);
+    }
+    selected[kind] = { id: String(item.id), name, digest: item.digest };
+  }
+  return selected;
+}
+
+function normalizedRecoveryRoutes(value, code) {
+  if (!value || typeof value.zone_id !== 'string' || !Array.isArray(value.routes)) {
+    deny(code, 'Admin route recovery evidence is incomplete');
+  }
+  return value.routes.map(item => {
+    if (typeof item?.pattern !== 'string' || !Object.hasOwn(item, 'script')) {
+      deny(code, 'Admin route recovery evidence is malformed');
+    }
+    return { pattern: item.pattern, script: item.script ?? null };
+  }).sort((left, right) => `${left.pattern}:${left.script}`.localeCompare(`${right.pattern}:${right.script}`));
+}
+
+export function verifyAdminRecoverySourceProvenance({
+  policy,
+  recoveryRequest,
+  recoveryManifest,
+  run,
+  artifacts,
+  releaseBundle,
+  gateEvidence,
+  adminEvidence,
+}) {
+  const code = 'ADMIN_RECOVERY_SOURCE_MISMATCH';
+  validateRequest(recoveryRequest, policy);
+  const sourceRunId = String(recoveryRequest.recoverySourceRunId ?? '');
+  const sourceRunAttempt = Number(run?.run_attempt);
+  if (recoveryRequest.mode !== 'admin_recovery'
+    || recoveryRequest.scopeConfirmation !== policy.scope_confirmations?.admin_recovery
+    || recoveryManifest?.identity?.mode !== 'admin_recovery'
+    || recoveryManifest?.identity?.approved_sha !== recoveryRequest.approvedSha
+    || recoveryManifest?.recovery?.kind !== 'admin_cloudflare_forward_completion'
+    || recoveryManifest?.recovery?.source_run_id !== sourceRunId
+    || canonicalJson(recoveryManifest?.resources) !== canonicalJson({
+      config_changed: false, function_contracts: [], functions: [], migrations: [],
+    })) {
+    deny(code, 'recovery request and zero-resource manifest are not exactly bound');
+  }
+  if (!run || String(run.id) !== sourceRunId || !Number.isSafeInteger(sourceRunAttempt) || sourceRunAttempt < 1
+    || run.status !== 'completed' || run.conclusion !== policy.admin_recovery.source_conclusion
+    || run.event !== policy.admin_recovery.source_event || run.head_branch !== policy.default_branch
+    || run.head_sha !== recoveryRequest.approvedSha || run.path !== policy.workflow_path
+    || run.repository?.full_name !== policy.repository) {
+    deny(code, 'source run is not the exact failed main workflow_dispatch release');
+  }
+  const selectedArtifacts = requireAdminRecoveryArtifactMetadata({ artifacts, sourceRunId, sourceRunAttempt });
+  const releaseDirectory = resolve(releaseBundle?.directory ?? '');
+  const gateDirectory = resolve(gateEvidence?.directory ?? '');
+  const adminDirectory = resolve(adminEvidence?.directory ?? '');
+  assertSafeRecoveryDirectory(releaseDirectory, RECOVERY_RELEASE_FILES, ['bundle', 'remote-evidence.json', 'request.json'], code);
+  assertSafeRecoveryDirectory(gateDirectory, RECOVERY_GATE_FILES,
+    ['release-observation.json', 'postcheck-result.json'], code);
+  assertSafeRecoveryDirectory(adminDirectory, ADMIN_RECOVERY_FILES,
+    ['admin-web-manifest.json', 'admin-web-manifest.sha256'], code);
+  const bundleDirectory = join(releaseDirectory, 'bundle');
+  assertSafeRecoveryDirectory(bundleDirectory, BUNDLE_FILES, BUNDLE_FILES, code);
+  const manifestBytes = readFileSync(join(bundleDirectory, 'manifest.json'), 'utf8');
+  const sourceManifest = readFixedJson(bundleDirectory, 'manifest.json', code);
+  const sourceManifestDigest = sha256Hex(manifestBytes);
+  const sourceAdminReleaseManifestDigest = sha256Hex(canonicalJson(sourceManifest).trimEnd());
+  if (canonicalJson(sourceManifest) !== manifestBytes
+    || readFileSync(join(bundleDirectory, 'manifest.sha256'), 'utf8').trim() !== sourceManifestDigest) {
+    deny(code, 'source release manifest bytes or digest are invalid');
+  }
+  const sourceRequest = readFixedJson(releaseDirectory, 'request.json', code);
+  const observation = readFixedJson(gateDirectory, 'release-observation.json', code);
+  const postcheckPath = join(gateDirectory, 'postcheck-result.json');
+  const sourcePostcheck = readFixedJson(gateDirectory, 'postcheck-result.json', code);
+  if (sourceRequest.mode !== policy.admin_recovery.source_mode
+    || sourceRequest.actor !== policy.owner || sourceRequest.triggeringActor !== policy.owner
+    || sourceRequest.repository !== policy.repository || sourceRequest.ref !== policy.admin_recovery.source_ref
+    || sourceRequest.workflowRef !== `${policy.repository}/${policy.workflow_path}@${policy.admin_recovery.source_ref}`
+    || sourceRequest.scopeConfirmation !== policy.scope_confirmations.release_high_risk
+    || sourceRequest.approvedSha !== recoveryRequest.approvedSha || sourceRequest.mainSha !== recoveryRequest.approvedSha
+    || String(sourceRequest.runId) !== sourceRunId || sourceRequest.runAttempt !== sourceRunAttempt
+    || sourceManifest.identity?.mode !== policy.admin_recovery.source_mode
+    || sourceManifest.identity?.approved_sha !== recoveryRequest.approvedSha
+    || sourceManifest.identity?.release_id !== sourceRequest.releaseId
+    || sourceManifest.identity?.scope_confirmation !== policy.scope_confirmations.release_high_risk
+    || sourceManifest.risk?.level !== 'HIGH' || sourceManifest.result !== 'PLAN READY'
+    || sourceManifest.delta?.productive_change_count !== policy.superuser_control_center_transition.migrations.length
+    || String(sourceManifest.identity?.run_id) !== sourceRunId
+    || sourceManifest.identity?.run_attempt !== sourceRunAttempt
+    || canonicalJson(sourceManifest.resources?.migrations?.map(item => ({
+      version: item.version, path: item.path, blob: item.blob, sha256: item.sha256,
+    })).sort((a, b) => a.version.localeCompare(b.version)))
+      !== canonicalJson(policy.superuser_control_center_transition.migrations.map(item => ({
+        version: item.version, path: item.path, blob: item.blob, sha256: item.sha256,
+      })).sort((a, b) => a.version.localeCompare(b.version)))
+    || canonicalJson(sourceManifest.resources?.functions) !== canonicalJson([])
+    || canonicalJson(sourceManifest.resources?.function_contracts) !== canonicalJson([])
+    || sourceManifest.resources?.config_changed !== false
+    || canonicalJson(sourceManifest.resources?.superuser_control_center_transition ?? null)
+      !== canonicalJson({
+        ...policy.superuser_control_center_transition,
+        approved_sha: recoveryRequest.approvedSha,
+        baseline_descendant_verified: true,
+        integration_base_descendant_verified: true,
+        reviewed_bytes_verified: true,
+      })) {
+    deny(code, 'source request or manifest is not the exact Control Center release');
+  }
+  const expectedPostcheckKeys = [
+    'applied_migrations', 'changed_functions', 'function_attestations', 'post_evidence_sha256',
+    'pre_evidence_sha256', 'result',
+  ];
+  const expectedMigrationVersions = policy.superuser_control_center_transition.migrations
+    .map(item => item.version).sort();
+  if (observation.schema_version !== 1 || observation.result !== 'INCOMPLETE_OR_FAILED'
+    || observation.steps?.post_snapshot !== policy.admin_recovery.supabase_post_snapshot_status
+    || observation.steps?.postcheck !== policy.admin_recovery.supabase_postcheck_status
+    || observation.admin_web?.required !== policy.admin_recovery.admin_enabled_required
+    || observation.admin_web?.finalize === 'success'
+    || !/^[0-9a-f]{64}$/.test(observation.post_evidence_sha256 ?? '')
+    || observation.postcheck_file_sha256 !== sha256Hex(readFileSync(postcheckPath))
+    || canonicalJson(Object.keys(sourcePostcheck).sort()) !== canonicalJson(expectedPostcheckKeys)
+    || sourcePostcheck.result !== 'REMOTE_POSTCHECK_VERIFIED'
+    || canonicalJson(sourcePostcheck.applied_migrations) !== canonicalJson(expectedMigrationVersions)
+    || canonicalJson(sourcePostcheck.changed_functions) !== canonicalJson([])
+    || canonicalJson(sourcePostcheck.function_attestations) !== canonicalJson([])
+    || sourcePostcheck.pre_evidence_sha256 !== observation.pre_evidence_sha256
+    || sourcePostcheck.post_evidence_sha256 !== observation.post_evidence_sha256) {
+    deny(code, 'source release did not prove successful Supabase postcheck followed by failed Admin finalization');
+  }
+  const adminManifestBytes = readFileSync(join(adminDirectory, 'admin-web-manifest.json'), 'utf8');
+  const adminManifest = readFixedJson(adminDirectory, 'admin-web-manifest.json', code);
+  const canonicalAdminManifest = canonicalJson(adminManifest).trimEnd();
+  const adminManifestDigest = sha256Hex(Buffer.from(canonicalAdminManifest, 'utf8'));
+  if (adminManifestBytes !== `${canonicalAdminManifest}\n`
+    || readFileSync(join(adminDirectory, 'admin-web-manifest.sha256'), 'utf8').trim() !== adminManifestDigest
+    || adminManifest.enabled !== true || adminManifest.release?.mode !== 'release'
+    || adminManifest.release?.approved_sha !== recoveryRequest.approvedSha
+    || adminManifest.release?.release_id !== sourceRequest.releaseId
+    || String(adminManifest.release?.run_id) !== sourceRunId
+    || adminManifest.release?.run_attempt !== sourceRunAttempt
+    || adminManifest.release?.manifest_sha256 !== sourceAdminReleaseManifestDigest
+    || !Array.isArray(adminManifest.source?.files)
+    || adminManifest.source?.sha256 !== sha256Hex(canonicalJson(adminManifest.source.files).trimEnd())) {
+    deny(code, 'source Admin manifest or digest is invalid');
+  }
+  const buildPath = join(adminDirectory, 'admin-web-build.json');
+  const build = existsSync(buildPath) ? readFixedJson(adminDirectory, 'admin-web-build.json', code) : null;
+  if (observation.admin_web?.build === 'success'
+    && (!build || build.approved_sha !== recoveryRequest.approvedSha
+      || build.source_manifest_sha256 !== adminManifestDigest
+      || !/^[0-9a-f]{64}$/.test(build.dist_sha256 ?? ''))) {
+    deny(code, 'source Admin reproducible build evidence is invalid');
+  }
+  const requiresRollback = ['candidate', 'promote'].some(step => observation.admin_web?.[step] === 'success');
+  if (requiresRollback && policy.admin_recovery.rollback_required_after_candidate_or_promote) {
+    for (const name of ['admin-web-recovered-routes.json', 'admin-web-recovered-deployment.json', 'admin-web-recovery.json']) {
+      if (!existsSync(join(adminDirectory, name))) deny(code, 'required source Cloudflare rollback evidence is missing');
+    }
+    const previous = readFixedJson(adminDirectory, 'admin-web-previous.json', code);
+    const beforeRoutes = readFixedJson(adminDirectory, 'admin-web-before-routes.json', code);
+    const recoveredRoutes = readFixedJson(adminDirectory, 'admin-web-recovered-routes.json', code);
+    const recoveredDeployment = readFixedJson(adminDirectory, 'admin-web-recovered-deployment.json', code);
+    const recovery = readFixedJson(adminDirectory, 'admin-web-recovery.json', code);
+    const activeVersions = recoveredDeployment?.versions;
+    if (observation.admin_web.recovery !== 'success'
+      || observation.admin_web.recovery_sha256 !== sha256Hex(readFileSync(join(adminDirectory, 'admin-web-recovery.json')))
+      || recovery.result !== 'ADMIN_RECOVERY_VERIFIED' || recovery.version_id !== previous.version_id
+      || recovery.routes_restored !== true || !Array.isArray(activeVersions) || activeVersions.length !== 1
+      || activeVersions[0]?.version_id !== previous.version_id || Number(activeVersions[0]?.percentage) !== 100
+      || beforeRoutes.zone_id !== recoveredRoutes.zone_id
+      || canonicalJson(normalizedRecoveryRoutes(beforeRoutes, code))
+        !== canonicalJson(normalizedRecoveryRoutes(recoveredRoutes, code))) {
+      deny(code, 'source Cloudflare rollback was not exact and successful');
+    }
+  }
+  return {
+    schema_version: 1,
+    result: 'ADMIN_RECOVERY_SOURCE_VERIFIED',
+    source_run_id: sourceRunId,
+    source_run_attempt: sourceRunAttempt,
+    source_sha: recoveryRequest.approvedSha,
+    source_release_id: sourceRequest.releaseId,
+    source_manifest_sha256: sourceManifestDigest,
+    source_admin_manifest_sha256: adminManifestDigest,
+    source_admin_source_sha256: adminManifest.source.sha256,
+    source_build_sha256: build?.dist_sha256 ?? null,
+    source_artifacts: selectedArtifacts,
+    source_manifest: sourceManifest,
     source_request: sourceRequest,
     source_observation: observation,
   };
@@ -4613,6 +4878,66 @@ export function verifyPostcheckRecovery({
   };
 }
 
+export function verifyAdminRecoveryBuildBinding({
+  recoveryRequest,
+  recoveryManifest,
+  verifiedSource,
+  currentAdminManifest,
+  currentBuild,
+}) {
+  const code = 'ADMIN_RECOVERY_POSTCHECK_FAILED';
+  if (verifiedSource?.result !== 'ADMIN_RECOVERY_SOURCE_VERIFIED'
+    || verifiedSource.source_run_id !== String(recoveryRequest?.recoverySourceRunId ?? '')
+    || verifiedSource.source_sha !== recoveryRequest?.approvedSha
+    || recoveryManifest?.recovery?.source_run_id !== verifiedSource.source_run_id
+    || currentAdminManifest?.enabled !== true || currentAdminManifest?.release?.mode !== 'admin_recovery'
+    || currentAdminManifest?.release?.recovery_source_run_id !== verifiedSource.source_run_id
+    || currentAdminManifest?.release?.approved_sha !== recoveryRequest?.approvedSha
+    || currentAdminManifest?.source?.sha256 !== verifiedSource.source_admin_source_sha256
+    || currentBuild?.approved_sha !== recoveryRequest?.approvedSha
+    || currentBuild?.source_manifest_sha256 !== sha256Hex(canonicalJson(currentAdminManifest).trimEnd())
+    || !/^[0-9a-f]{64}$/.test(currentBuild?.dist_sha256 ?? '')
+    || (verifiedSource.source_build_sha256 !== null
+      && currentBuild.dist_sha256 !== verifiedSource.source_build_sha256)) {
+    deny(code, 'Admin recovery source, rebuilt bytes, or current recovery identity drifted');
+  }
+  return true;
+}
+
+export function verifyAdminRecoveryPostcheck({
+  policy,
+  recoveryRequest,
+  recoveryManifest,
+  verifiedSource,
+  currentEvidence,
+  currentAdminManifest,
+  currentBuild,
+  adapterSourceSha256,
+}) {
+  verifyAdminRecoveryBuildBinding({
+    recoveryRequest,
+    recoveryManifest,
+    verifiedSource,
+    currentAdminManifest,
+    currentBuild,
+  });
+  const snapshot = verifyProductionAdminRecoverySnapshot({
+    post: currentEvidence,
+    policy,
+    request: recoveryRequest,
+    manifest: recoveryManifest,
+    adapterSourceSha256,
+  });
+  return {
+    schema_version: 1,
+    result: 'ADMIN_RECOVERY_POSTCHECK_VERIFIED',
+    source_run_id: verifiedSource.source_run_id,
+    source_build_sha256: verifiedSource.source_build_sha256,
+    recovery_build_sha256: currentBuild.dist_sha256,
+    production_evidence_sha256: snapshot.evidence_sha256,
+  };
+}
+
 export function validateReleaseHistory({ releaseId, pages, policy }) {
   if (!pages || pages.complete !== true || !Array.isArray(pages.pages)) {
     deny('INCOMPLETE_RELEASE_HISTORY', 'workflow release history pagination is incomplete');
@@ -4761,7 +5086,7 @@ export function verifyConcurrency({ runs, currentRunId, complete }) {
 
 export function requiredSecretsForMode(mode, secrets) {
   if (mode === 'plan_only' || mode === 'gate_proof' || mode === 'postcheck_recovery') return [];
-  if (mode !== 'release') deny('INVALID_MODE', 'unsupported release mode');
+  if (mode !== 'release' && mode !== 'admin_recovery') deny('INVALID_MODE', 'unsupported release mode');
   const required = ['SUPABASE_ACCESS_TOKEN'];
   const missing = required.filter(name => typeof secrets?.[name] !== 'string' || secrets[name].length === 0);
   if (missing.length > 0) deny('MISSING_SECRETS', 'required Environment deployment secrets are unavailable', { missing });
@@ -5262,7 +5587,7 @@ function parseCliArguments(argv) {
 }
 
 function printHelp() {
-  process.stdout.write('Usage: nelyon-production-release.mjs <plan|revalidate|verify-gate|verify-dry-run|verify-pre-snapshot|verify-function-contract|postcheck|verify-recovery-source|postcheck-recovery> [options]\n');
+  process.stdout.write('Usage: nelyon-production-release.mjs <plan|revalidate|verify-gate|verify-dry-run|verify-pre-snapshot|verify-function-contract|postcheck|verify-recovery-source|postcheck-recovery|verify-admin-recovery-source|postcheck-admin-recovery> [options]\n');
 }
 
 async function runCli(argv) {
@@ -5271,6 +5596,49 @@ async function runCli(argv) {
     return 0;
   }
   const { command, values } = parseCliArguments(argv);
+  if (command === 'verify-admin-recovery-source') {
+    for (const required of ['policy', 'request', 'recovery-manifest', 'run', 'artifacts', 'release-bundle', 'gate-evidence', 'admin-evidence', 'output']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    const policy = loadPolicy(values.policy);
+    const recoveryRequest = JSON.parse(readFileSync(values.request, 'utf8'));
+    const result = verifyAdminRecoverySourceProvenance({
+      policy,
+      recoveryRequest,
+      recoveryManifest: JSON.parse(readFileSync(values['recovery-manifest'], 'utf8')),
+      run: JSON.parse(readFileSync(values.run, 'utf8')),
+      artifacts: JSON.parse(readFileSync(values.artifacts, 'utf8')),
+      releaseBundle: { directory: resolve(values['release-bundle']) },
+      gateEvidence: { directory: resolve(values['gate-evidence']) },
+      adminEvidence: { directory: resolve(values['admin-evidence']) },
+    });
+    writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
+    process.stdout.write(`ADMIN RECOVERY SOURCE VERIFIED ${result.source_run_id} ${result.source_manifest_sha256}\n`);
+    return 0;
+  }
+  if (command === 'postcheck-admin-recovery') {
+    for (const required of ['policy', 'request', 'recovery-manifest', 'verified-source', 'current-snapshot', 'admin-manifest', 'build', 'output']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    const policy = loadPolicy(values.policy);
+    const recoveryRequest = JSON.parse(readFileSync(values.request, 'utf8'));
+    validateRequest(recoveryRequest, policy);
+    const adapterPath = join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs');
+    const result = verifyAdminRecoveryPostcheck({
+      policy,
+      recoveryRequest,
+      recoveryManifest: JSON.parse(readFileSync(values['recovery-manifest'], 'utf8')),
+      verifiedSource: JSON.parse(readFileSync(values['verified-source'], 'utf8')),
+      currentEvidence: JSON.parse(readFileSync(values['current-snapshot'], 'utf8')),
+      currentAdminManifest: JSON.parse(readFileSync(values['admin-manifest'], 'utf8')),
+      currentBuild: JSON.parse(readFileSync(values.build, 'utf8')),
+      adapterSourceSha256: sha256Hex(readFileSync(adapterPath)),
+    });
+    const bytes = canonicalJson(result);
+    writeFileSync(resolve(values.output), bytes, { encoding: 'utf8', flag: 'wx' });
+    process.stdout.write(`ADMIN RECOVERY POSTCHECK SUCCESS ${sha256Hex(bytes)}\n`);
+    return 0;
+  }
   if (command === 'verify-recovery-source') {
     for (const required of ['policy', 'recovery-source-run', 'run', 'artifacts', 'release-bundle', 'gate-evidence', 'output']) {
       if (!values[required]) throw new Error(`missing --${required}`);
@@ -5565,7 +5933,8 @@ async function runCli(argv) {
       runs: JSON.parse(readFileSync(values.runs, 'utf8')),
       currentRunId: releaseRequest.runId,
     });
-    requiredSecretsForMode(releaseRequest.mode, releaseRequest.mode === 'release' ? process.env : {});
+    requiredSecretsForMode(releaseRequest.mode,
+      ['release', 'admin_recovery'].includes(releaseRequest.mode) ? process.env : {});
     const proof = {
       schema_version: 1,
       result: 'GATE_VERIFIED',
