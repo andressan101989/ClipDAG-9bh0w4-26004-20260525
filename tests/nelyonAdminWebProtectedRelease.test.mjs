@@ -271,7 +271,7 @@ test('Admin route propagation probe uses one candidate-bound cache key per bound
   };
   const candidate = { version_id: versionId, build_sha256: buildManifest.dist_sha256 };
   const headers = {
-    'cache-control': 'no-store',
+    'cache-control': 'no-store, no-transform',
     'content-security-policy': "frame-ancestors 'none'",
     'x-frame-options': 'DENY',
     'x-robots-tag': 'noindex, nofollow',
@@ -303,6 +303,7 @@ test('Admin route propagation probe uses one candidate-bound cache key per bound
     { ...probe, content_type: 'application/json' },
     { ...probe, body_sha256: 'e'.repeat(64) },
     { ...probe, bytes: 4 },
+    { ...probe, headers: { ...headers, 'cache-control': 'no-store' } },
     { ...probe, headers: { ...headers, 'x-frame-options': null } },
   ]) {
     assert.throws(
@@ -328,7 +329,7 @@ test('Admin route propagation probe uses one candidate-bound cache key per bound
 
 test('production HTTP matrix proves redirect, SPA documents, security headers, and a real 404 asset', () => {
   const headers = {
-    'cache-control': 'no-store',
+    'cache-control': 'no-store, no-transform',
     'content-security-policy': "frame-ancestors 'none'",
     'x-frame-options': 'DENY',
     'x-robots-tag': 'noindex, nofollow',
@@ -351,13 +352,17 @@ test('production HTTP matrix proves redirect, SPA documents, security headers, a
   }), /admin_http_matrix_mismatch/);
   assert.throws(() => verifyProductionHttpMatrix({
     ...matrix,
+    '/admin/': { ...matrix['/admin/'], headers: { ...headers, 'cache-control': 'no-store' } },
+  }), /admin_http_matrix_mismatch/);
+  assert.throws(() => verifyProductionHttpMatrix({
+    ...matrix,
     '/admin/system': { ...matrix['/admin/system'], headers: { ...headers, 'content-security-policy': "default-src 'self'" } },
   }), /admin_http_matrix_mismatch/);
 });
 
 test('remote smoke verifies index and every immutable build artifact byte-for-byte', () => {
   const securityHeaders = {
-    'cache-control': 'no-store',
+    'cache-control': 'no-store, no-transform',
     'content-security-policy': "frame-ancestors 'none'",
     'x-frame-options': 'DENY',
     'x-robots-tag': 'noindex, nofollow',
