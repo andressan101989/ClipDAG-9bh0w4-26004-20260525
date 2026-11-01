@@ -1080,7 +1080,7 @@ export const SUPERUSER_QA_PERF_C1_RELEASE_TRANSITION = Object.freeze({
   approved_sha_ancestry: 'verified_integration_base',
   migrations: [
     { version: '20261101181907', path: 'supabase/migrations/20261101181907_superuser_qa_perf_c1.sql',
-      blob: '34a09a973b506924e780abbb1799c15c9414501d', sha256: 'fe07f20bd0855dc832310aa78a557dc18c96e42e18f20fdf11827b4200b82600', byte_length: 10041 },
+      blob: '005c6cbbf1539611ecb0b8f2255bdf3be44f32a6', sha256: '70c7d77bb0a2cb11287b4d0f0feba3f158e3ae3f749e7fa7ec15fb071a7fff07', byte_length: 10759 },
   ],
   productive_paths: [
     'supabase/migrations/20261101181907_superuser_qa_perf_c1.sql',
@@ -1091,24 +1091,26 @@ export const SUPERUSER_QA_PERF_C1_RELEASE_TRANSITION = Object.freeze({
     controlCenterFunction('public.get_marketplace_admin_health()', 'f0222d0af1d6b5f3317174f8b05fb91ea14f9786e87a17d0535baa70829102ab', ['search_path=pg_catalog, private, public']),
   ],
   function_definitions: [
-    controlCenterFunction('public.get_admin_system_health()', '3e669949cd7657bd3fb39db1d7ab98aa26ecc72ac136719cae5db604cc7f8a4a', ['search_path=""']),
+    controlCenterFunction('public.get_admin_system_health()', '59810b955f97c8d9538a8833f4aec5da994de2ff302d5706aceeb80a35f51c72', ['search_path=""']),
     controlCenterFunction('public.get_marketplace_admin_health()', 'be6d8747efe5066ecf514e1b38b7d4b28444e1bc53484208430f9a2b7884e233',
       ['search_path=pg_catalog, private, public','join_collapse_limit=1','from_collapse_limit=1']),
   ],
-  index_attestation: {
-    schema: 'cron', table: 'job_run_details', name: 'cron_job_run_details_start_job_cover_idx',
-    owner: 'postgres',
-    definition: 'CREATE INDEX cron_job_run_details_start_job_cover_idx ON cron.job_run_details USING btree (start_time DESC NULLS LAST, jobid) INCLUDE (status, end_time)',
-    valid: true, ready: true, unique: false, primary: false,
-    create_mode: 'concurrent', lock_timeout: null, retry_safe_invalid_index_replacement: true,
+  cron_history_attestation: {
+    schema: 'cron', table: 'job_run_details', relation_kind: 'r',
+    schema_owner: 'supabase_admin', table_owner: 'supabase_admin', extension: 'pg_cron',
+    primary_index: { name: 'job_run_details_pkey', key_columns: ['runid'], included_columns: [],
+      primary: true, unique: true, valid: true, ready: true,
+      predicate: false, expressions: false },
+    release_index_name: 'cron_job_run_details_start_job_cover_idx', release_index_expected: false,
+    release_mutation: 'forbidden',
+    metrics_contract: { probe_order: ['runid'], probe_direction: 'desc', probe_limit: 50000,
+      complete_only_when_unsaturated: true, exact_only_when_complete: true,
+      unavailable_reason: 'history_probe_limit_reached', unavailable_value: null },
   },
   pre_snapshot_recovery: {
     migration_inventory: 'baseline_without_c1',
     accepted_states: [
-      { functions: 'predecessor', index: 'absent' },
-      { functions: 'predecessor', index: 'exact_shape_any_valid_ready' },
-      { functions: 'successor', index: 'absent' },
-      { functions: 'successor', index: 'exact_shape_any_valid_ready' },
+      { functions: 'predecessor', cron_history: 'exact_extension_owned', release_index: 'absent' },
     ],
     finance_policy_exact: true,
     mixed_function_catalog_rejected: true,
@@ -1879,7 +1881,7 @@ export function validatePolicy(policy) {
   if (canonicalJson(policy.superuser_qa_perf_c1_transition ?? null)
     !== canonicalJson(SUPERUSER_QA_PERF_C1_RELEASE_TRANSITION)) {
     deny('INVALID_SUPERUSER_QA_PERF_C1_TRANSITION',
-      'Superuser QA PERF C1 authority must match the exact reviewed online-index and RPC contract');
+      'Superuser QA PERF C1 authority must match the exact reviewed bounded managed-cron and RPC contract');
   }
   const c2AdminFinanceRpc = policy.finance_security_advisor?.c2_rpc_replacements?.find(exception =>
     exception?.object?.schema === 'public'

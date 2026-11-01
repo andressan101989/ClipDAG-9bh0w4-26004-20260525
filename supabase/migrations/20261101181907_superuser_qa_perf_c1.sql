@@ -1,50 +1,3 @@
--- pg-delta: transaction=false
-
-do $migration$
-begin
-  if to_regclass('cron.job_run_details') is null
-     or not exists(select 1 from information_schema.columns where table_schema='cron' and table_name='job_run_details' and column_name='start_time')
-     or not exists(select 1 from information_schema.columns where table_schema='cron' and table_name='job_run_details' and column_name='jobid')
-     or not exists(select 1 from information_schema.columns where table_schema='cron' and table_name='job_run_details' and column_name='status')
-     or not exists(select 1 from information_schema.columns where table_schema='cron' and table_name='job_run_details' and column_name='end_time') then
-    raise exception 'superuser_qa_perf_c1_cron_contract_drift';
-  end if;
-end
-$migration$;
-
--- A failed concurrent build can leave an invalid index. Removing the exact
--- C1 name first makes the canonical migration retry safe without blocking
--- active pg_cron writers for the duration of the build.
-drop index concurrently if exists cron.cron_job_run_details_start_job_cover_idx;
-
-create index concurrently cron_job_run_details_start_job_cover_idx
-  on cron.job_run_details(start_time desc nulls last,jobid)
-  include(status,end_time);
-
-comment on index cron.cron_job_run_details_start_job_cover_idx is
-  'C1 time-leading covering index for bounded Admin cron health projections.';
-
-do $migration$
-begin
-  if not exists(
-    select 1
-    from pg_class c
-    join pg_namespace n on n.oid=c.relnamespace
-    join pg_index i on i.indexrelid=c.oid
-    where n.nspname='cron'
-      and c.relname='cron_job_run_details_start_job_cover_idx'
-      and i.indisvalid and i.indisready
-  ) or not exists(
-    select 1 from pg_indexes
-    where schemaname='cron' and tablename='job_run_details'
-      and indexname='cron_job_run_details_start_job_cover_idx'
-      and indexdef ilike '%(start_time DESC NULLS LAST, jobid) INCLUDE (status, end_time)%'
-  ) then
-    raise exception 'superuser_qa_perf_c1_index_postcondition_failed';
-  end if;
-end
-$migration$;
-
 begin;
 
 do $migration$
@@ -55,6 +8,39 @@ begin
   if v_system_oid is null or v_marketplace_oid is null then
     raise exception 'superuser_qa_perf_c1_authority_missing';
   end if;
+
+  -- pg_cron is Supabase-managed. C1 consumes the existing runid PK without
+  -- mutating the extension-owned schema or relation.
+  if not exists(
+    select 1
+    from pg_class c
+    join pg_namespace n on n.oid=c.relnamespace
+    where n.nspname='cron' and c.relname='job_run_details' and c.relkind='r'
+      and pg_get_userbyid(n.nspowner)='supabase_admin'
+      and pg_get_userbyid(c.relowner)='supabase_admin'
+  ) or not exists(
+    select 1 from pg_attribute a
+    where a.attrelid='cron.job_run_details'::regclass and a.attname='runid' and not a.attisdropped
+  ) or not exists(
+    select 1 from pg_attribute a
+    where a.attrelid='cron.job_run_details'::regclass and a.attname='start_time' and not a.attisdropped
+  ) or not exists(
+    select 1 from pg_attribute a
+    where a.attrelid='cron.job_run_details'::regclass and a.attname='status' and not a.attisdropped
+  ) or not exists(
+    select 1
+    from pg_index i
+    join pg_class index_class on index_class.oid=i.indexrelid
+    where i.indrelid='cron.job_run_details'::regclass
+      and index_class.relname='job_run_details_pkey'
+      and i.indisprimary and i.indisunique and i.indisvalid and i.indisready
+      and i.indnkeyatts=1 and i.indnatts=1
+      and i.indexprs is null and i.indpred is null
+      and pg_get_indexdef(i.indexrelid,1,true)='runid'
+  ) or to_regclass('cron.cron_job_run_details_start_job_cover_idx') is not null then
+    raise exception 'superuser_qa_perf_c1_cron_contract_drift';
+  end if;
+
   if not exists(
     select 1 from pg_proc
     where oid=v_system_oid and prosecdef and pg_get_userbyid(proowner)='postgres'
@@ -62,13 +48,12 @@ begin
   ) or not exists(
     select 1 from pg_proc
     where oid=v_marketplace_oid and prosecdef and pg_get_userbyid(proowner)='postgres'
-      and (
-        proconfig=array['search_path=pg_catalog, private, public']::text[]
-        or proconfig=array['search_path=pg_catalog, private, public','join_collapse_limit=1','from_collapse_limit=1']::text[]
-      )
+      and (proconfig=array['search_path=pg_catalog, private, public']::text[]
+        or proconfig=array['search_path=pg_catalog, private, public','join_collapse_limit=1','from_collapse_limit=1']::text[])
   ) then
     raise exception 'superuser_qa_perf_c1_function_security_drift';
   end if;
+
   if has_function_privilege('anon',v_system_oid,'execute')
      or not has_function_privilege('authenticated',v_system_oid,'execute')
      or has_function_privilege('service_role',v_system_oid,'execute')
@@ -77,17 +62,7 @@ begin
      or has_function_privilege('service_role',v_marketplace_oid,'execute') then
     raise exception 'superuser_qa_perf_c1_function_acl_drift';
   end if;
-  if not exists(
-    select 1
-    from pg_class c
-    join pg_namespace n on n.oid=c.relnamespace
-    join pg_index i on i.indexrelid=c.oid
-    where n.nspname='cron'
-      and c.relname='cron_job_run_details_start_job_cover_idx'
-      and i.indisvalid and i.indisready
-  ) then
-    raise exception 'superuser_qa_perf_c1_index_missing';
-  end if;
+
   if not exists(
     select 1 from private.creator_premium_finance_policy
     where singleton and activation_mode='general'
@@ -108,26 +83,41 @@ set search_path=''
 as $function$
 declare
   v_cutoff timestamptz:=statement_timestamp()-interval '24 hours';
+  v_probe_limit constant integer:=50000;
+  v_sampled_rows bigint;
+  v_oldest_sampled_start timestamptz;
   v_runs_24h bigint;
   v_successes_24h bigint;
   v_non_successes_24h bigint;
   v_last_run_at timestamptz;
+  v_history_window_complete boolean;
 begin
   perform public.admin_require_capability('system.health.read');
 
-  select
-    count(*),
-    count(*) filter(where status='succeeded'),
-    count(*) filter(where status<>'succeeded')
-  into v_runs_24h,v_successes_24h,v_non_successes_24h
-  from cron.job_run_details
-  where start_time>=v_cutoff;
+  select count(*),min(start_time) filter(where start_time is not null),
+    count(*) filter(where start_time>=v_cutoff),
+    count(*) filter(where start_time>=v_cutoff and status='succeeded'),
+    count(*) filter(where start_time>=v_cutoff and status<>'succeeded'),max(start_time)
+  into v_sampled_rows,v_oldest_sampled_start,v_runs_24h,
+    v_successes_24h,v_non_successes_24h,v_last_run_at
+  from(
+    select start_time,status
+    from cron.job_run_details
+    order by runid desc
+    limit v_probe_limit
+  ) recent;
 
-  select start_time
-  into v_last_run_at
-  from cron.job_run_details
-  order by start_time desc nulls last,runid desc
-  limit 1;
+  -- Only an unsaturated probe proves that every retained row was examined.
+  -- A saturated sample remains unavailable even when its oldest timestamp is
+  -- outside the cutoff; this avoids assuming runid/start_time monotonicity.
+  v_history_window_complete:=v_sampled_rows<v_probe_limit;
+
+  if not v_history_window_complete then
+    v_runs_24h:=null;
+    v_successes_24h:=null;
+    v_non_successes_24h:=null;
+    v_last_run_at:=null;
+  end if;
 
   return jsonb_build_object(
     'authority',jsonb_build_object(
@@ -165,22 +155,25 @@ begin
       'runs_24h',v_runs_24h,
       'successes_24h',v_successes_24h,
       'non_successes_24h',v_non_successes_24h,
-      'last_run_at',v_last_run_at
+      'last_run_at',v_last_run_at,
+      'run_metrics_available',v_history_window_complete,
+      'run_metrics_reason',case when v_history_window_complete then null else 'history_probe_limit_reached' end,
+      'history_probe_limit',v_probe_limit,
+      'history_sampled_rows',v_sampled_rows,
+      'history_oldest_sampled_at',v_oldest_sampled_start
     )
   );
 end;
 $function$;
 
-alter function public.get_marketplace_admin_health()
-  set join_collapse_limit=1;
-alter function public.get_marketplace_admin_health()
-  set from_collapse_limit=1;
+alter function public.get_marketplace_admin_health() set join_collapse_limit=1;
+alter function public.get_marketplace_admin_health() set from_collapse_limit=1;
 
 revoke all on function public.get_admin_system_health() from public,anon,authenticated,service_role;
 grant execute on function public.get_admin_system_health() to authenticated;
 
 comment on function public.get_admin_system_health() is
-  'C1 exact Admin health projection with one indexed 24-hour cron aggregate and no global timeout override.';
+  'C1 bounded Admin health projection: exact 24-hour cron metrics only when a 50k runid probe proves complete; otherwise explicit unavailable.';
 
 do $migration$
 declare
@@ -191,13 +184,23 @@ begin
     select 1
     from pg_class c
     join pg_namespace n on n.oid=c.relnamespace
-    join pg_index i on i.indexrelid=c.oid
-    where n.nspname='cron'
-      and c.relname='cron_job_run_details_start_job_cover_idx'
-      and i.indisvalid and i.indisready
-  ) then
-    raise exception 'superuser_qa_perf_c1_index_postcondition_failed';
+    where n.nspname='cron' and c.relname='job_run_details' and c.relkind='r'
+      and pg_get_userbyid(n.nspowner)='supabase_admin'
+      and pg_get_userbyid(c.relowner)='supabase_admin'
+  ) or not exists(
+    select 1
+    from pg_index i
+    join pg_class index_class on index_class.oid=i.indexrelid
+    where i.indrelid='cron.job_run_details'::regclass
+      and index_class.relname='job_run_details_pkey'
+      and i.indisprimary and i.indisunique and i.indisvalid and i.indisready
+      and i.indnkeyatts=1 and i.indnatts=1
+      and i.indexprs is null and i.indpred is null
+      and pg_get_indexdef(i.indexrelid,1,true)='runid'
+  ) or to_regclass('cron.cron_job_run_details_start_job_cover_idx') is not null then
+    raise exception 'superuser_qa_perf_c1_cron_postcondition_failed';
   end if;
+
   if not exists(
     select 1 from pg_proc
     where oid=v_system_oid and prosecdef and pg_get_userbyid(proowner)='postgres'
@@ -209,6 +212,7 @@ begin
   ) then
     raise exception 'superuser_qa_perf_c1_function_postcondition_failed';
   end if;
+
   if has_function_privilege('anon',v_system_oid,'execute')
      or not has_function_privilege('authenticated',v_system_oid,'execute')
      or has_function_privilege('service_role',v_system_oid,'execute')
@@ -217,6 +221,7 @@ begin
      or has_function_privilege('service_role',v_marketplace_oid,'execute') then
     raise exception 'superuser_qa_perf_c1_acl_postcondition_failed';
   end if;
+
   if not exists(
     select 1 from private.creator_premium_finance_policy
     where singleton and activation_mode='general'

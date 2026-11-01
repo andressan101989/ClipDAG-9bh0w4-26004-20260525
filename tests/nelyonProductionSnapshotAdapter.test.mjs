@@ -228,22 +228,19 @@ function perfC1Migrations(installed) {
 }
 
 function perfC1State(transition, installed) {
+  const history = transition.cron_history_attestation;
   return {
-    schema_version: 1,
+    schema_version: 3,
     complete: true,
     installed,
     functions: installed ? transition.function_definitions : transition.predecessor_functions,
-    index: installed ? {
-      schema: transition.index_attestation.schema,
-      table: transition.index_attestation.table,
-      name: transition.index_attestation.name,
-      owner: transition.index_attestation.owner,
-      definition: transition.index_attestation.definition,
-      valid: transition.index_attestation.valid,
-      ready: transition.index_attestation.ready,
-      unique: transition.index_attestation.unique,
-      primary: transition.index_attestation.primary,
-    } : null,
+    cron_history: {
+      schema: history.schema, table: history.table, relation_kind: history.relation_kind,
+      schema_owner: history.schema_owner, table_owner: history.table_owner,
+      extension: history.extension, primary_index: structuredClone(history.primary_index),
+      release_index_name: history.release_index_name,
+      release_index_present: history.release_index_expected,
+    },
     finance: {
       activation_mode: 'general', active_authorization: true,
       platform_fee_bps: 2000, purchase_enabled: true,
@@ -252,7 +249,7 @@ function perfC1State(transition, installed) {
   };
 }
 
-test('PERF C1 snapshot permits only exact retry-safe prestates and freezes the post-state', async () => {
+test('PERF C1 snapshot permits only the exact managed-cron prestate and freezes the bounded post-state', async () => {
   const adapter = await loadAdapter();
   const transition = installedPolicy.superuser_qa_perf_c1_transition;
   assert.equal(adapter.assertReadOnlySql(adapter.SUPERUSER_QA_PERF_C1_STATE_SQL), true);
@@ -301,72 +298,65 @@ test('PERF C1 snapshot permits only exact retry-safe prestates and freezes the p
       { migrations }), error);
   }
   const pre = perfC1State(transition, false), post = perfC1State(transition, true);
-  const recoverableIndex = {
-    schema: transition.index_attestation.schema,
-    table: transition.index_attestation.table,
-    name: transition.index_attestation.name,
-    owner: transition.index_attestation.owner,
-    definition: transition.index_attestation.definition,
-    valid: false,
-    ready: false,
-    unique: transition.index_attestation.unique,
-    primary: transition.index_attestation.primary,
-  };
   assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(pre, post, transition), true);
-  for (const valid of [false, true]) {
-    for (const ready of [false, true]) {
-      const recovery = structuredClone(pre);
-      recovery.index = { ...recoverableIndex, valid, ready };
-      assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(recovery, post, transition), true);
-    }
+  for (const mutate of [
+    value => { value.probe_order = ['start_time']; },
+    value => { value.probe_direction = 'asc'; },
+    value => { value.probe_limit = 100000; },
+    value => { value.complete_only_when_unsaturated = false; },
+    value => { value.exact_only_when_complete = false; },
+    value => { value.unavailable_reason = 'other'; },
+    value => { value.unavailable_value = 0; },
+  ]) {
+    const hostileTransition = structuredClone(transition);
+    mutate(hostileTransition.cron_history_attestation.metrics_contract);
+    assert.throws(
+      () => adapter.validateSuperuserQaPerfC1StateTransition(pre, post, hostileTransition),
+      /SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED/,
+    );
   }
-  const successorAfterDrop = structuredClone(post);
-  successorAfterDrop.installed = false;
-  successorAfterDrop.index = null;
-  assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(post, post, transition), true);
-  assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(successorAfterDrop, post, transition), true);
-  for (const valid of [false, true]) {
-    for (const ready of [false, true]) {
-      const successorRecovery = structuredClone(post);
-      successorRecovery.index = { ...recoverableIndex, valid, ready };
-      successorRecovery.installed = valid && ready;
-      assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(successorRecovery, post, transition), true);
-    }
-  }
-  const failedAfterAcceptedCommit = structuredClone(post);
-  assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(failedAfterAcceptedCommit, post, transition), true);
-  failedAfterAcceptedCommit.installed = false;
-  failedAfterAcceptedCommit.index = null;
-  assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(failedAfterAcceptedCommit, post, transition), true);
-  failedAfterAcceptedCommit.index = { ...recoverableIndex, valid: false, ready: false };
-  assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(failedAfterAcceptedCommit, post, transition), true);
   for (const mutate of [
     value => { value.installed = true; },
     value => { value.functions[0] = structuredClone(transition.function_definitions[0]); },
     value => { value.functions.push(structuredClone(value.functions[0])); },
-    value => { value.index = { ...recoverableIndex, owner: 'authenticated' }; },
-    value => { value.index = { ...recoverableIndex, schema: 'public' }; },
-    value => { value.index = { ...recoverableIndex, table: 'job' }; },
-    value => { value.index = { ...recoverableIndex, name: 'other_idx' }; },
-    value => { value.index = { ...recoverableIndex, definition: 'CREATE INDEX altered' }; },
-    value => { value.index = { ...recoverableIndex, unique: true }; },
-    value => { value.index = { ...recoverableIndex, primary: true }; },
+    value => { value.cron_history.schema_owner = 'postgres'; },
+    value => { value.cron_history.table_owner = 'postgres'; },
+    value => { value.cron_history.schema = 'public'; },
+    value => { value.cron_history.table = 'job'; },
+    value => { value.cron_history.relation_kind = 'v'; },
+    value => { value.cron_history.extension = 'other'; },
+    value => { value.cron_history.primary_index.name = 'other'; },
+    value => { value.cron_history.primary_index.key_columns = ['start_time']; },
+    value => { value.cron_history.primary_index.included_columns = ['status']; },
+    value => { value.cron_history.primary_index.primary = false; },
+    value => { value.cron_history.primary_index.unique = false; },
+    value => { value.cron_history.primary_index.valid = false; },
+    value => { value.cron_history.primary_index.ready = false; },
+    value => { value.cron_history.primary_index.predicate = true; },
+    value => { value.cron_history.primary_index.expressions = true; },
+    value => { value.cron_history.release_index_name = 'other_idx'; },
+    value => { value.cron_history.release_index_present = true; },
     value => { value.finance.platform_fee_bps = 0; },
   ]) {
     const hostile = structuredClone(pre); mutate(hostile);
     assert.throws(() => adapter.validateSuperuserQaPerfC1StateTransition(hostile, post, transition),
       /SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED/);
   }
-  const expandedIndex = structuredClone(pre);
-  expandedIndex.index = { ...recoverableIndex, unexpected: true };
+  const expandedHistory = structuredClone(pre);
+  expandedHistory.cron_history.unexpected = true;
   assert.throws(
-    () => adapter.validateSuperuserQaPerfC1StateTransition(expandedIndex, post, transition),
+    () => adapter.validateSuperuserQaPerfC1StateTransition(expandedHistory, post, transition),
+    error => error?.code === 'SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED',
+  );
+  const expandedPrimaryIndex = structuredClone(pre);
+  expandedPrimaryIndex.cron_history.primary_index.unexpected = true;
+  assert.throws(
+    () => adapter.validateSuperuserQaPerfC1StateTransition(expandedPrimaryIndex, post, transition),
     error => error?.code === 'SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED',
   );
   for (const mutate of [
     value => { value.installed = false; },
-    value => { value.index.valid = false; value.installed = true; },
-    value => { value.index.ready = false; value.installed = true; },
+    value => { value.cron_history.release_index_present = true; },
     value => { value.functions[0] = structuredClone(transition.predecessor_functions[0]); },
   ]) {
     const hostile = structuredClone(post); mutate(hostile);
@@ -381,10 +371,13 @@ test('PERF C1 snapshot permits only exact retry-safe prestates and freezes the p
     value => { value.functions[1].search_path.pop(); },
     value => { value.functions[0].acl.push({ grantee: 'PUBLIC', privilege_type: 'EXECUTE', is_grantable: false }); },
     value => { value.functions[1].acl.push({ grantee: 'PUBLIC', privilege_type: 'EXECUTE', is_grantable: false }); },
-    value => { value.index.owner = 'authenticated'; },
-    value => { value.index.valid = false; },
-    value => { value.index.ready = false; },
-    value => { value.index.definition = 'CREATE INDEX altered'; },
+    value => { value.cron_history.schema_owner = 'authenticated'; },
+    value => { value.cron_history.table_owner = 'authenticated'; },
+    value => { value.cron_history.extension = 'other'; },
+    value => { value.cron_history.primary_index.valid = false; },
+    value => { value.cron_history.primary_index.ready = false; },
+    value => { value.cron_history.primary_index.key_columns = ['start_time']; },
+    value => { value.cron_history.release_index_present = true; },
     value => { value.finance.platform_fee_bps = 0; },
     value => { value.finance.activation_mode = 'off'; },
   ]) {
@@ -489,7 +482,7 @@ test('PERF C1 capture and postcheck bind the fixed query and exact one-migration
   const pre = await capture('pre', false);
   assert.equal(pre.superuser_qa_perf_c1_state.installed, false);
   assert.ok(pre.adapter.queries.some(item => (
-    item.id === 'nelyon-superuser-qa-perf-c1-state-v1'
+    item.id === 'nelyon-superuser-qa-perf-c1-state-v3'
       && item.sha256 === sha256(adapter.SUPERUSER_QA_PERF_C1_STATE_SQL)
   )));
   controlledPolicy.baseline.evidence_digests = adapter.buildProductionBaselineDigests({

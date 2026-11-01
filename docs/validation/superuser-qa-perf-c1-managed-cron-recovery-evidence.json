@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "phase": "SUPERUSER_QA_PERF_C1_RELEASE_RECOVERY",
+  "project_ref": "aewwdlvbwpczqyvkwvvj",
+  "timeout_incident": {
+    "sqlstate": "57014",
+    "statement_timeout_ms": 8000,
+    "logical_events": 8,
+    "service_copies": {
+      "postgresql": 8,
+      "postgrest": 8
+    },
+    "rpc_events": {
+      "public.get_admin_system_health()": 7,
+      "public.get_marketplace_admin_health()": 1
+    }
+  },
+  "managed_cron_catalog": {
+    "schema": "cron",
+    "table": "job_run_details",
+    "schema_owner": "supabase_admin",
+    "table_owner": "supabase_admin",
+    "extension": "pg_cron",
+    "estimated_live_rows": 1076581,
+    "estimated_dead_rows": 234031,
+    "total_size_mb": 446,
+    "primary_index": {
+      "name": "job_run_details_pkey",
+      "key_columns": [
+        "runid"
+      ],
+      "included_columns": [],
+      "primary": true,
+      "unique": true,
+      "valid": true,
+      "ready": true,
+      "predicate": null,
+      "expressions": null
+    },
+    "c1_release_index_present": false
+  },
+  "bounded_probe": {
+    "order": "runid DESC",
+    "limit": 50000,
+    "production_execution_ms": 3388,
+    "approximate_24h_rows": 38900,
+    "observed_start_time_inversions": 8840,
+    "maximum_observed_inversion_seconds": 1.164529,
+    "exactness_contract": "only_when_probe_unsaturated"
+  },
+  "failed_release": {
+    "run_id": 41346031770,
+    "status": "failure",
+    "sqlstate": "42501",
+    "failed_operation": "CREATE INDEX CONCURRENTLY cron_job_run_details_start_job_cover_idx",
+    "reason": "must be owner of table job_run_details",
+    "migration_recorded": false,
+    "c1_index_present": false,
+    "system_rpc_successor_present": false,
+    "marketplace_rpc_successor_present": false,
+    "admin_bundle_promoted": false
+  },
+  "safety": {
+    "read_only_diagnosis": true,
+    "persistent_c1_mutations": 0,
+    "financial_operations": 0,
+    "ledger_mutations": 0,
+    "finance_general_preserved": true
+  }
+}
