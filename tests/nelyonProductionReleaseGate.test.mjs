@@ -109,7 +109,191 @@ const CONTROL_CENTER_MIGRATION_PATHS = [
   'supabase/migrations/20261031025722_superuser_control_center_cursor_terminal_truth.sql',
   'supabase/migrations/20261031032022_superuser_control_center_overview.sql',
 ];
+const SUPERUSER_QA_PERF_C1_MIGRATION_PATHS = [
+  'supabase/migrations/20261101181907_superuser_qa_perf_c1.sql',
+];
 const sha256 = value => createHash('sha256').update(value).digest('hex');
+
+test('Superuser QA PERF C1 policy freezes one retry-safe migration, recovery states, RPC security, and Finance GENERAL', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.superuser_qa_perf_c1_transition;
+  assert.deepEqual(transition, gate.SUPERUSER_QA_PERF_C1_RELEASE_TRANSITION);
+  assert.deepEqual(transition.migrations.map(item => ({
+    path: item.path, blob: item.blob, sha256: item.sha256, byte_length: item.byte_length,
+  })), [
+    { path: SUPERUSER_QA_PERF_C1_MIGRATION_PATHS[0], blob: '34a09a973b506924e780abbb1799c15c9414501d',
+      sha256: 'fe07f20bd0855dc832310aa78a557dc18c96e42e18f20fdf11827b4200b82600', byte_length: 10041 },
+  ]);
+  assert.deepEqual(transition.productive_paths, SUPERUSER_QA_PERF_C1_MIGRATION_PATHS);
+  assert.deepEqual(transition.functions, []);
+  assert.equal(transition.config_changed, false);
+  assert.equal(transition.index_attestation.create_mode, 'concurrent');
+  assert.equal(transition.index_attestation.lock_timeout, null);
+  assert.equal(transition.index_attestation.valid, true);
+  assert.equal(transition.index_attestation.ready, true);
+  assert.equal(transition.function_definitions.length, 2);
+  assert.equal(transition.predecessor_functions.length, 2);
+  assert.deepEqual(transition.pre_snapshot_recovery, {
+    migration_inventory: 'baseline_without_c1',
+    accepted_states: [
+      { functions: 'predecessor', index: 'absent' },
+      { functions: 'predecessor', index: 'exact_shape_any_valid_ready' },
+      { functions: 'successor', index: 'absent' },
+      { functions: 'successor', index: 'exact_shape_any_valid_ready' },
+    ],
+    finance_policy_exact: true,
+    mixed_function_catalog_rejected: true,
+  });
+  assert.deepEqual(transition.finance_policy,
+    { platform_fee_bps: 2000, purchase_enabled: true, refunds_enabled: true, subscription_enabled: true });
+  assert.equal(gate.validatePolicy(policy), true);
+  for (const mutate of [
+    value => { value.migrations[0].sha256 = '0'.repeat(64); },
+    value => { value.migrations.pop(); },
+    value => { value.productive_paths.push('supabase/functions/admin-user-moderation/index.ts'); },
+    value => { value.functions.push('admin-user-moderation'); },
+    value => { value.index_attestation.create_mode = 'blocking'; },
+    value => { value.index_attestation.definition = 'CREATE INDEX altered'; },
+    value => { value.index_attestation.owner = 'authenticated'; },
+    value => { value.index_attestation.valid = false; },
+    value => { value.index_attestation.ready = false; },
+    value => { value.function_definitions[0].definition_sha256 = '0'.repeat(64); },
+    value => { value.function_definitions[1].definition_sha256 = '0'.repeat(64); },
+    value => { value.pre_snapshot_recovery.accepted_states.pop(); },
+    value => { value.function_definitions[0].owner = 'authenticated'; },
+    value => { value.function_definitions[1].security_definer = false; },
+    value => { value.function_definitions[1].search_path.pop(); },
+    value => { value.function_definitions[0].acl.push({ grantee: 'PUBLIC', privilege_type: 'EXECUTE', is_grantable: false }); },
+    value => { value.function_definitions[1].acl.push({ grantee: 'PUBLIC', privilege_type: 'EXECUTE', is_grantable: false }); },
+    value => { value.finance_policy.platform_fee_bps = 0; },
+  ]) {
+    const hostile = structuredClone(policy);
+    mutate(hostile.superuser_qa_perf_c1_transition);
+    assertDenied(() => gate.validatePolicy(hostile), 'INVALID_SUPERUSER_QA_PERF_C1_TRANSITION');
+  }
+});
+
+test('Superuser QA PERF C1 Git attestation binds exact LF bytes, ancestry, and one-path Supabase closure', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.superuser_qa_perf_c1_transition;
+  const approvedSha = 'c'.repeat(40);
+  const changes = transition.productive_paths.map(path => ({ path, status: 'A' }));
+  const bytesByPath = new Map(transition.migrations.map(source => [
+    source.path,
+    readFileSync(new URL(`../${source.path}`, import.meta.url)),
+  ]));
+  const runGit = args => {
+    if (args[0] === 'cat-file' && args[1] === '-e' && args[2] === `${approvedSha}^{commit}`) return '';
+    if (args[0] === 'merge-base' && args[1] === '--is-ancestor') return '';
+    if (args[0] === 'rev-parse' && args[1]?.startsWith(`${approvedSha}:`)) {
+      const path = args[1].slice(41);
+      return `${transition.migrations.find(item => item.path === path)?.blob ?? ''}\n`;
+    }
+    if (args[0] === 'ls-tree' && args[2] === approvedSha) {
+      const path = args[4];
+      const source = transition.migrations.find(item => item.path === path);
+      return source ? Buffer.from(`100644 blob ${source.blob}\t${path}\0`) : Buffer.alloc(0);
+    }
+    if (args[0] === 'show' && args[1]?.startsWith(`${approvedSha}:`)) {
+      return bytesByPath.get(args[1].slice(41));
+    }
+    if (args[0] === 'diff' && args.includes(approvedSha)) {
+      return Buffer.from(`${transition.productive_paths.map(path => `A\0${path}`).join('\0')}\0`);
+    }
+    throw new Error(`unexpected git command: ${args.join(' ')}`);
+  };
+  const input = {
+    cwd: new URL('..', import.meta.url),
+    policy,
+    mode: 'plan_only',
+    approvedSha,
+    changes,
+    migrations: transition.migrations.map(item => ({ path: item.path, version: item.version })),
+    affectedFunctions: [],
+    runGit,
+  };
+  const attested = gate.attestSuperuserQaPerfC1Transition(input);
+  assert.equal(attested.attestation.reviewed_bytes_verified, true);
+  assert.deepEqual(attested.migrations.map(item => ({
+    path: item.path, blob: item.blob, sha256: item.sha256,
+  })), transition.migrations.map(item => ({
+    path: item.path, blob: item.blob, sha256: item.sha256,
+  })));
+  for (const source of transition.migrations) {
+    const bytes = bytesByPath.get(source.path);
+    assert.equal(bytes.includes(13), false);
+    assert.equal(bytes.byteLength, source.byte_length);
+    assert.equal(sha256(bytes), source.sha256);
+  }
+  for (const mutateGit of [
+    (args, fallback) => args[0] === 'show' && args[1] === `${approvedSha}:${transition.migrations[0].path}`
+      ? Buffer.from('altered\n') : fallback(args),
+    (args, fallback) => args[0] === 'rev-parse' && args[1] === `${approvedSha}:${transition.migrations[0].path}`
+      ? `${'0'.repeat(40)}\n` : fallback(args),
+    (args, fallback) => args[0] === 'diff' && args.includes(approvedSha)
+      ? Buffer.from(`${transition.productive_paths.map(path => `A\0${path}`).join('\0')}\0A\0supabase/config.toml\0`)
+      : fallback(args),
+  ]) {
+    assertDenied(() => gate.attestSuperuserQaPerfC1Transition({
+      ...input,
+      runGit: args => mutateGit(args, runGit),
+    }), 'INVALID_SUPERUSER_QA_PERF_C1_TRANSITION');
+  }
+});
+
+test('Superuser QA PERF C1 manifest permits exactly one migration and no Edge or config expansion', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const transition = policy.superuser_qa_perf_c1_transition;
+  const approvedSha = 'c'.repeat(40);
+  const adminPaths = [
+    'apps/admin-web/src/lib/adminControlCenterApi.ts',
+    'apps/admin-web/src/pages/AdminOverviewPage.tsx',
+    'apps/admin-web/src/tests/adminControlCenterApi.test.ts',
+    'apps/admin-web/src/tests/adminExecutiveDashboard.test.tsx',
+  ];
+  const changes = [
+    ...transition.productive_paths.map(path => ({ status: 'A', path, fileType: 'file' })),
+    ...adminPaths.map(path => ({ status: 'M', path, fileType: 'file' })),
+  ];
+  const attestation = { ...structuredClone(transition), approved_sha: approvedSha,
+    baseline_descendant_verified: true, integration_base_descendant_verified: true,
+    reviewed_bytes_verified: true };
+  const input = manifestInput(policy, {
+    request: request({ approvedSha, mainSha: approvedSha }),
+    gitState: { baselineSha: transition.baseline_sha, approvedSha, originMainSha: approvedSha, changes },
+    classified: gate.classifyChangedPaths(changes),
+    migrations: transition.migrations.map(item => ({ version: item.version, path: item.path,
+      blob: item.blob, sha256: item.sha256 })),
+    affectedFunctions: [], functionContracts: [], superuserQaPerfC1Transition: attestation,
+  });
+  const manifest = gate.buildManifest(input);
+  assert.equal(manifest.result, 'PLAN READY');
+  assert.equal(manifest.risk.level, 'HIGH');
+  assert.deepEqual(manifest.resources.superuser_qa_perf_c1_transition, attestation);
+  assert.deepEqual(manifest.resources.functions, []);
+  assert.equal(manifest.resources.config_changed, false);
+  const adminRelease = await import('../scripts/nelyon-admin-production-release.mjs');
+  const adminManifest = adminRelease.buildAdminSourceManifest({
+    approvedSha,
+    releaseManifest: manifest,
+    readTrackedFiles: () => [{ path: 'apps/admin-web/package.json', bytes: Buffer.from('{}\n') }],
+  });
+  assert.equal(adminManifest.enabled, true);
+  assert.deepEqual(adminManifest.release.changed_admin_paths, adminPaths);
+  for (const mutate of [
+    value => { value.superuserQaPerfC1Transition = null; },
+    value => { value.migrations[0].sha256 = '0'.repeat(64); },
+    value => { value.migrations.pop(); },
+    value => { value.classified.config.push({ path: 'supabase/config.toml' }); },
+    value => { value.classified.productive.push({ path: 'supabase/functions/admin-user-moderation/index.ts' }); },
+    value => { value.affectedFunctions = ['admin-user-moderation']; },
+    value => { value.gitState.originMainSha = '0'.repeat(40); },
+  ]) {
+    const hostile = structuredClone(input); mutate(hostile);
+    assertDenied(() => gate.buildManifest(hostile),
+      hostile.affectedFunctions.length ? 'FUNCTION_CONTRACT_MISMATCH' : 'INVALID_SUPERUSER_QA_PERF_C1_TRANSITION');
+  }
+});
 
 test('Control Center policy freezes exactly three migration-only resources and reviewed authorities', async () => {
   const { gate, policy } = await loadGateAndPolicy();

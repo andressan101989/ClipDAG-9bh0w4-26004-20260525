@@ -1071,6 +1071,52 @@ export const SUPERUSER_CONTROL_CENTER_RELEASE_TRANSITION = Object.freeze({
   requires_separate_baseline_promotion: true,
 });
 
+export const SUPERUSER_QA_PERF_C1_RELEASE_TRANSITION = Object.freeze({
+  id: 'superuser-qa-perf-c1-v1',
+  from_phase: 'superuser_control_center_desktop',
+  to_phase: 'superuser_qa_perf_c1',
+  baseline_sha: '94ac244197e5c0ab0753747532f4e0969ece1901',
+  integration_base_sha: 'a028a397e1c3c3455be0145a575cb9eda8cd4bef',
+  approved_sha_ancestry: 'verified_integration_base',
+  migrations: [
+    { version: '20261101181907', path: 'supabase/migrations/20261101181907_superuser_qa_perf_c1.sql',
+      blob: '34a09a973b506924e780abbb1799c15c9414501d', sha256: 'fe07f20bd0855dc832310aa78a557dc18c96e42e18f20fdf11827b4200b82600', byte_length: 10041 },
+  ],
+  productive_paths: [
+    'supabase/migrations/20261101181907_superuser_qa_perf_c1.sql',
+  ],
+  functions: [], config_changed: false,
+  predecessor_functions: [
+    controlCenterFunction('public.get_admin_system_health()', '9f0c387018d7a984118e42ff953a68fb1d26a4e9f288ec7ecec877adcf120676', ['search_path=""']),
+    controlCenterFunction('public.get_marketplace_admin_health()', 'f0222d0af1d6b5f3317174f8b05fb91ea14f9786e87a17d0535baa70829102ab', ['search_path=pg_catalog, private, public']),
+  ],
+  function_definitions: [
+    controlCenterFunction('public.get_admin_system_health()', '3e669949cd7657bd3fb39db1d7ab98aa26ecc72ac136719cae5db604cc7f8a4a', ['search_path=""']),
+    controlCenterFunction('public.get_marketplace_admin_health()', 'be6d8747efe5066ecf514e1b38b7d4b28444e1bc53484208430f9a2b7884e233',
+      ['search_path=pg_catalog, private, public','join_collapse_limit=1','from_collapse_limit=1']),
+  ],
+  index_attestation: {
+    schema: 'cron', table: 'job_run_details', name: 'cron_job_run_details_start_job_cover_idx',
+    owner: 'postgres',
+    definition: 'CREATE INDEX cron_job_run_details_start_job_cover_idx ON cron.job_run_details USING btree (start_time DESC NULLS LAST, jobid) INCLUDE (status, end_time)',
+    valid: true, ready: true, unique: false, primary: false,
+    create_mode: 'concurrent', lock_timeout: null, retry_safe_invalid_index_replacement: true,
+  },
+  pre_snapshot_recovery: {
+    migration_inventory: 'baseline_without_c1',
+    accepted_states: [
+      { functions: 'predecessor', index: 'absent' },
+      { functions: 'predecessor', index: 'exact_shape_any_valid_ready' },
+      { functions: 'successor', index: 'absent' },
+      { functions: 'successor', index: 'exact_shape_any_valid_ready' },
+    ],
+    finance_policy_exact: true,
+    mixed_function_catalog_rejected: true,
+  },
+  finance_policy: { platform_fee_bps: 2000, purchase_enabled: true, refunds_enabled: true, subscription_enabled: true },
+  requires_separate_baseline_promotion: true,
+});
+
 export const STORIES_SAFETY_C1_RELEASE_TRANSITION = Object.freeze({
   id: 'stories-v2-safety-c1-technical-policy-prep-v1',
   from_phase: 'stories_v2_interactive_b1_fail_closed',
@@ -1829,6 +1875,11 @@ export function validatePolicy(policy) {
     !== canonicalJson(SUPERUSER_CONTROL_CENTER_RELEASE_TRANSITION)) {
     deny('INVALID_SUPERUSER_CONTROL_CENTER_TRANSITION',
       'Superuser Control Center authority must match the exact reviewed migration-only contract');
+  }
+  if (canonicalJson(policy.superuser_qa_perf_c1_transition ?? null)
+    !== canonicalJson(SUPERUSER_QA_PERF_C1_RELEASE_TRANSITION)) {
+    deny('INVALID_SUPERUSER_QA_PERF_C1_TRANSITION',
+      'Superuser QA PERF C1 authority must match the exact reviewed online-index and RPC contract');
   }
   const c2AdminFinanceRpc = policy.finance_security_advisor?.c2_rpc_replacements?.find(exception =>
     exception?.object?.schema === 'public'
@@ -2859,6 +2910,82 @@ export function attestSuperuserControlCenterTransition({
   };
 }
 
+export function attestSuperuserQaPerfC1Transition({
+  cwd,
+  policy,
+  mode,
+  approvedSha,
+  changes,
+  migrations,
+  affectedFunctions,
+  runGit,
+}) {
+  if (isReadOnlyRecoveryMode(mode)) return { migrations, attestation: null };
+  const transition = SUPERUSER_QA_PERF_C1_RELEASE_TRANSITION;
+  const expectedPaths = transition.migrations.map(item => item.path).sort();
+  const migrationPaths = [...(migrations ?? [])].map(item => item?.path).sort();
+  if (!migrationPaths.some(path => expectedPaths.includes(path))) return { migrations, attestation: null };
+  const code = 'INVALID_SUPERUSER_QA_PERF_C1_TRANSITION';
+  const supabaseChanges = (changes ?? []).filter(item => item?.path?.startsWith('supabase/'))
+    .map(item => ({ path: item.path, status: item.status }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const expectedChanges = transition.productive_paths.map(path => ({ path, status: 'A' }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  if (canonicalJson(policy?.superuser_qa_perf_c1_transition ?? null) !== canonicalJson(transition)
+    || policy?.baseline?.sha !== transition.baseline_sha
+    || canonicalJson(policy?.supabase?.finance_policy ?? null) !== canonicalJson(transition.finance_policy)
+    || !SHA_PATTERN.test(approvedSha ?? '') || typeof runGit !== 'function'
+    || canonicalJson(migrationPaths) !== canonicalJson(expectedPaths)
+    || (affectedFunctions ?? []).length !== 0
+    || canonicalJson(supabaseChanges) !== canonicalJson(expectedChanges)) {
+    deny(code, 'PERF C1 permits exactly one reviewed migration, zero Edge Functions, and no config drift');
+  }
+  const expectedByPath = new Map(transition.migrations.map(item => [item.path, item]));
+  for (const migration of migrations) {
+    const expected = expectedByPath.get(migration.path);
+    if (!expected || migration.version !== expected.version) {
+      deny(code, 'PERF C1 migration versions differ from the reviewed authority');
+    }
+  }
+  try {
+    runGit(['cat-file', '-e', `${approvedSha}^{commit}`], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.baseline_sha, transition.integration_base_sha], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.integration_base_sha, approvedSha], { cwd });
+    for (const source of transition.migrations) {
+      if (gitText(runGit, ['rev-parse', `${approvedSha}:${source.path}`], cwd) !== source.blob
+        || fileTypeAtCommit(runGit, cwd, approvedSha, source.path) !== 'file') {
+        deny(code, `PERF C1 migration blob/type differs from reviewed Git bytes: ${source.path}`);
+      }
+      const bytes = runGit(['show', `${approvedSha}:${source.path}`], { cwd });
+      if (sha256Hex(bytes) !== source.sha256 || Buffer.from(bytes).byteLength !== source.byte_length
+        || Buffer.from(bytes).includes(13)) {
+        deny(code, `PERF C1 migration is not the exact reviewed Git-LF source: ${source.path}`);
+      }
+    }
+    const actualChanges = parseNameStatusZ(runGit([
+      'diff', '--name-status', '-z', transition.integration_base_sha, approvedSha, '--', 'supabase/',
+    ], { cwd })).map(item => ({ path: item.path, status: item.status }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    if (canonicalJson(actualChanges) !== canonicalJson(expectedChanges)) {
+      deny(code, 'PERF C1 committed Supabase closure differs from the exact one-migration authority');
+    }
+  } catch (error) {
+    if (error?.code === code) throw error;
+    deny(code, 'approved commit does not attest the exact PERF C1 ancestry and bytes');
+  }
+  return {
+    migrations: migrations.map(item => {
+      const expected = expectedByPath.get(item.path);
+      return { ...item, blob: expected.blob, sha256: expected.sha256 };
+    }),
+    attestation: {
+      ...stableCopy(transition), approved_sha: approvedSha,
+      baseline_descendant_verified: true, integration_base_descendant_verified: true,
+      reviewed_bytes_verified: true,
+    },
+  };
+}
+
 export function attestFinanceAuthorityTransition({ mode, policy, approvedSha, changes, migrations, affectedFunctions, runGit, cwd }) {
   if (isReadOnlyRecoveryMode(mode)) return { migrations, attestation: null };
   const f5 = F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION;
@@ -3690,6 +3817,11 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     cwd, policy, mode: request.mode, approvedSha: request.approvedSha,
     changes: gitState.changes, migrations: storiesQaC1Transition.migrations, affectedFunctions, runGit,
   });
+  const superuserQaPerfC1Transition = attestSuperuserQaPerfC1Transition({
+    cwd, policy, mode: request.mode, approvedSha: request.approvedSha,
+    changes: gitState.changes, migrations: superuserControlCenterTransition.migrations,
+    affectedFunctions, runGit,
+  });
   const risk = classifyRisk({
     affectedFunctions,
     changedPaths: gitState.changes.map(change => change.path),
@@ -3701,7 +3833,7 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   return {
     gitState,
     classified,
-    migrations: superuserControlCenterTransition.migrations,
+    migrations: superuserQaPerfC1Transition.migrations,
     managedScopeTransition: transitionEvidence.attestation,
     financeAuthorityTransition: financeTransition.attestation,
     storiesB1Transition: storiesB1Transition.attestation,
@@ -3709,6 +3841,7 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     storiesSafetyC2Transition: storiesSafetyC2Transition.attestation,
     storiesQaC1Transition: storiesQaC1Transition.attestation,
     superuserControlCenterTransition: superuserControlCenterTransition.attestation,
+    superuserQaPerfC1Transition: superuserQaPerfC1Transition.attestation,
     affectedFunctions,
     functionContracts,
     reproducibility,
@@ -3740,6 +3873,7 @@ export function buildManifest({
   storiesSafetyC2Transition,
   storiesQaC1Transition,
   superuserControlCenterTransition,
+  superuserQaPerfC1Transition,
   affectedFunctions,
   functionContracts,
   reproducibility,
@@ -3996,6 +4130,38 @@ export function buildManifest({
     deny('INVALID_SUPERUSER_CONTROL_CENTER_TRANSITION',
       'Superuser Control Center transition attestation is not applicable');
   }
+  const perfC1 = SUPERUSER_QA_PERF_C1_RELEASE_TRANSITION;
+  const perfC1Candidate = !recoveryMode
+    && migrations?.some(item => perfC1.productive_paths.includes(item?.path));
+  if (perfC1Candidate) {
+    const expectedAttestation = {
+      ...stableCopy(perfC1), approved_sha: request.approvedSha,
+      baseline_descendant_verified: true, integration_base_descendant_verified: true,
+      reviewed_bytes_verified: true,
+    };
+    const expectedMigrations = perfC1.migrations.map(item => ({
+      version: item.version, path: item.path, blob: item.blob, sha256: item.sha256,
+    })).sort((left, right) => left.version.localeCompare(right.version));
+    const actualMigrations = [...(migrations ?? [])].map(item => ({
+      version: item.version, path: item.path, blob: item.blob, sha256: item.sha256,
+    })).sort((left, right) => left.version.localeCompare(right.version));
+    if (canonicalJson(policy?.superuser_qa_perf_c1_transition ?? null) !== canonicalJson(perfC1)
+      || policy.baseline.sha !== perfC1.baseline_sha
+      || gitState.approvedSha !== request.approvedSha || gitState.originMainSha !== request.approvedSha
+      || request.mainSha !== request.approvedSha || gitState.baselineSha !== perfC1.baseline_sha
+      || risk.level !== 'HIGH' || canonicalJson(actualMigrations) !== canonicalJson(expectedMigrations)
+      || functionNames.length !== 0 || contracts.length !== 0
+      || canonicalJson(superuserQaPerfC1Transition ?? null) !== canonicalJson(expectedAttestation)
+      || classified.config.length !== 0
+      || canonicalJson(classified.productive.map(item => item.path).sort())
+        !== canonicalJson([...perfC1.productive_paths].sort())
+      || canonicalJson(policy.supabase.finance_policy) !== canonicalJson(perfC1.finance_policy)) {
+      deny('INVALID_SUPERUSER_QA_PERF_C1_TRANSITION',
+        'manifest lacks the exact PERF C1 one-migration zero-Edge attestation');
+    }
+  } else if (superuserQaPerfC1Transition !== undefined && superuserQaPerfC1Transition !== null) {
+    deny('INVALID_SUPERUSER_QA_PERF_C1_TRANSITION', 'PERF C1 transition attestation is not applicable');
+  }
   const f5 = F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION;
   const f5Candidate = !recoveryMode && migrations?.some(item => item.version === '20261026072512'
     || item.path === f5.migration_path);
@@ -4177,6 +4343,9 @@ export function buildManifest({
         : {}),
       ...(superuserControlCenterTransition
         ? { superuser_control_center_transition: stableCopy(superuserControlCenterTransition) }
+        : {}),
+      ...(superuserQaPerfC1Transition
+        ? { superuser_qa_perf_c1_transition: stableCopy(superuserQaPerfC1Transition) }
         : {}),
     },
     risk: stableCopy(risk),

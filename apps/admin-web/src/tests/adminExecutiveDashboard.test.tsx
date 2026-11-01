@@ -25,7 +25,7 @@ it("renders server zero, accessible chart table and separate denied/unavailable/
  expect(within(screen.getByRole("region",{name:"Stories"})).getByText("No disponible")).toBeInTheDocument();
  expect(within(screen.getByRole("region",{name:"Marketplace"})).getByText(/Sin permiso/)).toBeInTheDocument();
  expect(screen.getByRole("table",{name:"Datos de Usuarios por día"})).toBeInTheDocument();
- expect(getAdminControlCenterOverview).not.toHaveBeenCalledWith("marketplace",expect.anything());
+ expect(vi.mocked(getAdminControlCenterOverview).mock.calls.some(([module])=>module==="marketplace")).toBe(false);
 });
 it("applies a custom range and fences old range success",async()=>{
  let resolve!:(value:never)=>void;vi.mocked(getAdminControlCenterOverview).mockImplementationOnce(()=>new Promise(r=>resolve=r));
@@ -34,9 +34,22 @@ it("applies a custom range and fences old range success",async()=>{
  fireEvent.change(screen.getByLabelText("Periodo"),{target:{value:"custom"}});
  fireEvent.change(screen.getByLabelText("Desde (UTC)"),{target:{value:"2026-10-01"}});fireEvent.change(screen.getByLabelText("Hasta (UTC)"),{target:{value:"2026-10-02"}});
  fireEvent.click(screen.getByRole("button",{name:"Aplicar fechas"}));
- await waitFor(()=>expect(getAdminControlCenterOverview).toHaveBeenCalledWith("users",{from:"2026-10-01",to:"2026-10-02"}));
+ await waitFor(()=>expect(vi.mocked(getAdminControlCenterOverview).mock.calls.some(([module,range])=>module==="users"&&range.from==="2026-10-01"&&range.to==="2026-10-02")).toBe(true));
  await act(async()=>resolve({...snapshot("users"),metrics:[{key:"old",label:"Obsolete count",value:999,unit:"count",source:"old",reason:null}]} as never));
  expect(screen.queryByText("Obsolete count")).not.toBeInTheDocument();
+});
+it("aborts superseded module reads instead of leaving obsolete SQL running",async()=>{
+ let resolve!:(value:never)=>void;vi.mocked(getAdminControlCenterOverview).mockImplementationOnce(()=>new Promise(r=>resolve=r));
+ render(<MemoryRouter><AdminOverviewPage/></MemoryRouter>);
+ await waitFor(()=>expect(getAdminControlCenterOverview).toHaveBeenCalled());
+ const calls=vi.mocked(getAdminControlCenterOverview).mock.calls as unknown as Array<[string,unknown,AbortSignal|undefined]>;
+ const originalSignal=calls[0]?.[2];
+ expect(originalSignal).toBeInstanceOf(AbortSignal);
+ fireEvent.change(screen.getByLabelText("Periodo"),{target:{value:"custom"}});
+ fireEvent.change(screen.getByLabelText("Desde (UTC)"),{target:{value:"2026-10-01"}});fireEvent.change(screen.getByLabelText("Hasta (UTC)"),{target:{value:"2026-10-02"}});
+ fireEvent.click(screen.getByRole("button",{name:"Aplicar fechas"}));
+ await waitFor(()=>expect(originalSignal?.aborted).toBe(true));
+ await act(async()=>resolve(snapshot("users") as never));
 });
 it("reads recognized income from the existing revenue authority in its explicit today scope",async()=>{
  vi.mocked(useAdminAuth).mockReturnValue({hasCapability:(cap:string)=>cap==="finance.ledger.read"} as never);

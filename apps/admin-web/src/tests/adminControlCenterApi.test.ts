@@ -13,6 +13,41 @@ it("passes bounded dates only and validates the echoed authority",async()=>{
  response({...result,to:"2026-10-29"});await expect(getAdminControlCenterOverview("users",range)).rejects.toThrow();
  vi.mocked(supabase.rpc).mockClear();await expect(getAdminControlCenterOverview("users",{from:"2026-01-01",to:"2026-12-31"})).rejects.toThrow();expect(supabase.rpc).not.toHaveBeenCalled();
 });
+it("bounds concurrent dashboard reads instead of starting the full fan-out",async()=>{
+ const modules=["users","content","stories","live","marketplace","finance"] as const,deferred:Array<{module:string;resolve:(value:unknown)=>void}>=[];
+ vi.mocked(supabase.rpc).mockImplementation((_,args)=>new Promise(resolve=>deferred.push({module:String((args as Record<string,unknown>).p_module),resolve})) as never);
+ const reads=modules.map(module=>getAdminControlCenterOverview(module,range));
+ await Promise.resolve();
+ expect(supabase.rpc).toHaveBeenCalledTimes(4);
+ for(let index=0;index<modules.length;index++){
+   while(!deferred[index])await Promise.resolve();
+   const module=deferred[index].module;
+   deferred[index].resolve({data:{...result,module,metrics:[{...result.metrics[0],key:module,label:module}]},error:null});
+ }
+ await expect(Promise.all(reads)).resolves.toHaveLength(6);
+ expect(supabase.rpc).toHaveBeenCalledTimes(6);
+});
+it("passes AbortSignal to Supabase and removes an aborted queued read before it starts",async()=>{
+ const modules=["users","content","stories","live"] as const;
+ const deferred:Array<{module:string;signal?:AbortSignal;resolve:(value:unknown)=>void}>=[];
+ vi.mocked(supabase.rpc).mockImplementation((_,args)=>{
+  const module=String((args as Record<string,unknown>).p_module);
+  return {abortSignal:vi.fn((signal:AbortSignal)=>new Promise(resolve=>deferred.push({module,signal,resolve})))} as never;
+ });
+ const activeControllers=modules.map(()=>new AbortController());
+ const activeReads=modules.map((module,index)=>getAdminControlCenterOverview(module,range,activeControllers[index].signal));
+ const queuedController=new AbortController();
+ const queuedRead=getAdminControlCenterOverview("marketplace",range,queuedController.signal);
+ await Promise.resolve();
+ expect(supabase.rpc).toHaveBeenCalledTimes(4);
+ expect(deferred.map(item=>item.signal)).toEqual(activeControllers.map(item=>item.signal));
+ queuedController.abort();
+ await expect(queuedRead).rejects.toMatchObject({name:"AbortError"});
+ expect(supabase.rpc).toHaveBeenCalledTimes(4);
+ expect(vi.mocked(supabase.rpc).mock.calls.some(([,args])=>(args as Record<string,unknown>).p_module==="marketplace")).toBe(false);
+ for(const item of deferred)item.resolve({data:{...result,module:item.module,metrics:[{...result.metrics[0],key:item.module,label:item.module}]},error:null});
+ await expect(Promise.all(activeReads)).resolves.toHaveLength(4);
+});
 it("rejects identities, duplicate metrics and impossible negative count buckets",async()=>{
  for(const bad of [{...result,email:"private@example.test"},{...result,metrics:[...result.metrics,...result.metrics]},{...result,series:[{day:"2026-10-01",value:-1}]}]){response(bad);await expect(getAdminControlCenterOverview("users",range)).rejects.toThrow()}
 });

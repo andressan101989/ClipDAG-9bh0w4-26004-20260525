@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "phase": "SUPERUSER_QA_PERF_C1",
+  "project_ref": "aewwdlvbwpczqyvkwvvj",
+  "observed_window_utc": {
+    "from": "2026-11-01T19:47:38.628785Z",
+    "to": "2026-11-01T19:48:20.028477Z"
+  },
+  "database": {
+    "engine": "PostgreSQL",
+    "version": "17.6"
+  },
+  "method": {
+    "transaction": "BEGIN READ ONLY / ROLLBACK",
+    "statement_timeout_scope": "transaction_local_30s_for_explain_only",
+    "mutations": 0,
+    "explain": "ANALYZE, BUFFERS, SETTINGS, FORMAT JSON"
+  },
+  "single_reconciler_ab": {
+    "identity": "public.reconcile_marketplace_settlements()",
+    "sql_shape": "select public.reconcile_marketplace_settlements()",
+    "default_samples": [
+      {
+        "execution_ms": 4643.597,
+        "shared_hit_blocks": 6315,
+        "shared_read_blocks": 0
+      },
+      {
+        "execution_ms": 7995.563,
+        "shared_hit_blocks": 6315,
+        "shared_read_blocks": 0
+      }
+    ],
+    "bounded_samples": [
+      {
+        "join_collapse_limit": 1,
+        "from_collapse_limit": 1,
+        "execution_ms": 149.091,
+        "shared_hit_blocks": 6135,
+        "shared_read_blocks": 0
+      },
+      {
+        "join_collapse_limit": 1,
+        "from_collapse_limit": 1,
+        "execution_ms": 177.672,
+        "shared_hit_blocks": 6135,
+        "shared_read_blocks": 0
+      }
+    ],
+    "conservative_speedup": 26.1357,
+    "persistent_mutation": false
+  },
+  "all_reconcilers_bounded": {
+    "join_collapse_limit": 1,
+    "from_collapse_limit": 1,
+    "execution_ms": 626.599,
+    "shared_hit_blocks": 18953,
+    "shared_read_blocks": 0,
+    "identities": [
+      "public.reconcile_marketplace_payments()",
+      "public.reconcile_marketplace_settlements()",
+      "public.reconcile_marketplace_creator_commerce()",
+      "public.reconcile_marketplace_creator_showcase()",
+      "public.reconcile_marketplace_creator_content_tags()",
+      "public.reconcile_marketplace_multi_creator_allocations()",
+      "public.reconcile_marketplace_live_commissions()",
+      "public.reconcile_marketplace_creator_commerce_analytics()",
+      "public.reconcile_marketplace_settlement_reversals()",
+      "public.reconcile_marketplace_ad_finance()",
+      "public.reconcile_marketplace_ad_eligibility_clock()",
+      "public.reconcile_marketplace_ad_finalization()",
+      "public.reconcile_marketplace_ad_delivery()",
+      "public.reconcile_marketplace_ad_events()",
+      "public.reconcile_marketplace_admin_operations()"
+    ]
+  },
+  "safety": {
+    "read_only": true,
+    "financial_operations": 0,
+    "ledger_mutations": 0,
+    "persistent_settings_changed": false
+  }
+}
