@@ -368,13 +368,38 @@ test('canonical workflow exposes Admin plan but mutates Cloudflare only after HI
     workflow.indexOf('- name: Attest and smoke the exact uploaded Admin version'),
     workflow.indexOf('- name: Promote the exact smoked Admin version'),
   );
+  const promotedSmokeSection = workflow.slice(
+    workflow.indexOf('- name: Verify promoted Admin version on temporary workers.dev'),
+    workflow.indexOf('- name: Apply exact Admin production routes'),
+  );
   assert.match(previewSection, /nelyon-admin-production-release\.mjs smoke[\s\S]*--build admin-evidence\/admin-web-build\.json/);
+  assert.ok(workflow.indexOf('- name: Verify promoted Admin version on temporary workers.dev')
+    > workflow.indexOf('- name: Promote the exact smoked Admin version'),
+  'active workers.dev verification must run only after exact promotion');
+  assert.ok(workflow.indexOf('- name: Apply exact Admin production routes')
+    > workflow.indexOf('- name: Verify promoted Admin version on temporary workers.dev'),
+  'workers.dev must be verified before the route config closes temporary URLs');
+  assert.match(promotedSmokeSection, /id: admin_promoted_smoke/);
+  assert.match(promotedSmokeSection, /https:\/\/nelyon-admin-web\.nelyon\.workers\.dev/);
+  assert.match(promotedSmokeSection, /nelyon-admin-production-release\.mjs smoke[\s\S]*--candidate admin-evidence\/admin-web-candidate\.json[\s\S]*--build admin-evidence\/admin-web-build\.json/);
+  assert.match(promotedSmokeSection, /for attempt in \$\(seq 1 24\)/);
+  assert.match(promotedSmokeSection, /admin-web-promoted-http-attempt-\$\{attempt\}\.json/);
+  assert.match(promotedSmokeSection, /sleep 5/);
+  assert.match(promotedSmokeSection, /test "\$\{SMOKE_OK\}" = 'true'/,
+    'the promoted active Worker smoke must fail closed after bounded retries');
+  const routesSection = workflow.slice(
+    workflow.indexOf('- name: Apply exact Admin production routes'),
+    workflow.indexOf('- name: Purge exact Admin production cache prefix'),
+  );
+  assert.match(routesSection, /steps\.admin_promoted_smoke\.outcome == 'success'/);
   assert.ok(workflow.indexOf('- name: Purge exact Admin production cache prefix')
     > workflow.indexOf('- name: Apply exact Admin production routes'),
   'cache invalidation must run only after the exact routes are applied');
   assert.match(purgeSection, /nelyon-admin-production-release\.mjs purge-admin-cache[\s\S]*admin-web-cache-purge\.json/);
   assert.match(purgeSection, /id: admin_cache_purge/);
+  assert.match(purgeSection, /steps\.admin_routes\.outcome == 'success'/);
   assert.match(workflow, /steps\.admin_cache_purge\.outcome == 'success'/);
+  assert.match(workflow, /admin-evidence\/admin-web-promoted-http\.json/);
   assert.match(recoverySection, /restore-routes[\s\S]*purge-admin-cache[\s\S]*admin-web-recovery-cache-purge\.json/,
     'rollback must evict candidate Admin cache entries after restoring the previous deployment');
   assert.doesNotMatch(workflow, /purge_everything/);
