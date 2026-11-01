@@ -5319,12 +5319,38 @@ export function verifyAdminRecoveryBuildBinding({
       '.github/workflows/nelyon-production-release.yml',
       'scripts/nelyon-admin-production-release.mjs',
     ]);
+    // Exact Git-LF tuples from the sanitized Admin manifests verified in runs 41278629319 and 41278783775.
+    const noTransformWorkerEvolution = new Map([
+      ['apps/admin-web/deployment/tests/worker.test.mjs', {
+        source: { bytes: 4201,
+          sha256: 'c8c35cc79f24525d4c97b24e28bb7e8b63637d47fab2b5b64a579c633be144a6' },
+        current: { bytes: 4298,
+          sha256: 'a2f86e889c200343248ffa539160dd89f66c0c318ec3e1a3465739376e327cf1' },
+      }],
+      ['apps/admin-web/deployment/worker.mjs', {
+        source: { bytes: 1019,
+          sha256: '8f6e5a9e09340f2085c651130d718387678293512ee6da44de94e97f728191b8' },
+        current: { bytes: 1033,
+          sha256: 'a11a8ddb4341cbe15fe32691c0ee9efe2ecaebd2c192c5fbde2b56648fffee62' },
+      }],
+    ]);
+    const authorityOnlyEvolution = changedPaths.length === allowedChangedPaths.size
+      && changedPaths.every(path => allowedChangedPaths.has(path));
+    const noTransformChangedPaths = new Set([
+      ...allowedChangedPaths,
+      ...noTransformWorkerEvolution.keys(),
+    ]);
+    const exactNoTransformEvolution = changedPaths.length === noTransformChangedPaths.size
+      && changedPaths.every(path => noTransformChangedPaths.has(path))
+      && [...noTransformWorkerEvolution].every(([path, transition]) => (
+        canonicalJson(sourceByPath.get(path)) === canonicalJson({ path, ...transition.source })
+        && canonicalJson(currentByPath.get(path)) === canonicalJson({ path, ...transition.current })
+      ));
     protectedRecoveryEvolution = validateFiles(sourceFiles) && validateFiles(currentFiles)
       && pathsEqual
       && sha256Hex(canonicalJson(sourceFiles).trimEnd()) === verifiedSource.source_admin_source_sha256
       && sha256Hex(canonicalJson(currentFiles).trimEnd()) === currentAdminManifest.source.sha256
-      && changedPaths.length === allowedChangedPaths.size
-      && changedPaths.every(path => allowedChangedPaths.has(path));
+      && (authorityOnlyEvolution || exactNoTransformEvolution);
   }
   if (verifiedSource?.result !== 'ADMIN_RECOVERY_SOURCE_VERIFIED'
     || verifiedSource.source_run_id !== String(recoveryRequest?.recoverySourceRunId ?? '')

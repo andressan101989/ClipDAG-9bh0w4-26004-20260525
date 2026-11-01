@@ -4539,6 +4539,80 @@ test('Admin recovery permits only protected recovery authority evolution when re
   }
 });
 
+test('Admin recovery permits only the exact no-transform Worker transition alongside protected authority evolution', async () => {
+  const { gate } = await loadGateAndPolicy();
+  const recoveryRequest = request({ mode: 'admin_recovery', scopeConfirmation: 'ADMIN_RECOVERY_EXACT_SOURCE',
+    recoverySourceRunId: '987654321', productiveResources: [] });
+  const recoveryManifest = {
+    identity: { mode: 'admin_recovery', approved_sha: MAIN_SHA },
+    recovery: { source_run_id: '987654321' },
+  };
+  const sourceFiles = [
+    { path: '.github/workflows/nelyon-production-release.yml', bytes: 65184,
+      sha256: 'a8f8c0154e9b21f4b401bb591efe48dfdfb69e589c78ccecd07118d4b5a4229d' },
+    { path: 'apps/admin-web/deployment/tests/worker.test.mjs', bytes: 4201,
+      sha256: 'c8c35cc79f24525d4c97b24e28bb7e8b63637d47fab2b5b64a579c633be144a6' },
+    { path: 'apps/admin-web/deployment/worker.mjs', bytes: 1019,
+      sha256: '8f6e5a9e09340f2085c651130d718387678293512ee6da44de94e97f728191b8' },
+    { path: 'scripts/nelyon-admin-production-release.mjs', bytes: 32319,
+      sha256: 'd70d6f5c769de7f625f726a0cd65e1469340aceeaab2995ec504849cfeb332b0' },
+    { path: 'apps/admin-web/src/main.tsx', bytes: 200, sha256: '3'.repeat(64) },
+  ];
+  const currentFiles = structuredClone(sourceFiles);
+  currentFiles[0] = { ...currentFiles[0], bytes: 69611,
+    sha256: '94f5c712a7093c38b4de369f4fdbd237ee475649d25b47ac0b416570e05bd984' };
+  currentFiles[1] = { ...currentFiles[1], bytes: 4298,
+    sha256: 'a2f86e889c200343248ffa539160dd89f66c0c318ec3e1a3465739376e327cf1' };
+  currentFiles[2] = { ...currentFiles[2], bytes: 1033,
+    sha256: 'a11a8ddb4341cbe15fe32691c0ee9efe2ecaebd2c192c5fbde2b56648fffee62' };
+  currentFiles[3] = { ...currentFiles[3], bytes: 37752,
+    sha256: '8a58f00db3426e78d6f42ea87c1c276d48363ad520f59a6f5fda916ad1474e61' };
+  const sourceDigest = gate.sha256Hex(gate.canonicalJson(sourceFiles).trimEnd());
+  const currentDigest = gate.sha256Hex(gate.canonicalJson(currentFiles).trimEnd());
+  const currentAdminManifest = {
+    enabled: true,
+    release: { mode: 'admin_recovery', recovery_source_run_id: '987654321', approved_sha: MAIN_SHA },
+    source: { files: currentFiles, sha256: currentDigest },
+  };
+  const currentBuild = {
+    approved_sha: MAIN_SHA,
+    source_manifest_sha256: gate.sha256Hex(gate.canonicalJson(currentAdminManifest).trimEnd()),
+    dist_sha256: 'b'.repeat(64),
+  };
+  const verifiedSource = {
+    result: 'ADMIN_RECOVERY_SOURCE_VERIFIED',
+    source_run_id: '987654321',
+    source_sha: MAIN_SHA,
+    source_admin_source_sha256: sourceDigest,
+    source_admin_files: sourceFiles,
+    source_build_sha256: 'b'.repeat(64),
+  };
+  assert.equal(gate.verifyAdminRecoveryBuildBinding({ recoveryRequest, recoveryManifest, verifiedSource,
+    currentAdminManifest, currentBuild }), true);
+
+  for (const mutate of [
+    value => { value.currentAdminManifest.source.files[1].sha256 = '6'.repeat(64); },
+    value => { value.currentAdminManifest.source.files[2].bytes += 1; },
+    value => { value.verifiedSource.source_admin_files[2].sha256 = '7'.repeat(64); },
+    value => { value.currentAdminManifest.source.files[4].sha256 = '8'.repeat(64); },
+  ]) {
+    const hostile = { recoveryRequest: structuredClone(recoveryRequest), recoveryManifest: structuredClone(recoveryManifest),
+      verifiedSource: structuredClone(verifiedSource), currentAdminManifest: structuredClone(currentAdminManifest),
+      currentBuild: structuredClone(currentBuild) };
+    mutate(hostile);
+    hostile.verifiedSource.source_admin_source_sha256 = gate.sha256Hex(
+      gate.canonicalJson(hostile.verifiedSource.source_admin_files).trimEnd(),
+    );
+    hostile.currentAdminManifest.source.sha256 = gate.sha256Hex(
+      gate.canonicalJson(hostile.currentAdminManifest.source.files).trimEnd(),
+    );
+    hostile.currentBuild.source_manifest_sha256 = gate.sha256Hex(
+      gate.canonicalJson(hostile.currentAdminManifest).trimEnd(),
+    );
+    assertDenied(() => gate.verifyAdminRecoveryBuildBinding(hostile), 'ADMIN_RECOVERY_POSTCHECK_FAILED');
+  }
+});
+
 function manifestInput(policy, overrides = {}) {
   const result = {
     request: request(),
