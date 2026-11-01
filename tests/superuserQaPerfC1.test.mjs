@@ -8,22 +8,26 @@ const migrationsDir=new URL("../supabase/migrations/",import.meta.url);
 
 async function migrations(){
   const names=(await readdir(migrationsDir)).filter(name=>name.includes("_superuser_qa_perf_c1")).sort();
-  assert.equal(names.length,1,"C1 must keep the online index and atomic function update in one retry-safe migration history unit");
+  assert.equal(names.length,1,"C1 must keep the bounded health projection and atomic function update in one migration history unit");
   return Promise.all(names.map(async name=>({name,sql:await readFile(join(fileURLToPath(migrationsDir),name),"utf8")})));
 }
 
-test("C1 builds the cron index online with a recovery-safe nontransactional migration",async()=>{
+test("C1 never mutates the Supabase-owned pg_cron relation",async()=>{
   const [{sql}]=await migrations();
-  assert.match(sql,/^--\s*pg-delta:\s*transaction=false/im);
-  assert.match(sql,/drop\s+index\s+concurrently\s+if\s+exists\s+cron\.cron_job_run_details_start_job_cover_idx/i);
-  assert.match(sql,/create\s+index\s+concurrently\s+cron_job_run_details_start_job_cover_idx\s+on\s+cron\.job_run_details\s*\(\s*start_time\s+desc\s+nulls\s+last\s*,\s*jobid\s*\)\s*include\s*\(\s*status\s*,\s*end_time\s*\)/i);
-  assert.match(sql,/indisvalid\s+and\s+i\.indisready/i);
-  const concurrentIndexEnd=sql.search(/comment\s+on\s+index/i);
-  const transactionStart=sql.search(/\bbegin\s*;/i);
-  assert.ok(transactionStart>concurrentIndexEnd,"the function transaction must begin only after the concurrent index DDL");
+  assert.doesNotMatch(sql,/^--\s*pg-delta:\s*transaction=false/im);
+  assert.doesNotMatch(sql,/(?:create|drop|alter)\s+(?:index|table)[\s\S]{0,120}cron\.(?:job_run_details|job)/i);
+  assert.doesNotMatch(sql,/\b(?:insert\s+into|update|delete\s+from|truncate(?:\s+table)?|comment\s+on|grant\b[\s\S]{0,80}\bon|revoke\b[\s\S]{0,80}\bon)\s+cron\.(?:job_run_details|job)\b/i);
+  assert.match(sql,/pg_get_userbyid\s*\(\s*c\.relowner\s*\)\s*=\s*'supabase_admin'/i);
+  assert.match(sql,/pg_get_userbyid\s*\(\s*n\.nspowner\s*\)\s*=\s*'supabase_admin'/i);
+  assert.match(sql,/index_class\.relname\s*=\s*'job_run_details_pkey'/i);
+  assert.match(sql,/i\.indisprimary\s+and\s+i\.indisunique\s+and\s+i\.indisvalid\s+and\s+i\.indisready/i);
+  assert.match(sql,/i\.indnkeyatts\s*=\s*1\s+and\s+i\.indnatts\s*=\s*1/i);
+  assert.match(sql,/pg_get_indexdef\s*\(\s*i\.indexrelid\s*,\s*1\s*,\s*true\s*\)\s*=\s*'runid'/i);
+  assert.match(sql,/to_regclass\s*\(\s*'cron\.cron_job_run_details_start_job_cover_idx'\s*\)\s+is\s+not\s+null/i);
+  assert.match(sql,/\bbegin\s*;/i);
   assert.match(sql,/\bcommit\s*;/i);
 });
-test("C1 gives cron health one stable cutoff and one bounded aggregate",async()=>{
+test("C1 gives cron health one bounded PK probe and fails closed when it cannot cover 24 hours",async()=>{
   const [{sql}]=await migrations();
   const start=sql.search(/create\s+or\s+replace\s+function\s+public\.get_admin_system_health\s*\(\s*\)/i);
   const end=sql.indexOf("$function$;",start);
@@ -31,9 +35,16 @@ test("C1 gives cron health one stable cutoff and one bounded aggregate",async()=
   const body=sql.slice(start,end);
   assert.match(body,/admin_require_capability\s*\(\s*'system\.health\.read'\s*\)/i);
   assert.match(body,/v_cutoff\s+timestamptz\s*:=\s*statement_timestamp\(\)\s*-\s*interval\s*'24 hours'/i);
-  assert.equal((body.match(/from\s+cron\.job_run_details\s+where\s+start_time\s*>=\s*v_cutoff/gi)??[]).length,1,"recent cron history must be aggregated once");
+  assert.match(body,/from\s+cron\.job_run_details\s+order\s+by\s+runid\s+desc\s+limit\s+v_probe_limit/i);
+  assert.match(body,/v_probe_limit\s+constant\s+integer\s*:=\s*50000/i);
+  assert.match(body,/v_history_window_complete\s*:=\s*v_sampled_rows\s*<\s*v_probe_limit\s*;/i);
+  assert.doesNotMatch(body,/v_oldest_sampled_start\s*<=\s*v_cutoff/i);
+  assert.match(body,/'run_metrics_available'\s*,\s*v_history_window_complete/i);
+  assert.match(body,/'run_metrics_reason'\s*,\s*case\s+when\s+v_history_window_complete\s+then\s+null\s+else\s+'history_probe_limit_reached'/i);
+  assert.match(body,/if\s+not\s+v_history_window_complete\s+then[\s\S]*v_runs_24h\s*:=\s*null/i);
+  assert.doesNotMatch(body,/from\s+cron\.job_run_details\s+where\s+start_time\s*>=\s*v_cutoff/i);
   assert.doesNotMatch(body,/clock_timestamp\s*\(/i);
-  assert.match(body,/order\s+by\s+start_time\s+desc\s+nulls\s+last\s*,\s*runid\s+desc\s+limit\s+1/i);
+  assert.equal((body.match(/from\s+cron\.job_run_details/gi)??[]).length,1,"cron history must be read exactly once");
 });
 
 test("C1 contains Marketplace planner limits inside the read-only health RPC",async()=>{
@@ -53,17 +64,64 @@ test("C1 preserves authenticated-only RPC access and fixed security boundaries",
   assert.match(sql,/grant\s+execute\s+on\s+function\s+public\.get_admin_system_health\s*\(\s*\)\s+to\s+authenticated/i);
 });
 
-test("the disposable proof exercises a writer while the concurrent index is building",async()=>{
+test("the disposable proof verifies bounded truth without mutating the extension-owned cron relation",async()=>{
   const proof=await readFile(new URL("../scripts/prove-superuser-qa-perf-c1-disposable.mjs",import.meta.url),"utf8");
-  assert.match(proof,/begin\s+isolation\s+level\s+repeatable\s+read/i);
-  assert.match(proof,/pg_stat_progress_create_index/i);
-  assert.match(proof,/statement_timeout='2s'/i);
-  assert.match(proof,/writerDuringConcurrentBuild:true/);
+  assert.match(proof,/alter\s+schema\s+cron\s+owner\s+to\s+supabase_admin/i);
+  assert.match(proof,/alter\s+table\s+cron\.job_run_details\s+owner\s+to\s+supabase_admin/i);
+  assert.match(proof,/historyWindowComplete\s*=\s*true/);
+  assert.match(proof,/historyProbeSaturated\s*=\s*true/);
+  assert.match(proof,/historyUnavailableReturnsNull\s*=\s*true/);
+  assert.match(proof,/cronRelationUnmodified\s*=\s*true/);
+  assert.match(proof,/job_run_details_pkey/);
+  assert.match(proof,/statement_timeout='8s'/);
+  assert.match(proof,/marketplaceAfterExecutionMs<8000/);
   assert.match(proof,/supabase@2\.120\.0/);
   assert.match(proof,/"db","push"/);
   assert.match(proof,/canonicalMarketplaceReconciliations/);
   assert.match(proof,/marketplaceReconcilerCount:15/);
   assert.match(proof,/marketplaceDefinitionChanged:true/);
+});
+
+test("the managed-cron recovery evidence pins the failed release and zero productive mutation",async()=>{
+  const evidence=JSON.parse(await readFile(new URL("../docs/validation/superuser-qa-perf-c1-managed-cron-recovery-evidence.json",import.meta.url),"utf8"));
+  assert.deepEqual(evidence,{
+    schema_version:1,
+    phase:"SUPERUSER_QA_PERF_C1_RELEASE_RECOVERY",
+    project_ref:"aewwdlvbwpczqyvkwvvj",
+    timeout_incident:{
+      sqlstate:"57014",statement_timeout_ms:8000,logical_events:8,
+      service_copies:{postgresql:8,postgrest:8},
+      rpc_events:{"public.get_admin_system_health()":7,"public.get_marketplace_admin_health()":1},
+    },
+    managed_cron_catalog:{
+      schema:"cron",table:"job_run_details",schema_owner:"supabase_admin",
+      table_owner:"supabase_admin",extension:"pg_cron",estimated_live_rows:1076581,
+      estimated_dead_rows:234031,total_size_mb:446,
+      primary_index:{
+        name:"job_run_details_pkey",key_columns:["runid"],included_columns:[],
+        primary:true,unique:true,valid:true,ready:true,predicate:null,expressions:null,
+      },
+      c1_release_index_present:false,
+    },
+    bounded_probe:{
+      order:"runid DESC",limit:50000,production_execution_ms:3388,
+      approximate_24h_rows:38900,observed_start_time_inversions:8840,
+      maximum_observed_inversion_seconds:1.164529,
+      exactness_contract:"only_when_probe_unsaturated",
+    },
+    failed_release:{
+      run_id:41346031770,status:"failure",sqlstate:"42501",
+      failed_operation:"CREATE INDEX CONCURRENTLY cron_job_run_details_start_job_cover_idx",
+      reason:"must be owner of table job_run_details",
+      migration_recorded:false,c1_index_present:false,
+      system_rpc_successor_present:false,marketplace_rpc_successor_present:false,
+      admin_bundle_promoted:false,
+    },
+    safety:{
+      read_only_diagnosis:true,persistent_c1_mutations:0,financial_operations:0,
+      ledger_mutations:0,finance_general_preserved:true,
+    },
+  });
 });
 
 test("the disposable proof measures nested planning work for all Marketplace reconciliators",async()=>{

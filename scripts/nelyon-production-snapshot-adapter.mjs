@@ -1811,14 +1811,41 @@ export const SUPERUSER_QA_PERF_C1_STATE_SQL = `with expected(identity) as (
   from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
   join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
   join expected e on e.identity=n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')'
-), index_row as (
-  select n.nspname schema_name,t.relname table_name,i.relname name,owner_role.rolname owner,
-    pg_catalog.pg_get_indexdef(i.oid) definition,x.indisvalid valid,x.indisready ready,
-    x.indisunique unique_index,x.indisprimary primary_index
-  from pg_catalog.pg_class i join pg_catalog.pg_namespace n on n.oid=i.relnamespace
-  join pg_catalog.pg_index x on x.indexrelid=i.oid join pg_catalog.pg_class t on t.oid=x.indrelid
-  join pg_catalog.pg_roles owner_role on owner_role.oid=i.relowner
-  where n.nspname='cron' and i.relname='cron_job_run_details_start_job_cover_idx'
+), cron_history_row as (
+  select n.nspname schema_name,c.relname table_name,c.relkind relation_kind,
+    schema_owner.rolname schema_owner,table_owner.rolname table_owner,e.extname extension_name,
+    primary_index.index_name primary_index_name,
+    primary_index.key_columns primary_index_key_columns,
+    primary_index.included_columns primary_index_included_columns,
+    primary_index.is_primary primary_index_primary,
+    primary_index.is_unique primary_index_unique,
+    primary_index.is_valid primary_index_valid,
+    primary_index.is_ready primary_index_ready,
+    primary_index.has_predicate primary_index_predicate,
+    primary_index.has_expressions primary_index_expressions,
+    'cron_job_run_details_start_job_cover_idx' release_index_name,
+    pg_catalog.to_regclass('cron.cron_job_run_details_start_job_cover_idx') is not null release_index_present
+  from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+  join pg_catalog.pg_roles schema_owner on schema_owner.oid=n.nspowner
+  join pg_catalog.pg_roles table_owner on table_owner.oid=c.relowner
+  join pg_catalog.pg_depend d on d.classid='pg_class'::pg_catalog.regclass and d.objid=c.oid
+    and d.refclassid='pg_extension'::pg_catalog.regclass and d.deptype='e'
+  join pg_catalog.pg_extension e on e.oid=d.refobjid
+  join lateral (
+    select index_class.relname index_name,
+      (select pg_catalog.coalesce(pg_catalog.jsonb_agg(pg_catalog.pg_get_indexdef(i.indexrelid,position,true)
+        order by position),'[]'::jsonb)
+       from pg_catalog.generate_series(1,i.indnkeyatts) position) key_columns,
+      (select pg_catalog.coalesce(pg_catalog.jsonb_agg(pg_catalog.pg_get_indexdef(i.indexrelid,position,true)
+        order by position),'[]'::jsonb)
+       from pg_catalog.generate_series(i.indnkeyatts+1,i.indnatts) position) included_columns,
+      i.indisprimary is_primary,i.indisunique is_unique,i.indisvalid is_valid,i.indisready is_ready,
+      i.indpred is not null has_predicate,i.indexprs is not null has_expressions
+    from pg_catalog.pg_index i
+    join pg_catalog.pg_class index_class on index_class.oid=i.indexrelid
+    where i.indrelid=c.oid and i.indisprimary
+  ) primary_index on true
+  where n.nspname='cron' and c.relname='job_run_details'
 ), finance_row as (
   select activation_mode,active_authorization_id is not null active_authorization,
     platform_fee_bps,purchase_enabled,refunds_enabled,subscription_enabled
@@ -1826,24 +1853,42 @@ export const SUPERUSER_QA_PERF_C1_STATE_SQL = `with expected(identity) as (
 ), install_state as (
   select (select pg_catalog.count(*) from function_rows)=2 functions_complete,
     exists(select 1 from function_rows where identity='public.get_admin_system_health()'
-      and definition_sha256='3e669949cd7657bd3fb39db1d7ab98aa26ecc72ac136719cae5db604cc7f8a4a') system_successor,
+      and definition_sha256='59810b955f97c8d9538a8833f4aec5da994de2ff302d5706aceeb80a35f51c72') system_successor,
     exists(select 1 from function_rows where identity='public.get_marketplace_admin_health()'
       and definition_sha256='be6d8747efe5066ecf514e1b38b7d4b28444e1bc53484208430f9a2b7884e233'
       and search_path='["search_path=pg_catalog, private, public","join_collapse_limit=1","from_collapse_limit=1"]'::jsonb) marketplace_successor,
-    exists(select 1 from index_row where valid and ready) index_installed,
+    exists(select 1 from cron_history_row where relation_kind='r'
+      and schema_owner='supabase_admin' and table_owner='supabase_admin'
+      and extension_name='pg_cron'
+      and primary_index_name='job_run_details_pkey'
+      and primary_index_key_columns='["runid"]'::jsonb
+      and primary_index_included_columns='[]'::jsonb
+      and primary_index_primary and primary_index_unique
+      and primary_index_valid and primary_index_ready
+      and not primary_index_predicate and not primary_index_expressions
+      and not release_index_present) cron_history_exact,
     (select pg_catalog.count(*) from finance_row)=1 finance_complete
 )
 select pg_catalog.jsonb_build_object(
-  'schema_version',1,
-  'complete',install_state.functions_complete and install_state.finance_complete,
+  'schema_version',3,
+  'complete',install_state.functions_complete and install_state.finance_complete
+    and (select pg_catalog.count(*) from cron_history_row)=1,
   'installed',install_state.functions_complete and install_state.finance_complete
-    and install_state.system_successor and install_state.marketplace_successor and install_state.index_installed,
+    and install_state.system_successor and install_state.marketplace_successor and install_state.cron_history_exact,
   'functions',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
     'identity',identity,'owner',owner,'volatility',volatility,'security_definer',security_definer,
     'search_path',search_path,'execute',execute,'acl',acl,'definition_sha256',definition_sha256) order by identity)
     from function_rows),'[]'::jsonb),
-  'index',(select pg_catalog.jsonb_build_object('schema',schema_name,'table',table_name,'name',name,
-    'owner',owner,'definition',definition,'valid',valid,'ready',ready,'unique',unique_index,'primary',primary_index) from index_row),
+  'cron_history',(select pg_catalog.jsonb_build_object('schema',schema_name,'table',table_name,
+    'relation_kind',relation_kind,'schema_owner',schema_owner,'table_owner',table_owner,
+    'extension',extension_name,'primary_index',pg_catalog.jsonb_build_object(
+      'name',primary_index_name,'key_columns',primary_index_key_columns,
+      'included_columns',primary_index_included_columns,
+      'primary',primary_index_primary,'unique',primary_index_unique,
+      'valid',primary_index_valid,'ready',primary_index_ready,
+      'predicate',primary_index_predicate,'expressions',primary_index_expressions),
+    'release_index_name',release_index_name,
+    'release_index_present',release_index_present) from cron_history_row),
   'finance',(select pg_catalog.jsonb_build_object('activation_mode',activation_mode,
     'active_authorization',active_authorization,'platform_fee_bps',platform_fee_bps,
     'purchase_enabled',purchase_enabled,'refunds_enabled',refunds_enabled,
@@ -2423,7 +2468,7 @@ export function superuserQaPerfC1StateRequirement(policy, manifest, phase, conte
   if (promoted && items && !observedInstalled) fail(code, 'promoted PERF C1 baseline lacks exact migration evidence');
   const installed = promoted || (observedInstalled && phase !== 'pre');
   return { required: Boolean(transition) || installed, installed, transition,
-    query: SUPERUSER_QA_PERF_C1_STATE_SQL, query_id: 'nelyon-superuser-qa-perf-c1-state-v1' };
+    query: SUPERUSER_QA_PERF_C1_STATE_SQL, query_id: 'nelyon-superuser-qa-perf-c1-state-v3' };
 }
 
 export function superuserControlCenterStateRequirement(policy, manifest, phase, context = {}) {
@@ -2634,10 +2679,28 @@ export function validateSuperuserControlCenterStateTransition(preSnapshot, postS
 function normalizeSuperuserQaPerfC1State(snapshot) {
   const code = 'SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED';
   const withDigest = Object.hasOwn(snapshot ?? {}, 'sha256');
-  exactKeys(snapshot, ['schema_version','complete','installed','functions','index','finance',
+  exactKeys(snapshot, ['schema_version','complete','installed','functions','cron_history','finance',
     ...(withDigest ? ['sha256'] : [])], code);
-  if (snapshot.schema_version !== 1 || snapshot.complete !== true || typeof snapshot.installed !== 'boolean') {
+  if (snapshot.schema_version !== 3 || snapshot.complete !== true || typeof snapshot.installed !== 'boolean') {
     fail(code, 'PERF C1 snapshot envelope is invalid');
+  }
+  exactKeys(snapshot.cron_history, ['extension','primary_index','relation_kind','release_index_name',
+    'release_index_present','schema','schema_owner','table','table_owner'], code);
+  if (['extension','relation_kind','release_index_name','schema','schema_owner','table','table_owner']
+    .some(key => typeof snapshot.cron_history[key] !== 'string')
+    || typeof snapshot.cron_history.release_index_present !== 'boolean') {
+    fail(code, 'PERF C1 cron history evidence is malformed');
+  }
+  exactKeys(snapshot.cron_history.primary_index, ['expressions','included_columns','key_columns','name',
+    'predicate','primary','ready','unique','valid'], code);
+  if (typeof snapshot.cron_history.primary_index.name !== 'string'
+    || !Array.isArray(snapshot.cron_history.primary_index.key_columns)
+    || snapshot.cron_history.primary_index.key_columns.some(value => typeof value !== 'string')
+    || !Array.isArray(snapshot.cron_history.primary_index.included_columns)
+    || snapshot.cron_history.primary_index.included_columns.some(value => typeof value !== 'string')
+    || ['primary','unique','valid','ready','predicate','expressions']
+      .some(key => typeof snapshot.cron_history.primary_index[key] !== 'boolean')) {
+    fail(code, 'PERF C1 primary index evidence is malformed');
   }
   exactKeys(snapshot.finance, ['activation_mode','active_authorization','platform_fee_bps',
     'purchase_enabled','refunds_enabled','subscription_enabled'], code);
@@ -2648,19 +2711,22 @@ function normalizeSuperuserQaPerfC1State(snapshot) {
       .some(key => typeof snapshot.finance[key] !== 'boolean')) {
     fail(code, 'PERF C1 Finance evidence is malformed');
   }
-  const unsigned = { schema_version: 1, complete: true, installed: snapshot.installed,
+  const unsigned = { schema_version: 3, complete: true, installed: snapshot.installed,
     functions: normalizeControlCenterFunctions(snapshot.functions, code),
-    index: normalizeControlCenterIndex(snapshot.index, code), finance: { ...snapshot.finance } };
+    cron_history: { ...snapshot.cron_history }, finance: { ...snapshot.finance } };
   const digest = sha256(canonicalJson(unsigned));
   if (withDigest && snapshot.sha256 !== digest) fail(code, 'PERF C1 snapshot digest differs');
   return { ...unsigned, sha256: digest };
 }
 
-function expectedPerfC1Index(transition) {
-  const index = transition?.index_attestation;
-  return index && { schema: index.schema, table: index.table, name: index.name,
-    owner: index.owner, definition: index.definition, valid: index.valid, ready: index.ready,
-    unique: index.unique, primary: index.primary };
+function expectedPerfC1CronHistory(transition) {
+  const history = transition?.cron_history_attestation;
+  return history && { schema: history.schema, table: history.table,
+    relation_kind: history.relation_kind, schema_owner: history.schema_owner,
+    table_owner: history.table_owner, extension: history.extension,
+    primary_index: { ...history.primary_index },
+    release_index_name: history.release_index_name,
+    release_index_present: history.release_index_expected };
 }
 
 function expectedPerfC1Finance(transition) {
@@ -2676,10 +2742,14 @@ export function validateSuperuserQaPerfC1InstalledState(snapshot, transition) {
   const state = normalizeSuperuserQaPerfC1State(snapshot);
   if (state.installed !== true
     || canonicalJson(state.functions) !== canonicalJson(expectedControlCenterFunctionRows(transition?.function_definitions ?? []))
-    || canonicalJson(state.index) !== canonicalJson(expectedPerfC1Index(transition))
+    || canonicalJson(state.cron_history) !== canonicalJson(expectedPerfC1CronHistory(transition))
     || canonicalJson(state.finance) !== canonicalJson(expectedPerfC1Finance(transition))
-    || transition?.index_attestation?.create_mode !== 'concurrent'
-    || transition?.index_attestation?.retry_safe_invalid_index_replacement !== true) {
+    || transition?.cron_history_attestation?.release_mutation !== 'forbidden'
+    || canonicalJson(transition?.cron_history_attestation?.metrics_contract ?? null) !== canonicalJson({
+      probe_order: ['runid'], probe_direction: 'desc', probe_limit: 50000,
+      complete_only_when_unsaturated: true, exact_only_when_complete: true,
+      unavailable_reason: 'history_probe_limit_reached', unavailable_value: null,
+    })) {
     fail(code, 'PERF C1 installed state differs from the reviewed authority');
   }
   return state;
@@ -2691,33 +2761,18 @@ function validateSuperuserQaPerfC1PreState(snapshot, transition) {
   const expectedRecovery = {
     migration_inventory: 'baseline_without_c1',
     accepted_states: [
-      { functions: 'predecessor', index: 'absent' },
-      { functions: 'predecessor', index: 'exact_shape_any_valid_ready' },
-      { functions: 'successor', index: 'absent' },
-      { functions: 'successor', index: 'exact_shape_any_valid_ready' },
+      { functions: 'predecessor', cron_history: 'exact_extension_owned', release_index: 'absent' },
     ],
     finance_policy_exact: true,
     mixed_function_catalog_rejected: true,
   };
   const predecessor = expectedControlCenterFunctionRows(transition?.predecessor_functions ?? []);
-  const successor = expectedControlCenterFunctionRows(transition?.function_definitions ?? []);
-  const postIndex = expectedPerfC1Index(transition);
-  const sameFunctions = expected => canonicalJson(state.functions) === canonicalJson(expected);
-  const sameIndexShape = state.index !== null && postIndex !== null
-    && canonicalJson({ ...state.index, valid: postIndex.valid, ready: postIndex.ready })
-      === canonicalJson(postIndex);
-  const predecessorNoIndex = state.installed === false && sameFunctions(predecessor)
-    && state.index === null;
-  const predecessorRecoverableIndex = state.installed === false && sameFunctions(predecessor)
-    && sameIndexShape;
-  const successorNoIndex = state.installed === false && sameFunctions(successor)
-    && state.index === null;
-  const successorRecoverableIndex = sameFunctions(successor) && sameIndexShape
-    && state.installed === (state.index.valid && state.index.ready);
+  const predecessorExact = state.installed === false
+    && canonicalJson(state.functions) === canonicalJson(predecessor)
+    && canonicalJson(state.cron_history) === canonicalJson(expectedPerfC1CronHistory(transition));
   if (canonicalJson(transition?.pre_snapshot_recovery ?? null) !== canonicalJson(expectedRecovery)
     || canonicalJson(state.finance) !== canonicalJson(expectedPerfC1Finance(transition))
-    || (!predecessorNoIndex && !predecessorRecoverableIndex
-      && !successorNoIndex && !successorRecoverableIndex)) {
+    || !predecessorExact) {
     fail(code, 'PERF C1 predecessor/recovery state is outside the exact fail-closed authority');
   }
   return state;

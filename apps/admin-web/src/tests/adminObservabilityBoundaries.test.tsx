@@ -39,3 +39,9 @@ it.each([[AdminFinanceOverviewPage,"get_admin_platform_revenue"],[AdminSystemHea
  vi.mocked(supabase.rpc).mockImplementation((async(rpcName:string)=>rpcName===name?{data:null,status:403,error:{code:"42501",message:"private SQL detail"}}:{data:{},error:null}) as never);
  render(<MemoryRouter><Page/></MemoryRouter>);expect(await screen.findByText("Sin permiso para esta fuente.")).toBeInTheDocument();expect(screen.queryByRole("alert")).not.toBeInTheDocument();expect(screen.queryByText(/private SQL detail/)).not.toBeInTheDocument();
 });
+it("renders incomplete bounded cron history as unavailable rather than zero",async()=>{
+ vi.mocked(supabase.rpc).mockResolvedValue({data:{authority:{},finance:{},marketplace:{},live_battles:{},media:{},cron:{total_jobs:12,active_jobs:11,runs_24h:null,non_successes_24h:null,run_metrics_available:false,run_metrics_reason:"history_probe_limit_reached"}},error:null} as never);
+ render(<MemoryRouter><AdminSystemHealthPage/></MemoryRouter>);
+ expect(await screen.findAllByText("No disponible")).toHaveLength(2);
+ expect(screen.getByText("La ventana de 24 horas excede el sondeo seguro; no se presenta un total truncado.")).toBeInTheDocument();
+});

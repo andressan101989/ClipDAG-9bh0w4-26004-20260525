@@ -114,32 +114,37 @@ const SUPERUSER_QA_PERF_C1_MIGRATION_PATHS = [
 ];
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 
-test('Superuser QA PERF C1 policy freezes one retry-safe migration, recovery states, RPC security, and Finance GENERAL', async () => {
+test('Superuser QA PERF C1 policy freezes one managed-cron-safe migration, bounded truth, RPC security, and Finance GENERAL', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const transition = policy.superuser_qa_perf_c1_transition;
   assert.deepEqual(transition, gate.SUPERUSER_QA_PERF_C1_RELEASE_TRANSITION);
   assert.deepEqual(transition.migrations.map(item => ({
     path: item.path, blob: item.blob, sha256: item.sha256, byte_length: item.byte_length,
   })), [
-    { path: SUPERUSER_QA_PERF_C1_MIGRATION_PATHS[0], blob: '34a09a973b506924e780abbb1799c15c9414501d',
-      sha256: 'fe07f20bd0855dc832310aa78a557dc18c96e42e18f20fdf11827b4200b82600', byte_length: 10041 },
+    { path: SUPERUSER_QA_PERF_C1_MIGRATION_PATHS[0], blob: '005c6cbbf1539611ecb0b8f2255bdf3be44f32a6',
+      sha256: '70c7d77bb0a2cb11287b4d0f0feba3f158e3ae3f749e7fa7ec15fb071a7fff07', byte_length: 10759 },
   ]);
   assert.deepEqual(transition.productive_paths, SUPERUSER_QA_PERF_C1_MIGRATION_PATHS);
   assert.deepEqual(transition.functions, []);
   assert.equal(transition.config_changed, false);
-  assert.equal(transition.index_attestation.create_mode, 'concurrent');
-  assert.equal(transition.index_attestation.lock_timeout, null);
-  assert.equal(transition.index_attestation.valid, true);
-  assert.equal(transition.index_attestation.ready, true);
+  assert.deepEqual(transition.cron_history_attestation, {
+    schema: 'cron', table: 'job_run_details', relation_kind: 'r',
+    schema_owner: 'supabase_admin', table_owner: 'supabase_admin', extension: 'pg_cron',
+    primary_index: { name: 'job_run_details_pkey', key_columns: ['runid'], included_columns: [],
+      primary: true, unique: true, valid: true, ready: true,
+      predicate: false, expressions: false },
+    release_index_name: 'cron_job_run_details_start_job_cover_idx', release_index_expected: false,
+    release_mutation: 'forbidden',
+    metrics_contract: { probe_order: ['runid'], probe_direction: 'desc', probe_limit: 50000,
+      complete_only_when_unsaturated: true, exact_only_when_complete: true,
+      unavailable_reason: 'history_probe_limit_reached', unavailable_value: null },
+  });
   assert.equal(transition.function_definitions.length, 2);
   assert.equal(transition.predecessor_functions.length, 2);
   assert.deepEqual(transition.pre_snapshot_recovery, {
     migration_inventory: 'baseline_without_c1',
     accepted_states: [
-      { functions: 'predecessor', index: 'absent' },
-      { functions: 'predecessor', index: 'exact_shape_any_valid_ready' },
-      { functions: 'successor', index: 'absent' },
-      { functions: 'successor', index: 'exact_shape_any_valid_ready' },
+      { functions: 'predecessor', cron_history: 'exact_extension_owned', release_index: 'absent' },
     ],
     finance_policy_exact: true,
     mixed_function_catalog_rejected: true,
@@ -152,11 +157,26 @@ test('Superuser QA PERF C1 policy freezes one retry-safe migration, recovery sta
     value => { value.migrations.pop(); },
     value => { value.productive_paths.push('supabase/functions/admin-user-moderation/index.ts'); },
     value => { value.functions.push('admin-user-moderation'); },
-    value => { value.index_attestation.create_mode = 'blocking'; },
-    value => { value.index_attestation.definition = 'CREATE INDEX altered'; },
-    value => { value.index_attestation.owner = 'authenticated'; },
-    value => { value.index_attestation.valid = false; },
-    value => { value.index_attestation.ready = false; },
+    value => { value.cron_history_attestation.schema_owner = 'postgres'; },
+    value => { value.cron_history_attestation.table_owner = 'postgres'; },
+    value => { value.cron_history_attestation.extension = 'other'; },
+    value => { value.cron_history_attestation.primary_index.name = 'other'; },
+    value => { value.cron_history_attestation.primary_index.key_columns = ['start_time']; },
+    value => { value.cron_history_attestation.primary_index.included_columns = ['status']; },
+    value => { value.cron_history_attestation.primary_index.primary = false; },
+    value => { value.cron_history_attestation.primary_index.unique = false; },
+    value => { value.cron_history_attestation.primary_index.valid = false; },
+    value => { value.cron_history_attestation.primary_index.ready = false; },
+    value => { value.cron_history_attestation.primary_index.predicate = true; },
+    value => { value.cron_history_attestation.primary_index.expressions = true; },
+    value => { value.cron_history_attestation.release_index_expected = true; },
+    value => { value.cron_history_attestation.release_mutation = 'allowed'; },
+    value => { value.cron_history_attestation.metrics_contract.probe_limit = 100000; },
+    value => { value.cron_history_attestation.metrics_contract.probe_order = ['start_time']; },
+    value => { value.cron_history_attestation.metrics_contract.probe_direction = 'asc'; },
+    value => { value.cron_history_attestation.metrics_contract.complete_only_when_unsaturated = false; },
+    value => { value.cron_history_attestation.metrics_contract.exact_only_when_complete = false; },
+    value => { value.cron_history_attestation.metrics_contract.unavailable_reason = 'other'; },
     value => { value.function_definitions[0].definition_sha256 = '0'.repeat(64); },
     value => { value.function_definitions[1].definition_sha256 = '0'.repeat(64); },
     value => { value.pre_snapshot_recovery.accepted_states.pop(); },

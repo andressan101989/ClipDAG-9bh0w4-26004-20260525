@@ -7,7 +7,7 @@ import {spawn,spawnSync} from "node:child_process";
 
 const repo=resolve(import.meta.dirname,".."),scratch=resolve("D:/CodexTemp"),bin=join(scratch,"postgres-17.11-disposable/pgsql/bin");
 const migrationNames=readdirSync(join(repo,"supabase/migrations")).filter(name=>name.includes("_superuser_qa_perf_c1")).sort();
-assert.equal(migrationNames.length,1,"expected one retry-safe online-index and transactional-function C1 migration");
+assert.equal(migrationNames.length,1,"expected one transactional bounded-health C1 migration");
 const [migration]=migrationNames.map(name=>readFileSync(join(repo,"supabase/migrations",name),"utf8"));
 const evidence=join(repo,".superpowers/sdd/2026-11-01-superuser-qa-perf-c1/task-1-disposable");mkdirSync(evidence,{recursive:true});
 const environment={...process.env};for(const key of Object.keys(environment))if(/^PG/i.test(key))delete environment[key];
@@ -35,14 +35,16 @@ function invokeExternalRunning(command,args,label,cwd){
  return {child,done};
 }
 const connection=["-X","--no-password","-h","127.0.0.1","-p",String(port),"-U","postgres","-d","perfproof","-v","ON_ERROR_STOP=1"];
+const adminConnection=["-X","--no-password","-h","127.0.0.1","-p",String(port),"-U","supabase_admin","-d","perfproof","-v","ON_ERROR_STOP=1"];
 const sql=(source,allowFailure=false)=>invoke("psql",connection,source,allowFailure);
+const sqlAdmin=(source,allowFailure=false)=>invoke("psql",adminConnection,source,allowFailure);
 const scalar=source=>sql(`\\pset format unaligned\n\\pset tuples_only on\n${source}`).stdout.trim().split(/\r?\n/).filter(line=>line!=="Output format is unaligned.").join("\n");
 async function waitUntil(probe,label,timeoutMs=5000){
  const deadline=Date.now()+timeoutMs;while(Date.now()<deadline){if(probe())return;await new Promise(resolveWait=>setTimeout(resolveWait,50))}throw new Error(`timed out waiting for ${label}`);
 }
 const marketplacePlanningTrials=3;
 function measureMarketplacePlanning(label){
- scalar("select pg_stat_reset();select pg_stat_statements_reset();");
+ sqlAdmin("select pg_stat_reset();select pg_stat_statements_reset();");
  const payloads=Array.from({length:marketplacePlanningTrials},()=>scalar("select (public.get_marketplace_admin_health()-'checked_at')::text;"));
  for(const payload of payloads)assert.equal(payload,payloads[0],`${label} Marketplace payload varied across fresh planning sessions`);
  const statistics=JSON.parse(scalar(`
@@ -147,10 +149,21 @@ create function public.${shape.name}()returns jsonb language sql stable security
 $fixture$;`).join("\n");
 const fixturePlannedJoins=marketplaceCanonicalSourceShapes.reduce((sum,shape)=>sum+shape.fixtureCounters*marketplacePlannerJoinsPerCounter,0);
 assert.ok(fixturePlannedJoins>=canonicalSourceJoins,"planner fixture must preserve at least the latest canonical aggregate join pressure");
-const setup=`
+const managedCronSetup=`
 create extension pg_stat_statements;
+create schema cron;
+alter schema cron owner to supabase_admin;
+create table cron.job(jobid bigint primary key,active boolean not null);
+create table cron.job_run_details(runid bigint primary key,jobid bigint not null,job_pid integer,database text,username text,command text,status text,return_message text,start_time timestamptz,end_time timestamptz);
+alter table cron.job owner to supabase_admin;
+alter table cron.job_run_details owner to supabase_admin;
+grant usage on schema cron to postgres;
+grant select,insert,update,delete on cron.job,cron.job_run_details to postgres;
+grant pg_read_all_stats to postgres;
+`;
+const setup=`
 create role anon;create role authenticated;create role service_role;
-create schema private;create schema cron;
+create schema private;
 create function public.admin_require_capability(text)returns void language plpgsql as $$begin return;end$$;
 create table private.admin_roles(role_code text);create table private.admin_capabilities(capability_code text);
 create table private.admin_role_capabilities(role_code text,capability_code text);create table private.admin_role_grant_rules(role_code text);
@@ -165,14 +178,12 @@ create table public.marketplace_return_refunds(id uuid);create table public.live
 create table public.live_battles(id uuid,status text);create table public.media_assets(id uuid,status text);
 create table public.marketplace_ad_campaigns(id uuid,funded_at timestamptz,ends_at timestamptz,status text,eligibility_state boolean);
 ${marketplacePlannerFixtureTables}
-create table cron.job(jobid bigint primary key,active boolean not null);
-create table cron.job_run_details(runid bigint primary key,jobid bigint not null,job_pid integer,database text,username text,command text,status text,return_message text,start_time timestamptz,end_time timestamptz);
 insert into cron.job select n,true from generate_series(1,7)n;
 insert into cron.job_run_details(runid,jobid,status,start_time,end_time)
 select n,1+(n%7),case when n%19=0 then 'failed' else 'succeeded' end,
-  case when n<=10000 then statement_timestamp()-interval '12 hours'-n*interval '1 millisecond' else statement_timestamp()-interval '36 hours'-n*interval '1 millisecond' end,
-  case when n<=10000 then statement_timestamp()-interval '12 hours'-n*interval '1 millisecond'+interval '100 milliseconds' else statement_timestamp()-interval '36 hours'-n*interval '1 millisecond'+interval '100 milliseconds' end
-from generate_series(1,1000000)n;
+  statement_timestamp()-(40000-n)*interval '1 second',
+  statement_timestamp()-(40000-n)*interval '1 second'+interval '100 milliseconds'
+from generate_series(1,40000)n;
 insert into cron.job_run_details(runid,jobid,status,start_time,end_time) values(-1,1,'failed',null,null);
 ${predecessorFunction}
 ${predecessorClone}
@@ -194,9 +205,11 @@ try{
  writeFileSync(join(cliMigrations,migrationNames[0]),migration);
  console.log(`Fresh PostgreSQL 17 C1 proof: ${cluster}, 127.0.0.1:${port}`);
  assert.ok(existsSync(join(bin,"postgres.exe")),"disposable PostgreSQL 17 binaries missing");
- invoke("initdb",["-D",cluster,"-U","postgres","-A","trust","--no-locale","--encoding=UTF8","--no-sync"]);
+ invoke("initdb",["-D",cluster,"-U","supabase_admin","-A","trust","--no-locale","--encoding=UTF8","--no-sync"]);
  started=true;invoke("pg_ctl",["-D",cluster,"-l",join(evidence,"server.log"),"-o",`-h 127.0.0.1 -p ${port} -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c pg_stat_statements.track_planning=on -c track_functions=all -c jit=off`,"-w","-t","30","start"]);
- invoke("createdb",["-h","127.0.0.1","-p",String(port),"-U","postgres","perfproof"]);created=true;
+ invoke("psql",["-X","--no-password","-h","127.0.0.1","-p",String(port),"-U","supabase_admin","-d","postgres","-v","ON_ERROR_STOP=1"],"create role postgres login createrole;");
+ invoke("createdb",["-h","127.0.0.1","-p",String(port),"-U","supabase_admin","-O","postgres","perfproof"]);created=true;
+ sqlAdmin(managedCronSetup);
  sql(setup);
  assert.equal(scalar("select current_setting('pg_stat_statements.track')||':'||current_setting('pg_stat_statements.track_planning')||':'||current_setting('track_functions');"),"all:on:all","nested planning and per-function statistics must be enabled");
  const marketplaceBeforePlanning=measureMarketplacePlanning("before"),beforeMarketplace=marketplaceBeforePlanning.payload;
@@ -210,20 +223,29 @@ try{
  const beforePlan=sql("\\pset format unaligned\n\\pset tuples_only on\nexplain(analyze,buffers,format json) select count(*) from cron.job_run_details where start_time>=clock_timestamp()-interval '24 hours';").stdout;
  writeFileSync(join(evidence,"cron-before.json"),beforePlan);
  assert.match(beforePlan,/Seq Scan/i,"predecessor must reproduce the unindexed cron scan");
- const snapshotHolder=invokeRunning("psql",connection,"\\set ON_ERROR_STOP on\nset application_name='perf_c1_snapshot_holder';\nbegin isolation level repeatable read;\nselect count(*) from cron.job_run_details;\nselect pg_sleep(30);\ncommit;\n","snapshot-holder");
- await waitUntil(()=>scalar("select exists(select 1 from pg_stat_activity where application_name='perf_c1_snapshot_holder' and query ilike '%pg_sleep(30)%')::text;")==="true","repeatable-read snapshot holder");
  const dbUrl=`postgresql://postgres@127.0.0.1:${port}/perfproof?sslmode=disable`;
- const indexStartedAt=Date.now(),canonicalPush=invokeExternalRunning(process.platform==="win32"?"npx.cmd":"npx",["--yes","supabase@2.120.0","db","push","--db-url",dbUrl,"--skip-vault","--yes","--workdir",cliProject],"supabase-2.120-db-push",cliProject);
- try{await waitUntil(()=>scalar("select exists(select 1 from pg_stat_progress_create_index where relid='cron.job_run_details'::regclass)::text;")==="true","concurrent index progress",20000)}catch(error){const [holderResult,pushResult]=await Promise.all([snapshotHolder.done,canonicalPush.done]);assert.equal(holderResult.status,0,holderResult.stderr);assert.equal(pushResult.status,0,pushResult.stderr);throw error}
- const writerStartedAt=Date.now();
- sql("set application_name='perf_c1_writer'; set statement_timeout='2s'; insert into cron.job_run_details(runid,jobid,status,start_time,end_time) values(1000001,1,'succeeded',statement_timestamp(),statement_timestamp());");
- const writerMs=Date.now()-writerStartedAt;
- assert.ok(writerMs<2000,`concurrent writer exceeded its 2 second budget: ${writerMs}ms`);
- const holderResult=await snapshotHolder.done,pushResult=await canonicalPush.done,indexBuildMs=Date.now()-indexStartedAt;
- assert.equal(holderResult.status,0,holderResult.stderr);assert.equal(pushResult.status,0,pushResult.stderr);
- const beforeSystemAfterWriter=scalar("select public.get_admin_system_health_pre_c1();");
- const afterSystem=scalar("select public.get_admin_system_health();"),marketplaceAfterPlanning=measureMarketplacePlanning("after"),afterMarketplace=marketplaceAfterPlanning.payload;
- assert.equal(afterSystem,beforeSystemAfterWriter,"system-health JSON contract changed for the same cron history");
+ const cronCatalogBefore=scalar("select json_build_object('schema_owner',pg_get_userbyid(n.nspowner),'table_owner',pg_get_userbyid(c.relowner),'indexes',(select json_agg(pg_get_indexdef(i.indexrelid) order by pg_get_indexdef(i.indexrelid)) from pg_index i where i.indrelid=c.oid))::text from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='cron' and c.relname='job_run_details';");
+ const cronCatalog=JSON.parse(cronCatalogBefore);
+ assert.equal(cronCatalog.schema_owner,"supabase_admin");
+ assert.equal(cronCatalog.table_owner,"supabase_admin");
+ assert.deepEqual(cronCatalog.indexes,["CREATE UNIQUE INDEX job_run_details_pkey ON cron.job_run_details USING btree (runid)"]);
+ const canonicalPush=invokeExternalRunning(process.platform==="win32"?"npx.cmd":"npx",["--yes","supabase@2.120.0","db","push","--db-url",dbUrl,"--skip-vault","--yes","--workdir",cliProject],"supabase-2.120-db-push",cliProject);
+ const pushResult=await canonicalPush.done;assert.equal(pushResult.status,0,pushResult.stderr);
+ const cronCatalogAfter=scalar("select json_build_object('schema_owner',pg_get_userbyid(n.nspowner),'table_owner',pg_get_userbyid(c.relowner),'indexes',(select json_agg(pg_get_indexdef(i.indexrelid) order by pg_get_indexdef(i.indexrelid)) from pg_index i where i.indrelid=c.oid))::text from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='cron' and c.relname='job_run_details';");
+ assert.equal(cronCatalogAfter,cronCatalogBefore,"C1 must not mutate the managed cron relation");
+ const completeSystem=JSON.parse(scalar("select public.get_admin_system_health()::text;"));
+ assert.equal(completeSystem.cron.run_metrics_available,true);
+ assert.equal(completeSystem.cron.runs_24h,40000);
+ const historyWindowComplete=true,cronRelationUnmodified=true;
+ sql("insert into cron.job_run_details(runid,jobid,status,start_time,end_time) select 40000+n,1+(n%7),'succeeded',statement_timestamp()-interval '36 hours'-n*interval '1 millisecond',statement_timestamp()-interval '36 hours'-n*interval '1 millisecond'+interval '100 milliseconds' from generate_series(1,960000)n;");
+ sql("insert into cron.job_run_details(runid,jobid,status,start_time,end_time) select 1000000+n,1+(n%7),'succeeded',statement_timestamp()-n*interval '1 millisecond',statement_timestamp()-n*interval '1 millisecond'+interval '100 milliseconds' from generate_series(1,60000)n;");
+ const saturatedSystem=JSON.parse(scalar("select public.get_admin_system_health()::text;"));
+ assert.equal(saturatedSystem.cron.run_metrics_available,false);
+ assert.equal(saturatedSystem.cron.run_metrics_reason,"history_probe_limit_reached");
+ assert.equal(saturatedSystem.cron.runs_24h,null);
+ assert.equal(saturatedSystem.cron.non_successes_24h,null);
+ const historyProbeSaturated=true,historyUnavailableReturnsNull=true;
+ const marketplaceAfterPlanning=measureMarketplacePlanning("after"),afterMarketplace=marketplaceAfterPlanning.payload;
  assert.equal(afterMarketplace,beforeMarketplace,"Marketplace health output changed by planner-only settings");
  const expectedMarketplacePlans=marketplacePlanningTrials*canonicalMarketplaceReconciliations.length;
  assert.equal(marketplaceBeforePlanning.planCount,expectedMarketplacePlans,"pre-C1 measurement must plan every canonical reconciliator in every fresh session");
@@ -232,21 +254,25 @@ try{
  const marketplacePlanningRatio=marketplaceBeforePlanning.totalPlanMs/marketplaceAfterPlanning.totalPlanMs;
  assert.ok(Number.isFinite(marketplacePlanningRatio)&&marketplacePlanningRatio>=2,`function-local collapse limits did not halve nested planning work: ${JSON.stringify({marketplaceBeforePlanning,marketplaceAfterPlanning,marketplacePlanningRatio})}`);
  const marketplacePlanningPlanCount=marketplaceAfterPlanning.planCount,marketplacePlanningImprovement=true;
- const afterPlan=sql("\\pset format unaligned\n\\pset tuples_only on\nexplain(analyze,buffers,format json) select count(*) from cron.job_run_details where start_time>=statement_timestamp()-interval '24 hours';").stdout;
+ const afterPlan=sql("\\pset format unaligned\n\\pset tuples_only on\nexplain(analyze,buffers,format json) select public.get_admin_system_health();").stdout;
  writeFileSync(join(evidence,"cron-after.json"),afterPlan);
- assert.match(afterPlan,/cron_job_run_details_start_job_cover_idx/i,"optimized recent scan must use the measured time-leading index");
  const afterJson=JSON.parse(afterPlan.slice(afterPlan.indexOf("[")))[0],executionMs=Number(afterJson["Execution Time"]);
- assert.ok(executionMs<2000,`indexed representative cron range exceeded 2 seconds: ${executionMs}`);
+ assert.ok(executionMs<8000,`bounded representative system health exceeded the production statement timeout: ${executionMs}`);
  const settings=scalar("select array_to_string(proconfig,',') from pg_proc where oid='public.get_marketplace_admin_health()'::regprocedure;");
  assert.equal(settings,"search_path=pg_catalog, private, public,join_collapse_limit=1,from_collapse_limit=1");
  const marketplaceAfterPlan=sql("\\pset format unaligned\n\\pset tuples_only on\nexplain(analyze,buffers,format json) select public.get_marketplace_admin_health();").stdout;
  writeFileSync(join(evidence,"marketplace-after.json"),marketplaceAfterPlan);
  const marketplaceAfterExecutionMs=Number(JSON.parse(marketplaceAfterPlan.slice(marketplaceAfterPlan.indexOf("[")))[0]["Execution Time"]);
+ assert.ok(marketplaceAfterExecutionMs<8000,`bounded Marketplace health exceeded the production statement timeout: ${marketplaceAfterExecutionMs}`);
+ const systemUnderProductionTimeout=sql("begin;set local statement_timeout='8s';select public.get_admin_system_health();rollback;");
+ const marketplaceUnderProductionTimeout=sql("begin;set local statement_timeout='8s';select public.get_marketplace_admin_health();rollback;");
+ assert.equal(systemUnderProductionTimeout.status,0,"system health did not complete under the production timeout");
+ assert.equal(marketplaceUnderProductionTimeout.status,0,"Marketplace health did not complete under the production timeout");
  const acl=scalar("select has_function_privilege('authenticated','public.get_admin_system_health()','execute')::text||':'||has_function_privilege('anon','public.get_admin_system_health()','execute')::text;");
  assert.equal(acl,"true:false");
  const [systemDefinitionSha256,marketplaceDefinitionSha256]=scalar("select encode(sha256(convert_to(pg_get_functiondef('public.get_admin_system_health()'::regprocedure),'UTF8')),'hex') union all select encode(sha256(convert_to(pg_get_functiondef('public.get_marketplace_admin_health()'::regprocedure),'UTF8')),'hex');").split(/\r?\n/);
  assert.notEqual(marketplaceDefinitionSha256,marketplaceDefinitionBefore,"function-local planner settings must change the canonical function definition hash");
- console.log(JSON.stringify({rows:1000002,cronBefore:"sequential",cronAfter:"time_index",cronAfterExecutionMs:executionMs,indexBuildMs,writerDuringConcurrentBuild:true,writerMs,systemPayloadParity:true,marketplacePayloadParity:true,marketplaceReconcilerCount:15,marketplaceCanonicalSourceShapes,canonicalSourceJoins,fixturePlannedJoins,marketplacePlannerJoinsPerCounter,marketplacePlanningTrials,marketplacePlanningPlanCount,marketplaceCanonicalFunctionCalls:marketplaceAfterPlanning.functionCalls,marketplaceBeforePlanningMs:marketplaceBeforePlanning.totalPlanMs,marketplaceAfterPlanningMs:marketplaceAfterPlanning.totalPlanMs,marketplacePlanningRatio,marketplacePlanningImprovement,marketplaceBeforeExecutionMs,marketplaceAfterExecutionMs,marketplacePlannerScope:"function_local",marketplaceDefinitionChanged:true,systemDefinitionSha256,marketplaceDefinitionSha256,acl:"authenticated_only"},null,2));
+ console.log(JSON.stringify({rows:1060001,cronBefore:"sequential",cronAfter:"bounded_runid_pk_probe",cronAfterExecutionMs:executionMs,historyWindowComplete,historyProbeSaturated,historyUnavailableReturnsNull,cronRelationUnmodified,productionTimeoutMs:8000,systemUnderProductionTimeout:true,marketplaceUnderProductionTimeout:true,marketplacePayloadParity:true,marketplaceReconcilerCount:15,marketplaceCanonicalSourceShapes,canonicalSourceJoins,fixturePlannedJoins,marketplacePlannerJoinsPerCounter,marketplacePlanningTrials,marketplacePlanningPlanCount,marketplaceCanonicalFunctionCalls:marketplaceAfterPlanning.functionCalls,marketplaceBeforePlanningMs:marketplaceBeforePlanning.totalPlanMs,marketplaceAfterPlanningMs:marketplaceAfterPlanning.totalPlanMs,marketplacePlanningRatio,marketplacePlanningImprovement,marketplaceBeforeExecutionMs,marketplaceAfterExecutionMs,marketplacePlannerScope:"function_local",marketplaceDefinitionChanged:true,systemDefinitionSha256,marketplaceDefinitionSha256,acl:"authenticated_only"},null,2));
 }catch(error){proofError=error}
 finally{
  const cleanupErrors=[];
