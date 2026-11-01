@@ -219,6 +219,302 @@ function controlCenterState(transition, { installed, concurrentDelta = 0 } = {})
   };
 }
 
+function perfC1Migrations(installed) {
+  const base = controlCenterMigrations(true).items;
+  if (installed) base.push({ version: '20261101181907', name: 'superuser_qa_perf_c1' });
+  base.sort((a, b) => a.version.localeCompare(b.version));
+  return { complete: true, count: base.length, items: base, latest: base.at(-1),
+    sha256: sha256(canonicalJson(base)) };
+}
+
+function perfC1State(transition, installed) {
+  return {
+    schema_version: 1,
+    complete: true,
+    installed,
+    functions: installed ? transition.function_definitions : transition.predecessor_functions,
+    index: installed ? {
+      schema: transition.index_attestation.schema,
+      table: transition.index_attestation.table,
+      name: transition.index_attestation.name,
+      owner: transition.index_attestation.owner,
+      definition: transition.index_attestation.definition,
+      valid: transition.index_attestation.valid,
+      ready: transition.index_attestation.ready,
+      unique: transition.index_attestation.unique,
+      primary: transition.index_attestation.primary,
+    } : null,
+    finance: {
+      activation_mode: 'general', active_authorization: true,
+      platform_fee_bps: 2000, purchase_enabled: true,
+      refunds_enabled: true, subscription_enabled: true,
+    },
+  };
+}
+
+test('PERF C1 snapshot permits only exact retry-safe prestates and freezes the post-state', async () => {
+  const adapter = await loadAdapter();
+  const transition = installedPolicy.superuser_qa_perf_c1_transition;
+  assert.equal(adapter.assertReadOnlySql(adapter.SUPERUSER_QA_PERF_C1_STATE_SQL), true);
+  const approvedSha = 'c'.repeat(40);
+  const manifest = { identity: { approved_sha: approvedSha }, resources: {
+    superuser_qa_perf_c1_transition: { ...structuredClone(transition), approved_sha: approvedSha,
+      baseline_descendant_verified: true, integration_base_descendant_verified: true,
+      reviewed_bytes_verified: true },
+  } };
+  const preRequirement = adapter.superuserQaPerfC1StateRequirement(installedPolicy, manifest, 'pre',
+    { migrations: perfC1Migrations(false) });
+  const postRequirement = adapter.superuserQaPerfC1StateRequirement(installedPolicy, manifest, 'post',
+    { migrations: perfC1Migrations(true) });
+  assert.equal(preRequirement.required, true);
+  assert.equal(preRequirement.installed, false);
+  assert.equal(perfC1Migrations(false).count, 364);
+  for (const collision of [
+    { version: transition.migrations[0].version, name: 'wrong_name_same_version' },
+    { version: '20990101000000', name: 'superuser_qa_perf_c1' },
+  ]) {
+    const migrations = perfC1Migrations(false);
+    migrations.items.push(collision);
+    migrations.items.sort((left, right) => left.version.localeCompare(right.version));
+    migrations.count = migrations.items.length;
+    migrations.latest = migrations.items.at(-1);
+    migrations.sha256 = sha256(canonicalJson(migrations.items));
+    assert.throws(() => adapter.superuserQaPerfC1StateRequirement(installedPolicy, manifest, 'pre',
+      { migrations }), /SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED/);
+  }
+  assert.equal(postRequirement.required, true);
+  assert.equal(postRequirement.installed, true);
+  assert.equal(perfC1Migrations(true).count, 365);
+  for (const { collision, error } of [
+    { collision: { version: '20990101000000', name: 'superuser_qa_perf_c1' },
+      error: /SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED/ },
+    { collision: { version: transition.migrations[0].version, name: 'wrong_name_same_version' },
+      error: /(?:INVALID_REMOTE_INVENTORY|SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED)/ },
+  ]) {
+    const migrations = perfC1Migrations(true);
+    migrations.items.push(collision);
+    migrations.items.sort((left, right) => left.version.localeCompare(right.version));
+    migrations.count = migrations.items.length;
+    migrations.latest = migrations.items.at(-1);
+    migrations.sha256 = sha256(canonicalJson(migrations.items));
+    assert.throws(() => adapter.superuserQaPerfC1StateRequirement(installedPolicy, manifest, 'post',
+      { migrations }), error);
+  }
+  const pre = perfC1State(transition, false), post = perfC1State(transition, true);
+  const recoverableIndex = {
+    schema: transition.index_attestation.schema,
+    table: transition.index_attestation.table,
+    name: transition.index_attestation.name,
+    owner: transition.index_attestation.owner,
+    definition: transition.index_attestation.definition,
+    valid: false,
+    ready: false,
+    unique: transition.index_attestation.unique,
+    primary: transition.index_attestation.primary,
+  };
+  assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(pre, post, transition), true);
+  for (const valid of [false, true]) {
+    for (const ready of [false, true]) {
+      const recovery = structuredClone(pre);
+      recovery.index = { ...recoverableIndex, valid, ready };
+      assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(recovery, post, transition), true);
+    }
+  }
+  const successorAfterDrop = structuredClone(post);
+  successorAfterDrop.installed = false;
+  successorAfterDrop.index = null;
+  assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(post, post, transition), true);
+  assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(successorAfterDrop, post, transition), true);
+  for (const valid of [false, true]) {
+    for (const ready of [false, true]) {
+      const successorRecovery = structuredClone(post);
+      successorRecovery.index = { ...recoverableIndex, valid, ready };
+      successorRecovery.installed = valid && ready;
+      assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(successorRecovery, post, transition), true);
+    }
+  }
+  const failedAfterAcceptedCommit = structuredClone(post);
+  assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(failedAfterAcceptedCommit, post, transition), true);
+  failedAfterAcceptedCommit.installed = false;
+  failedAfterAcceptedCommit.index = null;
+  assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(failedAfterAcceptedCommit, post, transition), true);
+  failedAfterAcceptedCommit.index = { ...recoverableIndex, valid: false, ready: false };
+  assert.equal(adapter.validateSuperuserQaPerfC1StateTransition(failedAfterAcceptedCommit, post, transition), true);
+  for (const mutate of [
+    value => { value.installed = true; },
+    value => { value.functions[0] = structuredClone(transition.function_definitions[0]); },
+    value => { value.functions.push(structuredClone(value.functions[0])); },
+    value => { value.index = { ...recoverableIndex, owner: 'authenticated' }; },
+    value => { value.index = { ...recoverableIndex, schema: 'public' }; },
+    value => { value.index = { ...recoverableIndex, table: 'job' }; },
+    value => { value.index = { ...recoverableIndex, name: 'other_idx' }; },
+    value => { value.index = { ...recoverableIndex, definition: 'CREATE INDEX altered' }; },
+    value => { value.index = { ...recoverableIndex, unique: true }; },
+    value => { value.index = { ...recoverableIndex, primary: true }; },
+    value => { value.finance.platform_fee_bps = 0; },
+  ]) {
+    const hostile = structuredClone(pre); mutate(hostile);
+    assert.throws(() => adapter.validateSuperuserQaPerfC1StateTransition(hostile, post, transition),
+      /SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED/);
+  }
+  const expandedIndex = structuredClone(pre);
+  expandedIndex.index = { ...recoverableIndex, unexpected: true };
+  assert.throws(
+    () => adapter.validateSuperuserQaPerfC1StateTransition(expandedIndex, post, transition),
+    error => error?.code === 'SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED',
+  );
+  for (const mutate of [
+    value => { value.installed = false; },
+    value => { value.index.valid = false; value.installed = true; },
+    value => { value.index.ready = false; value.installed = true; },
+    value => { value.functions[0] = structuredClone(transition.predecessor_functions[0]); },
+  ]) {
+    const hostile = structuredClone(post); mutate(hostile);
+    assert.throws(() => adapter.validateSuperuserQaPerfC1StateTransition(hostile, post, transition),
+      /SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED/);
+  }
+  for (const mutate of [
+    value => { value.functions[0].definition_sha256 = '0'.repeat(64); },
+    value => { value.functions[1].definition_sha256 = '0'.repeat(64); },
+    value => { value.functions[0].owner = 'authenticated'; },
+    value => { value.functions[1].security_definer = false; },
+    value => { value.functions[1].search_path.pop(); },
+    value => { value.functions[0].acl.push({ grantee: 'PUBLIC', privilege_type: 'EXECUTE', is_grantable: false }); },
+    value => { value.functions[1].acl.push({ grantee: 'PUBLIC', privilege_type: 'EXECUTE', is_grantable: false }); },
+    value => { value.index.owner = 'authenticated'; },
+    value => { value.index.valid = false; },
+    value => { value.index.ready = false; },
+    value => { value.index.definition = 'CREATE INDEX altered'; },
+    value => { value.finance.platform_fee_bps = 0; },
+    value => { value.finance.activation_mode = 'off'; },
+  ]) {
+    const hostile = structuredClone(post); mutate(hostile);
+    assert.throws(() => adapter.validateSuperuserQaPerfC1StateTransition(pre, hostile, transition),
+      /SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED/);
+  }
+});
+
+test('PERF C1 capture and postcheck bind the fixed query and exact one-migration transition', async () => {
+  const adapter = await loadAdapter();
+  const controlledPolicy = structuredClone(policy);
+  const transition = controlledPolicy.superuser_qa_perf_c1_transition;
+  controlledPolicy.baseline.sha = transition.baseline_sha;
+  controlledPolicy.baseline.migration_count = 1;
+  controlledPolicy.baseline.latest_migration = '20261009021414_creator_premium_b5_creator_management_ux';
+  controlledPolicy.baseline.blocked_resources = [];
+  controlledPolicy.supabase.expected_remote_function_count = 1;
+  controlledPolicy.supabase.managed_functions = ['content-safety-scan'];
+  controlledPolicy.supabase.finance_policy = {
+    platform_fee_bps: 2000,
+    purchase_enabled: true,
+    refunds_enabled: true,
+    subscription_enabled: true,
+  };
+  const releaseManifest = manifest();
+  releaseManifest.resources = {
+    config_changed: false,
+    function_contracts: [],
+    functions: [],
+    migrations: transition.migrations.map(({ blob, path, version }) => ({ blob, path, version })),
+    superuser_qa_perf_c1_transition: {
+      ...structuredClone(transition),
+      approved_sha: releaseManifest.identity.approved_sha,
+      baseline_descendant_verified: true,
+      integration_base_descendant_verified: true,
+      reviewed_bytes_verified: true,
+    },
+  };
+  const baseMigration = {
+    version: '20261009021414',
+    name: 'creator_premium_b5_creator_management_ux',
+  };
+  const generalFinance = financeSnapshot({
+    policy: {
+      purchase_enabled: true,
+      subscription_enabled: true,
+      refunds_enabled: true,
+      platform_fee_bps: 2000,
+      policy_version: 'creator-premium-f4-general-v1',
+    },
+  });
+  const capture = async (phase, installed) => {
+    const calls = [];
+    const base = successfulFetch(calls, {
+      finance: generalFinance,
+      backups: [completedPhysicalBackup({
+        id: '2026-11-01T17:00:00.000Z',
+        inserted_at: '2026-11-01T17:00:00.000Z',
+      })],
+    });
+    const migrationRows = [
+      baseMigration,
+      ...(installed ? transition.migrations.map(item => ({
+        version: item.version,
+        name: item.path.split('/').at(-1).replace(/^\d{14}_|\.sql$/gu, ''),
+      })) : []),
+    ];
+    const fetchImpl = async (url, options = {}) => {
+      const pathname = new URL(url).pathname;
+      if (pathname.endsWith('/database/migrations')) {
+        calls.push({ url: String(url), options });
+        return jsonResponse(migrationRows);
+      }
+      if (pathname.endsWith('/database/query/read-only')) {
+        const body = JSON.parse(options.body);
+        if (body.query === adapter.SUPERUSER_QA_PERF_C1_STATE_SQL) {
+          calls.push({ url: String(url), options });
+          return jsonResponse([{ snapshot: perfC1State(transition, installed) }], 201);
+        }
+      }
+      return base(url, options);
+    };
+    const evidence = await adapter.captureProductionSnapshot({
+      phase,
+      policy: controlledPolicy,
+      request: request(),
+      manifest: releaseManifest,
+      token: 'private-read-token',
+      fetchImpl,
+      observedAt: installed ? '2026-11-01T17:02:00.000Z' : '2026-11-01T17:01:00.000Z',
+      adapterSourceSha256: '6'.repeat(64),
+    });
+    bindRpcSecurityEvidence(evidence, adapter.advisorExceptionsForPhase(
+      controlledPolicy,
+      releaseManifest,
+      phase,
+      { request: request(), migrations: evidence.migrations },
+    ));
+    return evidence;
+  };
+  const pre = await capture('pre', false);
+  assert.equal(pre.superuser_qa_perf_c1_state.installed, false);
+  assert.ok(pre.adapter.queries.some(item => (
+    item.id === 'nelyon-superuser-qa-perf-c1-state-v1'
+      && item.sha256 === sha256(adapter.SUPERUSER_QA_PERF_C1_STATE_SQL)
+  )));
+  controlledPolicy.baseline.evidence_digests = adapter.buildProductionBaselineDigests({
+    evidence: pre,
+    policy: controlledPolicy,
+  });
+  const post = await capture('post', true);
+  assert.equal(post.superuser_qa_perf_c1_state.installed, true);
+  const pair = {
+    pre,
+    post,
+    policy: controlledPolicy,
+    request: request(),
+    manifest: releaseManifest,
+    adapterSourceSha256: '6'.repeat(64),
+  };
+  assert.equal(adapter.verifyProductionSnapshotPair(pair).result, 'REMOTE_POSTCHECK_VERIFIED');
+  const renamedHistorical = structuredClone(post);
+  renamedHistorical.migrations.items[0].name = 'concurrently_renamed_historical_migration';
+  renamedHistorical.migrations.sha256 = sha256(canonicalJson(renamedHistorical.migrations.items));
+  resignEvidence(renamedHistorical);
+  assert.throws(() => adapter.verifyProductionSnapshotPair({ ...pair, post: renamedHistorical }),
+    /REMOTE_POSTCHECK_FAILED/);
+});
+
 test('Control Center snapshot uses bounded provenance, permits concurrency, and rejects release attribution', async () => {
   const adapter = await loadAdapter();
   const transition = installedPolicy.superuser_control_center_transition;

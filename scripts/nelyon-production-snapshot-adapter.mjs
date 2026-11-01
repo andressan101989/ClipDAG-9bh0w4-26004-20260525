@@ -1790,6 +1790,66 @@ select pg_catalog.jsonb_build_object(
     'admin_audit_release_attributed',bounded_observations.admin_audit_release_attributed)
 ) snapshot from install_state cross join bounded_observations;`;
 
+export const SUPERUSER_QA_PERF_C1_STATE_SQL = `with expected(identity) as (
+  values ('public.get_admin_system_health()'),('public.get_marketplace_admin_health()')
+), function_rows as (
+  select n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' identity,
+    owner_role.rolname owner,p.provolatile volatility,p.prosecdef security_definer,
+    coalesce(pg_catalog.to_jsonb(p.proconfig),'[]'::jsonb) search_path,
+    pg_catalog.jsonb_build_object(
+      'anon',pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE'),
+      'authenticated',pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE'),
+      'public',pg_catalog.has_function_privilege('public',p.oid,'EXECUTE'),
+      'service_role',pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE')) execute,
+    coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable)
+      order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,acl.privilege_type,acl.is_grantable)
+      from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+      left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee),'[]'::jsonb) acl,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex') definition_sha256
+  from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
+  join expected e on e.identity=n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')'
+), index_row as (
+  select n.nspname schema_name,t.relname table_name,i.relname name,owner_role.rolname owner,
+    pg_catalog.pg_get_indexdef(i.oid) definition,x.indisvalid valid,x.indisready ready,
+    x.indisunique unique_index,x.indisprimary primary_index
+  from pg_catalog.pg_class i join pg_catalog.pg_namespace n on n.oid=i.relnamespace
+  join pg_catalog.pg_index x on x.indexrelid=i.oid join pg_catalog.pg_class t on t.oid=x.indrelid
+  join pg_catalog.pg_roles owner_role on owner_role.oid=i.relowner
+  where n.nspname='cron' and i.relname='cron_job_run_details_start_job_cover_idx'
+), finance_row as (
+  select activation_mode,active_authorization_id is not null active_authorization,
+    platform_fee_bps,purchase_enabled,refunds_enabled,subscription_enabled
+  from private.creator_premium_finance_policy where singleton
+), install_state as (
+  select (select pg_catalog.count(*) from function_rows)=2 functions_complete,
+    exists(select 1 from function_rows where identity='public.get_admin_system_health()'
+      and definition_sha256='3e669949cd7657bd3fb39db1d7ab98aa26ecc72ac136719cae5db604cc7f8a4a') system_successor,
+    exists(select 1 from function_rows where identity='public.get_marketplace_admin_health()'
+      and definition_sha256='be6d8747efe5066ecf514e1b38b7d4b28444e1bc53484208430f9a2b7884e233'
+      and search_path='["search_path=pg_catalog, private, public","join_collapse_limit=1","from_collapse_limit=1"]'::jsonb) marketplace_successor,
+    exists(select 1 from index_row where valid and ready) index_installed,
+    (select pg_catalog.count(*) from finance_row)=1 finance_complete
+)
+select pg_catalog.jsonb_build_object(
+  'schema_version',1,
+  'complete',install_state.functions_complete and install_state.finance_complete,
+  'installed',install_state.functions_complete and install_state.finance_complete
+    and install_state.system_successor and install_state.marketplace_successor and install_state.index_installed,
+  'functions',coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+    'identity',identity,'owner',owner,'volatility',volatility,'security_definer',security_definer,
+    'search_path',search_path,'execute',execute,'acl',acl,'definition_sha256',definition_sha256) order by identity)
+    from function_rows),'[]'::jsonb),
+  'index',(select pg_catalog.jsonb_build_object('schema',schema_name,'table',table_name,'name',name,
+    'owner',owner,'definition',definition,'valid',valid,'ready',ready,'unique',unique_index,'primary',primary_index) from index_row),
+  'finance',(select pg_catalog.jsonb_build_object('activation_mode',activation_mode,
+    'active_authorization',active_authorization,'platform_fee_bps',platform_fee_bps,
+    'purchase_enabled',purchase_enabled,'refunds_enabled',refunds_enabled,
+    'subscription_enabled',subscription_enabled) from finance_row)
+) snapshot from install_state;`;
+
 function fail(code, message) {
   const error = new Error(`${code}: ${message}`);
   error.code = code;
@@ -2316,6 +2376,56 @@ function superuserControlCenterTransition(policy, manifest) {
   return expected;
 }
 
+function superuserQaPerfC1Transition(policy, manifest) {
+  const expected = policy?.superuser_qa_perf_c1_transition;
+  const attestation = manifest?.resources?.superuser_qa_perf_c1_transition;
+  if (!attestation) return null;
+  if (!expected || canonicalJson(attestation) !== canonicalJson({
+    ...expected, approved_sha: manifest?.identity?.approved_sha,
+    baseline_descendant_verified: true, integration_base_descendant_verified: true,
+    reviewed_bytes_verified: true,
+  })) {
+    fail('INVALID_SUPERUSER_QA_PERF_C1_TRANSITION', 'PERF C1 manifest attestation differs from policy');
+  }
+  return expected;
+}
+
+export function superuserQaPerfC1StateRequirement(policy, manifest, phase, context = {}) {
+  const code = 'SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED';
+  if (!['pre','post','recovery'].includes(phase)) fail(code, 'PERF C1 phase is invalid');
+  const authority = policy?.superuser_qa_perf_c1_transition;
+  const transition = superuserQaPerfC1Transition(policy, manifest);
+  const expected = (authority?.migrations ?? []).map(item => ({ version: item.version,
+    name: item.path.split('/').at(-1).replace(/^\d{14}_|\.sql$/gu, '') }));
+  const finalMigration = authority?.migrations?.at(-1)?.path?.split('/').at(-1)?.replace(/\.sql$/u, '');
+  const promoted = Boolean(finalMigration) && String(policy?.baseline?.latest_migration ?? '') >= finalMigration;
+  let items = null;
+  if (context.migrations !== undefined && context.migrations !== null) {
+    try { items = validateNormalizedMigrations(context.migrations).items; }
+    catch (error) { if (transition || promoted) throw error; }
+  }
+  const claimedItems = (items ?? []).filter(item => expected.some(expectedItem => (
+    item.version === expectedItem.version || item.name === expectedItem.name
+  )));
+  const exactItems = claimedItems.filter(item => expected.some(expectedItem => (
+    item.version === expectedItem.version && item.name === expectedItem.name
+  )));
+  const exactIdentities = new Set(exactItems.map(item => `${item.version}_${item.name}`));
+  if (claimedItems.length !== exactItems.length
+    || exactItems.length !== exactIdentities.size
+    || (exactItems.length !== 0 && exactItems.length !== expected.length)) {
+    fail(code, 'PERF C1 migration inventory is partially installed or has inconsistent identity');
+  }
+  const installedCount = exactItems.length;
+  const observedInstalled = expected.length === 1 && installedCount === expected.length;
+  if (transition && phase === 'pre' && observedInstalled) fail(code, 'PERF C1 pre state already contains the transition');
+  if (transition && phase === 'post' && !observedInstalled) fail(code, 'PERF C1 post state lacks reviewed migrations');
+  if (promoted && items && !observedInstalled) fail(code, 'promoted PERF C1 baseline lacks exact migration evidence');
+  const installed = promoted || (observedInstalled && phase !== 'pre');
+  return { required: Boolean(transition) || installed, installed, transition,
+    query: SUPERUSER_QA_PERF_C1_STATE_SQL, query_id: 'nelyon-superuser-qa-perf-c1-state-v1' };
+}
+
 export function superuserControlCenterStateRequirement(policy, manifest, phase, context = {}) {
   const code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED';
   if (!['pre', 'post', 'recovery'].includes(phase)) fail(code, 'Control Center phase is invalid');
@@ -2363,8 +2473,7 @@ export function superuserControlCenterStateRequirement(policy, manifest, phase, 
   };
 }
 
-function normalizeControlCenterFunctions(rows) {
-  const code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED';
+function normalizeControlCenterFunctions(rows, code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED') {
   if (!Array.isArray(rows)) fail(code, 'Control Center function evidence must be an array');
   const items = rows.map(row => {
     exactKeys(row, ['acl','definition_sha256','execute','identity','owner','search_path',
@@ -2385,8 +2494,7 @@ function normalizeControlCenterFunctions(rows) {
   return items;
 }
 
-function normalizeControlCenterIndex(index) {
-  const code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED';
+function normalizeControlCenterIndex(index, code = 'SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED') {
   if (index === null) return null;
   exactKeys(index, ['definition','name','owner','primary','ready','schema','table','unique','valid'], code);
   if (['definition','name','owner','schema','table'].some(key => typeof index[key] !== 'string')
@@ -2520,6 +2628,104 @@ function validateSuperuserControlCenterPreState(snapshot, transition) {
 export function validateSuperuserControlCenterStateTransition(preSnapshot, postSnapshot, transition) {
   validateSuperuserControlCenterPreState(preSnapshot, transition);
   validateSuperuserControlCenterInstalledState(postSnapshot, transition);
+  return true;
+}
+
+function normalizeSuperuserQaPerfC1State(snapshot) {
+  const code = 'SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED';
+  const withDigest = Object.hasOwn(snapshot ?? {}, 'sha256');
+  exactKeys(snapshot, ['schema_version','complete','installed','functions','index','finance',
+    ...(withDigest ? ['sha256'] : [])], code);
+  if (snapshot.schema_version !== 1 || snapshot.complete !== true || typeof snapshot.installed !== 'boolean') {
+    fail(code, 'PERF C1 snapshot envelope is invalid');
+  }
+  exactKeys(snapshot.finance, ['activation_mode','active_authorization','platform_fee_bps',
+    'purchase_enabled','refunds_enabled','subscription_enabled'], code);
+  if (typeof snapshot.finance.activation_mode !== 'string'
+    || typeof snapshot.finance.active_authorization !== 'boolean'
+    || !Number.isInteger(snapshot.finance.platform_fee_bps)
+    || ['purchase_enabled','refunds_enabled','subscription_enabled']
+      .some(key => typeof snapshot.finance[key] !== 'boolean')) {
+    fail(code, 'PERF C1 Finance evidence is malformed');
+  }
+  const unsigned = { schema_version: 1, complete: true, installed: snapshot.installed,
+    functions: normalizeControlCenterFunctions(snapshot.functions, code),
+    index: normalizeControlCenterIndex(snapshot.index, code), finance: { ...snapshot.finance } };
+  const digest = sha256(canonicalJson(unsigned));
+  if (withDigest && snapshot.sha256 !== digest) fail(code, 'PERF C1 snapshot digest differs');
+  return { ...unsigned, sha256: digest };
+}
+
+function expectedPerfC1Index(transition) {
+  const index = transition?.index_attestation;
+  return index && { schema: index.schema, table: index.table, name: index.name,
+    owner: index.owner, definition: index.definition, valid: index.valid, ready: index.ready,
+    unique: index.unique, primary: index.primary };
+}
+
+function expectedPerfC1Finance(transition) {
+  return { activation_mode: 'general', active_authorization: true,
+    platform_fee_bps: transition?.finance_policy?.platform_fee_bps,
+    purchase_enabled: transition?.finance_policy?.purchase_enabled,
+    refunds_enabled: transition?.finance_policy?.refunds_enabled,
+    subscription_enabled: transition?.finance_policy?.subscription_enabled };
+}
+
+export function validateSuperuserQaPerfC1InstalledState(snapshot, transition) {
+  const code = 'SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED';
+  const state = normalizeSuperuserQaPerfC1State(snapshot);
+  if (state.installed !== true
+    || canonicalJson(state.functions) !== canonicalJson(expectedControlCenterFunctionRows(transition?.function_definitions ?? []))
+    || canonicalJson(state.index) !== canonicalJson(expectedPerfC1Index(transition))
+    || canonicalJson(state.finance) !== canonicalJson(expectedPerfC1Finance(transition))
+    || transition?.index_attestation?.create_mode !== 'concurrent'
+    || transition?.index_attestation?.retry_safe_invalid_index_replacement !== true) {
+    fail(code, 'PERF C1 installed state differs from the reviewed authority');
+  }
+  return state;
+}
+
+function validateSuperuserQaPerfC1PreState(snapshot, transition) {
+  const code = 'SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED';
+  const state = normalizeSuperuserQaPerfC1State(snapshot);
+  const expectedRecovery = {
+    migration_inventory: 'baseline_without_c1',
+    accepted_states: [
+      { functions: 'predecessor', index: 'absent' },
+      { functions: 'predecessor', index: 'exact_shape_any_valid_ready' },
+      { functions: 'successor', index: 'absent' },
+      { functions: 'successor', index: 'exact_shape_any_valid_ready' },
+    ],
+    finance_policy_exact: true,
+    mixed_function_catalog_rejected: true,
+  };
+  const predecessor = expectedControlCenterFunctionRows(transition?.predecessor_functions ?? []);
+  const successor = expectedControlCenterFunctionRows(transition?.function_definitions ?? []);
+  const postIndex = expectedPerfC1Index(transition);
+  const sameFunctions = expected => canonicalJson(state.functions) === canonicalJson(expected);
+  const sameIndexShape = state.index !== null && postIndex !== null
+    && canonicalJson({ ...state.index, valid: postIndex.valid, ready: postIndex.ready })
+      === canonicalJson(postIndex);
+  const predecessorNoIndex = state.installed === false && sameFunctions(predecessor)
+    && state.index === null;
+  const predecessorRecoverableIndex = state.installed === false && sameFunctions(predecessor)
+    && sameIndexShape;
+  const successorNoIndex = state.installed === false && sameFunctions(successor)
+    && state.index === null;
+  const successorRecoverableIndex = sameFunctions(successor) && sameIndexShape
+    && state.installed === (state.index.valid && state.index.ready);
+  if (canonicalJson(transition?.pre_snapshot_recovery ?? null) !== canonicalJson(expectedRecovery)
+    || canonicalJson(state.finance) !== canonicalJson(expectedPerfC1Finance(transition))
+    || (!predecessorNoIndex && !predecessorRecoverableIndex
+      && !successorNoIndex && !successorRecoverableIndex)) {
+    fail(code, 'PERF C1 predecessor/recovery state is outside the exact fail-closed authority');
+  }
+  return state;
+}
+
+export function validateSuperuserQaPerfC1StateTransition(preSnapshot, postSnapshot, transition) {
+  validateSuperuserQaPerfC1PreState(preSnapshot, transition);
+  validateSuperuserQaPerfC1InstalledState(postSnapshot, transition);
   return true;
 }
 
@@ -3473,6 +3679,12 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     migrations: evidence?.migrations,
   });
   const requireControlCenter = controlCenterRequirement.required;
+  const perfC1Requirement = superuserQaPerfC1StateRequirement(policy, manifest, phase, {
+    evidence,
+    request,
+    migrations: evidence?.migrations,
+  });
+  const requirePerfC1 = perfC1Requirement.required;
   exactKeys(evidence, [
     'adapter', 'backup', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
     'health', 'identity', 'migrations', 'observed_at', 'phase', 'premium_state', 'project_ref',
@@ -3483,6 +3695,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     ...(requireStoriesSafetyC2 ? ['stories_safety_c2_state'] : []),
     ...(requireStoriesQaC1 ? ['stories_qa_c1_state'] : []),
     ...(requireControlCenter ? ['superuser_control_center_state'] : []),
+    ...(requirePerfC1 ? ['superuser_qa_perf_c1_state'] : []),
   ], 'INVALID_SNAPSHOT');
   const { evidence_sha256: claimedDigest, ...unsigned } = evidence;
   if (!HASH_PATTERN.test(claimedDigest ?? '') || claimedDigest !== sha256(canonicalJson(unsigned))) {
@@ -3525,6 +3738,10 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       id: controlCenterRequirement.query_id,
       sha256: sha256(controlCenterRequirement.query),
     }] : []),
+    ...(requirePerfC1 ? [{
+      id: perfC1Requirement.query_id,
+      sha256: sha256(perfC1Requirement.query),
+    }] : []),
   ];
   if (!HASH_PATTERN.test(adapterSourceSha256 ?? '')
     || evidence.adapter.source_sha256 !== adapterSourceSha256
@@ -3551,6 +3768,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   if (requireStoriesSafetyC2) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (requireStoriesQaC1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (requireControlCenter) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
+  if (requirePerfC1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (!Array.isArray(evidence.requests) || evidence.requests.length !== expectedRequests.length
     || evidence.requests.some((receipt, index) => {
       try {
@@ -3644,6 +3862,24 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       validateSuperuserControlCenterPreState(
         evidence.superuser_control_center_state,
         policy?.superuser_control_center_transition,
+      );
+    }
+  }
+  if (requirePerfC1) {
+    const matching = evidence.adapter.queries.filter(item => item?.id === perfC1Requirement.query_id);
+    if (matching.length !== 1 || matching[0].sha256 !== sha256(perfC1Requirement.query)) {
+      fail('SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED',
+        'PERF C1 query receipt differs from the fixed authority');
+    }
+    if (perfC1Requirement.installed) {
+      validateSuperuserQaPerfC1InstalledState(
+        evidence.superuser_qa_perf_c1_state,
+        policy?.superuser_qa_perf_c1_transition,
+      );
+    } else {
+      validateSuperuserQaPerfC1PreState(
+        evidence.superuser_qa_perf_c1_state,
+        policy?.superuser_qa_perf_c1_transition,
       );
     }
   }
@@ -4165,21 +4401,50 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
       policy?.superuser_control_center_transition,
     );
   }
+  const perfC1Transition = superuserQaPerfC1Transition(policy, manifest);
+  if (perfC1Transition) {
+    validateSuperuserQaPerfC1StateTransition(
+      pre.superuser_qa_perf_c1_state,
+      post.superuser_qa_perf_c1_state,
+      perfC1Transition,
+    );
+  } else if (superuserQaPerfC1StateRequirement(policy, manifest, 'post', {
+    request,
+    migrations: post.migrations,
+  }).required) {
+    validateSuperuserQaPerfC1InstalledState(
+      post.superuser_qa_perf_c1_state,
+      policy?.superuser_qa_perf_c1_transition,
+    );
+  }
   validatePremiumStateTransition(pre.premium_state, post.premium_state, manifest, policy);
   if (Date.parse(post.observed_at) < Date.parse(pre.observed_at)
     || Date.parse(post.finance.database_time) < Date.parse(pre.finance.database_time)) {
     fail('INVALID_SNAPSHOT_ORDER', 'post-release evidence predates pre-release evidence');
   }
 
-  const manifestMigrations = [...(manifest?.resources?.migrations ?? [])]
-    .map(item => item?.version).sort();
-  if (manifestMigrations.some(version => !/^20[0-9]{12}$/.test(version ?? ''))
-    || new Set(manifestMigrations).size !== manifestMigrations.length) {
+  const manifestMigrations = [...(manifest?.resources?.migrations ?? [])].map(item => {
+    const filename = typeof item?.path === 'string' ? item.path.split('/').at(-1) : '';
+    const match = /^(20[0-9]{12})_(.+)\.sql$/u.exec(filename);
+    if (!match || item?.version !== match[1]) {
+      fail('REMOTE_POSTCHECK_FAILED', 'manifest migration identity is invalid');
+    }
+    return { version: item.version, name: match[2] };
+  }).sort((left, right) => left.version.localeCompare(right.version)
+    || left.name.localeCompare(right.name));
+  if (new Set(manifestMigrations.map(item => `${item.version}_${item.name}`)).size
+    !== manifestMigrations.length) {
     fail('REMOTE_POSTCHECK_FAILED', 'manifest migration inventory is invalid');
   }
-  const preVersions = pre.migrations.items.map(item => item.version);
-  const postVersions = post.migrations.items.map(item => item.version);
-  if (canonicalJson(postVersions) !== canonicalJson([...preVersions, ...manifestMigrations].sort())) {
+  const byMigrationIdentity = (left, right) => left.version.localeCompare(right.version)
+    || left.name.localeCompare(right.name);
+  const preMigrations = pre.migrations.items.map(item => ({ version: item.version, name: item.name }))
+    .sort(byMigrationIdentity);
+  const postMigrations = post.migrations.items.map(item => ({ version: item.version, name: item.name }))
+    .sort(byMigrationIdentity);
+  const expectedPostMigrations = [...preMigrations, ...manifestMigrations]
+    .sort(byMigrationIdentity);
+  if (canonicalJson(postMigrations) !== canonicalJson(expectedPostMigrations)) {
     fail('REMOTE_POSTCHECK_FAILED', 'post-release migrations do not equal the pre-snapshot plus the exact manifest');
   }
 
@@ -5357,11 +5622,15 @@ export async function captureProductionSnapshot({
   const controlCenterRequirement = superuserControlCenterStateRequirement(
     policy, manifest, phase, { request, migrations },
   );
+  const perfC1Requirement = superuserQaPerfC1StateRequirement(
+    policy, manifest, phase, { request, migrations },
+  );
   if (storiesRequirement.required) assertReadOnlySql(storiesQuery);
   if (storiesSafetyRequirement.required) assertReadOnlySql(storiesSafetyRequirement.query);
   if (storiesSafetyC2Requirement.required) assertReadOnlySql(storiesSafetyC2Authority.query);
   if (storiesQaRequirement.required) assertReadOnlySql(storiesQaRequirement.query);
   if (controlCenterRequirement.required) assertReadOnlySql(controlCenterRequirement.query);
+  if (perfC1Requirement.required) assertReadOnlySql(perfC1Requirement.query);
   const financeQueries = selectFinanceSnapshotQueries(migrations);
   const requireFinanceAuthority = Boolean(activeFinanceAuthorityTransition(policy, manifest)) || financeQueries.phase !== 'legacy';
   const functionsBody = await get(`${base}/functions`, 'function inventory');
@@ -5415,6 +5684,9 @@ export async function captureProductionSnapshot({
     ? singleSnapshot(await sql(controlCenterRequirement.query, [identity.release_id, identity.run_id],
       'Superuser Control Center authority state'),
       normalizeSuperuserControlCenterState, 'Superuser Control Center authority state') : null;
+  const superuserQaPerfC1State = perfC1Requirement.required
+    ? singleSnapshot(await sql(perfC1Requirement.query, null, 'Superuser QA PERF C1 authority state'),
+      normalizeSuperuserQaPerfC1State, 'Superuser QA PERF C1 authority state') : null;
   const rpcSecurity = normalizeRpcSecurityAttestations(rpcSecurityBody);
   validateRpcIdentitySet(rpcSecurity, phaseExceptions);
   const evidence = {
@@ -5453,6 +5725,10 @@ export async function captureProductionSnapshot({
           id: controlCenterRequirement.query_id,
           sha256: sha256(controlCenterRequirement.query),
         }] : []),
+        ...(perfC1Requirement.required ? [{
+          id: perfC1Requirement.query_id,
+          sha256: sha256(perfC1Requirement.query),
+        }] : []),
       ],
     },
     observed_at: new Date(observedAt).toISOString(),
@@ -5477,6 +5753,9 @@ export async function captureProductionSnapshot({
     ...(storiesQaRequirement.required ? { stories_qa_c1_state: storiesQaC1State } : {}),
     ...(controlCenterRequirement.required
       ? { superuser_control_center_state: superuserControlCenterState }
+      : {}),
+    ...(perfC1Requirement.required
+      ? { superuser_qa_perf_c1_state: superuserQaPerfC1State }
       : {}),
     requests: calls,
   };

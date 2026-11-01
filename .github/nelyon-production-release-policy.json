@@ -4550,5 +4550,100 @@
       "subscription_enabled": true
     },
     "requires_separate_baseline_promotion": true
+  },
+  "superuser_qa_perf_c1_transition": {
+    "id": "superuser-qa-perf-c1-v1",
+    "from_phase": "superuser_control_center_desktop",
+    "to_phase": "superuser_qa_perf_c1",
+    "baseline_sha": "94ac244197e5c0ab0753747532f4e0969ece1901",
+    "integration_base_sha": "a028a397e1c3c3455be0145a575cb9eda8cd4bef",
+    "approved_sha_ancestry": "verified_integration_base",
+    "migrations": [
+      {
+        "version": "20261101181907",
+        "path": "supabase/migrations/20261101181907_superuser_qa_perf_c1.sql",
+        "blob": "34a09a973b506924e780abbb1799c15c9414501d",
+        "sha256": "fe07f20bd0855dc832310aa78a557dc18c96e42e18f20fdf11827b4200b82600",
+        "byte_length": 10041
+      }
+    ],
+    "productive_paths": [
+      "supabase/migrations/20261101181907_superuser_qa_perf_c1.sql"
+    ],
+    "functions": [],
+    "config_changed": false,
+    "predecessor_functions": [
+      {
+        "identity": "public.get_admin_system_health()",
+        "definition_sha256": "9f0c387018d7a984118e42ff953a68fb1d26a4e9f288ec7ecec877adcf120676",
+        "owner": "postgres", "volatility": "s", "security_definer": true,
+        "search_path": ["search_path=\"\""],
+        "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false },
+        "acl": [
+          { "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false },
+          { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }
+        ]
+      },
+      {
+        "identity": "public.get_marketplace_admin_health()",
+        "definition_sha256": "f0222d0af1d6b5f3317174f8b05fb91ea14f9786e87a17d0535baa70829102ab",
+        "owner": "postgres", "volatility": "s", "security_definer": true,
+        "search_path": ["search_path=pg_catalog, private, public"],
+        "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false },
+        "acl": [
+          { "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false },
+          { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }
+        ]
+      }
+    ],
+    "function_definitions": [
+      {
+        "identity": "public.get_admin_system_health()",
+        "definition_sha256": "3e669949cd7657bd3fb39db1d7ab98aa26ecc72ac136719cae5db604cc7f8a4a",
+        "owner": "postgres", "volatility": "s", "security_definer": true,
+        "search_path": ["search_path=\"\""],
+        "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false },
+        "acl": [
+          { "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false },
+          { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }
+        ]
+      },
+      {
+        "identity": "public.get_marketplace_admin_health()",
+        "definition_sha256": "be6d8747efe5066ecf514e1b38b7d4b28444e1bc53484208430f9a2b7884e233",
+        "owner": "postgres", "volatility": "s", "security_definer": true,
+        "search_path": ["search_path=pg_catalog, private, public", "join_collapse_limit=1", "from_collapse_limit=1"],
+        "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false },
+        "acl": [
+          { "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false },
+          { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }
+        ]
+      }
+    ],
+    "index_attestation": {
+      "schema": "cron", "table": "job_run_details", "name": "cron_job_run_details_start_job_cover_idx",
+      "owner": "postgres",
+      "definition": "CREATE INDEX cron_job_run_details_start_job_cover_idx ON cron.job_run_details USING btree (start_time DESC NULLS LAST, jobid) INCLUDE (status, end_time)",
+      "valid": true, "ready": true, "unique": false, "primary": false,
+      "create_mode": "concurrent", "lock_timeout": null, "retry_safe_invalid_index_replacement": true
+    },
+    "pre_snapshot_recovery": {
+      "migration_inventory": "baseline_without_c1",
+      "accepted_states": [
+        { "functions": "predecessor", "index": "absent" },
+        { "functions": "predecessor", "index": "exact_shape_any_valid_ready" },
+        { "functions": "successor", "index": "absent" },
+        { "functions": "successor", "index": "exact_shape_any_valid_ready" }
+      ],
+      "finance_policy_exact": true,
+      "mixed_function_catalog_rejected": true
+    },
+    "finance_policy": {
+      "platform_fee_bps": 2000,
+      "purchase_enabled": true,
+      "refunds_enabled": true,
+      "subscription_enabled": true
+    },
+    "requires_separate_baseline_promotion": true
   }
 }
