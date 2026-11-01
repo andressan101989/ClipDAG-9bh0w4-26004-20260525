@@ -177,13 +177,18 @@ test('Control Center policy freezes exactly three migration-only resources and r
 test('Control Center Git attestation binds exact LF bytes, ancestry, and three-path Supabase closure', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const transition = policy.superuser_control_center_transition;
+  const preControlCenterPolicy = structuredClone(policy);
+  preControlCenterPolicy.baseline.sha = transition.baseline_sha;
+  preControlCenterPolicy.baseline.migration_count = 361;
+  preControlCenterPolicy.baseline.latest_migration =
+    '20261029042807_stories_v2_qa_c1_question_answer_authority';
   const root = new URL('..', import.meta.url);
   const runGit = args => execFileSync('git', args, { cwd: root,
     encoding: args.includes('-z') ? 'buffer' : 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
   const approvedSha = transition.reviewed_source_sha;
   const changes = transition.productive_paths.map(path => ({ path, status: 'A' }));
   const result = gate.attestSuperuserControlCenterTransition({
-    cwd: root, policy, mode: 'plan_only', approvedSha, changes,
+    cwd: root, policy: preControlCenterPolicy, mode: 'plan_only', approvedSha, changes,
     migrations: transition.migrations.map(item => ({ path: item.path, version: item.version })),
     affectedFunctions: [], runGit,
   });
@@ -204,7 +209,7 @@ test('Control Center Git attestation binds exact LF bytes, ancestry, and three-p
     { approvedSha: '0'.repeat(40) },
   ]) {
     assertDenied(() => gate.attestSuperuserControlCenterTransition({
-      cwd: root, policy, mode: 'plan_only', approvedSha, changes,
+      cwd: root, policy: preControlCenterPolicy, mode: 'plan_only', approvedSha, changes,
       migrations: transition.migrations.map(item => ({ path: item.path, version: item.version })),
       affectedFunctions: [], runGit, ...hostile,
     }), 'INVALID_SUPERUSER_CONTROL_CENTER_TRANSITION');
@@ -213,7 +218,7 @@ test('Control Center Git attestation binds exact LF bytes, ancestry, and three-p
     && args[1] === `${approvedSha}:${transition.migrations[0].path}`
     ? Buffer.from('altered\n') : runGit(args);
   assertDenied(() => gate.attestSuperuserControlCenterTransition({
-    cwd: root, policy, mode: 'plan_only', approvedSha, changes,
+    cwd: root, policy: preControlCenterPolicy, mode: 'plan_only', approvedSha, changes,
     migrations: transition.migrations.map(item => ({ path: item.path, version: item.version })),
     affectedFunctions: [], runGit: alteredBytes,
   }), 'INVALID_SUPERUSER_CONTROL_CENTER_TRANSITION');
@@ -248,7 +253,7 @@ test('Control Center Git attestation binds exact LF bytes, ancestry, and three-p
     return runGit(args);
   };
   const rebased = gate.attestSuperuserControlCenterTransition({
-    cwd: root, policy, mode: 'plan_only', approvedSha: rebasedSha, changes,
+    cwd: root, policy: preControlCenterPolicy, mode: 'plan_only', approvedSha: rebasedSha, changes,
     migrations: transition.migrations.map(item => ({ path: item.path, version: item.version })),
     affectedFunctions: [], runGit: rebasedRunGit,
   });
@@ -260,12 +265,17 @@ test('Control Center Git attestation binds exact LF bytes, ancestry, and three-p
 test('Control Center manifest permits exactly three frozen migrations and zero Edge or config resources', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const transition = policy.superuser_control_center_transition;
+  const preControlCenterPolicy = structuredClone(policy);
+  preControlCenterPolicy.baseline.sha = transition.baseline_sha;
+  preControlCenterPolicy.baseline.migration_count = 361;
+  preControlCenterPolicy.baseline.latest_migration =
+    '20261029042807_stories_v2_qa_c1_question_answer_authority';
   const approvedSha = 'd'.repeat(40);
   const changes = transition.productive_paths.map(path => ({ status: 'A', path, fileType: 'file' }));
   const attestation = { ...structuredClone(transition), approved_sha: approvedSha,
     baseline_descendant_verified: true, integration_base_descendant_verified: true,
     reviewed_bytes_verified: true };
-  const input = manifestInput(policy, {
+  const input = manifestInput(preControlCenterPolicy, {
     request: request({ approvedSha, mainSha: approvedSha }),
     gitState: { baselineSha: transition.baseline_sha, approvedSha, originMainSha: approvedSha, changes },
     classified: gate.classifyChangedPaths(changes),
@@ -3485,35 +3495,35 @@ test('expanded managed scope has a verified static cutover control', async () =>
   }), policy).mode, 'release');
 });
 
-test('Stories QA C1 production baseline is promoted from independently verified owner evidence', async () => {
+test('Superuser Control Center production baseline is promoted from independently verified owner evidence', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(gate.validatePolicy(policy), true);
   assert.deepEqual(policy.baseline, {
     authority_source: 'owner-control-plane',
     blocked_resources: [],
-    evidence: 'b088be01a95bd06428cc34f721b059bbab93917b2f00315018f4be2413e75441',
+    evidence: '026a503453300aa177d7bc9a33369d4a2bbf9009c0f87796f0978e71f8bc8893',
     evidence_digests: {
-      migrations: '2491beef8b04623de0c0c2dffd73aa1b79f57de6cf7f3144590744f2165c6bc9',
+      migrations: 'd829535d795f32b196554880124ba8b5c8740f9fb5f4546a9b05e17fab7f368e',
       managed_functions: '93eddb2a83d06900a78277827a5f00eec185bc75a06202653969b2a539fb2d6c',
       unmanaged_functions: '26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc',
       function_source_parity: '031993a08f4e7178169e26468e746c13178cd752e30d1694e9904781cde8c9c4',
       config_verify_jwt: '703749fce46f724c7c4e791f7a222915b166af0ded38f00f34f983798355ba15',
-      cron_security: 'b6c47fc8ac86aafe9b05b8dc02eb52df6e25bf76c84d4e029ecea6517e11a29b',
+      cron_security: '14e2f511010a0bd1dddb859223d730c24fc99ac3ca6fa5ddafd19184e55583ba',
       finance: 'f94d54264c5d7658dc04aba34b028c815e99d7eb8ccf2490410817d47566754f',
     },
-    latest_migration: '20261029042807_stories_v2_qa_c1_question_answer_authority',
-    migration_count: 361,
+    latest_migration: '20261031032022_superuser_control_center_overview',
+    migration_count: 364,
     prior_release: {
       kind: 'post-release',
-      release_id: 'nelyon-stories-v2-qa-c1-release-final-20261029T0818Z',
-      manifest_sha256: '714d5a5788696daaefaece6692481858310c447c0e2bc3a2ceb0997a28536af2',
-      postcheck_evidence_sha256: 'a598f68e5945306502a0657b72a74f07da7cf0bbb8ddd1aa2589320e71dfff5a',
+      release_id: 'SUPERUSER-CC-R1-RELEASE-20261031T212706Z',
+      manifest_sha256: 'f0cedb82c8b756eb847d4175ae6378a8fc6f7a13c21a0fc8b0992b2826069030',
+      postcheck_evidence_sha256: '465a51991e3494cd9280129ca59cc736b3c7a5e2b627f5d2ae7d2f8bc48bb420',
     },
     requires_separate_policy_commit: true,
-    reviewed_policy_sha256: 'c3c4f8e5b5562a0ec3990c4eb66d05f9b04e71a8f05503e632531cb48bc10f72',
-    sha: '3246a502f8d350f43edbd78314b3be9e1609935d',
+    reviewed_policy_sha256: 'b818272a536a60f839bbc1cc8ca4a54a8279f42c6a220ede11a31f3e118e1e56',
+    sha: '94ac244197e5c0ab0753747532f4e0969ece1901',
     state: 'verified',
-    verified_at: '2026-10-29T08:23:32.194Z',
+    verified_at: '2026-11-01T06:09:26.488Z',
     verified_by: OWNER,
   });
 
