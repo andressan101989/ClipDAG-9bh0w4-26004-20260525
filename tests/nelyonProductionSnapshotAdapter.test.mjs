@@ -39,6 +39,12 @@ f5TransitionPolicy.supabase.finance_policy = {
   refunds_enabled: true,
   subscription_enabled: true,
 };
+const prePerfPolicy = structuredClone(installedPolicy);
+prePerfPolicy.baseline.sha = installedPolicy.superuser_qa_perf_c1_transition.baseline_sha;
+prePerfPolicy.baseline.migration_count = 364;
+prePerfPolicy.baseline.latest_migration = '20261031032022_superuser_control_center_overview';
+prePerfPolicy.baseline.evidence_digests.migrations =
+  'd829535d795f32b196554880124ba8b5c8740f9fb5f4546a9b05e17fab7f368e';
 const walletTransitionPolicy = structuredClone(installedPolicy);
 walletTransitionPolicy.baseline.sha = '05cdd2ecbeda6132fffb7edc0cf4e7ab2848625a';
 walletTransitionPolicy.baseline.migration_count = 353;
@@ -261,9 +267,9 @@ test('PERF C1 snapshot permits only the exact managed-cron prestate and freezes 
       baseline_descendant_verified: true, integration_base_descendant_verified: true,
       reviewed_bytes_verified: true },
   } };
-  const preRequirement = adapter.superuserQaPerfC1StateRequirement(installedPolicy, manifest, 'pre',
+  const preRequirement = adapter.superuserQaPerfC1StateRequirement(prePerfPolicy, manifest, 'pre',
     { migrations: perfC1Migrations(false) });
-  const postRequirement = adapter.superuserQaPerfC1StateRequirement(installedPolicy, manifest, 'post',
+  const postRequirement = adapter.superuserQaPerfC1StateRequirement(prePerfPolicy, manifest, 'post',
     { migrations: perfC1Migrations(true) });
   assert.equal(preRequirement.required, true);
   assert.equal(preRequirement.installed, false);
@@ -278,7 +284,7 @@ test('PERF C1 snapshot permits only the exact managed-cron prestate and freezes 
     migrations.count = migrations.items.length;
     migrations.latest = migrations.items.at(-1);
     migrations.sha256 = sha256(canonicalJson(migrations.items));
-    assert.throws(() => adapter.superuserQaPerfC1StateRequirement(installedPolicy, manifest, 'pre',
+    assert.throws(() => adapter.superuserQaPerfC1StateRequirement(prePerfPolicy, manifest, 'pre',
       { migrations }), /SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED/);
   }
   assert.equal(postRequirement.required, true);
@@ -296,7 +302,7 @@ test('PERF C1 snapshot permits only the exact managed-cron prestate and freezes 
     migrations.count = migrations.items.length;
     migrations.latest = migrations.items.at(-1);
     migrations.sha256 = sha256(canonicalJson(migrations.items));
-    assert.throws(() => adapter.superuserQaPerfC1StateRequirement(installedPolicy, manifest, 'post',
+    assert.throws(() => adapter.superuserQaPerfC1StateRequirement(prePerfPolicy, manifest, 'post',
       { migrations }), error);
   }
   const pre = perfC1State(transition, false), post = perfC1State(transition, true);
