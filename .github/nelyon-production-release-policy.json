@@ -1882,6 +1882,43 @@
         ],
         "premium_relation_security_sha256": "a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0",
         "premium_legacy": { "content_count": 9, "pending_review_count": 0, "deleted_count": 5 }
+      },
+      {
+        "run_id": "41351597413",
+        "run_attempt": 1,
+        "release_id": "superuser-qa-perf-c1-r2-release-20261101-2122",
+        "source_sha": "9010894cb37cd10df4ab0eae5b849143fd2222fd",
+        "repository": "andressan101989/ClipDAG-9bh0w4-26004-20260525",
+        "mutation_status": "completed",
+        "post_snapshot_status": "success",
+        "postcheck_status": "success",
+        "gate_artifact": {
+          "id": "13101483501",
+          "name": "nelyon-gate-evidence-41351597413-1",
+          "digest": "sha256:5d0a5c353a30f17d45f7ca11deb42961a48303be8173b5f19bf7bfb9963e033d"
+        },
+        "release_artifact": {
+          "id": "13101463169",
+          "name": "nelyon-release-41351597413-1",
+          "digest": "sha256:898e179a58ce8dbc90e8e27daefaac60cdf769f3636a2e51bf384d94e79473d8"
+        },
+        "manifest_sha256": "5abd64634d3ee98f4ef8334c0e120549d6139df3e2914e40286ad8e1703cef07",
+        "pre_snapshot_evidence_sha256": "b5cf7da854ade78cf7305fd0b8be019fae8b5076dd68b964acde45dc5a0467be",
+        "post_snapshot_evidence_sha256": "9196cd32e0b3a283fde389ab717cfd05f7b1c8c5e35b32fba18e7bb90334d136",
+        "expected_migrations": [
+          {
+            "blob": "005c6cbbf1539611ecb0b8f2255bdf3be44f32a6",
+            "name": "20261101181907_superuser_qa_perf_c1"
+          }
+        ],
+        "expected_migration_count": 365,
+        "expected_latest_migration": "20261101181907_superuser_qa_perf_c1",
+        "edge_functions": [],
+        "productive_resources": [
+          "migration:20261101181907_superuser_qa_perf_c1"
+        ],
+        "premium_relation_security_sha256": "a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0",
+        "premium_legacy": { "content_count": 9, "pending_review_count": 0, "deleted_count": 5 }
       }
     ]
   },

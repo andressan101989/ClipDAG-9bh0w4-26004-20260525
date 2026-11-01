@@ -2811,10 +2811,116 @@ export function validateAdminRecoveryControlCenterPostState({ migrations, state,
   return true;
 }
 
-export function verifyAdminRecoveryInfrastructurePostState({ post, policy }) {
+export function validateAdminRecoveryPerfC1PostState({ migrations, state, policy }) {
   const code = 'ADMIN_RECOVERY_POSTCHECK_FAILED';
-  const transition = policy?.superuser_control_center_transition;
-  if (!post || !transition) fail(code, 'Admin recovery infrastructure evidence is unavailable');
+  const transition = policy?.superuser_qa_perf_c1_transition;
+  if (!transition || migrations?.complete !== true || !Array.isArray(migrations.items)) {
+    fail(code, 'Admin recovery migration or PERF C1 authority is incomplete');
+  }
+  validateNormalizedMigrations(migrations);
+  const expected = transition.migrations.map(item => ({
+    version: item.version,
+    name: item.path.replace(/^.*\//u, '').replace(/\.sql$/u, '').slice(15),
+  }));
+  const baselineCount = policy?.baseline?.migration_count;
+  const baselineNames = migrations.items.slice(0, baselineCount).map(baselineMigrationName);
+  if (!Number.isInteger(baselineCount) || baselineCount < 0
+    || !HASH_PATTERN.test(policy?.baseline?.evidence_digests?.migrations ?? '')
+    || migrations.count !== baselineCount + expected.length
+    || migrations.items.length !== migrations.count
+    || sha256(canonicalJson(baselineNames)) !== policy.baseline.evidence_digests.migrations
+    || canonicalJson(migrations.items.slice(baselineCount)) !== canonicalJson(expected)
+    || migrations.latest?.version !== expected.at(-1)?.version
+    || migrations.latest?.name !== expected.at(-1)?.name) {
+    fail(code, 'Admin recovery requires the exact post-PERF-C1 migration inventory');
+  }
+  validateSuperuserQaPerfC1InstalledState(state, transition);
+  return true;
+}
+
+function resolveAdminRecoveryInfrastructureTransition({ migrations, policy, transitionKey }) {
+  const code = 'ADMIN_RECOVERY_POSTCHECK_FAILED';
+  const supported = [
+    'superuser_control_center_transition',
+    'superuser_qa_perf_c1_transition',
+  ];
+  if (transitionKey !== undefined && !supported.includes(transitionKey)) {
+    fail(code, 'Admin recovery transition key is unsupported');
+  }
+  const exactCandidates = supported.filter(key => {
+    if (transitionKey !== undefined && key !== transitionKey) return false;
+    const transition = policy?.[key];
+    const expected = (transition?.migrations ?? []).map(item => ({
+      version: item.version,
+      name: item.path.replace(/^.*\//u, '').replace(/\.sql$/u, '').slice(15),
+    }));
+    const baselineCount = policy?.baseline?.migration_count;
+    return expected.length > 0
+      && Number.isInteger(baselineCount) && baselineCount >= 0
+      && migrations?.complete === true && Array.isArray(migrations.items)
+      && migrations.count === baselineCount + expected.length
+      && migrations.items.length === migrations.count
+      && canonicalJson(migrations.items.slice(baselineCount)) === canonicalJson(expected)
+      && migrations.latest?.version === expected.at(-1)?.version
+      && migrations.latest?.name === expected.at(-1)?.name;
+  });
+  if (exactCandidates.length !== 1) {
+    fail(code, 'Admin recovery infrastructure transition is missing or ambiguous');
+  }
+  return exactCandidates[0];
+}
+
+export function verifyAdminRecoveryInfrastructurePostState({ post, policy, transitionKey }) {
+  const code = 'ADMIN_RECOVERY_POSTCHECK_FAILED';
+  if (!post) fail(code, 'Admin recovery infrastructure evidence is unavailable');
+  const resolvedTransitionKey = resolveAdminRecoveryInfrastructureTransition({
+    migrations: post.migrations,
+    policy,
+    transitionKey,
+  });
+  const transition = policy?.[resolvedTransitionKey];
+  if (!transition) fail(code, 'Admin recovery transition authority is unavailable');
+
+  if (resolvedTransitionKey === 'superuser_qa_perf_c1_transition') {
+    validateAdminRecoveryPerfC1PostState({
+      migrations: post.migrations,
+      state: post.superuser_qa_perf_c1_state,
+      policy,
+    });
+    const expectedAppendCount = transition.migrations.length;
+    const expectedLatestMigration = transition.migrations.at(-1)?.path
+      ?.replace(/^.*\//u, '').replace(/\.sql$/u, '');
+    verifyRecoveryInfrastructureBaseline({
+      policy,
+      migrations: post.migrations,
+      functions: post.functions,
+      expectedLatestMigration,
+      functionTransitions: [],
+      expectedAppendCount,
+    });
+    validateNormalizedAdvisors(post.cron_security?.advisors);
+    validateCronSnapshot(post.cron_security?.cron);
+    const baselineMigrationItems = post.migrations.items.slice(0, policy.baseline.migration_count);
+    const baselineEvidence = {
+      ...post,
+      migrations: {
+        complete: true,
+        count: baselineMigrationItems.length,
+        items: baselineMigrationItems,
+        latest: baselineMigrationItems.at(-1) ?? null,
+        sha256: sha256(canonicalJson(baselineMigrationItems)),
+      },
+    };
+    const reconstructedDigests = buildProductionBaselineDigests({
+      evidence: baselineEvidence,
+      policy,
+    });
+    if (canonicalJson(reconstructedDigests) !== canonicalJson(policy.baseline.evidence_digests)) {
+      fail(code, 'Admin recovery PERF C1 state drifted from the reviewed baseline');
+    }
+    return reconstructedDigests;
+  }
+
   validateAdminRecoveryControlCenterPostState({
     migrations: post.migrations,
     state: post.superuser_control_center_state,
@@ -4707,7 +4813,14 @@ export function verifyProductionRecoverySnapshot({ recovery, policy, request, ma
   };
 }
 
-export function verifyProductionAdminRecoverySnapshot({ post, policy, request, manifest, adapterSourceSha256 }) {
+export function verifyProductionAdminRecoverySnapshot({
+  post,
+  policy,
+  request,
+  manifest,
+  adapterSourceSha256,
+  transitionKey,
+}) {
   const code = 'ADMIN_RECOVERY_POSTCHECK_FAILED';
   if (request?.mode !== 'admin_recovery'
     || request?.scopeConfirmation !== 'ADMIN_RECOVERY_EXACT_SOURCE'
@@ -4725,7 +4838,7 @@ export function verifyProductionAdminRecoverySnapshot({ post, policy, request, m
     request, migrations: post.migrations,
   }));
   validatePremiumPostcheckState(post.premium_state);
-  const baselineDigests = verifyAdminRecoveryInfrastructurePostState({ post, policy });
+  const baselineDigests = verifyAdminRecoveryInfrastructurePostState({ post, policy, transitionKey });
   if (canonicalJson({
     platform_fee_bps: post.finance?.policy?.platform_fee_bps,
     purchase_enabled: post.finance?.policy?.purchase_enabled,
@@ -5063,6 +5176,10 @@ function exactRecoveryAuthorityPhase(policy, manifest, phase, { request, migrati
     }],
     ['40473092474', {
       expectedLatestMigration: STORIES_B1_MIGRATION,
+      phase: 'f5_autonomous',
+    }],
+    ['41351597413', {
+      expectedLatestMigration: '20261101181907_superuser_qa_perf_c1',
       phase: 'f5_autonomous',
     }],
   ]);

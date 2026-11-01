@@ -2057,7 +2057,8 @@ function recoveryArtifactFixture(t, gate, policy, sourceIndex = 0) {
   };
 }
 
-function adminRecoverySourceFixture(t, gate, policy) {
+function adminRecoverySourceFixture(t, gate, policy,
+  transitionKey = 'superuser_control_center_transition') {
   const root = mkdtempSync(join(tmpdir(), 'nelyon-admin-recovery-source-'));
   t.after(() => rmSync(root, { force: true, recursive: true }));
   const releaseDirectory = join(root, 'release');
@@ -2070,7 +2071,9 @@ function adminRecoverySourceFixture(t, gate, policy) {
   const sourceRunId = '987654321';
   const sourceRunAttempt = 2;
   const sourceReleaseId = 'nelyon-admin-source-release-20261031';
-  const migrationItems = policy.superuser_control_center_transition.migrations.map(item => ({
+  const transition = policy[transitionKey];
+  assert.ok(transition, `missing ${transitionKey}`);
+  const migrationItems = transition.migrations.map(item => ({
     path: item.path, version: item.version, blob: item.blob, sha256: item.sha256,
   }));
   const sourceManifest = {
@@ -2082,8 +2085,8 @@ function adminRecoverySourceFixture(t, gate, policy) {
     delta: { productive_change_count: migrationItems.length },
     resources: {
       config_changed: false, function_contracts: [], functions: [], migrations: migrationItems,
-      superuser_control_center_transition: {
-        ...structuredClone(policy.superuser_control_center_transition), approved_sha: MAIN_SHA,
+      [transitionKey]: {
+        ...structuredClone(transition), approved_sha: MAIN_SHA,
         baseline_descendant_verified: true, integration_base_descendant_verified: true,
         reviewed_bytes_verified: true,
       },
@@ -2176,7 +2179,7 @@ function adminRecoverySourceFixture(t, gate, policy) {
   };
   return { policy, recoveryRequest, recoveryManifest, run, artifacts,
     releaseBundle: { directory: releaseDirectory }, gateEvidence: { directory: gateDirectory },
-    adminEvidence: { directory: adminDirectory }, sourceManifest, observation, names };
+    adminEvidence: { directory: adminDirectory }, sourceManifest, observation, names, transitionKey };
 }
 
 function bindAdminSourceFixtureToPostcheckChain(fixture, gate) {
@@ -2187,7 +2190,7 @@ function bindAdminSourceFixtureToPostcheckChain(fixture, gate) {
   fixture.run.head_sha = originalSourceSha;
 
   fixture.sourceManifest.identity.approved_sha = originalSourceSha;
-  fixture.sourceManifest.resources.superuser_control_center_transition.approved_sha = originalSourceSha;
+  fixture.sourceManifest.resources[fixture.transitionKey].approved_sha = originalSourceSha;
   const sourceManifestBytes = gate.canonicalJson(fixture.sourceManifest);
   const sourceManifestSha256 = gate.sha256Hex(sourceManifestBytes);
   const bundleDirectory = join(fixture.releaseBundle.directory, 'bundle');
@@ -2256,8 +2259,12 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
   const isF5Recovery = requestedSource.run_id === '40324910390';
   const isStoriesRecovery = requestedSource.run_id === '40473092474';
   const isControlCenterRecovery = requestedSource.run_id === '41243646356';
-  const isPostF5Recovery = isF5Recovery || isStoriesRecovery || isControlCenterRecovery;
-  const controlledPolicy = isControlCenterRecovery
+  const isPerfC1Recovery = requestedSource.run_id === '41351597413';
+  const isPostF5Recovery = isF5Recovery || isStoriesRecovery
+    || isControlCenterRecovery || isPerfC1Recovery;
+  const controlledPolicy = isPerfC1Recovery
+    ? structuredClone(policy)
+    : isControlCenterRecovery
     ? asF5TransitionPolicy(policy)
     : isStoriesRecovery
     ? asStoriesB1TransitionPolicy(policy)
@@ -2269,6 +2276,8 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
   if (isControlCenterRecovery) {
     controlledPolicy.baseline.sha = policy.superuser_control_center_transition.baseline_sha;
     controlledPolicy.baseline.migration_count = 361;
+    controlledPolicy.baseline.latest_migration = F5_AUTONOMOUS_MIGRATION;
+  } else if (isPerfC1Recovery) {
     controlledPolicy.baseline.latest_migration = F5_AUTONOMOUS_MIGRATION;
   }
   const recoveryRequest = request({
@@ -2302,7 +2311,8 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     { version: latestMigration.slice(0, 14), name: latestMigration.slice(15) },
   ];
   if (isF4Recovery || isPostF5Recovery) {
-    const phaseOffset = isControlCenterRecovery ? 8 : isStoriesRecovery ? 7 : isF5Recovery ? 5 : 4;
+    const phaseOffset = isPerfC1Recovery ? 9
+      : isControlCenterRecovery ? 8 : isStoriesRecovery ? 7 : isF5Recovery ? 5 : 4;
     migrationRows[migrationRows.length - phaseOffset] = {
       version: '20261025011000',
       name: 'creator_premium_f3_bounded_financial_activation',
@@ -2320,7 +2330,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
         version: '20261026030000',
         name: 'creator_premium_f4_general_bdag_activation',
       };
-      if (isStoriesRecovery || isControlCenterRecovery) {
+      if (isStoriesRecovery || isControlCenterRecovery || isPerfC1Recovery) {
         migrationRows[migrationRows.length - phaseOffset + 4] = {
           version: '20261026072512',
           name: 'creator_premium_f5_autonomous_subscriptions',
@@ -2331,6 +2341,15 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
           version: '20261026120000',
           name: 'live_battles_final_c1',
         };
+      }
+      if (isPerfC1Recovery) {
+        for (const [offset, [version, name]] of [
+          ['20261030000001', 'historical_admin_fixture_1'],
+          ['20261030000002', 'historical_admin_fixture_2'],
+          ['20261030000003', 'historical_admin_fixture_3'],
+        ].entries()) {
+          migrationRows[migrationRows.length - phaseOffset + 5 + offset] = { version, name };
+        }
       }
     }
   }
@@ -2489,10 +2508,10 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     'creator_premium_subscription_periods', 'creator_premium_subscriptions',
   ];
   if (['39157300357', '39195966131', '40139736749', '40166468648', '40268500711',
-    '40324910390', '40473092474', '41243646356'].includes(source.run_id)) {
+    '40324910390', '40473092474', '41243646356', '41351597413'].includes(source.run_id)) {
     relationNames.unshift('creator_premium_content_safety_context_evaluations');
   }
-  if (['40166468648', '40268500711', '40324910390', '40473092474', '41243646356']
+  if (['40166468648', '40268500711', '40324910390', '40473092474', '41243646356', '41351597413']
     .includes(source.run_id)) {
     relationNames.push('creator_premium_finance_authorizations');
   }
@@ -2501,7 +2520,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     'creator_premium_auto_renewal_attempts',
     'creator_premium_auto_renewal_mandates',
   );
-  const captureMigrationRows = isControlCenterRecovery
+  const captureMigrationRows = isControlCenterRecovery || isPerfC1Recovery
     ? migrationRows.filter(item => ![
       '20261025011000',
       '20261025160452',
@@ -2528,7 +2547,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     capturePolicy.baseline.latest_migration = source.expected_latest_migration;
     capturePolicy.baseline.migration_count = source.expected_migration_count;
   }
-  const captureExceptionMigrations = isControlCenterRecovery ? {
+  const captureExceptionMigrations = isControlCenterRecovery || isPerfC1Recovery ? {
     complete: true,
     count: captureMigrationRows.length,
     items: captureMigrationRows,
@@ -2669,6 +2688,35 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
           },
         } }], 201);
       }
+      if (body.query === adapter.SUPERUSER_QA_PERF_C1_STATE_SQL) {
+        const transition = controlledPolicy.superuser_qa_perf_c1_transition;
+        const history = transition.cron_history_attestation;
+        return json([{ snapshot: {
+          schema_version: 3,
+          complete: true,
+          installed: true,
+          functions: transition.function_definitions,
+          cron_history: {
+            schema: history.schema,
+            table: history.table,
+            relation_kind: history.relation_kind,
+            schema_owner: history.schema_owner,
+            table_owner: history.table_owner,
+            extension: history.extension,
+            primary_index: structuredClone(history.primary_index),
+            release_index_name: history.release_index_name,
+            release_index_present: history.release_index_expected,
+          },
+          finance: {
+            activation_mode: 'general',
+            active_authorization: true,
+            platform_fee_bps: 2000,
+            purchase_enabled: true,
+            refunds_enabled: true,
+            subscription_enabled: true,
+          },
+        } }], 201);
+      }
     }
     throw new Error(`unexpected recovery fixture request ${url}`);
   };
@@ -2682,7 +2730,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
     observedAt: '2026-10-17T22:00:01.000Z',
     adapterSourceSha256,
   });
-  if (['40166468648', '40268500711', '40324910390', '40473092474', '41243646356']
+  if (['40166468648', '40268500711', '40324910390', '40473092474', '41243646356', '41351597413']
     .includes(source.run_id)) {
     currentEvidence.migrations = {
       complete: true,
@@ -2809,10 +2857,11 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
       { method: 'POST', path: `/v1/projects/${PROJECT_REF}/database/query/read-only`, status: 201, response_sha256: 'a'.repeat(64) },
       { method: 'POST', path: `/v1/projects/${PROJECT_REF}/database/query/read-only`, status: 201, response_sha256: 'b'.repeat(64) },
     ];
-    if (isStoriesRecovery || isControlCenterRecovery) {
+    if (isStoriesRecovery || isControlCenterRecovery || isPerfC1Recovery) {
       const domainQueryIndex = currentEvidence.adapter.queries.findIndex(item => (
         item.id.startsWith('nelyon-stories-b1-')
           || item.id === 'nelyon-superuser-control-center-state-v1'
+          || item.id === 'nelyon-superuser-qa-perf-c1-state-v3'
       ));
       currentEvidence.adapter.queries.splice(domainQueryIndex, 0, ...financeQueryReceipts);
       currentEvidence.requests.splice(currentEvidence.requests.length - 1, 0, ...financeRequestReceipts);
@@ -2927,6 +2976,22 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
           items: baselineControlCenterAdvisorItems,
           sha256: gate.sha256Hex(gate.canonicalJson(baselineControlCenterAdvisorItems)),
         },
+      },
+    };
+    controlledPolicy.baseline.evidence_digests = adapter.buildProductionBaselineDigests({
+      evidence: baselineEvidence,
+      policy: controlledPolicy,
+    });
+  } else if (isPerfC1Recovery) {
+    const baselineMigrationItems = migrationRows.slice(0, controlledPolicy.baseline.migration_count);
+    const baselineEvidence = {
+      ...currentEvidence,
+      migrations: {
+        complete: true,
+        count: baselineMigrationItems.length,
+        items: baselineMigrationItems,
+        latest: baselineMigrationItems.at(-1),
+        sha256: gate.sha256Hex(gate.canonicalJson(baselineMigrationItems)),
       },
     };
     controlledPolicy.baseline.evidence_digests = adapter.buildProductionBaselineDigests({
@@ -3497,7 +3562,7 @@ test('phase-bound migration omission is bound to the exact reviewed blob and sou
 
 test('recovery source is exact immutable failed-postcheck authority', async () => {
   const { gate, policy } = await loadGateAndPolicy();
-  assert.equal(policy.postcheck_recovery.approved_sources.length, 9);
+  assert.equal(policy.postcheck_recovery.approved_sources.length, 10);
   for (const source of policy.postcheck_recovery.approved_sources) {
     assert.equal(gate.validateRecoverySource(source), true);
     assert.ok(source.expected_migrations.length >= 1);
@@ -3624,6 +3689,41 @@ test('recovery source is exact immutable failed-postcheck authority', async () =
   assert.deepEqual(controlCenterSource.edge_functions, []);
   assert.deepEqual(controlCenterSource.productive_resources,
     controlCenterSource.expected_migrations.map(item => `migration:${item.name}`));
+  const perfC1Source = policy.postcheck_recovery.approved_sources
+    .find(item => item.run_id === '41351597413');
+  assert.deepEqual(perfC1Source, {
+    run_id: '41351597413',
+    run_attempt: 1,
+    release_id: 'superuser-qa-perf-c1-r2-release-20261101-2122',
+    source_sha: '9010894cb37cd10df4ab0eae5b849143fd2222fd',
+    repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+    mutation_status: 'completed',
+    post_snapshot_status: 'success',
+    postcheck_status: 'success',
+    gate_artifact: {
+      id: '13101483501',
+      name: 'nelyon-gate-evidence-41351597413-1',
+      digest: 'sha256:5d0a5c353a30f17d45f7ca11deb42961a48303be8173b5f19bf7bfb9963e033d',
+    },
+    release_artifact: {
+      id: '13101463169',
+      name: 'nelyon-release-41351597413-1',
+      digest: 'sha256:898e179a58ce8dbc90e8e27daefaac60cdf769f3636a2e51bf384d94e79473d8',
+    },
+    manifest_sha256: '5abd64634d3ee98f4ef8334c0e120549d6139df3e2914e40286ad8e1703cef07',
+    pre_snapshot_evidence_sha256: 'b5cf7da854ade78cf7305fd0b8be019fae8b5076dd68b964acde45dc5a0467be',
+    post_snapshot_evidence_sha256: '9196cd32e0b3a283fde389ab717cfd05f7b1c8c5e35b32fba18e7bb90334d136',
+    expected_migrations: [{
+      blob: '005c6cbbf1539611ecb0b8f2255bdf3be44f32a6',
+      name: '20261101181907_superuser_qa_perf_c1',
+    }],
+    expected_migration_count: 365,
+    expected_latest_migration: '20261101181907_superuser_qa_perf_c1',
+    edge_functions: [],
+    productive_resources: ['migration:20261101181907_superuser_qa_perf_c1'],
+    premium_relation_security_sha256: 'a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0',
+    premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
+  });
   for (const mutate of [
     candidate => { candidate.run_id = '39066492486'; },
     candidate => { candidate.postcheck_status = 'success'; },
@@ -4490,6 +4590,7 @@ test('Admin recovery source provenance fails closed on SHA, artifacts, postcheck
   const verified = gate.verifyAdminRecoverySourceProvenance(fixture);
   assert.equal(verified.result, 'ADMIN_RECOVERY_SOURCE_VERIFIED');
   assert.equal(verified.source_run_id, fixture.recoveryRequest.recoverySourceRunId);
+  assert.equal(verified.source_transition_key, 'superuser_control_center_transition');
   assert.equal(verified.source_build_sha256, '6'.repeat(64));
   assert.deepEqual(verified.source_cloudflare_prestate, {
     active_version_id: '11111111-1111-4111-8111-111111111111',
@@ -4538,6 +4639,110 @@ test('Admin recovery source provenance fails closed on SHA, artifacts, postcheck
   }
   writeFileSync(postcheckPath, gate.canonicalJson(originalPostcheck));
   writeFileSync(observationPath, gate.canonicalJson(fixture.observation));
+});
+
+test('Admin recovery source provenance accepts the exact PERF C1 transition and rejects mixed authority', async (t) => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = adminRecoverySourceFixture(t, gate, policy,
+    'superuser_qa_perf_c1_transition');
+  const verified = gate.verifyAdminRecoverySourceProvenance(fixture);
+  assert.equal(verified.result, 'ADMIN_RECOVERY_SOURCE_VERIFIED');
+  assert.equal(verified.source_run_id, fixture.recoveryRequest.recoverySourceRunId);
+  assert.equal(verified.source_transition_key, 'superuser_qa_perf_c1_transition');
+
+  fixture.sourceManifest.resources.superuser_control_center_transition = {
+    ...structuredClone(policy.superuser_control_center_transition),
+    approved_sha: MAIN_SHA,
+    baseline_descendant_verified: true,
+    integration_base_descendant_verified: true,
+    reviewed_bytes_verified: true,
+  };
+  const bundle = join(fixture.releaseBundle.directory, 'bundle');
+  const bytes = gate.canonicalJson(fixture.sourceManifest);
+  writeFileSync(join(bundle, 'manifest.json'), bytes);
+  writeFileSync(join(bundle, 'manifest.sha256'), `${gate.sha256Hex(bytes)}\n`);
+  assertDenied(() => gate.verifyAdminRecoverySourceProvenance(fixture),
+    'ADMIN_RECOVERY_SOURCE_MISMATCH');
+});
+
+test('Admin recovery binds the complete temporary URL lifecycle for modern source artifacts', async (t) => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = adminRecoverySourceFixture(t, gate, policy);
+  const directory = fixture.adminEvidence.directory;
+  const states = {
+    before: {
+      schema_version: 1, result: 'ADMIN_PREVIEW_LIFECYCLE_CAPTURED',
+      worker_name: 'nelyon-admin-web', enabled: false, previews_enabled: false,
+    },
+    enabled: {
+      schema_version: 1, result: 'ADMIN_PREVIEW_LIFECYCLE_ENABLED',
+      worker_name: 'nelyon-admin-web', enabled: true, previews_enabled: true,
+    },
+    closed: {
+      schema_version: 1, result: 'ADMIN_PREVIEW_LIFECYCLE_CLOSED',
+      worker_name: 'nelyon-admin-web', enabled: false, previews_enabled: false,
+    },
+  };
+  const paths = {
+    before: join(directory, 'admin-web-preview-before.json'),
+    enabled: join(directory, 'admin-web-preview-enabled.json'),
+    closed: join(directory, 'admin-web-preview-closed.json'),
+  };
+  const writeStates = () => {
+    for (const key of Object.keys(states)) writeFileSync(paths[key], gate.canonicalJson(states[key]));
+    Object.assign(fixture.observation.admin_web, {
+      temporary_urls_prestate: 'success',
+      temporary_urls_enable: 'success',
+      temporary_urls_cleanup: 'success',
+      temporary_urls_prestate_sha256: gate.sha256Hex(readFileSync(paths.before)),
+      temporary_urls_enable_sha256: gate.sha256Hex(readFileSync(paths.enabled)),
+      temporary_urls_cleanup_sha256: gate.sha256Hex(readFileSync(paths.closed)),
+    });
+    writeFileSync(join(fixture.gateEvidence.directory, 'release-observation.json'),
+      gate.canonicalJson(fixture.observation));
+  };
+  writeStates();
+  assert.equal(gate.verifyAdminRecoverySourceProvenance(fixture).result,
+    'ADMIN_RECOVERY_SOURCE_VERIFIED');
+
+  states.closed.enabled = true;
+  writeStates();
+  assertDenied(() => gate.verifyAdminRecoverySourceProvenance(fixture),
+    'ADMIN_RECOVERY_SOURCE_MISMATCH');
+  states.closed.enabled = false;
+  writeStates();
+
+  rmSync(paths.enabled);
+  assertDenied(() => gate.verifyAdminRecoverySourceProvenance(fixture),
+    'ADMIN_RECOVERY_SOURCE_MISMATCH');
+  writeStates();
+
+  states.before.enabled = true;
+  states.before.previews_enabled = true;
+  writeFileSync(paths.before, gate.canonicalJson(states.before));
+  rmSync(paths.enabled);
+  Object.assign(fixture.observation.admin_web, {
+    temporary_urls_enable: 'failure',
+    temporary_urls_prestate_sha256: gate.sha256Hex(readFileSync(paths.before)),
+    temporary_urls_enable_sha256: null,
+    temporary_urls_cleanup_sha256: gate.sha256Hex(readFileSync(paths.closed)),
+  });
+  writeFileSync(join(fixture.gateEvidence.directory, 'release-observation.json'),
+    gate.canonicalJson(fixture.observation));
+  assert.equal(gate.verifyAdminRecoverySourceProvenance(fixture).result,
+    'ADMIN_RECOVERY_SOURCE_VERIFIED');
+  writeFileSync(paths.enabled, gate.canonicalJson(states.enabled));
+  assertDenied(() => gate.verifyAdminRecoverySourceProvenance(fixture),
+    'ADMIN_RECOVERY_SOURCE_MISMATCH');
+  states.before.enabled = false;
+  states.before.previews_enabled = false;
+  writeStates();
+
+  delete fixture.observation.admin_web.temporary_urls_cleanup_sha256;
+  writeFileSync(join(fixture.gateEvidence.directory, 'release-observation.json'),
+    gate.canonicalJson(fixture.observation));
+  assertDenied(() => gate.verifyAdminRecoverySourceProvenance(fixture),
+    'ADMIN_RECOVERY_SOURCE_MISMATCH');
 });
 
 test('Admin recovery accepts only an exact successful postcheck recovery chain and recomputes its evidence', async (t) => {
@@ -5729,6 +5934,67 @@ test('Control Center recovery verifies exact installed authority, three-migratio
   resign(releaseAttributed);
   assert.throws(() => verify(releaseAttributed),
     /ADMIN_RECOVERY_POSTCHECK_FAILED|SUPERUSER_CONTROL_CENTER_POSTCHECK_FAILED|RECOVERY_POSTCHECK_FAILED/);
+});
+
+test('PERF C1 recovery verifies the exact installed one-migration successor and rejects drift', async t => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const fixture = await recoveryStateFixture(t, gate, policy, 9);
+  const verify = candidate => gate.verifyPostcheckRecovery({
+    policy: candidate.controlledPolicy,
+    recoveryRequest: candidate.recoveryRequest,
+    recoveryManifest: candidate.recoveryManifest,
+    sourceManifest: candidate.sourceManifest,
+    sourceObservation: candidate.sourceObservation,
+    currentEvidence: candidate.currentEvidence,
+    adapterSourceSha256: candidate.adapterSourceSha256,
+  });
+  const resign = candidate => {
+    const { evidence_sha256: ignored, ...unsigned } = candidate.currentEvidence;
+    candidate.currentEvidence.evidence_sha256 = gate.sha256Hex(gate.canonicalJson(unsigned));
+  };
+
+  const result = verify(fixture);
+  assert.equal(result.result, 'POSTCHECK_RECOVERY_SUCCESS');
+  assert.equal(result.source_run_id, '41351597413');
+  assert.equal(result.migrations.count, 365);
+  assert.equal(`${result.migrations.latest.version}_${result.migrations.latest.name}`,
+    '20261101181907_superuser_qa_perf_c1');
+  assert.equal(result.superuser_qa_perf_c1_state.installed, true);
+  assert.deepEqual(result.superuser_qa_perf_c1_state.functions.map(item => ({
+    identity: item.identity,
+    definition_sha256: item.definition_sha256,
+  })), fixture.controlledPolicy.superuser_qa_perf_c1_transition.function_definitions.map(item => ({
+    identity: item.identity,
+    definition_sha256: item.definition_sha256,
+  })));
+  assert.deepEqual(result.finance.policy, {
+    purchase_enabled: true,
+    subscription_enabled: true,
+    refunds_enabled: true,
+    platform_fee_bps: 2000,
+  });
+
+  const authorityDrift = structuredClone(fixture);
+  authorityDrift.currentEvidence.superuser_qa_perf_c1_state.functions[0].definition_sha256 =
+    'f'.repeat(64);
+  const { sha256: ignoredStateSha, ...unsignedState } =
+    authorityDrift.currentEvidence.superuser_qa_perf_c1_state;
+  authorityDrift.currentEvidence.superuser_qa_perf_c1_state.sha256 =
+    gate.sha256Hex(gate.canonicalJson(unsignedState));
+  resign(authorityDrift);
+  assert.throws(() => verify(authorityDrift),
+    /ADMIN_RECOVERY_POSTCHECK_FAILED|SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED|RECOVERY_POSTCHECK_FAILED/);
+
+  const migrationDrift = structuredClone(fixture);
+  migrationDrift.currentEvidence.migrations.items.at(-1).name = 'superuser_qa_perf_c1_rewritten';
+  migrationDrift.currentEvidence.migrations.latest =
+    structuredClone(migrationDrift.currentEvidence.migrations.items.at(-1));
+  migrationDrift.currentEvidence.migrations.sha256 = gate.sha256Hex(
+    gate.canonicalJson(migrationDrift.currentEvidence.migrations.items),
+  );
+  resign(migrationDrift);
+  assert.throws(() => verify(migrationDrift),
+    /ADMIN_RECOVERY_POSTCHECK_FAILED|SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED|RECOVERY_POSTCHECK_FAILED/);
 });
 
 test('F3 recovery keeps the remote EZBR attestation distinct from the Git source contract', async t => {
