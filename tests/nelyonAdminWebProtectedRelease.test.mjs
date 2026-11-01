@@ -4,11 +4,13 @@ import test from 'node:test';
 
 import {
   buildAdminCachePurgeRequest,
+  buildAdminRouteProbePath,
   buildAdminSourceManifest,
   canonicalJson,
   identifyUploadedVersion,
   parseActiveDeployment,
   verifyProductionHttpMatrix,
+  verifyAdminRouteProbe,
   verifyRecoveredRouteInventory,
   verifyRemoteBuildArtifacts,
   verifyRouteInventory,
@@ -261,6 +263,69 @@ test('Admin cache invalidation is restricted to the exact production Admin prefi
   }
 });
 
+test('Admin route propagation probe uses one candidate-bound cache key per bounded attempt', () => {
+  const versionId = '557fc06c-8267-4362-928d-d21048279966';
+  const buildManifest = {
+    dist_sha256: 'd'.repeat(64),
+    files: [{ path: 'index.html', bytes: 5, sha256: 'c'.repeat(64) }],
+  };
+  const candidate = { version_id: versionId, build_sha256: buildManifest.dist_sha256 };
+  const headers = {
+    'cache-control': 'no-store',
+    'content-security-policy': "frame-ancestors 'none'",
+    'x-frame-options': 'DENY',
+    'x-robots-tag': 'noindex, nofollow',
+  };
+  const probe = {
+    attempt: 7,
+    url_path: `/admin/__nelyon_release_probe__/${versionId}/7`,
+    status: 200,
+    content_type: 'text/html; charset=utf-8',
+    headers,
+    body_sha256: 'c'.repeat(64),
+    bytes: 5,
+  };
+
+  assert.equal(buildAdminRouteProbePath(versionId, 7), probe.url_path);
+  assert.notEqual(buildAdminRouteProbePath(versionId, 1), buildAdminRouteProbePath(versionId, 2));
+  assert.equal(verifyAdminRouteProbe({ candidate, buildManifest, probe }), true);
+  for (const [invalidVersion, invalidAttempt] of [
+    ['../candidate', 1],
+    [versionId, 0],
+    [versionId, 61],
+    [versionId, 1.5],
+  ]) {
+    assert.throws(() => buildAdminRouteProbePath(invalidVersion, invalidAttempt), /admin_route_probe_invalid/);
+  }
+  for (const mutated of [
+    { ...probe, url_path: '/admin/' },
+    { ...probe, status: 404 },
+    { ...probe, content_type: 'application/json' },
+    { ...probe, body_sha256: 'e'.repeat(64) },
+    { ...probe, bytes: 4 },
+    { ...probe, headers: { ...headers, 'x-frame-options': null } },
+  ]) {
+    assert.throws(
+      () => verifyAdminRouteProbe({ candidate, buildManifest, probe: mutated }),
+      /admin_route_probe_mismatch/,
+    );
+  }
+  assert.throws(
+    () => verifyAdminRouteProbe({
+      candidate: { ...candidate, build_sha256: 'e'.repeat(64) },
+      buildManifest,
+      probe,
+    }),
+    /admin_route_probe_mismatch/,
+  );
+  const releaseScript = readFileSync(new URL('../scripts/nelyon-admin-production-release.mjs', import.meta.url), 'utf8');
+  assert.match(releaseScript, /const ADMIN_HTTP_TIMEOUT_MS = 15_000;/);
+  assert.match(releaseScript, /signal: AbortSignal\.timeout\(ADMIN_HTTP_TIMEOUT_MS\)/,
+    'every HTTP evidence request must have a hard transport timeout');
+  assert.match(releaseScript, /error_code: 'admin_route_probe_transport_failed'/,
+    'transport failures must leave only a fixed sanitized diagnostic code');
+});
+
 test('production HTTP matrix proves redirect, SPA documents, security headers, and a real 404 asset', () => {
   const headers = {
     'cache-control': 'no-store',
@@ -372,6 +437,14 @@ test('canonical workflow exposes Admin plan but mutates Cloudflare only after HI
     workflow.indexOf('- name: Verify promoted Admin version on temporary workers.dev'),
     workflow.indexOf('- name: Apply exact Admin production routes'),
   );
+  const routesSection = workflow.slice(
+    workflow.indexOf('- name: Apply exact Admin production routes'),
+    workflow.indexOf('- name: Wait for exact Admin production route activation'),
+  );
+  const routeActivationSection = workflow.slice(
+    workflow.indexOf('- name: Wait for exact Admin production route activation'),
+    workflow.indexOf('- name: Purge exact Admin production cache prefix'),
+  );
   assert.match(previewSection, /nelyon-admin-production-release\.mjs smoke[\s\S]*--build admin-evidence\/admin-web-build\.json/);
   assert.ok(workflow.indexOf('- name: Verify promoted Admin version on temporary workers.dev')
     > workflow.indexOf('- name: Promote the exact smoked Admin version'),
@@ -387,19 +460,33 @@ test('canonical workflow exposes Admin plan but mutates Cloudflare only after HI
   assert.match(promotedSmokeSection, /sleep 5/);
   assert.match(promotedSmokeSection, /test "\$\{SMOKE_OK\}" = 'true'/,
     'the promoted active Worker smoke must fail closed after bounded retries');
-  const routesSection = workflow.slice(
-    workflow.indexOf('- name: Apply exact Admin production routes'),
-    workflow.indexOf('- name: Purge exact Admin production cache prefix'),
-  );
   assert.match(routesSection, /steps\.admin_promoted_smoke\.outcome == 'success'/);
-  assert.ok(workflow.indexOf('- name: Purge exact Admin production cache prefix')
+  assert.ok(workflow.indexOf('- name: Wait for exact Admin production route activation')
     > workflow.indexOf('- name: Apply exact Admin production routes'),
-  'cache invalidation must run only after the exact routes are applied');
+  'production propagation must be proven after the exact routes are applied');
+  assert.ok(workflow.indexOf('- name: Purge exact Admin production cache prefix')
+    > workflow.indexOf('- name: Wait for exact Admin production route activation'),
+  'cache invalidation must run only after the candidate route is serving exact bytes');
+  assert.match(routeActivationSection, /id: admin_route_activation/);
+  assert.match(routeActivationSection, /steps\.admin_routes\.outcome == 'success'/);
+  assert.match(routeActivationSection, /nelyon-admin-production-release\.mjs route-probe/);
+  assert.match(routeActivationSection, /--base-url https:\/\/nelyon\.app/);
+  assert.match(routeActivationSection, /--candidate admin-evidence\/admin-web-candidate\.json/);
+  assert.match(routeActivationSection, /--build admin-evidence\/admin-web-build\.json/);
+  assert.match(routeActivationSection, /--attempt "\$\{attempt\}"/);
+  assert.match(routeActivationSection, /for attempt in \$\(seq 1 60\)/);
+  assert.match(routeActivationSection, /admin-web-route-probe-attempt-\$\{attempt\}\.json/);
+  assert.match(routeActivationSection, /sleep 5/);
+  assert.match(routeActivationSection, /test "\$\{ROUTE_ACTIVE\}" = 'true'/,
+    'route propagation must fail closed after bounded unique-path attempts');
   assert.match(purgeSection, /nelyon-admin-production-release\.mjs purge-admin-cache[\s\S]*admin-web-cache-purge\.json/);
   assert.match(purgeSection, /id: admin_cache_purge/);
-  assert.match(purgeSection, /steps\.admin_routes\.outcome == 'success'/);
+  assert.match(purgeSection, /steps\.admin_route_activation\.outcome == 'success'/);
   assert.match(workflow, /steps\.admin_cache_purge\.outcome == 'success'/);
   assert.match(workflow, /admin-evidence\/admin-web-promoted-http\.json/);
+  assert.match(workflow, /admin-evidence\/admin-web-route-probe\.json/);
+  assert.match(workflow, /admin-evidence\/admin-web-route-probe-attempt-\*\.json/,
+    'rejected probes must remain available as sanitized recovery evidence');
   assert.match(recoverySection, /restore-routes[\s\S]*purge-admin-cache[\s\S]*admin-web-recovery-cache-purge\.json/,
     'rollback must evict candidate Admin cache entries after restoring the previous deployment');
   assert.doesNotMatch(workflow, /purge_everything/);

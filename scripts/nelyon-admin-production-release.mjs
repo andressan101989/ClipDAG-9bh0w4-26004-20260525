@@ -29,6 +29,7 @@ const WRANGLER_VERSION = '4.135.0';
 const PRODUCTION_ORIGIN = 'https://nelyon.app';
 const ADMIN_ROUTES = ['nelyon.app/admin', 'nelyon.app/admin/*'];
 const ADMIN_CACHE_PREFIX = 'nelyon.app/admin';
+const ADMIN_HTTP_TIMEOUT_MS = 15_000;
 const ADMIN_PREFIXES = ['apps/admin-web/', 'shared/web-deployment/', 'shared/web-media/'];
 const ADMIN_IDENTITY_PATHS = [
   '.github/workflows/nelyon-production-release.yml',
@@ -413,8 +414,46 @@ export function verifyRemoteBuildArtifacts({ buildManifest, artifacts }) {
   return true;
 }
 
+export function buildAdminRouteProbePath(versionId, attempt) {
+  if (!UUID_PATTERN.test(versionId ?? '') || !Number.isSafeInteger(attempt) || attempt < 1 || attempt > 60) {
+    fail('admin_route_probe_invalid');
+  }
+  return `/admin/__nelyon_release_probe__/${versionId}/${attempt}`;
+}
+
+export function verifyAdminRouteProbe({ candidate, buildManifest, probe }) {
+  const versionId = candidate?.version_id;
+  const attempt = probe?.attempt;
+  if (!UUID_PATTERN.test(versionId ?? '')
+    || !SHA256_PATTERN.test(buildManifest?.dist_sha256 ?? '')
+    || candidate?.build_sha256 !== buildManifest.dist_sha256
+    || !Number.isSafeInteger(attempt) || attempt < 1 || attempt > 60) {
+    fail('admin_route_probe_mismatch');
+  }
+  const indexes = Array.isArray(buildManifest?.files)
+    ? buildManifest.files.filter((file) => file?.path === 'index.html')
+    : [];
+  const index = indexes[0];
+  const expectedPath = buildAdminRouteProbePath(versionId, attempt);
+  if (indexes.length !== 1 || !Number.isSafeInteger(index?.bytes) || index.bytes < 0
+    || !SHA256_PATTERN.test(index?.sha256 ?? '')
+    || probe?.url_path !== expectedPath
+    || probe?.status !== 200
+    || !/^text\/html\b/i.test(probe?.content_type ?? '')
+    || probe?.body_sha256 !== index.sha256
+    || probe?.bytes !== index.bytes
+    || !hasAdminSecurityHeaders(probe)) {
+    fail('admin_route_probe_mismatch');
+  }
+  return true;
+}
+
 async function fetchHttpEvidence(url, headers) {
-  const response = await fetch(url, { redirect: 'manual', headers });
+  const response = await fetch(url, {
+    redirect: 'manual',
+    headers,
+    signal: AbortSignal.timeout(ADMIN_HTTP_TIMEOUT_MS),
+  });
   const body = Buffer.from(await response.arrayBuffer());
   return {
     status: response.status,
@@ -423,6 +462,11 @@ async function fetchHttpEvidence(url, headers) {
     headers: {
       'cache-control': response.headers.get('cache-control'),
       'content-security-policy': response.headers.get('content-security-policy'),
+      'cf-cache-status': response.headers.get('cf-cache-status'),
+      'cf-ray': response.headers.get('cf-ray'),
+      age: response.headers.get('age'),
+      etag: response.headers.get('etag'),
+      'server-timing': response.headers.get('server-timing'),
       'x-frame-options': response.headers.get('x-frame-options'),
       'x-robots-tag': response.headers.get('x-robots-tag'),
     },
@@ -449,6 +493,28 @@ async function captureHttpMatrix(baseUrl, buildManifest) {
   }
   verifyRemoteBuildArtifacts({ buildManifest, artifacts });
   return { matrix, artifacts };
+}
+
+async function captureRouteProbe(baseUrl, candidate, buildManifest, attempt) {
+  let base;
+  try {
+    base = new URL(baseUrl);
+    if (base.protocol !== 'https:' || base.origin !== base.href.replace(/\/$/, '')) fail('admin_route_probe_url_invalid');
+  } catch {
+    fail('admin_route_probe_url_invalid');
+  }
+  const urlPath = buildAdminRouteProbePath(candidate?.version_id, attempt);
+  const evidence = {
+    attempt,
+    url_path: urlPath,
+    ...await fetchHttpEvidence(new URL(urlPath, base), { Accept: 'text/html' }),
+  };
+  return {
+    schema_version: 1,
+    version_id: candidate.version_id,
+    build_sha256: buildManifest.dist_sha256,
+    ...evidence,
+  };
 }
 
 async function cloudflareRequest(path, { method = 'GET', json = null } = {}) {
@@ -685,6 +751,44 @@ async function main(argv = process.argv.slice(2)) {
     const evidence = await purgeAdminCache();
     writeCanonical(requireArg(values, 'output'), evidence);
     process.stdout.write('ADMIN CACHE PURGE VERIFIED\n');
+    return;
+  }
+  if (command === 'route-probe') {
+    const candidate = readJson(requireArg(values, 'candidate'));
+    const build = readJson(requireArg(values, 'build'));
+    const attempt = Number(requireArg(values, 'attempt'));
+    const outputPath = requireArg(values, 'output');
+    let evidence;
+    try {
+      evidence = await captureRouteProbe(requireArg(values, 'base-url'), candidate, build, attempt);
+    } catch (error) {
+      const safeVersionId = UUID_PATTERN.test(candidate?.version_id ?? '') ? candidate.version_id : null;
+      const safeBuildSha = SHA256_PATTERN.test(build?.dist_sha256 ?? '') ? build.dist_sha256 : null;
+      const safeAttempt = Number.isSafeInteger(attempt) && attempt >= 1 && attempt <= 60 ? attempt : null;
+      writeCanonical(outputPath, {
+        schema_version: 1,
+        result: 'ADMIN_ROUTE_PROBE_REJECTED',
+        version_id: safeVersionId,
+        build_sha256: safeBuildSha,
+        attempt: safeAttempt,
+        url_path: safeVersionId && safeAttempt ? buildAdminRouteProbePath(safeVersionId, safeAttempt) : null,
+        error_code: 'admin_route_probe_transport_failed',
+      });
+      throw error;
+    }
+    try {
+      verifyAdminRouteProbe({ candidate, buildManifest: build, probe: evidence });
+      writeCanonical(outputPath, { ...evidence, result: 'ADMIN_ROUTE_PROBE_VERIFIED' });
+    } catch (error) {
+      const errorCode = String(error?.message ?? '').split(':', 1)[0];
+      writeCanonical(outputPath, {
+        ...evidence,
+        result: 'ADMIN_ROUTE_PROBE_REJECTED',
+        error_code: errorCode === 'admin_route_probe_mismatch' ? errorCode : 'admin_route_probe_failed',
+      });
+      throw error;
+    }
+    process.stdout.write(`ADMIN ROUTE PROBE VERIFIED ${candidate.version_id} ATTEMPT ${attempt}\n`);
     return;
   }
   if (command === 'smoke') {
