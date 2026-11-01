@@ -1833,10 +1833,10 @@ export const SUPERUSER_QA_PERF_C1_STATE_SQL = `with expected(identity) as (
   join pg_catalog.pg_extension e on e.oid=d.refobjid
   join lateral (
     select index_class.relname index_name,
-      (select pg_catalog.coalesce(pg_catalog.jsonb_agg(pg_catalog.pg_get_indexdef(i.indexrelid,position,true)
+      (select coalesce(pg_catalog.jsonb_agg(pg_catalog.pg_get_indexdef(i.indexrelid,position,true)
         order by position),'[]'::jsonb)
        from pg_catalog.generate_series(1,i.indnkeyatts) position) key_columns,
-      (select pg_catalog.coalesce(pg_catalog.jsonb_agg(pg_catalog.pg_get_indexdef(i.indexrelid,position,true)
+      (select coalesce(pg_catalog.jsonb_agg(pg_catalog.pg_get_indexdef(i.indexrelid,position,true)
         order by position),'[]'::jsonb)
        from pg_catalog.generate_series(i.indnkeyatts+1,i.indnatts) position) included_columns,
       i.indisprimary is_primary,i.indisunique is_unique,i.indisvalid is_valid,i.indisready is_ready,

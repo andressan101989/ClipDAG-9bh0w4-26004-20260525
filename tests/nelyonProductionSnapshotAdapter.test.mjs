@@ -253,6 +253,8 @@ test('PERF C1 snapshot permits only the exact managed-cron prestate and freezes 
   const adapter = await loadAdapter();
   const transition = installedPolicy.superuser_qa_perf_c1_transition;
   assert.equal(adapter.assertReadOnlySql(adapter.SUPERUSER_QA_PERF_C1_STATE_SQL), true);
+  assert.doesNotMatch(adapter.SUPERUSER_QA_PERF_C1_STATE_SQL, /\bpg_catalog\.coalesce\b/iu,
+    'COALESCE is SQL syntax and cannot be schema-qualified as a pg_catalog function');
   const approvedSha = 'c'.repeat(40);
   const manifest = { identity: { approved_sha: approvedSha }, resources: {
     superuser_qa_perf_c1_transition: { ...structuredClone(transition), approved_sha: approvedSha,

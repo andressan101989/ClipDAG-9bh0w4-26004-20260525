@@ -198,9 +198,10 @@ test('Superuser QA PERF C1 Git attestation binds exact LF bytes, ancestry, and o
   const transition = policy.superuser_qa_perf_c1_transition;
   const approvedSha = 'c'.repeat(40);
   const changes = transition.productive_paths.map(path => ({ path, status: 'A' }));
+  const root = new URL('..', import.meta.url);
   const bytesByPath = new Map(transition.migrations.map(source => [
     source.path,
-    readFileSync(new URL(`../${source.path}`, import.meta.url)),
+    execFileSync('git', ['show', `HEAD:${source.path}`], { cwd: root }),
   ]));
   const runGit = args => {
     if (args[0] === 'cat-file' && args[1] === '-e' && args[2] === `${approvedSha}^{commit}`) return '';
@@ -223,7 +224,7 @@ test('Superuser QA PERF C1 Git attestation binds exact LF bytes, ancestry, and o
     throw new Error(`unexpected git command: ${args.join(' ')}`);
   };
   const input = {
-    cwd: new URL('..', import.meta.url),
+    cwd: root,
     policy,
     mode: 'plan_only',
     approvedSha,
