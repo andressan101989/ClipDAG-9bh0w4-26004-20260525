@@ -865,10 +865,41 @@ jobs:
           node "$NELYON_HELPER" postcheck --policy "$NELYON_POLICY" --request release-artifact/request.json --manifest release-artifact/bundle/manifest.json --pre-snapshot gate-evidence/production-pre.json --post-snapshot gate-evidence/production-post.json --output gate-evidence/postcheck-result.json
           echo "SUPABASE POSTCHECK SUCCESS" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Capture Admin workers.dev and Version URL pre-state
+        id: admin_temp_urls_prestate
+        if: >-
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_prestate.outcome == 'success' &&
+          ((needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success') ||
+           (needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_postcheck.outcome == 'success' &&
+            steps.admin_recovery_cloudflare_prestate.outcome == 'success'))
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-admin-production-release.mjs capture-preview-lifecycle \
+            --output admin-evidence/admin-web-preview-before.json
+
+      - name: Enable exact temporary Admin workers.dev and Version URLs
+        id: admin_temp_urls_enable
+        if: >-
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_temp_urls_prestate.outcome == 'success' &&
+          ((needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success') ||
+           (needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_postcheck.outcome == 'success' &&
+            steps.admin_recovery_cloudflare_prestate.outcome == 'success'))
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-admin-production-release.mjs preview-lifecycle \
+            --enabled true \
+            --previews-enabled true \
+            --output admin-evidence/admin-web-preview-enabled.json
+
       - name: Upload one immutable Admin version
         id: admin_upload
         if: >-
           needs.plan.outputs.admin_enabled == 'true' && steps.admin_prestate.outcome == 'success' &&
+          steps.admin_temp_urls_enable.outcome == 'success' &&
           ((needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success') ||
            (needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_postcheck.outcome == 'success' &&
             steps.admin_recovery_cloudflare_prestate.outcome == 'success'))
@@ -1074,14 +1105,39 @@ jobs:
             --after-routes admin-evidence/admin-web-recovered-routes.json \
             --output admin-evidence/admin-web-recovery.json
 
+      - name: Close and verify temporary Admin URLs
+        id: admin_temp_urls_cleanup
+        if: >-
+          always() && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_temp_urls_prestate.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          TEMP_URLS_CLOSED=false
+          for attempt in $(seq 1 5); do
+            if node scripts/nelyon-admin-production-release.mjs preview-lifecycle \
+              --enabled false \
+              --previews-enabled false \
+              --output admin-evidence/admin-web-preview-closed.json; then
+              TEMP_URLS_CLOSED=true
+              break
+            fi
+            if [ "${attempt}" -lt 5 ]; then sleep 3; fi
+          done
+          test "${TEMP_URLS_CLOSED}" = 'true'
+
       - name: Require complete protected release success
         id: release_complete
         if: >-
           always() &&
           ((needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success' &&
-            (needs.plan.outputs.admin_enabled != 'true' || steps.admin_finalize.outcome == 'success')) ||
+            (needs.plan.outputs.admin_enabled != 'true' ||
+             (steps.admin_finalize.outcome == 'success' && steps.admin_temp_urls_cleanup.outcome == 'success'))) ||
            (needs.plan.outputs.mode == 'admin_recovery' &&
-            steps.admin_recovery_postcheck.outcome == 'success' && steps.admin_finalize.outcome == 'success'))
+            steps.admin_recovery_postcheck.outcome == 'success' &&
+            steps.admin_finalize.outcome == 'success' &&
+            steps.admin_temp_urls_cleanup.outcome == 'success'))
         run: |
           set -euo pipefail
           echo "RELEASE SUCCESS" >> "$GITHUB_STEP_SUMMARY"
@@ -1099,6 +1155,8 @@ jobs:
           RELEASE_COMPLETE_OUTCOME: ${{ steps.release_complete.outcome }}
           ADMIN_ENABLED: ${{ needs.plan.outputs.admin_enabled }}
           ADMIN_BUILD_OUTCOME: ${{ steps.admin_build.outcome }}
+          ADMIN_TEMP_URLS_PRESTATE_OUTCOME: ${{ steps.admin_temp_urls_prestate.outcome }}
+          ADMIN_TEMP_URLS_ENABLE_OUTCOME: ${{ steps.admin_temp_urls_enable.outcome }}
           ADMIN_UPLOAD_OUTCOME: ${{ steps.admin_upload.outcome }}
           ADMIN_CANDIDATE_OUTCOME: ${{ steps.admin_candidate.outcome }}
           ADMIN_PROMOTE_OUTCOME: ${{ steps.admin_promote.outcome }}
@@ -1108,6 +1166,7 @@ jobs:
           ADMIN_CACHE_PURGE_OUTCOME: ${{ steps.admin_cache_purge.outcome }}
           ADMIN_FINALIZE_OUTCOME: ${{ steps.admin_finalize.outcome }}
           ADMIN_RECOVERY_OUTCOME: ${{ steps.admin_recovery.outcome }}
+          ADMIN_TEMP_URLS_CLEANUP_OUTCOME: ${{ steps.admin_temp_urls_cleanup.outcome }}
         run: |
           node --input-type=module <<'NODE'
           import { createHash } from 'node:crypto';
@@ -1135,6 +1194,10 @@ jobs:
             admin_web: {
               required: process.env.ADMIN_ENABLED === 'true',
               build: process.env.ADMIN_BUILD_OUTCOME,
+              temporary_urls_prestate: process.env.ADMIN_TEMP_URLS_PRESTATE_OUTCOME,
+              temporary_urls_enable: process.env.ADMIN_TEMP_URLS_ENABLE_OUTCOME,
+              temporary_urls_prestate_sha256: safeFileDigest('admin-evidence/admin-web-preview-before.json'),
+              temporary_urls_enable_sha256: safeFileDigest('admin-evidence/admin-web-preview-enabled.json'),
               upload: process.env.ADMIN_UPLOAD_OUTCOME,
               candidate: process.env.ADMIN_CANDIDATE_OUTCOME,
               promote: process.env.ADMIN_PROMOTE_OUTCOME,
@@ -1144,6 +1207,8 @@ jobs:
               cache_purge: process.env.ADMIN_CACHE_PURGE_OUTCOME,
               finalize: process.env.ADMIN_FINALIZE_OUTCOME,
               recovery: process.env.ADMIN_RECOVERY_OUTCOME,
+              temporary_urls_cleanup: process.env.ADMIN_TEMP_URLS_CLEANUP_OUTCOME,
+              temporary_urls_cleanup_sha256: safeFileDigest('admin-evidence/admin-web-preview-closed.json'),
               result_sha256: safeFileDigest('admin-evidence/admin-web-release-result.json'),
               recovery_sha256: safeFileDigest('admin-evidence/admin-web-recovery.json'),
             },
@@ -1165,6 +1230,8 @@ jobs:
             admin-evidence/admin-web-build.json \
             admin-evidence/admin-web-previous.json \
             admin-evidence/admin-web-before-routes.json \
+            admin-evidence/admin-web-preview-before.json \
+            admin-evidence/admin-web-preview-enabled.json \
             admin-evidence/admin-web-candidate.json \
             admin-evidence/admin-web-preview-http.json \
             admin-evidence/admin-web-promoted-version.json \
@@ -1177,7 +1244,8 @@ jobs:
             admin-evidence/admin-web-recovered-routes.json \
             admin-evidence/admin-web-recovered-deployment.json \
             admin-evidence/admin-web-recovery-cache-purge.json \
-            admin-evidence/admin-web-recovery.json; do
+            admin-evidence/admin-web-recovery.json \
+            admin-evidence/admin-web-preview-closed.json; do
             if test -f "$path"; then cp "$path" admin-source-evidence/; fi
           done
           for path in admin-evidence/admin-web-route-probe-attempt-*.json; do
@@ -1228,6 +1296,8 @@ jobs:
             admin-evidence/admin-web-build.json
             admin-evidence/admin-web-previous.json
             admin-evidence/admin-web-before-routes.json
+            admin-evidence/admin-web-preview-before.json
+            admin-evidence/admin-web-preview-enabled.json
             admin-evidence/admin-web-candidate.json
             admin-evidence/admin-web-preview-http.json
             admin-evidence/admin-web-promoted-version.json
@@ -1242,6 +1312,7 @@ jobs:
             admin-evidence/admin-web-recovered-deployment.json
             admin-evidence/admin-web-recovery-cache-purge.json
             admin-evidence/admin-web-recovery.json
+            admin-evidence/admin-web-preview-closed.json
           if-no-files-found: warn
           retention-days: 90
           compression-level: 0

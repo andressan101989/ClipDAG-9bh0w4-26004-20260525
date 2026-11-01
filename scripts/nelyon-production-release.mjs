@@ -1656,6 +1656,38 @@ const EXPECTED_RECOVERY_SOURCES = [{
   ],
   premium_relation_security_sha256: 'a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0',
   premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
+}, {
+  run_id: '41351597413',
+  run_attempt: 1,
+  release_id: 'superuser-qa-perf-c1-r2-release-20261101-2122',
+  source_sha: '9010894cb37cd10df4ab0eae5b849143fd2222fd',
+  repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+  mutation_status: 'completed',
+  post_snapshot_status: 'success',
+  postcheck_status: 'success',
+  gate_artifact: {
+    id: '13101483501',
+    name: 'nelyon-gate-evidence-41351597413-1',
+    digest: 'sha256:5d0a5c353a30f17d45f7ca11deb42961a48303be8173b5f19bf7bfb9963e033d',
+  },
+  release_artifact: {
+    id: '13101463169',
+    name: 'nelyon-release-41351597413-1',
+    digest: 'sha256:898e179a58ce8dbc90e8e27daefaac60cdf769f3636a2e51bf384d94e79473d8',
+  },
+  manifest_sha256: '5abd64634d3ee98f4ef8334c0e120549d6139df3e2914e40286ad8e1703cef07',
+  pre_snapshot_evidence_sha256: 'b5cf7da854ade78cf7305fd0b8be019fae8b5076dd68b964acde45dc5a0467be',
+  post_snapshot_evidence_sha256: '9196cd32e0b3a283fde389ab717cfd05f7b1c8c5e35b32fba18e7bb90334d136',
+  expected_migrations: [{
+    blob: '005c6cbbf1539611ecb0b8f2255bdf3be44f32a6',
+    name: '20261101181907_superuser_qa_perf_c1',
+  }],
+  expected_migration_count: 365,
+  expected_latest_migration: '20261101181907_superuser_qa_perf_c1',
+  edge_functions: [],
+  productive_resources: ['migration:20261101181907_superuser_qa_perf_c1'],
+  premium_relation_security_sha256: 'a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0',
+  premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
 }];
 const REQUIRED_FINANCE_RECONCILIATIONS = [
   'account_balance_ledger_mismatch',
@@ -4492,6 +4524,9 @@ const ADMIN_RECOVERY_FILES = [
   'admin-web-build.json',
   'admin-web-previous.json',
   'admin-web-before-routes.json',
+  'admin-web-preview-before.json',
+  'admin-web-preview-enabled.json',
+  'admin-web-preview-closed.json',
   'admin-web-candidate.json',
   'admin-web-preview-http.json',
   'admin-web-promoted-version.json',
@@ -4683,6 +4718,48 @@ function normalizedRecoveryRoutes(value, code) {
   }).sort((left, right) => `${left.pattern}:${left.script}`.localeCompare(`${right.pattern}:${right.script}`));
 }
 
+function verifyAdminPreviewLifecycleEvidence(value, {
+  result,
+  enabled,
+  previewsEnabled,
+  code,
+}) {
+  const keys = ['enabled', 'previews_enabled', 'result', 'schema_version', 'worker_name'];
+  if (!value || canonicalJson(Object.keys(value).sort()) !== canonicalJson(keys)
+    || value.schema_version !== 1 || value.result !== result
+    || value.worker_name !== 'nelyon-admin-web'
+    || value.enabled !== enabled || value.previews_enabled !== previewsEnabled) {
+    deny(code, 'source Admin temporary URL lifecycle evidence is invalid');
+  }
+  return true;
+}
+
+function adminRecoveryTransitionAuthority({ policy, sourceManifest, expectedSourceSha, code }) {
+  const supported = [
+    'superuser_control_center_transition',
+    'superuser_qa_perf_c1_transition',
+  ];
+  const resources = sourceManifest?.resources;
+  const present = supported.filter(key => Object.hasOwn(resources ?? {}, key));
+  if (present.length !== 1) {
+    deny(code, 'source release must contain exactly one supported Admin transition authority');
+  }
+  const key = present[0];
+  const transition = policy?.[key];
+  const expectedAttestation = transition && {
+    ...transition,
+    approved_sha: expectedSourceSha,
+    baseline_descendant_verified: true,
+    integration_base_descendant_verified: true,
+    reviewed_bytes_verified: true,
+  };
+  if (!transition || !Array.isArray(transition.migrations) || transition.migrations.length < 1
+    || canonicalJson(resources[key]) !== canonicalJson(expectedAttestation)) {
+    deny(code, 'source Admin transition authority differs from the reviewed policy');
+  }
+  return { key, transition };
+}
+
 export function verifyAdminRecoverySourceProvenance({
   policy,
   recoveryRequest,
@@ -4762,6 +4839,9 @@ export function verifyAdminRecoverySourceProvenance({
   const observation = readFixedJson(gateDirectory, 'release-observation.json', code);
   const postcheckPath = join(gateDirectory, 'postcheck-result.json');
   const sourcePostcheck = chainedRecovery ? null : readFixedJson(gateDirectory, 'postcheck-result.json', code);
+  const sourceTransition = adminRecoveryTransitionAuthority({
+    policy, sourceManifest, expectedSourceSha, code,
+  });
   if (sourceRequest.mode !== policy.admin_recovery.source_mode
     || sourceRequest.actor !== policy.owner || sourceRequest.triggeringActor !== policy.owner
     || sourceRequest.repository !== policy.repository || sourceRequest.ref !== policy.admin_recovery.source_ref
@@ -4774,38 +4854,87 @@ export function verifyAdminRecoverySourceProvenance({
     || sourceManifest.identity?.release_id !== sourceRequest.releaseId
     || sourceManifest.identity?.scope_confirmation !== policy.scope_confirmations.release_high_risk
     || sourceManifest.risk?.level !== 'HIGH' || sourceManifest.result !== 'PLAN READY'
-    || sourceManifest.delta?.productive_change_count !== policy.superuser_control_center_transition.migrations.length
+    || sourceManifest.delta?.productive_change_count !== sourceTransition.transition.migrations.length
     || String(sourceManifest.identity?.run_id) !== sourceRunId
     || sourceManifest.identity?.run_attempt !== sourceRunAttempt
     || canonicalJson(sourceManifest.resources?.migrations?.map(item => ({
       version: item.version, path: item.path, blob: item.blob, sha256: item.sha256,
     })).sort((a, b) => a.version.localeCompare(b.version)))
-      !== canonicalJson(policy.superuser_control_center_transition.migrations.map(item => ({
+      !== canonicalJson(sourceTransition.transition.migrations.map(item => ({
         version: item.version, path: item.path, blob: item.blob, sha256: item.sha256,
       })).sort((a, b) => a.version.localeCompare(b.version)))
     || canonicalJson(sourceManifest.resources?.functions) !== canonicalJson([])
     || canonicalJson(sourceManifest.resources?.function_contracts) !== canonicalJson([])
     || sourceManifest.resources?.config_changed !== false
-    || canonicalJson(sourceManifest.resources?.superuser_control_center_transition ?? null)
+    || canonicalJson(sourceManifest.resources?.[sourceTransition.key] ?? null)
       !== canonicalJson({
-        ...policy.superuser_control_center_transition,
+        ...sourceTransition.transition,
         approved_sha: expectedSourceSha,
         baseline_descendant_verified: true,
         integration_base_descendant_verified: true,
         reviewed_bytes_verified: true,
       })) {
-    deny(code, 'source request or manifest is not the exact Control Center release');
+    deny(code, 'source request or manifest is not the exact supported Admin release');
   }
   const expectedPostcheckKeys = [
     'applied_migrations', 'changed_functions', 'function_attestations', 'post_evidence_sha256',
     'pre_evidence_sha256', 'result',
   ];
-  const expectedMigrationVersions = policy.superuser_control_center_transition.migrations
+  const expectedMigrationVersions = sourceTransition.transition.migrations
     .map(item => item.version).sort();
   if (observation.schema_version !== 1 || observation.result !== 'INCOMPLETE_OR_FAILED'
     || observation.admin_web?.required !== policy.admin_recovery.admin_enabled_required
     || observation.admin_web?.finalize === 'success') {
     deny(code, 'source release lifecycle does not permit forward Admin completion');
+  }
+  const lifecycleFields = [
+    'temporary_urls_prestate', 'temporary_urls_enable', 'temporary_urls_cleanup',
+    'temporary_urls_prestate_sha256', 'temporary_urls_enable_sha256',
+    'temporary_urls_cleanup_sha256',
+  ];
+  const lifecycleDeclared = lifecycleFields.some(key => Object.hasOwn(observation.admin_web ?? {}, key));
+  const lifecycleFilePresent = [
+    'admin-web-preview-before.json', 'admin-web-preview-enabled.json', 'admin-web-preview-closed.json',
+  ].some(name => existsSync(join(adminDirectory, name)));
+  if (lifecycleFilePresent && !lifecycleDeclared) {
+    deny(code, 'source Admin temporary URL files lack lifecycle authority');
+  }
+  if (lifecycleDeclared) {
+    if (lifecycleFields.some(key => !Object.hasOwn(observation.admin_web, key))
+      || observation.admin_web.temporary_urls_prestate !== 'success'
+      || observation.admin_web.temporary_urls_cleanup !== 'success') {
+      deny(code, 'source Admin temporary URL lifecycle is incomplete');
+    }
+    const beforePath = join(adminDirectory, 'admin-web-preview-before.json');
+    const enabledPath = join(adminDirectory, 'admin-web-preview-enabled.json');
+    const closedPath = join(adminDirectory, 'admin-web-preview-closed.json');
+    const before = readFixedJson(adminDirectory, 'admin-web-preview-before.json', code);
+    const closed = readFixedJson(adminDirectory, 'admin-web-preview-closed.json', code);
+    verifyAdminPreviewLifecycleEvidence(before, {
+      result: 'ADMIN_PREVIEW_LIFECYCLE_CAPTURED',
+      enabled: observation.admin_web.temporary_urls_enable === 'success' ? false : before.enabled,
+      previewsEnabled: observation.admin_web.temporary_urls_enable === 'success'
+        ? false : before.previews_enabled,
+      code,
+    });
+    verifyAdminPreviewLifecycleEvidence(closed, {
+      result: 'ADMIN_PREVIEW_LIFECYCLE_CLOSED', enabled: false, previewsEnabled: false, code,
+    });
+    if (observation.admin_web.temporary_urls_prestate_sha256 !== sha256Hex(readFileSync(beforePath))
+      || observation.admin_web.temporary_urls_cleanup_sha256 !== sha256Hex(readFileSync(closedPath))) {
+      deny(code, 'source Admin temporary URL lifecycle digest differs');
+    }
+    if (observation.admin_web.temporary_urls_enable === 'success') {
+      const enabledState = readFixedJson(adminDirectory, 'admin-web-preview-enabled.json', code);
+      verifyAdminPreviewLifecycleEvidence(enabledState, {
+        result: 'ADMIN_PREVIEW_LIFECYCLE_ENABLED', enabled: true, previewsEnabled: true, code,
+      });
+      if (observation.admin_web.temporary_urls_enable_sha256 !== sha256Hex(readFileSync(enabledPath))) {
+        deny(code, 'source Admin temporary URL enable digest differs');
+      }
+    } else if (existsSync(enabledPath) || observation.admin_web.temporary_urls_enable_sha256 !== null) {
+      deny(code, 'failed source Admin temporary URL enable has ambiguous evidence');
+    }
   }
   if (chainedRecovery) {
     if (sourceManifestDigest !== postcheckRecoveryChain.source_manifest_sha256
@@ -4907,6 +5036,7 @@ export function verifyAdminRecoverySourceProvenance({
     source_manifest: sourceManifest,
     source_request: sourceRequest,
     source_observation: observation,
+    source_transition_key: sourceTransition.key,
     postcheck_recovery_chain: chainedRecovery ? postcheckRecoveryChain : null,
   };
 }
@@ -5081,13 +5211,21 @@ export function verifyPostcheckRecovery({
     manifest: recoveryManifest,
     adapterSourceSha256,
   });
-  const controlCenterRecovery = source.run_id === '41243646356';
+  const adminRecoveryTransitionKey = source.run_id === '41243646356'
+    ? 'superuser_control_center_transition'
+    : source.run_id === '41351597413'
+      ? 'superuser_qa_perf_c1_transition'
+      : null;
   const storiesB1Recovery = source.run_id === '40473092474';
-  if (controlCenterRecovery) {
+  if (adminRecoveryTransitionKey) {
     try {
-      verifyAdminRecoveryInfrastructurePostState({ post: currentEvidence, policy });
+      verifyAdminRecoveryInfrastructurePostState({
+        post: currentEvidence,
+        policy,
+        transitionKey: adminRecoveryTransitionKey,
+      });
     } catch (error) {
-      deny(code, String(error?.message ?? 'Control Center recovery post-state verification failed'));
+      deny(code, String(error?.message ?? 'Admin recovery post-state verification failed'));
     }
   }
 
@@ -5172,7 +5310,7 @@ export function verifyPostcheckRecovery({
     code,
   });
   let baselineCronItems = currentEvidence.cron_security.cron.items;
-  const postF5Recovery = ['40324910390', '40473092474', '41243646356']
+  const postF5Recovery = ['40324910390', '40473092474', '41243646356', '41351597413']
     .includes(source.run_id);
   if (postF5Recovery) {
     const currentCron = currentEvidence.cron_security.cron;
@@ -5286,8 +5424,11 @@ export function verifyPostcheckRecovery({
     },
     premium_state: currentEvidence.premium_state,
     ...(storiesB1Recovery ? { stories_b1_state: currentEvidence.stories_b1_state } : {}),
-    ...(controlCenterRecovery
+    ...(adminRecoveryTransitionKey === 'superuser_control_center_transition'
       ? { superuser_control_center_state: currentEvidence.superuser_control_center_state }
+      : {}),
+    ...(adminRecoveryTransitionKey === 'superuser_qa_perf_c1_transition'
+      ? { superuser_qa_perf_c1_state: currentEvidence.superuser_qa_perf_c1_state }
       : {}),
   };
 }
@@ -5564,6 +5705,7 @@ export function verifyAdminRecoveryPostcheck({
     request: recoveryRequest,
     manifest: recoveryManifest,
     adapterSourceSha256,
+    transitionKey: verifiedSource.source_transition_key,
   });
   return {
     schema_version: 1,

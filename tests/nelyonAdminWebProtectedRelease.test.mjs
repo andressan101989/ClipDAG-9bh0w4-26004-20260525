@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  buildAdminPreviewLifecycleRequest,
   buildAdminCachePurgeRequest,
   buildAdminRouteProbePath,
   buildAdminSourceManifest,
@@ -11,6 +12,7 @@ import {
   parseActiveDeployment,
   verifyProductionHttpMatrix,
   verifyAdminRouteProbe,
+  verifyAdminPreviewLifecycleState,
   verifyRecoveredRouteInventory,
   verifyRemoteBuildArtifacts,
   verifyRouteInventory,
@@ -214,6 +216,34 @@ test('active deployment must be one exact version at 100 percent', () => {
   assert.throws(() => parseActiveDeployment({
     versions: [{ version_id: version, percentage: 50 }, { version_id: '33333333-3333-4333-8333-333333333333', percentage: 50 }],
   }), /admin_active_deployment_not_atomic/);
+});
+
+test('temporary Admin workers.dev and Version URL lifecycle is exact and fail-closed', () => {
+  assert.deepEqual(buildAdminPreviewLifecycleRequest({ enabled: true, previewsEnabled: true }), {
+    method: 'POST',
+    path: '/accounts/24a176456cf57435119db8caf3af61dd/workers/scripts/nelyon-admin-web/subdomain',
+    json: { enabled: true, previews_enabled: true },
+  });
+  assert.deepEqual(buildAdminPreviewLifecycleRequest({ enabled: false, previewsEnabled: false }), {
+    method: 'POST',
+    path: '/accounts/24a176456cf57435119db8caf3af61dd/workers/scripts/nelyon-admin-web/subdomain',
+    json: { enabled: false, previews_enabled: false },
+  });
+  assert.throws(() => buildAdminPreviewLifecycleRequest({
+    enabled: true, previewsEnabled: false,
+  }), /admin_preview_lifecycle_invalid/);
+  assert.deepEqual(verifyAdminPreviewLifecycleState(
+    { enabled: false, previews_enabled: false },
+    { enabled: false, previewsEnabled: false },
+  ), { enabled: false, previews_enabled: false });
+  for (const hostile of [
+    { enabled: true, previews_enabled: false },
+    { enabled: false, previews_enabled: true },
+    { enabled: false },
+    { enabled: 'false', previews_enabled: false },
+  ]) assert.throws(() => verifyAdminPreviewLifecycleState(hostile, {
+    enabled: false, previewsEnabled: false,
+  }), /admin_preview_lifecycle_mismatch/);
 });
 
 test('route inventory requires both exact Admin patterns and rejects conflicting ownership', () => {
@@ -450,6 +480,39 @@ test('canonical workflow exposes Admin plan but mutates Cloudflare only after HI
     workflow.indexOf('- name: Wait for exact Admin production route activation'),
     workflow.indexOf('- name: Purge exact Admin production cache prefix'),
   );
+  const previewEnableSection = workflow.slice(
+    workflow.indexOf('- name: Enable exact temporary Admin workers.dev and Version URLs'),
+    workflow.indexOf('- name: Upload one immutable Admin version'),
+  );
+  const previewPrestateSection = workflow.slice(
+    workflow.indexOf('- name: Capture Admin workers.dev and Version URL pre-state'),
+    workflow.indexOf('- name: Enable exact temporary Admin workers.dev and Version URLs'),
+  );
+  const previewCleanupSection = workflow.slice(
+    workflow.indexOf('- name: Close and verify temporary Admin URLs'),
+    workflow.indexOf('- name: Require complete protected release success'),
+  );
+  assert.ok(workflow.indexOf('- name: Capture Admin workers.dev and Version URL pre-state')
+    < workflow.indexOf('- name: Enable exact temporary Admin workers.dev and Version URLs'));
+  assert.match(previewPrestateSection, /capture-preview-lifecycle[\s\S]*admin-web-preview-before\.json/);
+  assert.ok(workflow.indexOf('- name: Enable exact temporary Admin workers.dev and Version URLs')
+    < workflow.indexOf('- name: Upload one immutable Admin version'),
+  'temporary URLs must be enabled before the immutable candidate is uploaded');
+  assert.match(previewEnableSection,
+    /preview-lifecycle[\s\S]*--enabled true[\s\S]*--previews-enabled true/);
+  assert.match(previewCleanupSection, /if:\s*>-\s*always\(\)/,
+    'temporary URL cleanup must run on every post-enable outcome');
+  assert.match(previewCleanupSection, /steps\.admin_temp_urls_prestate\.outcome == 'success'/,
+    'cleanup must remain runnable after an ambiguous or failed enable');
+  assert.doesNotMatch(previewCleanupSection, /admin_temp_urls_enable\.outcome/,
+    'cleanup must not depend on the enable result');
+  assert.match(previewCleanupSection,
+    /preview-lifecycle[\s\S]*--enabled false[\s\S]*--previews-enabled false/);
+  assert.match(previewCleanupSection, /for attempt in \$\(seq 1 5\)/,
+    'temporary URL closure must use bounded recovery for transient control-plane failures');
+  assert.match(previewCleanupSection, /admin-web-preview-closed\.json/);
+  assert.match(workflow, /steps\.admin_temp_urls_cleanup\.outcome == 'success'/,
+    'release success must require verified temporary URL closure');
   assert.match(previewSection, /nelyon-admin-production-release\.mjs smoke[\s\S]*--build admin-evidence\/admin-web-build\.json/);
   assert.ok(workflow.indexOf('- name: Verify promoted Admin version on temporary workers.dev')
     > workflow.indexOf('- name: Promote the exact smoked Admin version'),

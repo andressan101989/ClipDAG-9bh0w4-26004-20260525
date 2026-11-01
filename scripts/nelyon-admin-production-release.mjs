@@ -25,6 +25,7 @@ const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const WORKER_NAME = 'nelyon-admin-web';
+const CLOUDFLARE_ACCOUNT_ID = '24a176456cf57435119db8caf3af61dd';
 const WRANGLER_VERSION = '4.135.0';
 const PRODUCTION_ORIGIN = 'https://nelyon.app';
 const ADMIN_ROUTES = ['nelyon.app/admin', 'nelyon.app/admin/*'];
@@ -535,6 +536,58 @@ async function cloudflareRequest(path, { method = 'GET', json = null } = {}) {
   return body.result;
 }
 
+export function buildAdminPreviewLifecycleRequest({ enabled, previewsEnabled }) {
+  if (typeof enabled !== 'boolean' || typeof previewsEnabled !== 'boolean'
+    || enabled !== previewsEnabled) {
+    fail('admin_preview_lifecycle_invalid');
+  }
+  return {
+    path: `/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${WORKER_NAME}/subdomain`,
+    method: 'POST',
+    json: { enabled, previews_enabled: previewsEnabled },
+  };
+}
+
+export function verifyAdminPreviewLifecycleState(state, { enabled, previewsEnabled }) {
+  if (typeof enabled !== 'boolean' || typeof previewsEnabled !== 'boolean'
+    || state === null || typeof state !== 'object' || Array.isArray(state)
+    || typeof state.enabled !== 'boolean' || typeof state.previews_enabled !== 'boolean'
+    || state.enabled !== enabled || state.previews_enabled !== previewsEnabled) {
+    fail('admin_preview_lifecycle_mismatch');
+  }
+  return { enabled: state.enabled, previews_enabled: state.previews_enabled };
+}
+
+async function captureAdminPreviewLifecycle() {
+  const result = await cloudflareRequest(
+    `/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${WORKER_NAME}/subdomain`,
+  );
+  if (result === null || typeof result !== 'object' || Array.isArray(result)
+    || typeof result.enabled !== 'boolean' || typeof result.previews_enabled !== 'boolean') {
+    fail('admin_preview_lifecycle_mismatch');
+  }
+  return { enabled: result.enabled, previews_enabled: result.previews_enabled };
+}
+
+async function setAdminPreviewLifecycle({ enabled, previewsEnabled }) {
+  if (enabled) {
+    const before = await captureAdminPreviewLifecycle();
+    verifyAdminPreviewLifecycleState(before, { enabled: false, previewsEnabled: false });
+  }
+  const request = buildAdminPreviewLifecycleRequest({ enabled, previewsEnabled });
+  await cloudflareRequest(request.path, { method: request.method, json: request.json });
+  const observed = await captureAdminPreviewLifecycle();
+  verifyAdminPreviewLifecycleState(observed, { enabled, previewsEnabled });
+  return {
+    schema_version: 1,
+    result: enabled || previewsEnabled
+      ? 'ADMIN_PREVIEW_LIFECYCLE_ENABLED'
+      : 'ADMIN_PREVIEW_LIFECYCLE_CLOSED',
+    worker_name: WORKER_NAME,
+    ...observed,
+  };
+}
+
 async function findZone() {
   const zones = await cloudflareRequest('/zones?name=nelyon.app&status=active&per_page=50');
   if (!Array.isArray(zones) || zones.length !== 1 || zones[0]?.name !== 'nelyon.app') fail('admin_cloudflare_zone_invalid');
@@ -756,6 +809,31 @@ async function main(argv = process.argv.slice(2)) {
     const evidence = await purgeAdminCache();
     writeCanonical(requireArg(values, 'output'), evidence);
     process.stdout.write('ADMIN CACHE PURGE VERIFIED\n');
+    return;
+  }
+  if (command === 'preview-lifecycle') {
+    const parseBoolean = (name) => {
+      const raw = requireArg(values, name);
+      if (!['true', 'false'].includes(raw)) fail('admin_preview_lifecycle_invalid', name);
+      return raw === 'true';
+    };
+    const evidence = await setAdminPreviewLifecycle({
+      enabled: parseBoolean('enabled'),
+      previewsEnabled: parseBoolean('previews-enabled'),
+    });
+    writeCanonical(requireArg(values, 'output'), evidence);
+    process.stdout.write(`${evidence.result}\n`);
+    return;
+  }
+  if (command === 'capture-preview-lifecycle') {
+    const evidence = await captureAdminPreviewLifecycle();
+    writeCanonical(requireArg(values, 'output'), {
+      schema_version: 1,
+      result: 'ADMIN_PREVIEW_LIFECYCLE_CAPTURED',
+      worker_name: WORKER_NAME,
+      ...evidence,
+    });
+    process.stdout.write('ADMIN PREVIEW LIFECYCLE CAPTURED\n');
     return;
   }
   if (command === 'route-probe') {

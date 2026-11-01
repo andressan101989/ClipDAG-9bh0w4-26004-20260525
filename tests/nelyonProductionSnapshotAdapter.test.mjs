@@ -698,6 +698,68 @@ test('Admin recovery infrastructure rejects Edge, cron, and Advisor drift after 
   }
 });
 
+test('Admin recovery infrastructure accepts only the exact installed PERF C1 append', async () => {
+  const adapter = await loadAdapter();
+  const controlledPolicy = structuredClone(installedPolicy);
+  const transition = controlledPolicy.superuser_qa_perf_c1_transition;
+  controlledPolicy.baseline.migration_count = 1;
+  controlledPolicy.baseline.latest_migration = '20260000000000_admin_recovery_fixture';
+  controlledPolicy.supabase.managed_functions = [];
+  controlledPolicy.supabase.expected_remote_function_count = 0;
+  const baseMigrations = [{ version: '20260000000000', name: 'admin_recovery_fixture' }];
+  const appended = transition.migrations.map(item => ({
+    version: item.version,
+    name: item.path.split('/').at(-1).replace(/^\d{14}_|\.sql$/gu, ''),
+  }));
+  const migrations = [...baseMigrations, ...appended];
+  const migrationInventory = { complete: true, count: migrations.length, items: migrations,
+    latest: migrations.at(-1), sha256: sha256(canonicalJson(migrations)) };
+  const functions = { complete: true, count: 0, items: [], sha256: sha256(canonicalJson([])) };
+  const cron = cronSnapshot();
+  const advisors = { complete: true, count: 0, items: [], sha256: sha256(canonicalJson([])) };
+  const finance = financeSnapshot();
+  controlledPolicy.supabase.finance_policy = {
+    platform_fee_bps: finance.policy.platform_fee_bps,
+    purchase_enabled: finance.policy.purchase_enabled,
+    refunds_enabled: finance.policy.refunds_enabled,
+    subscription_enabled: finance.policy.subscription_enabled,
+  };
+  const baselineEvidence = {
+    migrations: { complete: true, count: 1, items: baseMigrations, latest: baseMigrations[0],
+      sha256: sha256(canonicalJson(baseMigrations)) },
+    functions,
+    cron_security: { cron, advisors },
+    finance,
+    rpc_security: { items: [] },
+  };
+  controlledPolicy.baseline.evidence_digests = adapter.buildProductionBaselineDigests({
+    evidence: baselineEvidence, policy: controlledPolicy,
+  });
+  const post = {
+    ...baselineEvidence,
+    migrations: migrationInventory,
+    superuser_qa_perf_c1_state: perfC1State(transition, true),
+  };
+  assert.equal(adapter.verifyAdminRecoveryInfrastructurePostState({ post, policy: controlledPolicy }).migrations,
+    controlledPolicy.baseline.evidence_digests.migrations);
+
+  for (const mutate of [
+    value => { value.superuser_qa_perf_c1_state.functions[0].definition_sha256 = '0'.repeat(64); },
+    value => { value.superuser_qa_perf_c1_state.cron_history.release_index_present = true; },
+    value => { value.superuser_qa_perf_c1_state.finance.platform_fee_bps = 0; },
+    value => { value.migrations.items[0].name = 'rewritten_baseline'; },
+    value => { value.cron_security.cron.items.push({ active: true, command_sha256: 'a'.repeat(64),
+      database: 'postgres', jobid: '1', jobname: 'rogue', legacy_normalized_command_sha256: 'b'.repeat(64),
+      nodename: 'localhost', nodeport: 5432, schedule: '* * * * *', username: 'postgres' }); },
+  ]) {
+    const hostile = structuredClone(post);
+    mutate(hostile);
+    assert.throws(() => adapter.verifyAdminRecoveryInfrastructurePostState({
+      post: hostile, policy: controlledPolicy,
+    }), /ADMIN_RECOVERY_POSTCHECK_FAILED|RECOVERY_POSTCHECK_FAILED|REMOTE_BASELINE_MISMATCH|SUPERUSER_QA_PERF_C1_POSTCHECK_FAILED|INVALID_REMOTE_INVENTORY|INVALID_SNAPSHOT/);
+  }
+});
+
 test('Stories B1 snapshot contract is fail-closed and rejects policy activation or fabricated pass', async () => {
   const adapter = await loadAdapter();
   assert.equal(adapter.assertReadOnlySql(adapter.STORIES_B1_PRE_STATE_SQL), true);
