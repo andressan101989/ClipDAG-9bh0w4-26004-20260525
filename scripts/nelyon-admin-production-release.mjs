@@ -351,7 +351,12 @@ function normalizedHeaders(headers = {}) {
 
 function hasAdminSecurityHeaders(entry) {
   const headers = normalizedHeaders(entry?.headers);
-  return /^no-store(?:,|$)/i.test(headers['cache-control'] ?? '')
+  const cacheControl = new Set((headers['cache-control'] ?? '')
+    .split(',')
+    .map((directive) => directive.trim().toLowerCase())
+    .filter(Boolean));
+  return cacheControl.has('no-store')
+    && cacheControl.has('no-transform')
     && /(?:^|;)\s*frame-ancestors\s+'none'\s*(?:;|$)/i.test(headers['content-security-policy'] ?? '')
     && /^deny$/i.test(headers['x-frame-options'] ?? '')
     && /noindex/i.test(headers['x-robots-tag'] ?? '');

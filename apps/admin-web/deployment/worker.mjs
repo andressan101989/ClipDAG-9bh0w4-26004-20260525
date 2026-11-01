@@ -4,7 +4,7 @@ const spa = createStaticSpaWorker({ mountPath: '/admin' });
 
 function adminHeaders(response, method) {
   const headers = new Headers(response.headers);
-  headers.set('Cache-Control', 'no-store');
+  headers.set('Cache-Control', 'no-store, no-transform');
   headers.set('Content-Security-Policy', "frame-ancestors 'none'");
   headers.set('X-Frame-Options', 'DENY');
   headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
