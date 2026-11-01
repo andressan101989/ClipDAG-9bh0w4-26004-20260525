@@ -222,6 +222,13 @@ function controlCenterState(transition, { installed, concurrentDelta = 0 } = {})
 test('Control Center snapshot uses bounded provenance, permits concurrency, and rejects release attribution', async () => {
   const adapter = await loadAdapter();
   const transition = installedPolicy.superuser_control_center_transition;
+  const preControlCenterPolicy = structuredClone(installedPolicy);
+  preControlCenterPolicy.baseline.sha = transition.baseline_sha;
+  preControlCenterPolicy.baseline.migration_count = 361;
+  preControlCenterPolicy.baseline.latest_migration =
+    '20261029042807_stories_v2_qa_c1_question_answer_authority';
+  preControlCenterPolicy.baseline.evidence_digests.migrations =
+    '2491beef8b04623de0c0c2dffd73aa1b79f57de6cf7f3144590744f2165c6bc9';
   assert.equal(adapter.assertReadOnlySql(adapter.SUPERUSER_CONTROL_CENTER_STATE_SQL), true);
   const approvedSha = 'd'.repeat(40);
   const manifest = {
@@ -235,10 +242,10 @@ test('Control Center snapshot uses bounded provenance, permits concurrency, and 
   const preMigrations = controlCenterMigrations(false);
   const postMigrations = controlCenterMigrations(true);
   const preRequirement = adapter.superuserControlCenterStateRequirement(
-    installedPolicy, manifest, 'pre', { migrations: preMigrations },
+    preControlCenterPolicy, manifest, 'pre', { migrations: preMigrations },
   );
   const postRequirement = adapter.superuserControlCenterStateRequirement(
-    installedPolicy, manifest, 'post', { migrations: postMigrations },
+    preControlCenterPolicy, manifest, 'post', { migrations: postMigrations },
   );
   assert.equal(preRequirement.required, true);
   assert.equal(preRequirement.installed, false);
@@ -252,10 +259,10 @@ test('Control Center snapshot uses bounded provenance, permits concurrency, and 
   const pre = controlCenterState(transition, { installed: false });
   const post = controlCenterState(transition, { installed: true, concurrentDelta: 1 });
   assert.equal(adapter.validateSuperuserControlCenterStateTransition(pre, post, transition), true);
-  const preExceptions = adapter.advisorExceptionsForPhase(installedPolicy, manifest, 'pre', {
+  const preExceptions = adapter.advisorExceptionsForPhase(preControlCenterPolicy, manifest, 'pre', {
     migrations: preMigrations,
   });
-  const postExceptions = adapter.advisorExceptionsForPhase(installedPolicy, manifest, 'post', {
+  const postExceptions = adapter.advisorExceptionsForPhase(preControlCenterPolicy, manifest, 'post', {
     migrations: postMigrations,
   });
   assert.equal(preExceptions.filter(item => item.advisor_fingerprint
@@ -288,6 +295,10 @@ test('Admin recovery post-state requires the exact installed Control Center stat
   const controlledPolicy = structuredClone(installedPolicy);
   const transition = controlledPolicy.superuser_control_center_transition;
   const migrations = controlCenterMigrations(true);
+  controlledPolicy.baseline.sha = transition.baseline_sha;
+  controlledPolicy.baseline.migration_count = 361;
+  controlledPolicy.baseline.latest_migration =
+    '20261029042807_stories_v2_qa_c1_question_answer_authority';
   controlledPolicy.baseline.evidence_digests.migrations = sha256(canonicalJson(
     migrations.items.slice(0, controlledPolicy.baseline.migration_count)
       .map(item => `${item.version}_${item.name}`),
@@ -4598,9 +4609,10 @@ test('baseline phase-effective exceptions replace both historical F2 predecessor
 
 test('current successor RPC attestations require exact definition ACL owner and search_path', async () => {
   const adapter = await loadAdapter();
-  const items = [{
-    version: '20261029042807', name: 'stories_v2_qa_c1_question_answer_authority',
-  }];
+  const items = [
+    { version: '20261029042807', name: 'stories_v2_qa_c1_question_answer_authority' },
+    ...CONTROL_CENTER_MIGRATIONS.map(([version, name]) => ({ version, name })),
+  ];
   const migrations = {
     complete: true, count: items.length, items, latest: items.at(-1), sha256: sha256(canonicalJson(items)),
   };
