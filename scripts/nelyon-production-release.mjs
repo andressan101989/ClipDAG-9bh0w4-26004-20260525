@@ -1119,7 +1119,7 @@ export const SUPERUSER_QA_PERF_C1_RELEASE_TRANSITION = Object.freeze({
   requires_separate_baseline_promotion: true,
 });
 
-const WEB_CONTROL_CENTERS_B1_REVIEWED_SOURCE_SHA = '3eb300096ba14a97f84536b04447a4dfed321bc0';
+const WEB_CONTROL_CENTERS_B1_REVIEWED_SOURCE_SHA = '94006f2e87edb960cbf457ab4313198aadf05c8c';
 const WEB_CONTROL_CENTERS_B1_MIGRATION = Object.freeze({
   version: '20261102065812',
   path: 'supabase/migrations/20261102065812_web_control_centers_b1_publication_drafts.sql',

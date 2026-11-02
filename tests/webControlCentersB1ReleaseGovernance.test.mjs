@@ -6,7 +6,7 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 const root = path.resolve(import.meta.dirname, '..');
-const reviewedSourceSha = '3eb300096ba14a97f84536b04447a4dfed321bc0';
+const reviewedSourceSha = '94006f2e87edb960cbf457ab4313198aadf05c8c';
 const policy = JSON.parse(readFileSync(path.join(root, '.github', 'nelyon-production-release-policy.json'), 'utf8'));
 
 async function load(relative) {
