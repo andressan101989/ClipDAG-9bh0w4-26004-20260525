@@ -2922,15 +2922,105 @@ function webControlCentersB1Transition(policy, manifest) {
   return expected;
 }
 
-function webControlCentersB1StateRequirement(policy, manifest, phase) {
+function webControlCentersB1RecoverySource(policy, manifest, phase, { request, migrations } = {}) {
+  const authority = policy?.web_control_centers_b1_transition;
+  const migration = authority?.migrations?.[0];
+  const migrationName = migration?.path?.split('/').at(-1)?.replace(/\.sql$/u, '');
+  if (phase !== 'recovery' || request?.mode !== 'postcheck_recovery'
+    || request?.scopeConfirmation !== 'POSTCHECK_RECOVERY_READ_ONLY'
+    || String(request?.recoverySourceRunId ?? '') !== '41416609819'
+    || manifest?.identity?.mode !== 'postcheck_recovery'
+    || canonicalJson(manifest?.resources ?? null) !== canonicalJson({
+      config_changed: false,
+      function_contracts: [],
+      functions: [],
+      migrations: [],
+    })) return null;
+  const source = policy?.postcheck_recovery?.approved_sources
+    ?.find(item => item?.run_id === '41416609819');
+  const exactSource = source?.run_attempt === 1
+    && source?.release_id === 'web-control-centers-b1-release-20261102-r5'
+    && source?.source_sha === '2ac206d77f1f4fbebeccfea92171d75d762825a2'
+    && source?.repository === 'andressan101989/ClipDAG-9bh0w4-26004-20260525'
+    && source?.mutation_status === 'completed'
+    && source?.post_snapshot_status === 'success'
+    && source?.postcheck_status === 'failure'
+    && source?.manifest_sha256 === '347f323272ba7fe6454ed9c6b1b0fcd7c651e8738bd3053bbb2d66263837b295'
+    && source?.pre_snapshot_evidence_sha256
+      === '9eea8156338ecd11a92c8ac09ad8dd30ab16152820788417a3bb39f7c7b0c66d'
+    && source?.post_snapshot_evidence_sha256
+      === 'f1f765a344aae446ac15a13160db4b1aa8c89969cce09c6aa7824d99218960f0'
+    && source?.expected_latest_migration === migrationName
+    && source?.expected_migration_count === policy?.baseline?.migration_count + 1
+    && canonicalJson(source?.expected_migrations ?? null) === canonicalJson([
+      { blob: migration?.blob, name: migrationName },
+    ])
+    && canonicalJson(source?.edge_functions ?? null) === canonicalJson([])
+    && canonicalJson(source?.productive_resources ?? null)
+      === canonicalJson([`migration:${migrationName}`]);
+  if (!exactSource || !migrations
+    || !hasExactBaselineMigrationAppend(policy, migrations, migrationName)
+    || source.expected_migrations.some(expected => migrations.items.filter(item => (
+      `${item?.version}_${item?.name}` === expected.name
+    )).length !== 1)) return null;
+  return source;
+}
+
+export function webControlCentersB1StateRequirement(policy, manifest, phase, context = {}) {
+  const code = 'WEB_CONTROL_CENTERS_B1_POSTCHECK_FAILED';
+  if (!['pre','post','recovery'].includes(phase)) fail(code, 'B1 snapshot phase is invalid');
   const transition = webControlCentersB1Transition(policy, manifest);
   const migration = policy?.web_control_centers_b1_transition?.migrations?.[0]?.path
     ?.split('/').at(-1)?.replace(/\.sql$/u, '');
   const promoted = Boolean(migration) && String(policy?.baseline?.latest_migration ?? '') >= migration;
+  const recoveryCandidate = phase === 'recovery'
+    && String(context.request?.recoverySourceRunId ?? '') === '41416609819';
+  const looseItems = Array.isArray(context.migrations?.items) ? context.migrations.items : [];
+  const migrationVersion = migration?.slice(0, 14);
+  const migrationName = migration?.slice(15);
+  const inventoryClaimsB1 = looseItems.some(item => item?.version === migrationVersion
+    || item?.name === migrationName);
+  const evidenceSignalsB1 = context.evidence !== null && typeof context.evidence === 'object'
+    && (Object.prototype.hasOwnProperty.call(context.evidence, 'web_control_centers_b1_state')
+      || (context.evidence?.adapter?.queries ?? []).some(item => (
+        item?.id === 'nelyon-web-control-centers-b1-state-v1'
+      )));
+  let observedInstalled = false;
+  let exactObservedAppend = false;
+  if (migration && context.migrations
+    && (transition || promoted || recoveryCandidate || inventoryClaimsB1 || evidenceSignalsB1)) {
+    try {
+      const items = validateNormalizedMigrations(context.migrations).items;
+      const matching = items.filter(item => baselineMigrationName(item) === migration);
+      observedInstalled = matching.length === 1;
+      if (matching.length > 1) fail(code, 'B1 migration is duplicated');
+      exactObservedAppend = !promoted && observedInstalled
+        && hasExactBaselineMigrationAppend(policy, context.migrations, migration);
+    } catch (error) {
+      if (transition || promoted || recoveryCandidate || inventoryClaimsB1 || evidenceSignalsB1) throw error;
+    }
+  }
+  const recovery = webControlCentersB1RecoverySource(policy, manifest, phase, context);
+  if (transition && phase === 'pre' && observedInstalled) {
+    fail(code, 'B1 pre state already contains the transition migration');
+  }
+  if (transition && phase === 'post' && context.migrations && !observedInstalled) {
+    fail(code, 'B1 post state lacks the reviewed migration');
+  }
+  if (promoted && context.migrations && !observedInstalled) {
+    fail(code, 'promoted B1 baseline lacks the exact migration');
+  }
+  if (phase === 'recovery' && observedInstalled && !promoted && !recovery) {
+    fail(code, 'observed B1 recovery lacks the exact approved read-only source');
+  }
+  const observedForBaselinePromotion = !transition && phase === 'post' && exactObservedAppend;
+  const installed = promoted || Boolean(recovery) || observedForBaselinePromotion
+    || (Boolean(transition) && phase !== 'pre');
   return {
-    required: Boolean(transition) || promoted,
-    installed: promoted || (Boolean(transition) && phase !== 'pre'),
+    required: Boolean(transition) || installed,
+    installed,
     transition,
+    recovery,
     query: WEB_CONTROL_CENTERS_B1_STATE_SQL,
     query_id: 'nelyon-web-control-centers-b1-state-v1',
   };
@@ -4102,7 +4192,11 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     migrations: evidence?.migrations,
   });
   const requirePerfC1 = perfC1Requirement.required;
-  const webB1Requirement = webControlCentersB1StateRequirement(policy, manifest, phase);
+  const webB1Requirement = webControlCentersB1StateRequirement(policy, manifest, phase, {
+    evidence,
+    request,
+    migrations: evidence?.migrations,
+  });
   const requireWebB1 = webB1Requirement.required;
   exactKeys(evidence, [
     'adapter', 'backup', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
@@ -4575,6 +4669,16 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
     validateStoriesQaC1InstalledState(evidence.stories_qa_c1_state,
       policy?.stories_qa_c1_transition);
   }
+  const webB1Requirement = webControlCentersB1StateRequirement(policy, null, 'post', {
+    evidence,
+    migrations: evidence.migrations,
+  });
+  if (webB1Requirement.required) {
+    validateWebControlCentersB1InstalledState(
+      evidence.web_control_centers_b1_state,
+      policy?.web_control_centers_b1_transition,
+    );
+  }
   const attestedRpcIdentities = new Set((evidence.rpc_security?.items ?? []).map(rpcIdentity));
   if (storiesB1Installed) {
     const expectedStoriesRpcIdentities = storiesAdvisor.introduced_exceptions
@@ -4582,6 +4686,15 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
       .map(exception => rpcIdentity(exception.object));
     if (expectedStoriesRpcIdentities.some(identity => !attestedRpcIdentities.has(identity))) {
       fail('REMOTE_BASELINE_MISMATCH', 'Stories B1 RPC authority evidence is incomplete');
+    }
+  }
+  if (webB1Requirement.required) {
+    const expectedWebB1RpcIdentities = (policy?.web_control_centers_b1_transition
+      ?.rpc_attestations ?? []).map(item => item.identity.replaceAll(' ', ''));
+    if (expectedWebB1RpcIdentities.length !== 7
+      || new Set(expectedWebB1RpcIdentities).size !== expectedWebB1RpcIdentities.length
+      || expectedWebB1RpcIdentities.some(identity => !attestedRpcIdentities.has(identity))) {
+      fail('REMOTE_BASELINE_MISMATCH', 'B1 RPC authority evidence is incomplete');
     }
   }
   const effectiveExceptions = advisorExceptionsForPhase(policy, null, 'post', {
@@ -4867,7 +4980,11 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
       post.web_control_centers_b1_state,
       webB1Transition,
     );
-  } else if (webControlCentersB1StateRequirement(policy, manifest, 'post').required) {
+  } else if (webControlCentersB1StateRequirement(policy, manifest, 'post', {
+    request,
+    migrations: post.migrations,
+    evidence: post,
+  }).required) {
     validateWebControlCentersB1InstalledState(
       post.web_control_centers_b1_state,
       policy?.web_control_centers_b1_transition,
@@ -5099,6 +5216,16 @@ export function verifyProductionRecoverySnapshot({ recovery, policy, request, ma
   }).required) {
     validateStoriesQaC1InstalledState(recovery.stories_qa_c1_state,
       policy?.stories_qa_c1_transition);
+  }
+  if (webControlCentersB1StateRequirement(policy, manifest, 'recovery', {
+    evidence: recovery,
+    request,
+    migrations: recovery.migrations,
+  }).required) {
+    validateWebControlCentersB1InstalledState(
+      recovery.web_control_centers_b1_state,
+      policy?.web_control_centers_b1_transition,
+    );
   }
   return {
     result: 'RECOVERY_SNAPSHOT_VERIFIED',
@@ -5477,6 +5604,10 @@ function exactRecoveryAuthorityPhase(policy, manifest, phase, { request, migrati
       expectedLatestMigration: '20261101181907_superuser_qa_perf_c1',
       phase: 'f5_autonomous',
     }],
+    ['41416609819', {
+      expectedLatestMigration: '20261102065812_web_control_centers_b1_publication_drafts',
+      phase: 'f5_autonomous',
+    }],
   ]);
   const requestedRunId = String(request?.recoverySourceRunId ?? '');
   const recovery = recoveryPhases.get(requestedRunId);
@@ -5684,7 +5815,7 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
         && !additionFingerprints.has(item?.advisor_fingerprint)), ...additions];
     }
   }
-  const webB1Requirement = webControlCentersB1StateRequirement(policy, manifest, phase);
+  const webB1Requirement = webControlCentersB1StateRequirement(policy, manifest, phase, context);
   if (webB1Requirement.required && webB1Requirement.installed) {
     const authority = policy?.web_control_centers_b1_transition;
     const additions = authority?.security_advisor?.introduced_exceptions;
@@ -6122,7 +6253,10 @@ export async function captureProductionSnapshot({
   const perfC1Requirement = superuserQaPerfC1StateRequirement(
     policy, manifest, phase, { request, migrations },
   );
-  const webB1Requirement = webControlCentersB1StateRequirement(policy, manifest, phase);
+  const webB1Requirement = webControlCentersB1StateRequirement(policy, manifest, phase, {
+    request,
+    migrations,
+  });
   if (storiesRequirement.required) assertReadOnlySql(storiesQuery);
   if (storiesSafetyRequirement.required) assertReadOnlySql(storiesSafetyRequirement.query);
   if (storiesSafetyC2Requirement.required) assertReadOnlySql(storiesSafetyC2Authority.query);

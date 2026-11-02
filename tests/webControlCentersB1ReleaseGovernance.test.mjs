@@ -150,3 +150,94 @@ test('B1 Advisor exceptions are exact, unique and cover seven authenticated RPCs
     assert.equal(item.origin.source_sha, transition.reviewed_source_sha);
   }
 });
+
+test('B1 Advisor fingerprints match the provider function shape without a fabricated metadata type', async () => {
+  const adapter = await load('scripts/nelyon-production-snapshot-adapter.mjs');
+  const transition = policy.web_control_centers_b1_transition;
+  const rpcExceptions = new Map(transition.security_advisor.introduced_exceptions
+    .filter(item => Array.isArray(item.object.argument_types))
+    .map(item => [item.object.name, item]));
+  assert.equal(rpcExceptions.size, 7);
+  for (const rpc of transition.rpc_attestations) {
+    const name = rpc.identity.slice(rpc.identity.indexOf('.') + 1, rpc.identity.indexOf('('));
+    const lint = {
+      name: 'authenticated_security_definer_function_executable',
+      level: 'WARN',
+      facing: 'EXTERNAL',
+      categories: ['SECURITY'],
+      metadata: {
+        schema: 'public',
+        name,
+        arguments: rpc.identity_arguments,
+        language: 'plpgsql',
+        security_definer: true,
+      },
+    };
+    const normalized = adapter.normalizeSecurityAdvisors({ lints: [lint] }).items[0];
+    assert.equal(normalized.fingerprint, rpc.advisor_fingerprint);
+    assert.equal(normalized.fingerprint, rpcExceptions.get(name).advisor_fingerprint);
+    const fabricated = adapter.normalizeSecurityAdvisors({
+      lints: [{ ...lint, metadata: { ...lint.metadata, type: 'function' } }],
+    }).items[0];
+    assert.notEqual(fabricated.fingerprint, normalized.fingerprint);
+  }
+});
+
+test('B1 recovery selector accepts only the exact zero-resource source and one migration append', async () => {
+  const compiler = await load('scripts/nelyon-production-release.mjs');
+  const adapter = await load('scripts/nelyon-production-snapshot-adapter.mjs');
+  const controlled = structuredClone(policy);
+  const source = controlled.postcheck_recovery.approved_sources
+    .find(item => item.run_id === '41416609819');
+  assert.ok(source);
+  assert.equal(compiler.validateRecoverySource(source), true);
+  const baselineItem = { version: '20261101181907', name: 'superuser_qa_perf_c1' };
+  const b1Item = { version: '20261102065812', name: 'web_control_centers_b1_publication_drafts' };
+  controlled.baseline.migration_count = 1;
+  controlled.baseline.latest_migration = `${baselineItem.version}_${baselineItem.name}`;
+  controlled.baseline.evidence_digests.migrations = compiler.sha256Hex(
+    compiler.canonicalJson([`${baselineItem.version}_${baselineItem.name}`]),
+  );
+  source.expected_migration_count = 2;
+  const items = [baselineItem, b1Item];
+  const migrations = {
+    complete: true,
+    count: items.length,
+    items,
+    latest: b1Item,
+    sha256: compiler.sha256Hex(compiler.canonicalJson(items)),
+  };
+  const request = {
+    mode: 'postcheck_recovery',
+    scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
+    recoverySourceRunId: '41416609819',
+  };
+  const manifest = {
+    identity: { mode: 'postcheck_recovery' },
+    resources: { config_changed: false, function_contracts: [], functions: [], migrations: [] },
+  };
+  const requirement = adapter.webControlCentersB1StateRequirement(
+    controlled, manifest, 'recovery', { request, migrations },
+  );
+  assert.equal(requirement.required, true);
+  assert.equal(requirement.installed, true);
+  assert.equal(requirement.recovery.run_id, '41416609819');
+  for (const mutate of [
+    value => { value.request.recoverySourceRunId = '41416609818'; },
+    value => { value.request.scopeConfirmation = 'RELEASE_HIGH_RISK'; },
+    value => { value.manifest.resources.migrations.push({ path: 'forbidden.sql' }); },
+    value => { value.migrations.items.push(structuredClone(b1Item)); value.migrations.count += 1;
+      value.migrations.latest = structuredClone(b1Item);
+      value.migrations.sha256 = compiler.sha256Hex(compiler.canonicalJson(value.migrations.items)); },
+  ]) {
+    const hostile = { request: structuredClone(request), manifest: structuredClone(manifest),
+      migrations: structuredClone(migrations) };
+    mutate(hostile);
+    assert.throws(() => adapter.webControlCentersB1StateRequirement(
+      controlled, hostile.manifest, 'recovery', {
+        request: hostile.request,
+        migrations: hostile.migrations,
+      },
+    ), /WEB_CONTROL_CENTERS_B1_POSTCHECK_FAILED|INVALID_REMOTE_INVENTORY/);
+  }
+});

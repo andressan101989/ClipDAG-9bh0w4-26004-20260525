@@ -3574,7 +3574,7 @@ test('phase-bound migration omission is bound to the exact reviewed blob and sou
 
 test('recovery source is exact immutable failed-postcheck authority', async () => {
   const { gate, policy } = await loadGateAndPolicy();
-  assert.equal(policy.postcheck_recovery.approved_sources.length, 10);
+  assert.equal(policy.postcheck_recovery.approved_sources.length, 11);
   for (const source of policy.postcheck_recovery.approved_sources) {
     assert.equal(gate.validateRecoverySource(source), true);
     assert.ok(source.expected_migrations.length >= 1);
@@ -3733,6 +3733,41 @@ test('recovery source is exact immutable failed-postcheck authority', async () =
     expected_latest_migration: '20261101181907_superuser_qa_perf_c1',
     edge_functions: [],
     productive_resources: ['migration:20261101181907_superuser_qa_perf_c1'],
+    premium_relation_security_sha256: 'a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0',
+    premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
+  });
+  const webControlCentersB1Source = policy.postcheck_recovery.approved_sources
+    .find(item => item.run_id === '41416609819');
+  assert.deepEqual(webControlCentersB1Source, {
+    run_id: '41416609819',
+    run_attempt: 1,
+    release_id: 'web-control-centers-b1-release-20261102-r5',
+    source_sha: '2ac206d77f1f4fbebeccfea92171d75d762825a2',
+    repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+    mutation_status: 'completed',
+    post_snapshot_status: 'success',
+    postcheck_status: 'failure',
+    gate_artifact: {
+      id: '13128086254',
+      name: 'nelyon-gate-evidence-41416609819-1',
+      digest: 'sha256:25304100c19cb4e6471d0ea4ab675037843633d458c9e4f3b3e03f92fba7db20',
+    },
+    release_artifact: {
+      id: '13128101062',
+      name: 'nelyon-release-41416609819-1',
+      digest: 'sha256:25e644f232d45769ee30f5ba59e60fba3824508d2a79933d6c3eaa8de03672e2',
+    },
+    manifest_sha256: '347f323272ba7fe6454ed9c6b1b0fcd7c651e8738bd3053bbb2d66263837b295',
+    pre_snapshot_evidence_sha256: '9eea8156338ecd11a92c8ac09ad8dd30ab16152820788417a3bb39f7c7b0c66d',
+    post_snapshot_evidence_sha256: 'f1f765a344aae446ac15a13160db4b1aa8c89969cce09c6aa7824d99218960f0',
+    expected_migrations: [{
+      blob: 'd12f7b10a64d7eeb55d9347dff30c7d4cb3303d3',
+      name: '20261102065812_web_control_centers_b1_publication_drafts',
+    }],
+    expected_migration_count: 366,
+    expected_latest_migration: '20261102065812_web_control_centers_b1_publication_drafts',
+    edge_functions: [],
+    productive_resources: ['migration:20261102065812_web_control_centers_b1_publication_drafts'],
     premium_relation_security_sha256: 'a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0',
     premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
   });

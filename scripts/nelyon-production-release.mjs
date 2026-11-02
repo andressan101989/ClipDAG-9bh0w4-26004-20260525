@@ -12,6 +12,7 @@ import {
   normalizeCronCommand,
   projectCronBaselineItems,
   projectProductionBaselineFinance,
+  validateWebControlCentersB1InstalledState,
   verifyAdminRecoveryInfrastructurePostState,
   verifyProductionAdminRecoverySnapshot,
   verifyProductionPreSnapshot,
@@ -1160,31 +1161,31 @@ const WEB_CONTROL_CENTERS_B1_RPCS = Object.freeze([
   ['public.create_my_publication_draft_v1(uuid,text,text,text,jsonb,uuid[])',
     '2d48fd7299c8f9ce98f6d7dff3c72cd99fcf8c3a790ad65688cf8dc2ae005b88', 'v',
     'p_client_request_id uuid, p_kind text, p_caption text, p_music text, p_composition jsonb, p_asset_ids uuid[]',
-    ['uuid','text','text','text','jsonb','uuid[]'], 'cbe89884dd9af12bebf783f08be9db6896247ec13f056b5cc8c1c84f0f5c307d'],
+    ['uuid','text','text','text','jsonb','uuid[]'], '0a1ab69763e5bd7c53e24688c152086c7b1fb704d87425b7c3fc68627c93b76c'],
   ['public.delete_my_publication_draft_v1(uuid,bigint,uuid)',
     'f420e32b58d5f797653d7083bf69d687950f290c719b6db6e4032c2efb08a100', 'v',
     'p_draft_id uuid, p_expected_revision bigint, p_client_mutation_id uuid',
-    ['uuid','bigint','uuid'], '49074e5ce41752c654331d1925fcbcab8998b3a5f2f46eba2a534504977a2071'],
+    ['uuid','bigint','uuid'], 'efd6ee5a2807e75e93eb533f858021f0f4bf27b96dbd2ba6e1fd805c0ad2409f'],
   ['public.get_my_publication_draft_v1(uuid)',
     'e9000082b39327886e56d6d84d5725c4735248ca313ca5a1d8fa64d5b3772f17', 's',
-    'p_draft_id uuid', ['uuid'], 'adc6f9953e043962bc816ded157494607de7f751d9b8c87b24aff5e28a6acdf0'],
+    'p_draft_id uuid', ['uuid'], '373f1f947894cf0096cb297f5882451fdf7b02fb61009298ee689b4b172aac4f'],
   ['public.list_my_publication_drafts_v1(integer,timestampwithtimezone,uuid)',
     '4a826e0ac92c77dfe7e10f725f1278152bbd7e544763c809f34007c1d1b53ff1', 's',
     'p_limit integer, p_cursor_updated_at timestamp with time zone, p_cursor_id uuid',
-    ['integer','timestamp with time zone','uuid'], '9b9c2e41dcc86a7c74bba9a95d6be25d87f6e0f1cf21cb5118dea359427d2688'],
+    ['integer','timestamp with time zone','uuid'], '32370dc3b431acac6f74e8d9e3f99d0bf6050b128dc5ff7bd797306310352d16'],
   ['public.publish_my_media_post_v1(uuid,text,text,text,uuid[])',
     '54b53bb1c99cf6ffd63b19d2125368b06d944b3fb1f0761ec575a3cfd48c641d', 'v',
     'p_client_command_id uuid, p_kind text, p_caption text, p_music text, p_asset_ids uuid[]',
-    ['uuid','text','text','text','uuid[]'], '958777a41b4782888b6545cb80877103d223bd880d30d7954848ee3be1e642ae'],
+    ['uuid','text','text','text','uuid[]'], 'aede65cb0c2218d113c3583ff2c9dd47154bb71a06a07031092b8eb1f0598361'],
   ['public.publish_my_publication_draft_v1(uuid,bigint,uuid,uuid[])',
     '97a23af064fb62450c3885c28be1a7da76d3d0de3786b7ed792066fdc159e708', 'v',
     'p_draft_id uuid, p_expected_revision bigint, p_client_command_id uuid, p_public_asset_ids uuid[]',
-    ['uuid','bigint','uuid','uuid[]'], '224b0d408455a2ee20c2ef6bbaa499416b6630779b912a8d2e1402acead8627f'],
+    ['uuid','bigint','uuid','uuid[]'], '4fc7c5ae6e14a99c537d0857b2c257e86a3d5267ec1c49cfcfed5f0dd0276181'],
   ['public.update_my_publication_draft_v1(uuid,bigint,uuid,text,text,text,jsonb,uuid[])',
     '86f1c7276f4f94e34c82e6a33c183a1aae8f1cb5decc189f97757ffbf3fd5a88', 'v',
     'p_draft_id uuid, p_expected_revision bigint, p_client_mutation_id uuid, p_kind text, p_caption text, p_music text, p_composition jsonb, p_asset_ids uuid[]',
     ['uuid','bigint','uuid','text','text','text','jsonb','uuid[]'],
-    'f3fa89fb11ae3ef250072513ea2d549272a49a240f7059482f7d01012538ab06'],
+    'b2391c6357cac8e3bbbeee5228fea05c92ee5a6378c2b14d12b1d3d9ceb267ab'],
 ].map(([identity, hash, volatility, identityArguments, argumentTypes, fingerprint]) => ({
   ...b1Function(identity, hash, volatility, true, true),
   identity_arguments: identityArguments,
@@ -1842,6 +1843,38 @@ const EXPECTED_RECOVERY_SOURCES = [{
   expected_latest_migration: '20261101181907_superuser_qa_perf_c1',
   edge_functions: [],
   productive_resources: ['migration:20261101181907_superuser_qa_perf_c1'],
+  premium_relation_security_sha256: 'a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0',
+  premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
+}, {
+  run_id: '41416609819',
+  run_attempt: 1,
+  release_id: 'web-control-centers-b1-release-20261102-r5',
+  source_sha: '2ac206d77f1f4fbebeccfea92171d75d762825a2',
+  repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+  mutation_status: 'completed',
+  post_snapshot_status: 'success',
+  postcheck_status: 'failure',
+  gate_artifact: {
+    id: '13128086254',
+    name: 'nelyon-gate-evidence-41416609819-1',
+    digest: 'sha256:25304100c19cb4e6471d0ea4ab675037843633d458c9e4f3b3e03f92fba7db20',
+  },
+  release_artifact: {
+    id: '13128101062',
+    name: 'nelyon-release-41416609819-1',
+    digest: 'sha256:25e644f232d45769ee30f5ba59e60fba3824508d2a79933d6c3eaa8de03672e2',
+  },
+  manifest_sha256: '347f323272ba7fe6454ed9c6b1b0fcd7c651e8738bd3053bbb2d66263837b295',
+  pre_snapshot_evidence_sha256: '9eea8156338ecd11a92c8ac09ad8dd30ab16152820788417a3bb39f7c7b0c66d',
+  post_snapshot_evidence_sha256: 'f1f765a344aae446ac15a13160db4b1aa8c89969cce09c6aa7824d99218960f0',
+  expected_migrations: [{
+    blob: 'd12f7b10a64d7eeb55d9347dff30c7d4cb3303d3',
+    name: '20261102065812_web_control_centers_b1_publication_drafts',
+  }],
+  expected_migration_count: 366,
+  expected_latest_migration: '20261102065812_web_control_centers_b1_publication_drafts',
+  edge_functions: [],
+  productive_resources: ['migration:20261102065812_web_control_centers_b1_publication_drafts'],
   premium_relation_security_sha256: 'a342b0c22f952cc09160b231e96a109fd096750ffa8a883844f581c5238703b0',
   premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
 }];
@@ -5502,6 +5535,7 @@ export function verifyPostcheckRecovery({
       ? 'superuser_qa_perf_c1_transition'
       : null;
   const storiesB1Recovery = source.run_id === '40473092474';
+  const webControlCentersB1Recovery = source.run_id === '41416609819';
   if (adminRecoveryTransitionKey) {
     try {
       verifyAdminRecoveryInfrastructurePostState({
@@ -5547,7 +5581,8 @@ export function verifyPostcheckRecovery({
       version: actual.version,
     };
   });
-  if (['40166468648', '40268500711', '40324910390', '40473092474'].includes(source.run_id)) {
+  if (['40166468648', '40268500711', '40324910390', '40473092474', '41416609819']
+    .includes(source.run_id)) {
     const transitionBaselineRunId = source.run_id === '40166468648'
       ? '40139736749'
       : source.run_id === '40324910390'
@@ -5579,6 +5614,17 @@ export function verifyPostcheckRecovery({
     }
   }
 
+  if (webControlCentersB1Recovery) {
+    try {
+      validateWebControlCentersB1InstalledState(
+        currentEvidence.web_control_centers_b1_state,
+        policy?.web_control_centers_b1_transition,
+      );
+    } catch (error) {
+      deny(code, String(error?.message ?? 'Web Control Centers B1 recovery post-state verification failed'));
+    }
+  }
+
   const advisorItems = currentEvidence.cron_security.advisors.items;
   const recoveryExceptions = advisorExceptionsForPhase(policy, recoveryManifest, 'recovery', {
     request: recoveryRequest,
@@ -5595,7 +5641,8 @@ export function verifyPostcheckRecovery({
     code,
   });
   let baselineCronItems = currentEvidence.cron_security.cron.items;
-  const postF5Recovery = ['40324910390', '40473092474', '41243646356', '41351597413']
+  const postF5Recovery = ['40324910390', '40473092474', '41243646356', '41351597413',
+    '41416609819']
     .includes(source.run_id);
   if (postF5Recovery) {
     const currentCron = currentEvidence.cron_security.cron;
@@ -5714,6 +5761,9 @@ export function verifyPostcheckRecovery({
       : {}),
     ...(adminRecoveryTransitionKey === 'superuser_qa_perf_c1_transition'
       ? { superuser_qa_perf_c1_state: currentEvidence.superuser_qa_perf_c1_state }
+      : {}),
+    ...(webControlCentersB1Recovery
+      ? { web_control_centers_b1_state: currentEvidence.web_control_centers_b1_state }
       : {}),
   };
 }
