@@ -1119,6 +1119,162 @@ export const SUPERUSER_QA_PERF_C1_RELEASE_TRANSITION = Object.freeze({
   requires_separate_baseline_promotion: true,
 });
 
+const WEB_CONTROL_CENTERS_B1_REVIEWED_SOURCE_SHA = '3eb300096ba14a97f84536b04447a4dfed321bc0';
+const WEB_CONTROL_CENTERS_B1_MIGRATION = Object.freeze({
+  version: '20261102065812',
+  path: 'supabase/migrations/20261102065812_web_control_centers_b1_publication_drafts.sql',
+  blob: 'd12f7b10a64d7eeb55d9347dff30c7d4cb3303d3',
+  sha256: '99717e6ff7902e3bff2ed242237d28313b2c822b1a63975756ba9bbd6e60bc99',
+  byte_length: 37397,
+});
+const b1Execute = authenticated => ({
+  anon: false, authenticated, public: false, service_role: false,
+});
+const b1Acl = authenticated => [
+  ...(authenticated ? [{ grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false }] : []),
+  { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+];
+const b1Function = (identity, definition_sha256, volatility, security_definer, authenticated = false) => ({
+  identity, definition_sha256, owner: 'postgres', volatility, security_definer,
+  search_path: ['search_path=""'], execute: b1Execute(authenticated), acl: b1Acl(authenticated),
+});
+const WEB_CONTROL_CENTERS_B1_HELPERS = Object.freeze([
+  b1Function('private.guard_publication_draft_command_immutable_v1()',
+    '499daaa13a47457c43b82d077c64be5d6827e5e0d958912423a3c049cd83d4da', 'v', false),
+  b1Function('private.guard_publication_draft_media_v1()',
+    'a8a5d194bc100d7cc28b4c7c081751b78eb577ce1dcfd9cc17fc8eb7b037b5f8', 'v', true),
+  b1Function('private.guard_publication_draft_mutation_v1()',
+    '5dd40a6f050cf4b187ce36c95c6bd171e6dacad61c65bafea7253819db353988', 'v', false),
+  b1Function('private.guard_publication_receipt_immutable_v1()',
+    '78dcd496d53985a34f98683fa3f9ccf56f0e3f288dc71c6c7188aab46abf3305', 'v', false),
+  b1Function('private.publication_draft_composition_safe_v1(jsonb)',
+    'c115d174247d5fff687449c482de336c56e9368f99768633ca3fa2e4576479b0', 'i', false),
+  b1Function('private.publication_draft_json_v1(private.publication_drafts)',
+    '1be7b4597dfeae9741ae309aeb138c7caa5390dc91500a70bf0a7283e9f4e85a', 's', true),
+  b1Function('private.publication_draft_payload_fingerprint_v1(text,text,text,text,jsonb,uuid[],bigint,uuid)',
+    '80af2c42d14c381c207c8abd51422ded4dc465f38f6bd1a12fc182b28ec67aee', 'i', false),
+  b1Function('private.require_publication_asset_set_v1(uuid,text,uuid[],text)',
+    'aded1ef320f4bbc7237f253c8158b92903502927359004f365448a3f4800aa24', 'v', true),
+]);
+const WEB_CONTROL_CENTERS_B1_RPCS = Object.freeze([
+  ['public.create_my_publication_draft_v1(uuid,text,text,text,jsonb,uuid[])',
+    '2d48fd7299c8f9ce98f6d7dff3c72cd99fcf8c3a790ad65688cf8dc2ae005b88', 'v',
+    'p_client_request_id uuid, p_kind text, p_caption text, p_music text, p_composition jsonb, p_asset_ids uuid[]',
+    ['uuid','text','text','text','jsonb','uuid[]'], 'cbe89884dd9af12bebf783f08be9db6896247ec13f056b5cc8c1c84f0f5c307d'],
+  ['public.delete_my_publication_draft_v1(uuid,bigint,uuid)',
+    'f420e32b58d5f797653d7083bf69d687950f290c719b6db6e4032c2efb08a100', 'v',
+    'p_draft_id uuid, p_expected_revision bigint, p_client_mutation_id uuid',
+    ['uuid','bigint','uuid'], '49074e5ce41752c654331d1925fcbcab8998b3a5f2f46eba2a534504977a2071'],
+  ['public.get_my_publication_draft_v1(uuid)',
+    'e9000082b39327886e56d6d84d5725c4735248ca313ca5a1d8fa64d5b3772f17', 's',
+    'p_draft_id uuid', ['uuid'], 'adc6f9953e043962bc816ded157494607de7f751d9b8c87b24aff5e28a6acdf0'],
+  ['public.list_my_publication_drafts_v1(integer,timestampwithtimezone,uuid)',
+    '4a826e0ac92c77dfe7e10f725f1278152bbd7e544763c809f34007c1d1b53ff1', 's',
+    'p_limit integer, p_cursor_updated_at timestamp with time zone, p_cursor_id uuid',
+    ['integer','timestamp with time zone','uuid'], '9b9c2e41dcc86a7c74bba9a95d6be25d87f6e0f1cf21cb5118dea359427d2688'],
+  ['public.publish_my_media_post_v1(uuid,text,text,text,uuid[])',
+    '54b53bb1c99cf6ffd63b19d2125368b06d944b3fb1f0761ec575a3cfd48c641d', 'v',
+    'p_client_command_id uuid, p_kind text, p_caption text, p_music text, p_asset_ids uuid[]',
+    ['uuid','text','text','text','uuid[]'], '958777a41b4782888b6545cb80877103d223bd880d30d7954848ee3be1e642ae'],
+  ['public.publish_my_publication_draft_v1(uuid,bigint,uuid,uuid[])',
+    '97a23af064fb62450c3885c28be1a7da76d3d0de3786b7ed792066fdc159e708', 'v',
+    'p_draft_id uuid, p_expected_revision bigint, p_client_command_id uuid, p_public_asset_ids uuid[]',
+    ['uuid','bigint','uuid','uuid[]'], '224b0d408455a2ee20c2ef6bbaa499416b6630779b912a8d2e1402acead8627f'],
+  ['public.update_my_publication_draft_v1(uuid,bigint,uuid,text,text,text,jsonb,uuid[])',
+    '86f1c7276f4f94e34c82e6a33c183a1aae8f1cb5decc189f97757ffbf3fd5a88', 'v',
+    'p_draft_id uuid, p_expected_revision bigint, p_client_mutation_id uuid, p_kind text, p_caption text, p_music text, p_composition jsonb, p_asset_ids uuid[]',
+    ['uuid','bigint','uuid','text','text','text','jsonb','uuid[]'],
+    'f3fa89fb11ae3ef250072513ea2d549272a49a240f7059482f7d01012538ab06'],
+].map(([identity, hash, volatility, identityArguments, argumentTypes, fingerprint]) => ({
+  ...b1Function(identity, hash, volatility, true, true),
+  identity_arguments: identityArguments,
+  argument_types: argumentTypes,
+  advisor_fingerprint: fingerprint,
+})));
+const WEB_CONTROL_CENTERS_B1_TABLE_ACL = Object.freeze({
+  anon: false, authenticated: false, public: false, service_role: false,
+});
+const WEB_CONTROL_CENTERS_B1_RELATIONS = Object.freeze([
+  'publication_draft_commands','publication_drafts','publication_receipts',
+].map(name => ({ schema: 'private', name, owner: 'postgres', relation_kind: 'r',
+  rls_enabled: true, force_rls: true, acl: WEB_CONTROL_CENTERS_B1_TABLE_ACL })));
+const WEB_CONTROL_CENTERS_B1_MEDIA = Object.freeze({
+  entity_type_constraint: "CHECK (entity_type = ANY (ARRAY['user_profile'::text, 'video_post'::text, 'story'::text, 'chat_message'::text, 'shop_product'::text, 'exclusive_content'::text, 'marketplace_store'::text, 'marketplace_dispute'::text, 'marketplace_return_shipment'::text, 'creator_premium_content'::text, 'publication_draft'::text]))",
+  policies: [
+    { schema: 'public', table: 'media_asset_links', name: 'media_asset_links_owner_read',
+      permissive: 'PERMISSIVE', roles: ['authenticated'], command: 'SELECT',
+      qual: "((entity_type <> ALL (ARRAY['story'::text, 'creator_premium_content'::text, 'publication_draft'::text])) AND (EXISTS ( SELECT 1\n   FROM media_assets asset\n  WHERE ((asset.id = media_asset_links.asset_id) AND (asset.owner_id = ( SELECT auth.uid() AS uid))))))",
+      with_check: null },
+    { schema: 'public', table: 'media_asset_links', name: 'media_asset_links_public_read',
+      permissive: 'PERMISSIVE', roles: ['anon','authenticated'], command: 'SELECT',
+      qual: "((entity_type <> ALL (ARRAY['story'::text, 'creator_premium_content'::text, 'publication_draft'::text])) AND (EXISTS ( SELECT 1\n   FROM media_assets asset\n  WHERE ((asset.id = media_asset_links.asset_id) AND (asset.visibility = 'public'::text) AND (asset.status = 'ready'::text)))))",
+      with_check: null },
+  ],
+  indexes: [
+    { schema: 'public', table: 'media_asset_links', name: 'publication_draft_media_asset_uidx',
+      owner: 'postgres', definition: "CREATE UNIQUE INDEX publication_draft_media_asset_uidx ON public.media_asset_links USING btree (asset_id) WHERE (entity_type = 'publication_draft'::text)",
+      valid: true, ready: true, unique: true, primary: false },
+    { schema: 'public', table: 'media_asset_links', name: 'publication_draft_media_position_uidx',
+      owner: 'postgres', definition: "CREATE UNIQUE INDEX publication_draft_media_position_uidx ON public.media_asset_links USING btree (entity_id, \"position\") WHERE (entity_type = 'publication_draft'::text)",
+      valid: true, ready: true, unique: true, primary: false },
+  ],
+  triggers: [{ schema: 'public', table: 'media_asset_links', name: 'media_asset_links_guard_publication_draft',
+    enabled: 'O', function_identity: 'private.guard_publication_draft_media_v1()',
+    definition_sha256: '96b9b7dbdecf578ae8f5e544f5893e002764b3e4400747ed45e49a53826710ff' }],
+});
+const WEB_CONTROL_CENTERS_B1_PRE_MEDIA = Object.freeze({
+  entity_type_constraint: "CHECK (entity_type = ANY (ARRAY['user_profile'::text, 'video_post'::text, 'story'::text, 'chat_message'::text, 'shop_product'::text, 'exclusive_content'::text, 'marketplace_store'::text, 'marketplace_dispute'::text, 'marketplace_return_shipment'::text, 'creator_premium_content'::text]))",
+  policies: WEB_CONTROL_CENTERS_B1_MEDIA.policies.map(policy => ({ ...policy,
+    qual: policy.qual.replace(", 'publication_draft'::text", '') })),
+  indexes: [], triggers: [],
+});
+const WEB_CONTROL_CENTERS_B1_ORIGIN = Object.freeze({
+  migration: '20261102065812_web_control_centers_b1_publication_drafts',
+  migration_blob: WEB_CONTROL_CENTERS_B1_MIGRATION.blob,
+  source_sha: WEB_CONTROL_CENTERS_B1_REVIEWED_SOURCE_SHA,
+});
+const WEB_CONTROL_CENTERS_B1_ADVISOR_EXCEPTIONS = Object.freeze([
+  ...WEB_CONTROL_CENTERS_B1_RPCS.map(item => ({
+    advisor_fingerprint: item.advisor_fingerprint,
+    advisor_type: 'authenticated_security_definer_function_executable', advisor_severity: 'WARN',
+    object: { schema: 'public', name: item.identity.slice(7, item.identity.indexOf('(')),
+      argument_types: item.argument_types, identity_arguments: item.identity_arguments },
+    attestation: { security_definer: item.security_definer, owner: item.owner,
+      search_path: item.search_path, acl: item.acl, execute: item.execute,
+      definition_sha256: item.definition_sha256 },
+    origin: WEB_CONTROL_CENTERS_B1_ORIGIN,
+  })),
+  ...[
+    ['publication_draft_commands','3918834b4c171d60b18574d673ec4e5dbac6138cf2a9997c2440162c5c1be481'],
+    ['publication_drafts','8bb642f9b8e5376546330fc03937409376c206b08d5ed321e8cf5053eec1eefb'],
+    ['publication_receipts','677403a7d99487e3e4db6eec38b550ef8405eb620170959c96d9bc64e0148df6'],
+  ].map(([name, advisor_fingerprint]) => ({ advisor_fingerprint, advisor_type: 'table',
+    advisor_severity: 'INFO', object: { schema: 'private', name }, origin: WEB_CONTROL_CENTERS_B1_ORIGIN })),
+]);
+
+export const WEB_CONTROL_CENTERS_B1_RELEASE_TRANSITION = Object.freeze({
+  id: 'web-control-centers-b1-publication-drafts-v1',
+  from_phase: 'superuser_qa_perf_c1', to_phase: 'web_control_centers_b1',
+  baseline_sha: '9010894cb37cd10df4ab0eae5b849143fd2222fd',
+  integration_base_sha: 'a7d93778f94c677440fdfe172dc679b5dd5f1c91',
+  reviewed_source_sha: WEB_CONTROL_CENTERS_B1_REVIEWED_SOURCE_SHA,
+  approved_sha_ancestry: 'verified_integration_base',
+  migrations: [WEB_CONTROL_CENTERS_B1_MIGRATION],
+  productive_paths: [WEB_CONTROL_CENTERS_B1_MIGRATION.path],
+  functions: [], config_changed: false,
+  rpc_attestations: WEB_CONTROL_CENTERS_B1_RPCS.map(item => {
+    const { argument_types, advisor_fingerprint, identity_arguments, ...attestation } = item;
+    return { ...attestation, argument_types, identity_arguments, advisor_fingerprint };
+  }),
+  catalog: { relations: WEB_CONTROL_CENTERS_B1_RELATIONS, helpers: WEB_CONTROL_CENTERS_B1_HELPERS,
+    media_asset_links: WEB_CONTROL_CENTERS_B1_MEDIA },
+  predecessor_media_asset_links: WEB_CONTROL_CENTERS_B1_PRE_MEDIA,
+  security_advisor: { introduced_exceptions: WEB_CONTROL_CENTERS_B1_ADVISOR_EXCEPTIONS },
+  finance_policy: { platform_fee_bps: 2000, purchase_enabled: true,
+    refunds_enabled: true, subscription_enabled: true },
+  requires_separate_baseline_promotion: true,
+});
+
 export const STORIES_SAFETY_C1_RELEASE_TRANSITION = Object.freeze({
   id: 'stories-v2-safety-c1-technical-policy-prep-v1',
   from_phase: 'stories_v2_interactive_b1_fail_closed',
@@ -1914,6 +2070,11 @@ export function validatePolicy(policy) {
     !== canonicalJson(SUPERUSER_QA_PERF_C1_RELEASE_TRANSITION)) {
     deny('INVALID_SUPERUSER_QA_PERF_C1_TRANSITION',
       'Superuser QA PERF C1 authority must match the exact reviewed bounded managed-cron and RPC contract');
+  }
+  if (canonicalJson(policy.web_control_centers_b1_transition ?? null)
+    !== canonicalJson(WEB_CONTROL_CENTERS_B1_RELEASE_TRANSITION)) {
+    deny('INVALID_WEB_CONTROL_CENTERS_B1_TRANSITION',
+      'Web Control Centers B1 authority must match the exact reviewed one-migration contract');
   }
   const c2AdminFinanceRpc = policy.finance_security_advisor?.c2_rpc_replacements?.find(exception =>
     exception?.object?.schema === 'public'
@@ -3020,6 +3181,88 @@ export function attestSuperuserQaPerfC1Transition({
   };
 }
 
+export function attestWebControlCentersB1Transition({
+  cwd,
+  policy,
+  mode,
+  approvedSha,
+  changes,
+  migrations,
+  affectedFunctions,
+  runGit,
+}) {
+  if (isReadOnlyRecoveryMode(mode)) return { migrations, attestation: null };
+  const transition = WEB_CONTROL_CENTERS_B1_RELEASE_TRANSITION;
+  const expectedPaths = transition.migrations.map(item => item.path).sort();
+  const migrationPaths = [...(migrations ?? [])].map(item => item?.path).sort();
+  if (!migrationPaths.some(path => expectedPaths.includes(path))) return { migrations, attestation: null };
+  const code = 'INVALID_WEB_CONTROL_CENTERS_B1_TRANSITION';
+  const supabaseChanges = (changes ?? []).filter(item => item?.path?.startsWith('supabase/'))
+    .map(item => ({ path: item.path, status: item.status }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const expectedChanges = transition.productive_paths.map(path => ({ path, status: 'A' }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  if (canonicalJson(policy?.web_control_centers_b1_transition ?? null) !== canonicalJson(transition)
+    || policy?.baseline?.sha !== transition.baseline_sha
+    || canonicalJson(policy?.supabase?.finance_policy ?? null) !== canonicalJson(transition.finance_policy)
+    || !SHA_PATTERN.test(approvedSha ?? '') || typeof runGit !== 'function'
+    || !SHA_PATTERN.test(transition.reviewed_source_sha)
+    || canonicalJson(migrationPaths) !== canonicalJson(expectedPaths)
+    || (affectedFunctions ?? []).length !== 0
+    || canonicalJson(supabaseChanges) !== canonicalJson(expectedChanges)) {
+    deny(code, 'B1 permits one reviewed migration, zero Edge/config/finance changes, and requires finalized source provenance');
+  }
+  const expectedByPath = new Map(transition.migrations.map(item => [item.path, item]));
+  for (const migration of migrations) {
+    const expected = expectedByPath.get(migration.path);
+    if (!expected || migration.version !== expected.version) {
+      deny(code, 'B1 migration versions differ from the reviewed authority');
+    }
+  }
+  try {
+    for (const sha of [approvedSha, transition.reviewed_source_sha]) {
+      runGit(['cat-file', '-e', `${sha}^{commit}`], { cwd });
+    }
+    runGit(['merge-base', '--is-ancestor', transition.baseline_sha, transition.integration_base_sha], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.integration_base_sha, transition.reviewed_source_sha], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.reviewed_source_sha, approvedSha], { cwd });
+    for (const source of transition.migrations) {
+      for (const sha of [transition.reviewed_source_sha, approvedSha]) {
+        if (gitText(runGit, ['rev-parse', `${sha}:${source.path}`], cwd) !== source.blob
+          || fileTypeAtCommit(runGit, cwd, sha, source.path) !== 'file') {
+          deny(code, `B1 migration blob/type differs from reviewed Git bytes: ${source.path}`);
+        }
+        const bytes = runGit(['show', `${sha}:${source.path}`], { cwd });
+        if (sha256Hex(bytes) !== source.sha256 || Buffer.from(bytes).byteLength !== source.byte_length
+          || Buffer.from(bytes).includes(13)) {
+          deny(code, `B1 migration is not the exact reviewed Git-LF source: ${source.path}`);
+        }
+      }
+    }
+    const actualChanges = parseNameStatusZ(runGit([
+      'diff', '--name-status', '-z', transition.integration_base_sha, approvedSha, '--', 'supabase/',
+    ], { cwd })).map(item => ({ path: item.path, status: item.status }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    if (canonicalJson(actualChanges) !== canonicalJson(expectedChanges)) {
+      deny(code, 'B1 committed Supabase closure differs from the exact one-migration authority');
+    }
+  } catch (error) {
+    if (error?.code === code) throw error;
+    deny(code, 'approved commit does not attest exact B1 ancestry and bytes');
+  }
+  return {
+    migrations: migrations.map(item => {
+      const expected = expectedByPath.get(item.path);
+      return { ...item, blob: expected.blob, sha256: expected.sha256 };
+    }),
+    attestation: {
+      ...stableCopy(transition), approved_sha: approvedSha,
+      baseline_descendant_verified: true, integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true, reviewed_bytes_verified: true,
+    },
+  };
+}
+
 export function attestFinanceAuthorityTransition({ mode, policy, approvedSha, changes, migrations, affectedFunctions, runGit, cwd }) {
   if (isReadOnlyRecoveryMode(mode)) return { migrations, attestation: null };
   const f5 = F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION;
@@ -3856,6 +4099,11 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     changes: gitState.changes, migrations: superuserControlCenterTransition.migrations,
     affectedFunctions, runGit,
   });
+  const webControlCentersB1Transition = attestWebControlCentersB1Transition({
+    cwd, policy, mode: request.mode, approvedSha: request.approvedSha,
+    changes: gitState.changes, migrations: superuserQaPerfC1Transition.migrations,
+    affectedFunctions, runGit,
+  });
   const risk = classifyRisk({
     affectedFunctions,
     changedPaths: gitState.changes.map(change => change.path),
@@ -3867,7 +4115,7 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   return {
     gitState,
     classified,
-    migrations: superuserQaPerfC1Transition.migrations,
+    migrations: webControlCentersB1Transition.migrations,
     managedScopeTransition: transitionEvidence.attestation,
     financeAuthorityTransition: financeTransition.attestation,
     storiesB1Transition: storiesB1Transition.attestation,
@@ -3876,6 +4124,7 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     storiesQaC1Transition: storiesQaC1Transition.attestation,
     superuserControlCenterTransition: superuserControlCenterTransition.attestation,
     superuserQaPerfC1Transition: superuserQaPerfC1Transition.attestation,
+    webControlCentersB1Transition: webControlCentersB1Transition.attestation,
     affectedFunctions,
     functionContracts,
     reproducibility,
@@ -3908,6 +4157,7 @@ export function buildManifest({
   storiesQaC1Transition,
   superuserControlCenterTransition,
   superuserQaPerfC1Transition,
+  webControlCentersB1Transition,
   affectedFunctions,
   functionContracts,
   reproducibility,
@@ -4196,6 +4446,38 @@ export function buildManifest({
   } else if (superuserQaPerfC1Transition !== undefined && superuserQaPerfC1Transition !== null) {
     deny('INVALID_SUPERUSER_QA_PERF_C1_TRANSITION', 'PERF C1 transition attestation is not applicable');
   }
+  const webB1 = WEB_CONTROL_CENTERS_B1_RELEASE_TRANSITION;
+  const webB1Candidate = !recoveryMode
+    && migrations?.some(item => webB1.productive_paths.includes(item?.path));
+  if (webB1Candidate) {
+    const expectedAttestation = {
+      ...stableCopy(webB1), approved_sha: request.approvedSha,
+      baseline_descendant_verified: true, integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true, reviewed_bytes_verified: true,
+    };
+    const expectedMigrations = webB1.migrations.map(item => ({
+      version: item.version, path: item.path, blob: item.blob, sha256: item.sha256,
+    })).sort((left, right) => left.version.localeCompare(right.version));
+    const actualMigrations = [...(migrations ?? [])].map(item => ({
+      version: item.version, path: item.path, blob: item.blob, sha256: item.sha256,
+    })).sort((left, right) => left.version.localeCompare(right.version));
+    if (canonicalJson(policy?.web_control_centers_b1_transition ?? null) !== canonicalJson(webB1)
+      || policy.baseline.sha !== webB1.baseline_sha
+      || gitState.approvedSha !== request.approvedSha || gitState.originMainSha !== request.approvedSha
+      || request.mainSha !== request.approvedSha || gitState.baselineSha !== webB1.baseline_sha
+      || risk.level !== 'HIGH' || canonicalJson(actualMigrations) !== canonicalJson(expectedMigrations)
+      || functionNames.length !== 0 || contracts.length !== 0
+      || canonicalJson(webControlCentersB1Transition ?? null) !== canonicalJson(expectedAttestation)
+      || classified.config.length !== 0
+      || canonicalJson(classified.productive.map(item => item.path).sort())
+        !== canonicalJson([...webB1.productive_paths].sort())
+      || canonicalJson(policy.supabase.finance_policy) !== canonicalJson(webB1.finance_policy)) {
+      deny('INVALID_WEB_CONTROL_CENTERS_B1_TRANSITION',
+        'manifest lacks the exact B1 one-migration zero-Edge/config/finance attestation');
+    }
+  } else if (webControlCentersB1Transition !== undefined && webControlCentersB1Transition !== null) {
+    deny('INVALID_WEB_CONTROL_CENTERS_B1_TRANSITION', 'B1 transition attestation is not applicable');
+  }
   const f5 = F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION;
   const f5Candidate = !recoveryMode && migrations?.some(item => item.version === '20261026072512'
     || item.path === f5.migration_path);
@@ -4380,6 +4662,9 @@ export function buildManifest({
         : {}),
       ...(superuserQaPerfC1Transition
         ? { superuser_qa_perf_c1_transition: stableCopy(superuserQaPerfC1Transition) }
+        : {}),
+      ...(webControlCentersB1Transition
+        ? { web_control_centers_b1_transition: stableCopy(webControlCentersB1Transition) }
         : {}),
     },
     risk: stableCopy(risk),
