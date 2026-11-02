@@ -16,8 +16,12 @@ test('new public image uploaders use mediaService and never persist local fallba
   assert.match(upload, /'post_image'/);
   assert.match(upload, /'carousel_image'/);
   assert.match(product, /purpose: "product_image"/);
-  assert.match(story, /purpose: isVideo \? 'story_video' : 'story_image'/);
+  assert.match(story, /purpose: 'story_image'/);
   assert.match(story, /visibility: 'private'/);
+  assert.match(story, /createStoryStreamUpload/);
+  assert.match(story, /uploadStoryVideoWithTus/);
+  assert.match(story, /waitForStoryStreamReady/);
+  assert.doesNotMatch(story, /addStory\(asset\.uri/);
   assert.doesNotMatch(product, /setImages\(prev => \[\.\.\.prev, asset\.uri\]\)/);
   assert.doesNotMatch(upload, /const finalUrl = url \|\| selectedMedia\.uri/);
 });

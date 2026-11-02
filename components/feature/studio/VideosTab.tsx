@@ -22,12 +22,25 @@ import { Audio } from 'expo-av';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAlert } from '@/template';
-import { useFeed } from '@/hooks/useFeed';
 import { useRouter } from 'expo-router';
+import { useAuth } from '@/hooks/useAuth';
 import { isFFmpegAvailable } from '@/services/ffmpegService';
 import SkiaEffectsLayer from '@/components/feature/SkiaEffectsLayer';
 import { useVideoEditor, type DeezerTrack } from '@/hooks/video/useVideoEditor';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
+import {
+  getSafeStreamError,
+  resumeStreamVideoPublication,
+  uploadAndPublishStreamVideo,
+  type StreamUploadStage,
+} from '@/services/streamService';
+import {
+  clearPendingStreamPublication,
+  fingerprintStreamSourceIdentity,
+  loadPendingStreamPublication,
+  savePendingStreamPublication,
+  type PendingStreamPublicationRecovery,
+} from '@/services/streamPublicationRecovery';
 
 // ── Lazy expo-video / expo-av ────────────────────────────────────────────────
 let VideoView: any      = null;
@@ -76,6 +89,32 @@ const DEEZER_CATS = [
 function fmtMs(ms: number) {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
+}
+
+/**
+ * Stable logical identity for the editor state that produced a Stream upload.
+ *
+ * Pending Stream recovery intentionally stores only this fingerprint (never a
+ * private/local URI).  When an older upload is confirmed after the user has
+ * opened or edited another clip, the comparison prevents that confirmation
+ * from clearing the newer work.
+ */
+function buildEditorSourceIdentity(editor: ReturnType<typeof useVideoEditor>): string {
+  return JSON.stringify({
+    clips: editor.clips.map(clip => ({
+      id: clip.id,
+      uri: clip.uri,
+      durationMs: clip.durationMs,
+      trimStart: clip.trimStart,
+      trimEnd: clip.trimEnd,
+    })),
+    activeIdx: editor.activeIdx,
+    speed: editor.speed,
+    colorFilter: editor.colorFilter,
+    selectedTrackId: editor.selectedTrack?.id ?? null,
+    musicVol: editor.musicVol,
+    videoVol: editor.videoVol,
+  });
 }
 
 // ── ClipVideoPlayer — memoized ────────────────────────────────────────────────
@@ -306,36 +345,114 @@ function DeezerMusicModal({ visible, onClose, onSelect, selectedId, soundRef }: 
 
 // ── Main VideosTab ────────────────────────────────────────────────────────────
 export function VideosTab() {
-  const { addVideo }  = useFeed();
   const { showAlert } = useAlert();
+  const { user }      = useAuth();
   const router        = useRouter();
 
   const editor = useVideoEditor();
   const [captionModal, setCaptionModal] = useState(false);
   const [caption,      setCaption]      = useState('');
   const [musicModal,   setMusicModal]   = useState(false);
+  const [publishStage, setPublishStage] = useState<StreamUploadStage | null>(null);
+  const publishingRef = useRef(false);
+  const pendingStreamPublicationRef = useRef<PendingStreamPublicationRecovery | null>(null);
 
   const TRACK_W_FULL = W - 32;
 
   const handleExportAndPublish = useCallback(async () => {
-    const { uri, ok, error } = await editor.exportAndPublish(caption);
-    if (!ok || !uri) { showAlert('Error', error ?? 'No se pudo exportar'); return; }
+    if (publishingRef.current) return;
+    const ownerId=user?.id;
+    if(!ownerId) {
+      showAlert('Sesión requerida','Inicia sesión para publicar.');
+      return;
+    }
+    publishingRef.current = true;
+    let pending=pendingStreamPublicationRef.current?.ownerId===ownerId
+      ? pendingStreamPublicationRef.current
+      : null;
     try {
-      await addVideo({
-        videoUrl: uri, thumbnailUrl: '',
-        caption: caption.trim() || `🎬 ${editor.colorFilter !== 'none' ? `#${editor.colorFilter} ` : ''}${editor.speed !== 1 ? `${editor.speed}× ` : ''}#Nelyon`,
-        music: editor.selectedTrack
-          ? `${editor.selectedTrack.title} — ${editor.selectedTrack.artist.name}`
-          : 'Sin música',
-        username: '', userAvatar: '',
+      pending??=await loadPendingStreamPublication('creator-studio-videos',ownerId);
+      pendingStreamPublicationRef.current=pending;
+    } catch(error) {
+      publishingRef.current=false;
+      showAlert('Error','No se pudo recuperar la publicación pendiente.');
+      return;
+    }
+    if(pending) {
+      try {
+        const currentEditorFingerprint=await fingerprintStreamSourceIdentity(buildEditorSourceIdentity(editor));
+        setPublishStage('STREAM_PUBLISH');
+        const published=await resumeStreamVideoPublication(pending);
+        if(!published.postId) throw new Error('stream_post_confirmation_missing');
+        pendingStreamPublicationRef.current=null;
+        await clearPendingStreamPublication('creator-studio-videos',ownerId);
+        showAlert('Publicado 🎉','Video confirmado y publicado',[
+          {text:'Ver feed',onPress:()=>router.replace('/(tabs)')},
+        ]);
+        if(currentEditorFingerprint===pending.sourceFingerprint) {
+          setCaptionModal(false);
+          editor.reset();
+        }
+      } catch(error) {
+        const safe=getSafeStreamError(error);
+        showAlert('Confirmación pendiente',`No se pudo confirmar todavía (${safe.stage}/${safe.code})`);
+      } finally {
+        setPublishStage(null);
+        publishingRef.current=false;
+      }
+      return;
+    }
+    const { uri, ok, status, error } = await editor.exportAndPublish(caption);
+    if (status === 'queued') {
+      publishingRef.current = false;
+      showAlert('Exportación en cola', 'El video todavía no se ha publicado. Vuelve cuando termine la exportación.');
+      return;
+    }
+    if (!ok || !uri) {
+      publishingRef.current = false;
+      showAlert('Error', error ?? 'No se pudo exportar');
+      return;
+    }
+    const frozenCaption=caption.trim() || `🎬 ${editor.colorFilter !== 'none' ? `#${editor.colorFilter} ` : ''}${editor.speed !== 1 ? `${editor.speed}× ` : ''}#Nelyon`;
+    const frozenMusic=editor.selectedTrack
+      ? `${editor.selectedTrack.title} — ${editor.selectedTrack.artist.name}`
+      : 'Sin música';
+    try {
+      const published = await uploadAndPublishStreamVideo({
+        uri,
+        mimeType: 'video/mp4',
+        fileName: 'creator-studio.mp4',
+        caption:frozenCaption,
+        music:frozenMusic,
+        onStage: (stage) => setPublishStage(stage),
       });
+      const postId = published.postId;
+      if (!postId) throw new Error('stream_post_confirmation_missing');
       showAlert('Publicado 🎉', isFFmpegAvailable() ? 'Video exportado y publicado' : 'Clip publicado', [
         { text: 'Ver feed', onPress: () => router.replace('/(tabs)') },
       ]);
       setCaptionModal(false);
       editor.reset();
-    } catch (e: any) { showAlert('Error', e?.message || 'No se pudo publicar'); }
-  }, [editor, caption, addVideo, showAlert, router]);
+    } catch (error) {
+      const safe = getSafeStreamError(error);
+      if(safe.code==='stream_publish_confirmation_pending'&&safe.assetId) {
+        const pendingRecovery:PendingStreamPublicationRecovery={
+          ownerId,
+          assetId:safe.assetId,operationId:safe.operationId,
+          caption:frozenCaption,music:frozenMusic,
+          sourceFingerprint:await fingerprintStreamSourceIdentity(buildEditorSourceIdentity(editor)),
+        };
+        await savePendingStreamPublication('creator-studio-videos',ownerId,pendingRecovery);
+        pendingStreamPublicationRef.current=pendingRecovery;
+        showAlert('Confirmación pendiente','El video ya fue subido. Reintenta para confirmar la misma publicación.');
+      } else {
+        showAlert('Error', `No se pudo publicar (${safe.stage}/${safe.code})`);
+      }
+    } finally {
+      setPublishStage(null);
+      publishingRef.current = false;
+    }
+  }, [editor, caption, showAlert, router, user?.id]);
 
   const trimDurSec = editor.durationMs > 0
     ? Math.round((editor.trimEnd - editor.trimStart) * editor.durationMs / 1000)
@@ -600,11 +717,11 @@ export function VideosTab() {
             placeholder="Escribe algo..." placeholderTextColor={Colors.textSubtle}
             multiline maxLength={200} />
           <Text style={cm.count}>{caption.length}/200</Text>
-          <Pressable style={[cm.pubBtn, editor.isPublishing && { opacity: 0.6 }]}
-            onPress={handleExportAndPublish} disabled={editor.isPublishing}>
+          <Pressable style={[cm.pubBtn, (editor.isPublishing || publishStage) && { opacity: 0.6 }]}
+            onPress={handleExportAndPublish} disabled={editor.isPublishing || publishStage !== null}>
             <LinearGradient colors={['#7C5CFF', '#FF2D78']} style={cm.pubBtnInner}>
-              {editor.isPublishing ? <ActivityIndicator color="#fff" size="small" /> : null}
-              <Text style={cm.pubBtnText}>{editor.isPublishing ? (editor.exportProgress ?? 'Procesando...') : '🚀 Publicar'}</Text>
+              {editor.isPublishing || publishStage ? <ActivityIndicator color="#fff" size="small" /> : null}
+              <Text style={cm.pubBtnText}>{editor.isPublishing || publishStage ? (editor.exportProgress ?? publishStage ?? 'Procesando...') : '🚀 Publicar'}</Text>
             </LinearGradient>
           </Pressable>
         </View>

@@ -70,7 +70,11 @@ test('carousel RPC is authenticated, bounded, HTTPS-only, and balance-neutral', 
   assert.match(migration, /revoke execute .* from anon/i);
   assert.match(migration, /grant execute .* to authenticated/i);
   assert.doesNotMatch(migration, /ledger|balance|wallet|live_/i);
-  assert.match(feed, /supabase\.rpc\('create_carousel_post'/);
+  assert.match(feed, /supabase\.rpc\('publish_my_media_post_v1'/);
+  assert.match(feed, /p_kind:\s*mediaAssetIds\.length\s*>\s*1\s*\?\s*'carousel'\s*:\s*'photo'/);
+  assert.match(feed, /p_asset_ids:\s*mediaAssetIds/);
+  assert.match(feed, /p_client_command_id:\s*video\.publicationCommandId/);
+  assert.doesNotMatch(feed, /supabase\.rpc\('create_carousel_post'/);
   assert.doesNotMatch(uploadScreen, /\(addVideo as any\)/);
   assert.match(uploadScreen, /completedUploads\[index\] = completed/);
 });

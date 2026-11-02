@@ -55,8 +55,11 @@ test('story flow returns remote ID, links position zero, and compensates failure
 
 test('physical story path uses one canonical RPC and never persists a local URI', () => {
   assert.match(context, /rpc\('create_story_with_media'/);
-  assert.match(feed, /addStory\(uploadedAssetId, composition, clientStoryId\)/);
-  assert.match(feed, /purpose: isVideo \? 'story_video' : 'story_image'/);
+  assert.match(feed, /addStory\(\s*uploadedAssetId,\s*publication\.composition,\s*clientStoryId,\s*publication\.interactiveDefinitions/);
+  assert.match(feed, /purpose: 'story_image'/);
+  assert.match(feed, /createStoryStreamUpload/);
+  assert.match(feed, /uploadStoryVideoWithTus/);
+  assert.match(feed, /waitForStoryStreamReady/);
   assert.match(feed, /visibility: 'private'/);
   assert.doesNotMatch(feed, /uploadFileFromUri\(/);
   assert.doesNotMatch(context, /from\('stories'\)\.insert/);

@@ -30,6 +30,8 @@ import { useAlert } from '@/template';
 import { getSupabaseClient } from '@/template';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme';
+import { randomUUID } from 'expo-crypto';
+import { publishCanonicalAvatarMedia } from '@/services/avatarPublicationService';
 
 const { width: W } = Dimensions.get('window');
 const PREVIEW_SIZE = W - 64;
@@ -79,6 +81,7 @@ export default function AIAvatarScreen() {
   const { user, updateProfile } = useAuth();
   const { addVideo } = useFeed();
   const { showAlert } = useAlert();
+  const publicationCommandRef = useRef(randomUUID());
   const supabase = getSupabaseClient();
 
   // State
@@ -310,17 +313,19 @@ export default function AIAvatarScreen() {
   // ── Publish video/image to feed ────────────────────────────────────────────
   const handlePublishToFeed = useCallback(async () => {
     const mediaUrl = videoUrl || avatarUrl;
-    if (!mediaUrl) return;
+    if (!mediaUrl || !user?.id) return;
     setPublishingToFeed(true);
     try {
-      await addVideo({
-        videoUrl:   mediaUrl,
-        thumbnailUrl: avatarUrl || '',
+      await publishCanonicalAvatarMedia({
+        ownerId:user.id,
+        imageUrl:avatarUrl || mediaUrl,
+        videoUrl:videoUrl || null,
         caption:    `Mi nuevo avatar IA ${AVATAR_STYLES.find(s => s.id === selectedStyle)?.emoji || '✨'} #AIAvatar #Nelyon #Creator`,
         music:      'Sin música',
-        username:   user?.username || '',
-        userAvatar: user?.avatar || '',
+        publicationCommandId:publicationCommandRef.current,
+        publishPhoto:addVideo,
       });
+      publicationCommandRef.current=randomUUID();
       showAlert('Publicado 🎉', 'Tu avatar fue publicado al feed', [
         { text: 'Ver feed', onPress: () => router.replace('/(tabs)') },
       ]);
