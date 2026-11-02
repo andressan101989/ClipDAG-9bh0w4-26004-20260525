@@ -4690,7 +4690,9 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
   }
   if (webB1Requirement.required) {
     const expectedWebB1RpcIdentities = (policy?.web_control_centers_b1_transition
-      ?.rpc_attestations ?? []).map(item => item.identity.replaceAll(' ', ''));
+      ?.security_advisor?.introduced_exceptions ?? [])
+      .filter(exception => Array.isArray(exception?.object?.argument_types))
+      .map(exception => rpcIdentity(exception.object));
     if (expectedWebB1RpcIdentities.length !== 7
       || new Set(expectedWebB1RpcIdentities).size !== expectedWebB1RpcIdentities.length
       || expectedWebB1RpcIdentities.some(identity => !attestedRpcIdentities.has(identity))) {

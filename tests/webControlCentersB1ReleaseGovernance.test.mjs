@@ -10,6 +10,16 @@ const root = path.resolve(import.meta.dirname, '..');
 const reviewedSourceSha = '94006f2e87edb960cbf457ab4313198aadf05c8c';
 const policy = JSON.parse(readFileSync(path.join(root, '.github', 'nelyon-production-release-policy.json'), 'utf8'));
 
+function withPreB1Baseline(value) {
+  const historical = structuredClone(value);
+  historical.baseline.sha = historical.web_control_centers_b1_transition.baseline_sha;
+  historical.baseline.migration_count = 365;
+  historical.baseline.latest_migration = '20261101181907_superuser_qa_perf_c1';
+  historical.baseline.evidence_digests.migrations =
+    '9cdf87e9d7d76392470f6c2e7238b5fe4b0790c9487efa4be59528aebf4cb1de';
+  return historical;
+}
+
 async function load(relative) {
   return import(`${pathToFileURL(path.join(root, relative)).href}?b1=${Date.now()}-${Math.random()}`);
 }
@@ -65,6 +75,7 @@ test('B1 policy rejects migration, RPC, ACL, RLS, policy, helper, Edge, config a
 test('B1 compiler accepts exact reviewed source provenance and rejects altered Git bytes', async () => {
   const compiler = await load('scripts/nelyon-production-release.mjs');
   const transition = policy.web_control_centers_b1_transition;
+  const historicalPolicy = withPreB1Baseline(policy);
   const runGit = args => execFileSync('git', args, {
     cwd: root,
     encoding: args.includes('-z') ? 'buffer' : 'utf8',
@@ -72,7 +83,7 @@ test('B1 compiler accepts exact reviewed source provenance and rejects altered G
   });
   const input = {
     cwd: root,
-    policy,
+    policy: historicalPolicy,
     mode: 'plan_only',
     approvedSha: reviewedSourceSha,
     changes: [{ path: transition.migrations[0].path, status: 'A' }],
