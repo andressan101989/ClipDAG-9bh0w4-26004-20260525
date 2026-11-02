@@ -494,7 +494,9 @@ select pg_catalog.json_build_object(
   console.log(JSON.stringify({
     verdict: "WEB_CONTROL_CENTERS_B1_DISPOSABLE_PASS",
     postgres: scalar("show server_version;"),
-    assertions: 23,
+    assertions: 25,
+    snapshotPreState: true,
+    snapshotPostState: true,
     createReplay: true,
     createReplayAfterMutation: true,
     mutationReplay: true,
