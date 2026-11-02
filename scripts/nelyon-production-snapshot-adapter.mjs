@@ -1895,6 +1895,122 @@ select pg_catalog.jsonb_build_object(
     'subscription_enabled',subscription_enabled) from finance_row)
 ) snapshot from install_state;`;
 
+export const WEB_CONTROL_CENTERS_B1_STATE_SQL = `with expected_helpers(identity) as (
+  values
+    ('private.guard_publication_draft_command_immutable_v1()'),
+    ('private.guard_publication_draft_media_v1()'),
+    ('private.guard_publication_draft_mutation_v1()'),
+    ('private.guard_publication_receipt_immutable_v1()'),
+    ('private.publication_draft_composition_safe_v1(jsonb)'),
+    ('private.publication_draft_json_v1(private.publication_drafts)'),
+    ('private.publication_draft_payload_fingerprint_v1(text,text,text,text,jsonb,uuid[],bigint,uuid)'),
+    ('private.require_publication_asset_set_v1(uuid,text,uuid[],text)')
+), expected_rpcs(identity) as (
+  values
+    ('public.create_my_publication_draft_v1(uuid,text,text,text,jsonb,uuid[])'),
+    ('public.delete_my_publication_draft_v1(uuid,bigint,uuid)'),
+    ('public.get_my_publication_draft_v1(uuid)'),
+    ('public.list_my_publication_drafts_v1(integer,timestampwithtimezone,uuid)'),
+    ('public.publish_my_media_post_v1(uuid,text,text,text,uuid[])'),
+    ('public.publish_my_publication_draft_v1(uuid,bigint,uuid,uuid[])'),
+    ('public.update_my_publication_draft_v1(uuid,bigint,uuid,text,text,text,jsonb,uuid[])')
+), function_catalog as (
+  select n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' identity,
+    owner_role.rolname owner,p.provolatile volatility,p.prosecdef security_definer,
+    coalesce(pg_catalog.to_jsonb(p.proconfig),'[]'::jsonb) search_path,
+    pg_catalog.jsonb_build_object(
+      'anon',pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE'),
+      'authenticated',pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE'),
+      'public',pg_catalog.has_function_privilege('public',p.oid,'EXECUTE'),
+      'service_role',pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE')) execute,
+    coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable)
+      order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,acl.privilege_type,acl.is_grantable)
+      from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+      left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee),'[]'::jsonb) acl,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex') definition_sha256
+  from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
+), helper_rows as (
+  select catalog.* from function_catalog catalog join expected_helpers expected using(identity)
+), rpc_rows as (
+  select catalog.identity from function_catalog catalog join expected_rpcs expected using(identity)
+), relation_rows as (
+  select n.nspname schema,c.relname name,owner_role.rolname owner,c.relkind relation_kind,
+    c.relrowsecurity rls_enabled,c.relforcerowsecurity force_rls,
+    pg_catalog.jsonb_build_object(
+      'anon',pg_catalog.has_table_privilege('anon',c.oid,
+        'SE'||'LECT,IN'||'SERT,UP'||'DATE,DE'||'LETE,TRUN'||'CATE,REFERENCES,TRIG'||'GER'),
+      'authenticated',pg_catalog.has_table_privilege('authenticated',c.oid,
+        'SE'||'LECT,IN'||'SERT,UP'||'DATE,DE'||'LETE,TRUN'||'CATE,REFERENCES,TRIG'||'GER'),
+      'public',pg_catalog.has_table_privilege('public',c.oid,
+        'SE'||'LECT,IN'||'SERT,UP'||'DATE,DE'||'LETE,TRUN'||'CATE,REFERENCES,TRIG'||'GER'),
+      'service_role',pg_catalog.has_table_privilege('service_role',c.oid,
+        'SE'||'LECT,IN'||'SERT,UP'||'DATE,DE'||'LETE,TRUN'||'CATE,REFERENCES,TRIG'||'GER')) acl
+  from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=c.relowner
+  where n.nspname='private' and c.relname in
+    ('publication_draft_commands','publication_drafts','publication_receipts')
+), constraint_row as (
+  select pg_catalog.pg_get_constraintdef(c.oid,true) definition
+  from pg_catalog.pg_constraint c join pg_catalog.pg_class r on r.oid=c.conrelid
+  join pg_catalog.pg_namespace n on n.oid=r.relnamespace
+  where n.nspname='public' and r.relname='media_asset_links'
+    and c.conname='media_asset_links_entity_type_check'
+), policy_rows as (
+  select schemaname schema,tablename table_name,policyname name,permissive,roles,cmd command,qual,with_check
+  from pg_catalog.pg_policies where schemaname='public' and tablename='media_asset_links'
+    and policyname in ('media_asset_links_owner_read','media_asset_links_public_read')
+), index_rows as (
+  select n.nspname schema,t.relname table_name,i.relname name,owner_role.rolname owner,
+    pg_catalog.pg_get_indexdef(ix.indexrelid) definition,ix.indisvalid valid,ix.indisready ready,
+    ix.indisunique unique,ix.indisprimary primary
+  from pg_catalog.pg_index ix join pg_catalog.pg_class i on i.oid=ix.indexrelid
+  join pg_catalog.pg_class t on t.oid=ix.indrelid join pg_catalog.pg_namespace n on n.oid=t.relnamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=i.relowner
+  where n.nspname='public' and t.relname='media_asset_links'
+    and i.relname in ('publication_draft_media_position_uidx','publication_draft_media_asset_uidx')
+), trigger_rows as (
+  select n.nspname schema,c.relname table_name,t.tgname name,t.tgenabled enabled,
+    pn.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' function_identity,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_triggerdef(t.oid,true),'UTF8')),'hex') definition_sha256
+  from pg_catalog.pg_trigger t join pg_catalog.pg_class c on c.oid=t.tgrelid
+  join pg_catalog.pg_namespace n on n.oid=c.relnamespace join pg_catalog.pg_proc p on p.oid=t.tgfoid
+  join pg_catalog.pg_namespace pn on pn.oid=p.pronamespace
+  where not t.tgisinternal and n.nspname='public' and c.relname='media_asset_links'
+    and t.tgname='media_asset_links_guard_publication_draft'
+), counts as (
+  select (select pg_catalog.count(*) from helper_rows) helper_count,
+    (select pg_catalog.count(*) from rpc_rows) rpc_count,
+    (select pg_catalog.count(*) from relation_rows) relation_count,
+    (select pg_catalog.count(*) from policy_rows) policy_count,
+    (select pg_catalog.count(*) from index_rows) index_count,
+    (select pg_catalog.count(*) from trigger_rows) trigger_count,
+    (select pg_catalog.count(*) from constraint_row) constraint_count
+)
+select pg_catalog.jsonb_build_object(
+  'schema_version',1,
+  'complete',counts.policy_count=2 and counts.constraint_count=1,
+  'installed',counts.helper_count=8 and counts.rpc_count=7 and counts.relation_count=3
+    and counts.index_count=2 and counts.trigger_count=1,
+  'relations',coalesce((select pg_catalog.jsonb_agg(pg_catalog.to_jsonb(row) order by row.schema,row.name)
+    from relation_rows row),'[]'::jsonb),
+  'helpers',coalesce((select pg_catalog.jsonb_agg(pg_catalog.to_jsonb(row) order by row.identity)
+    from helper_rows row),'[]'::jsonb),
+  'rpc_identities',coalesce((select pg_catalog.jsonb_agg(row.identity order by row.identity)
+    from rpc_rows row),'[]'::jsonb),
+  'media_asset_links',pg_catalog.jsonb_build_object(
+    'entity_type_constraint',(select definition from constraint_row),
+    'policies',coalesce((select pg_catalog.jsonb_agg(pg_catalog.to_jsonb(row) order by row.name)
+      from policy_rows row),'[]'::jsonb),
+    'indexes',coalesce((select pg_catalog.jsonb_agg(pg_catalog.to_jsonb(row) order by row.name)
+      from index_rows row),'[]'::jsonb),
+    'triggers',coalesce((select pg_catalog.jsonb_agg(pg_catalog.to_jsonb(row) order by row.name)
+      from trigger_rows row),'[]'::jsonb)
+  )
+) snapshot from counts;`;
+
 function fail(code, message) {
   const error = new Error(`${code}: ${message}`);
   error.code = code;
@@ -2781,6 +2897,139 @@ function validateSuperuserQaPerfC1PreState(snapshot, transition) {
 export function validateSuperuserQaPerfC1StateTransition(preSnapshot, postSnapshot, transition) {
   validateSuperuserQaPerfC1PreState(preSnapshot, transition);
   validateSuperuserQaPerfC1InstalledState(postSnapshot, transition);
+  return true;
+}
+
+function webControlCentersB1Transition(policy, manifest) {
+  const expected = policy?.web_control_centers_b1_transition;
+  const attestation = manifest?.resources?.web_control_centers_b1_transition;
+  if (!attestation) return null;
+  const expectedAttestation = expected && {
+    ...expected, approved_sha: manifest?.identity?.approved_sha,
+    baseline_descendant_verified: true, integration_base_descendant_verified: true,
+    reviewed_source_descendant_verified: true, reviewed_bytes_verified: true,
+  };
+  if (!expected || canonicalJson(attestation) !== canonicalJson(expectedAttestation)) {
+    fail('INVALID_WEB_CONTROL_CENTERS_B1_TRANSITION', 'B1 manifest attestation differs from policy');
+  }
+  return expected;
+}
+
+function webControlCentersB1StateRequirement(policy, manifest, phase) {
+  const transition = webControlCentersB1Transition(policy, manifest);
+  const migration = policy?.web_control_centers_b1_transition?.migrations?.[0]?.path
+    ?.split('/').at(-1)?.replace(/\.sql$/u, '');
+  const promoted = Boolean(migration) && String(policy?.baseline?.latest_migration ?? '') >= migration;
+  return {
+    required: Boolean(transition) || promoted,
+    installed: promoted || (Boolean(transition) && phase !== 'pre'),
+    transition,
+    query: WEB_CONTROL_CENTERS_B1_STATE_SQL,
+    query_id: 'nelyon-web-control-centers-b1-state-v1',
+  };
+}
+
+function normalizeWebControlCentersB1State(snapshot) {
+  const code = 'WEB_CONTROL_CENTERS_B1_POSTCHECK_FAILED';
+  exactKeys(snapshot, ['schema_version','complete','installed','relations','helpers',
+    'rpc_identities','media_asset_links'], code);
+  if (snapshot.schema_version !== 1 || snapshot.complete !== true || typeof snapshot.installed !== 'boolean'
+    || !Array.isArray(snapshot.relations) || !Array.isArray(snapshot.helpers)
+    || !Array.isArray(snapshot.rpc_identities)
+    || snapshot.rpc_identities.some(identity => typeof identity !== 'string')) {
+    fail(code, 'B1 snapshot envelope is incomplete');
+  }
+  const relations = snapshot.relations.map(row => {
+    exactKeys(row, ['schema','name','owner','relation_kind','rls_enabled','force_rls','acl'], code);
+    exactKeys(row.acl, ['anon','authenticated','public','service_role'], code);
+    if (['schema','name','owner','relation_kind'].some(key => typeof row[key] !== 'string')
+      || ['rls_enabled','force_rls'].some(key => typeof row[key] !== 'boolean')
+      || Object.values(row.acl).some(value => typeof value !== 'boolean')) {
+      fail(code, 'B1 relation evidence is malformed');
+    }
+    return { ...row, acl: { ...row.acl } };
+  }).sort((left, right) => `${left.schema}.${left.name}`.localeCompare(`${right.schema}.${right.name}`));
+  const helpers = normalizeControlCenterFunctions(snapshot.helpers, code);
+  exactKeys(snapshot.media_asset_links, ['entity_type_constraint','policies','indexes','triggers'], code);
+  if (typeof snapshot.media_asset_links.entity_type_constraint !== 'string'
+    || !Array.isArray(snapshot.media_asset_links.policies)
+    || !Array.isArray(snapshot.media_asset_links.indexes)
+    || !Array.isArray(snapshot.media_asset_links.triggers)) {
+    fail(code, 'B1 media link evidence is malformed');
+  }
+  const policies = snapshot.media_asset_links.policies.map(row => {
+    exactKeys(row, ['schema','table','name','permissive','roles','command','qual','with_check'], code);
+    if (['schema','table','name','permissive','command','qual'].some(key => typeof row[key] !== 'string')
+      || !Array.isArray(row.roles) || row.roles.some(role => typeof role !== 'string')
+      || !(row.with_check === null || typeof row.with_check === 'string')) {
+      fail(code, 'B1 policy evidence is malformed');
+    }
+    return { ...row, roles: [...row.roles] };
+  }).sort((left, right) => left.name.localeCompare(right.name));
+  const indexes = snapshot.media_asset_links.indexes.map(row => {
+    exactKeys(row, ['schema','table','name','owner','definition','valid','ready','unique','primary'], code);
+    if (['schema','table','name','owner','definition'].some(key => typeof row[key] !== 'string')
+      || ['valid','ready','unique','primary'].some(key => typeof row[key] !== 'boolean')) {
+      fail(code, 'B1 index evidence is malformed');
+    }
+    return { ...row };
+  }).sort((left, right) => left.name.localeCompare(right.name));
+  const triggers = snapshot.media_asset_links.triggers.map(row => {
+    exactKeys(row, ['schema','table','name','enabled','function_identity','definition_sha256'], code);
+    if (['schema','table','name','enabled','function_identity'].some(key => typeof row[key] !== 'string')
+      || !HASH_PATTERN.test(row.definition_sha256 ?? '')) {
+      fail(code, 'B1 trigger evidence is malformed');
+    }
+    return { ...row };
+  }).sort((left, right) => left.name.localeCompare(right.name));
+  if (new Set(relations.map(item => `${item.schema}.${item.name}`)).size !== relations.length
+    || new Set(helpers.map(item => item.identity)).size !== helpers.length
+    || new Set(snapshot.rpc_identities).size !== snapshot.rpc_identities.length
+    || new Set(policies.map(item => item.name)).size !== policies.length
+    || new Set(indexes.map(item => item.name)).size !== indexes.length
+    || new Set(triggers.map(item => item.name)).size !== triggers.length) {
+    fail(code, 'B1 catalog identities are duplicate');
+  }
+  return {
+    schema_version: 1, complete: true, installed: snapshot.installed,
+    relations, helpers, rpc_identities: [...snapshot.rpc_identities].sort(),
+    media_asset_links: {
+      entity_type_constraint: snapshot.media_asset_links.entity_type_constraint,
+      policies, indexes, triggers,
+    },
+  };
+}
+
+export function validateWebControlCentersB1InstalledState(snapshot, transition) {
+  const code = 'WEB_CONTROL_CENTERS_B1_POSTCHECK_FAILED';
+  const state = normalizeWebControlCentersB1State(snapshot);
+  const expectedRpcIdentities = (transition?.rpc_attestations ?? [])
+    .map(item => item.identity).sort();
+  if (state.installed !== true
+    || canonicalJson(state.relations) !== canonicalJson(transition?.catalog?.relations ?? null)
+    || canonicalJson(state.helpers) !== canonicalJson(transition?.catalog?.helpers ?? null)
+    || canonicalJson(state.rpc_identities) !== canonicalJson(expectedRpcIdentities)
+    || canonicalJson(state.media_asset_links) !== canonicalJson(transition?.catalog?.media_asset_links ?? null)) {
+    fail(code, 'B1 installed state differs from the exact reviewed catalog');
+  }
+  return true;
+}
+
+function validateWebControlCentersB1PreState(snapshot, transition) {
+  const code = 'WEB_CONTROL_CENTERS_B1_POSTCHECK_FAILED';
+  const state = normalizeWebControlCentersB1State(snapshot);
+  if (state.installed !== false || state.relations.length !== 0 || state.helpers.length !== 0
+    || state.rpc_identities.length !== 0
+    || canonicalJson(state.media_asset_links)
+      !== canonicalJson(transition?.predecessor_media_asset_links ?? null)) {
+    fail(code, 'B1 predecessor contains new authority or differs from exact media policy');
+  }
+  return state;
+}
+
+export function validateWebControlCentersB1StateTransition(preSnapshot, postSnapshot, transition) {
+  validateWebControlCentersB1PreState(preSnapshot, transition);
+  validateWebControlCentersB1InstalledState(postSnapshot, transition);
   return true;
 }
 
@@ -3846,6 +4095,8 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     migrations: evidence?.migrations,
   });
   const requirePerfC1 = perfC1Requirement.required;
+  const webB1Requirement = webControlCentersB1StateRequirement(policy, manifest, phase);
+  const requireWebB1 = webB1Requirement.required;
   exactKeys(evidence, [
     'adapter', 'backup', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
     'health', 'identity', 'migrations', 'observed_at', 'phase', 'premium_state', 'project_ref',
@@ -3857,6 +4108,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     ...(requireStoriesQaC1 ? ['stories_qa_c1_state'] : []),
     ...(requireControlCenter ? ['superuser_control_center_state'] : []),
     ...(requirePerfC1 ? ['superuser_qa_perf_c1_state'] : []),
+    ...(requireWebB1 ? ['web_control_centers_b1_state'] : []),
   ], 'INVALID_SNAPSHOT');
   const { evidence_sha256: claimedDigest, ...unsigned } = evidence;
   if (!HASH_PATTERN.test(claimedDigest ?? '') || claimedDigest !== sha256(canonicalJson(unsigned))) {
@@ -3903,6 +4155,10 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       id: perfC1Requirement.query_id,
       sha256: sha256(perfC1Requirement.query),
     }] : []),
+    ...(requireWebB1 ? [{
+      id: webB1Requirement.query_id,
+      sha256: sha256(webB1Requirement.query),
+    }] : []),
   ];
   if (!HASH_PATTERN.test(adapterSourceSha256 ?? '')
     || evidence.adapter.source_sha256 !== adapterSourceSha256
@@ -3930,6 +4186,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   if (requireStoriesQaC1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (requireControlCenter) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (requirePerfC1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
+  if (requireWebB1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (!Array.isArray(evidence.requests) || evidence.requests.length !== expectedRequests.length
     || evidence.requests.some((receipt, index) => {
       try {
@@ -4041,6 +4298,24 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       validateSuperuserQaPerfC1PreState(
         evidence.superuser_qa_perf_c1_state,
         policy?.superuser_qa_perf_c1_transition,
+      );
+    }
+  }
+  if (requireWebB1) {
+    const matching = evidence.adapter.queries.filter(item => item?.id === webB1Requirement.query_id);
+    if (matching.length !== 1 || matching[0].sha256 !== sha256(webB1Requirement.query)) {
+      fail('WEB_CONTROL_CENTERS_B1_POSTCHECK_FAILED',
+        'B1 query receipt differs from the fixed authority');
+    }
+    if (webB1Requirement.installed) {
+      validateWebControlCentersB1InstalledState(
+        evidence.web_control_centers_b1_state,
+        policy?.web_control_centers_b1_transition,
+      );
+    } else {
+      validateWebControlCentersB1PreState(
+        evidence.web_control_centers_b1_state,
+        policy?.web_control_centers_b1_transition,
       );
     }
   }
@@ -4576,6 +4851,19 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
     validateSuperuserQaPerfC1InstalledState(
       post.superuser_qa_perf_c1_state,
       policy?.superuser_qa_perf_c1_transition,
+    );
+  }
+  const webB1Transition = webControlCentersB1Transition(policy, manifest);
+  if (webB1Transition) {
+    validateWebControlCentersB1StateTransition(
+      pre.web_control_centers_b1_state,
+      post.web_control_centers_b1_state,
+      webB1Transition,
+    );
+  } else if (webControlCentersB1StateRequirement(policy, manifest, 'post').required) {
+    validateWebControlCentersB1InstalledState(
+      post.web_control_centers_b1_state,
+      policy?.web_control_centers_b1_transition,
     );
   }
   validatePremiumStateTransition(pre.premium_state, post.premium_state, manifest, policy);
@@ -5389,6 +5677,36 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
         && !additionFingerprints.has(item?.advisor_fingerprint)), ...additions];
     }
   }
+  const webB1Requirement = webControlCentersB1StateRequirement(policy, manifest, phase);
+  if (webB1Requirement.required && webB1Requirement.installed) {
+    const authority = policy?.web_control_centers_b1_transition;
+    const additions = authority?.security_advisor?.introduced_exceptions;
+    const migration = authority?.migrations?.[0];
+    const rpcByIdentity = new Map((authority?.rpc_attestations ?? [])
+      .map(item => [item.identity, item]));
+    if (!Array.isArray(additions) || additions.length !== 10
+      || new Set(additions.map(item => item?.advisor_fingerprint)).size !== additions.length
+      || rpcByIdentity.size !== 7
+      || additions.some(item => item?.origin?.migration
+          !== '20261102065812_web_control_centers_b1_publication_drafts'
+        || item?.origin?.migration_blob !== migration?.blob
+        || item?.origin?.source_sha !== authority?.reviewed_source_sha)) {
+      fail('RPC_SECURITY_ATTESTATION_FAILED', 'B1 Advisor authority is unavailable or inconsistent');
+    }
+    for (const addition of additions.filter(item => Array.isArray(item?.object?.argument_types))) {
+      const identity = rpcIdentity(addition.object).replaceAll(' ', '');
+      const rpc = rpcByIdentity.get(identity);
+      if (!rpc || addition.advisor_fingerprint !== rpc.advisor_fingerprint
+        || canonicalJson(addition.attestation) !== canonicalJson({
+          security_definer: rpc.security_definer, owner: rpc.owner, search_path: rpc.search_path,
+          acl: rpc.acl, execute: rpc.execute, definition_sha256: rpc.definition_sha256,
+        })) {
+        fail('RPC_SECURITY_ATTESTATION_FAILED', 'B1 RPC Advisor attestation differs from catalog authority');
+      }
+    }
+    const fingerprints = new Set(additions.map(item => item.advisor_fingerprint));
+    result = [...result.filter(item => !fingerprints.has(item?.advisor_fingerprint)), ...additions];
+  }
   return phaseBoundRpcExceptions(result, manifest, phase, { policy, migrations: context.migrations });
 }
 
@@ -5797,12 +6115,14 @@ export async function captureProductionSnapshot({
   const perfC1Requirement = superuserQaPerfC1StateRequirement(
     policy, manifest, phase, { request, migrations },
   );
+  const webB1Requirement = webControlCentersB1StateRequirement(policy, manifest, phase);
   if (storiesRequirement.required) assertReadOnlySql(storiesQuery);
   if (storiesSafetyRequirement.required) assertReadOnlySql(storiesSafetyRequirement.query);
   if (storiesSafetyC2Requirement.required) assertReadOnlySql(storiesSafetyC2Authority.query);
   if (storiesQaRequirement.required) assertReadOnlySql(storiesQaRequirement.query);
   if (controlCenterRequirement.required) assertReadOnlySql(controlCenterRequirement.query);
   if (perfC1Requirement.required) assertReadOnlySql(perfC1Requirement.query);
+  if (webB1Requirement.required) assertReadOnlySql(webB1Requirement.query);
   const financeQueries = selectFinanceSnapshotQueries(migrations);
   const requireFinanceAuthority = Boolean(activeFinanceAuthorityTransition(policy, manifest)) || financeQueries.phase !== 'legacy';
   const functionsBody = await get(`${base}/functions`, 'function inventory');
@@ -5859,6 +6179,9 @@ export async function captureProductionSnapshot({
   const superuserQaPerfC1State = perfC1Requirement.required
     ? singleSnapshot(await sql(perfC1Requirement.query, null, 'Superuser QA PERF C1 authority state'),
       normalizeSuperuserQaPerfC1State, 'Superuser QA PERF C1 authority state') : null;
+  const webControlCentersB1State = webB1Requirement.required
+    ? singleSnapshot(await sql(webB1Requirement.query, null, 'Web Control Centers B1 authority state'),
+      normalizeWebControlCentersB1State, 'Web Control Centers B1 authority state') : null;
   const rpcSecurity = normalizeRpcSecurityAttestations(rpcSecurityBody);
   validateRpcIdentitySet(rpcSecurity, phaseExceptions);
   const evidence = {
@@ -5901,6 +6224,10 @@ export async function captureProductionSnapshot({
           id: perfC1Requirement.query_id,
           sha256: sha256(perfC1Requirement.query),
         }] : []),
+        ...(webB1Requirement.required ? [{
+          id: webB1Requirement.query_id,
+          sha256: sha256(webB1Requirement.query),
+        }] : []),
       ],
     },
     observed_at: new Date(observedAt).toISOString(),
@@ -5928,6 +6255,9 @@ export async function captureProductionSnapshot({
       : {}),
     ...(perfC1Requirement.required
       ? { superuser_qa_perf_c1_state: superuserQaPerfC1State }
+      : {}),
+    ...(webB1Requirement.required
+      ? { web_control_centers_b1_state: webControlCentersB1State }
       : {}),
     requests: calls,
   };
