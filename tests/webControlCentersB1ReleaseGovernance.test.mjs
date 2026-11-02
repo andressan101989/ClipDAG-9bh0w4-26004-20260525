@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -96,6 +97,8 @@ test('B1 post-state validator binds relations, helpers, RPC identities and media
   assert.match(adapter.WEB_CONTROL_CENTERS_B1_STATE_SQL, /join expected_functions expected/);
   assert.match(adapter.WEB_CONTROL_CENTERS_B1_STATE_SQL, /where p\.prokind='f'/);
   assert.match(adapter.WEB_CONTROL_CENTERS_B1_STATE_SQL, /pg_catalog\.pg_get_functiondef\(p\.oid\)/);
+  assert.equal((adapter.WEB_CONTROL_CENTERS_B1_STATE_SQL.match(/as "table"/g) ?? []).length, 3);
+  assert.doesNotMatch(adapter.WEB_CONTROL_CENTERS_B1_STATE_SQL, /\btable_name\b/);
   const transition = policy.web_control_centers_b1_transition;
   const state = postState(transition);
   assert.equal(adapter.validateWebControlCentersB1InstalledState(state, transition), true);
