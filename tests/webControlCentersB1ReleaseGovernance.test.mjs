@@ -92,6 +92,10 @@ test('B1 compiler accepts exact reviewed source provenance and rejects altered G
 test('B1 post-state validator binds relations, helpers, RPC identities and media link policy', async () => {
   const adapter = await load('scripts/nelyon-production-snapshot-adapter.mjs');
   assert.equal(adapter.assertReadOnlySql(adapter.WEB_CONTROL_CENTERS_B1_STATE_SQL), true);
+  assert.match(adapter.WEB_CONTROL_CENTERS_B1_STATE_SQL, /expected_functions\(identity\)/);
+  assert.match(adapter.WEB_CONTROL_CENTERS_B1_STATE_SQL, /join expected_functions expected/);
+  assert.match(adapter.WEB_CONTROL_CENTERS_B1_STATE_SQL, /where p\.prokind='f'/);
+  assert.match(adapter.WEB_CONTROL_CENTERS_B1_STATE_SQL, /pg_catalog\.pg_get_functiondef\(p\.oid\)/);
   const transition = policy.web_control_centers_b1_transition;
   const state = postState(transition);
   assert.equal(adapter.validateWebControlCentersB1InstalledState(state, transition), true);

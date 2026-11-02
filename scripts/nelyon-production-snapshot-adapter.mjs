@@ -1914,6 +1914,10 @@ export const WEB_CONTROL_CENTERS_B1_STATE_SQL = `with expected_helpers(identity)
     ('public.publish_my_media_post_v1(uuid,text,text,text,uuid[])'),
     ('public.publish_my_publication_draft_v1(uuid,bigint,uuid,uuid[])'),
     ('public.update_my_publication_draft_v1(uuid,bigint,uuid,text,text,text,jsonb,uuid[])')
+), expected_functions(identity) as (
+  select identity from expected_helpers
+  union all
+  select identity from expected_rpcs
 ), function_catalog as (
   select n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' identity,
     owner_role.rolname owner,p.provolatile volatility,p.prosecdef security_definer,
@@ -1932,6 +1936,9 @@ export const WEB_CONTROL_CENTERS_B1_STATE_SQL = `with expected_helpers(identity)
     pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex') definition_sha256
   from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
   join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
+  join expected_functions expected on expected.identity=
+    n.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')'
+  where p.prokind='f'
 ), helper_rows as (
   select catalog.* from function_catalog catalog join expected_helpers expected using(identity)
 ), rpc_rows as (
