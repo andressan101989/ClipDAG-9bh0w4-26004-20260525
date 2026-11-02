@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { WEB_CONTROL_CENTERS_B1_STATE_SQL } from "./nelyon-production-snapshot-adapter.mjs";
 
 const repo = resolve(import.meta.dirname, "..");
 const scratch = resolve("D:/CodexTemp");
@@ -258,8 +259,19 @@ try {
   ]);
   databaseCreated = true;
   sql(setup);
+  const preSnapshotState = JSON.parse(scalar(WEB_CONTROL_CENTERS_B1_STATE_SQL));
+  assert.equal(preSnapshotState.complete, true);
+  assert.equal(preSnapshotState.installed, false);
+  assert.deepEqual(preSnapshotState.helpers, []);
+  assert.deepEqual(preSnapshotState.rpc_identities, []);
   sql(migration);
   sql(securityFixture);
+  const postSnapshotState = JSON.parse(scalar(WEB_CONTROL_CENTERS_B1_STATE_SQL));
+  assert.equal(postSnapshotState.complete, true);
+  assert.equal(postSnapshotState.installed, true);
+  assert.equal(postSnapshotState.helpers.length, 8);
+  assert.equal(postSnapshotState.rpc_identities.length, 7);
+  assert.equal(postSnapshotState.relations.length, 3);
 
   const created = JSON.parse(asUserScalar(owner, `
 select public.create_my_publication_draft_v1(
