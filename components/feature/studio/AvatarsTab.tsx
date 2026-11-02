@@ -7,7 +7,7 @@
  *  - iOS ph:// URIs handled via expo-file-system (fetch() crashes on ph://)
  *  - Calls ai-avatar edge function via Supabase
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView,
   ActivityIndicator, Dimensions,
@@ -18,10 +18,13 @@ import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAlert } from '@/template';
 import { useFeed } from '@/hooks/useFeed';
+import { useAuth } from '@/hooks/useAuth';
 import { useRouter } from 'expo-router';
 import { getSupabaseClient } from '@/template';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
+import { randomUUID } from 'expo-crypto';
+import { publishCanonicalAvatarMedia } from '@/services/avatarPublicationService';
 
 const { width: W } = Dimensions.get('window');
 
@@ -41,6 +44,7 @@ const AVATAR_STYLES = [
 export function AvatarsTab() {
   const { showAlert } = useAlert();
   const { addVideo }  = useFeed();
+  const { user }      = useAuth();
   const router        = useRouter();
   const supabase      = getSupabaseClient();
 
@@ -52,6 +56,7 @@ export function AvatarsTab() {
   const [isUploading,      setIsUploading]      = useState(false);
   const [isGenerating,     setIsGenerating]     = useState(false);
   const [generatingStatus, setGeneratingStatus] = useState('');
+  const publicationCommandRef = useRef(randomUUID());
 
   /**
    * iOS ph:// URIs from ImagePicker cannot be fetched with fetch().
@@ -151,19 +156,22 @@ export function AvatarsTab() {
   }, [uploadedUrl, selectedStyle, supabase, showAlert]);
 
   const publishAvatar = useCallback(async () => {
-    if (!avatarUrl) return;
+    if (!avatarUrl || !user?.id) return;
     try {
-      await addVideo({
-        videoUrl: avatarUrl, thumbnailUrl: avatarUrl,
+      await publishCanonicalAvatarMedia({
+        ownerId:user.id,
+        imageUrl:avatarUrl,
         caption: `Mi nuevo avatar IA ${AVATAR_STYLES.find(s => s.id === selectedStyle)?.emoji ?? '✨'} #AIAvatar #Nelyon`,
-        music: 'Sin música', username: '', userAvatar: '',
+        music:'Sin música',publicationCommandId:publicationCommandRef.current,
+        publishPhoto:addVideo,
       });
+      publicationCommandRef.current=randomUUID();
       showAlert('Publicado 🎉', 'Tu avatar fue publicado al feed', [
         { text: 'Ver feed', onPress: () => router.replace('/(tabs)') },
       ]);
       setStep('pick'); setPhotoUri(null); setUploadedUrl(null); setAvatarUrl(null);
     } catch (e: any) { showAlert('Error', e?.message ?? 'No se pudo publicar'); }
-  }, [avatarUrl, selectedStyle, addVideo, showAlert, router]);
+  }, [avatarUrl, selectedStyle, addVideo, showAlert, router, user?.id]);
 
   // ── Step: pick ─────────────────────────────────────────────────────────
   if (step === 'pick') {

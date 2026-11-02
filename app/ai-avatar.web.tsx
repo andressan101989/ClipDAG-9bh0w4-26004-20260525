@@ -20,6 +20,8 @@ import { useAlert } from '@/template';
 import { getSupabaseClient } from '@/template';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
+import { randomUUID } from 'expo-crypto';
+import { publishCanonicalAvatarMedia } from '@/services/avatarPublicationService';
 
 const { width: W } = Dimensions.get('window');
 const PREVIEW_SIZE = Math.min(W - 64, 400);
@@ -60,6 +62,7 @@ export default function AIAvatarScreen() {
   const { user, updateProfile } = useAuth();
   const { addVideo } = useFeed();
   const { showAlert } = useAlert();
+  const publicationCommandRef = useRef(randomUUID());
   const supabase = getSupabaseClient();
 
   const [step,          setStep]          = useState<Step>('upload');
@@ -153,9 +156,15 @@ export default function AIAvatarScreen() {
   }, [avatarUrl, updateProfile, showAlert, router]);
 
   const handlePublishToFeed = useCallback(async () => {
-    const mediaUrl = videoUrl || avatarUrl; if (!mediaUrl) return; setPublishingToFeed(true);
+    const mediaUrl = videoUrl || avatarUrl; if (!mediaUrl || !user?.id) return; setPublishingToFeed(true);
     try {
-      await addVideo({ videoUrl: mediaUrl, thumbnailUrl: avatarUrl || '', caption: `Mi nuevo avatar IA ${AVATAR_STYLES.find(s => s.id === selectedStyle)?.emoji || '✨'} #AIAvatar #Nelyon`, music: 'Sin música', username: user?.username || '', userAvatar: user?.avatar || '' });
+      await publishCanonicalAvatarMedia({
+        ownerId:user.id,
+        imageUrl:avatarUrl || mediaUrl,videoUrl:videoUrl || null,
+        caption:`Mi nuevo avatar IA ${AVATAR_STYLES.find(s => s.id === selectedStyle)?.emoji || '✨'} #AIAvatar #Nelyon`,
+        music:'Sin música',publicationCommandId:publicationCommandRef.current,publishPhoto:addVideo,
+      });
+      publicationCommandRef.current=randomUUID();
       showAlert('Publicado 🎉', 'Tu avatar fue publicado', [{ text: 'Ver feed', onPress: () => router.replace('/(tabs)') }]);
     } catch (e: any) { showAlert('Error', e?.message || 'No se pudo publicar'); }
     setPublishingToFeed(false);

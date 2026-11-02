@@ -39,6 +39,30 @@ export interface UploadMediaInput {
   timeoutMs?: number;
   premiumContentId?: string;
 }
+export type CanonicalUploadSource =
+  | {
+      kind: 'native-uri';
+      uri: string;
+      mimeType: string;
+      fileName: string;
+      sizeBytes?: number;
+    }
+  | {
+      kind: 'browser-blob';
+      blob: Blob;
+      mimeType: string;
+      fileName: string;
+      sizeBytes: number;
+    };
+export interface UploadMediaFromSourceInput {
+  source: CanonicalUploadSource;
+  purpose: MediaPurpose;
+  visibility: MediaVisibility;
+  durationMs?: number;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  premiumContentId?: string;
+}
 export interface MediaAssetDescriptor {
   assetId: string;
   provider: "r2";
@@ -103,8 +127,38 @@ export interface NormalizedUploadMedia {
 }
 
 const supabase = getSupabaseClient();
-const rejectLocalUrl = (value: string) =>
-  /^(file|ph|content):\/\//i.test(value);
+const NON_PERSISTABLE_MEDIA_SCHEMES = /^(?:file|ph|content|blob|data):/i;
+export function isCanonicalPersistedMediaUrl(value: string): boolean {
+  const candidate = value?.trim();
+  if (!candidate || NON_PERSISTABLE_MEDIA_SCHEMES.test(candidate)) return false;
+  // Hermes and browsers expose URL. The narrow fallback keeps isolated JS
+  // runtimes/tests safe without accepting credentials, whitespace or HTTP.
+  if (typeof URL === "undefined") {
+    return /^https:\/\/[^\s/@]+(?:\/[^\s]*)?$/i.test(candidate);
+  }
+  try {
+    const parsed = new URL(candidate);
+    return (
+      parsed.protocol === "https:" &&
+      Boolean(parsed.hostname) &&
+      !parsed.username &&
+      !parsed.password
+    );
+  } catch {
+    return false;
+  }
+}
+export function assertCanonicalPersistedMediaUrl(value: string): string {
+  if (!isCanonicalPersistedMediaUrl(value)) {
+    throw new MediaClientError({
+      stage: "MEDIA_INPUT",
+      code: "invalid_persisted_media_url",
+      message: "invalid_persisted_media_url",
+      operationId: createMediaOperationId("url"),
+    });
+  }
+  return value;
+}
 const DIRECT_IMAGE_MIMES = new Set([
   "image/jpeg",
   "image/png",
@@ -394,17 +448,20 @@ type R2UploadHeaders = {
   "Cache-Control"?: string;
 };
 type R2PutResponse = Awaited<ReturnType<typeof expoFetch>>;
+type R2PutBody = File | Blob;
 type R2PutFetcher = (
   url: string,
   init: {
     method: "PUT";
     headers: R2UploadHeaders;
-    body: File;
+    body: R2PutBody;
     signal: AbortSignal;
   },
 ) => Promise<R2PutResponse>;
 interface R2PutRetryInput {
-  file: File;
+  body?: R2PutBody;
+  /** @deprecated Native callers should migrate to body; retained for API compatibility. */
+  file?: File;
   uploadUrl: string;
   headers: R2UploadHeaders;
   signal: AbortSignal;
@@ -432,6 +489,16 @@ function classifyTransientTransportError(error: unknown): string | null {
 export async function putFileToR2WithRetry(
   input: R2PutRetryInput,
 ): Promise<R2PutResponse> {
+  const requestBody = input.body ?? input.file;
+  if (!requestBody) {
+    throw new MediaClientError({
+      stage: "MEDIA_R2_PUT",
+      code: "invalid_media_input",
+      message: "invalid_media_input",
+      mimeType: input.mimeType,
+      operationId: input.operationId,
+    });
+  }
   const fetcher = input.fetcher ?? (expoFetch as R2PutFetcher);
   const sleep =
     input.sleep ??
@@ -456,7 +523,7 @@ export async function putFileToR2WithRetry(
       response = await fetcher(input.uploadUrl, {
         method: "PUT",
         headers: input.headers,
-        body: input.file,
+        body: requestBody,
         signal: input.signal,
       });
       if (response.ok) return response;
@@ -522,8 +589,9 @@ export async function putFileToR2WithRetry(
   });
 }
 
+type MediaUploadMetadata = Omit<UploadMediaInput, "uri"> & { uri?: string };
 export async function createMediaUpload(
-  input: UploadMediaInput,
+  input: MediaUploadMetadata,
   operationId = createMediaOperationId(),
 ) {
   try {
@@ -536,8 +604,13 @@ export async function createMediaUpload(
     } else if (input.premiumContentId !== undefined) {
       throw new Error("premium_context_not_allowed");
     }
-    const file = new File(input.uri);
-    const size = input.sizeBytes ?? file.size;
+    const nativeFile = input.uri ? new File(input.uri) : undefined;
+    const size = input.sizeBytes ?? nativeFile?.size;
+    if (!Number.isFinite(size) || Number(size) <= 0) {
+      throw new Error("invalid_media_size");
+    }
+    const fileName = input.fileName ?? nativeFile?.name;
+    if (!fileName?.trim()) throw new Error("invalid_media_file_name");
     const { data, error } = await supabase.functions.invoke<CreateResponse>(
       "create-media-upload",
       {
@@ -545,7 +618,7 @@ export async function createMediaUpload(
           purpose: input.purpose,
           mime_type: input.mimeType,
           size_bytes: size,
-          file_name: input.fileName ?? file.name,
+          file_name: fileName,
           visibility: input.visibility,
           ...(isPremiumImage
             ? { premium_content_id: input.premiumContentId }
@@ -563,7 +636,7 @@ export async function createMediaUpload(
         operationId,
       });
     }
-    return { file, contract: data.data };
+    return { contract: data.data };
   } catch (error) {
     throw asMediaClientError(error, "MEDIA_CREATE_UPLOAD_RECORD", {
       mimeType: input.mimeType,
@@ -583,7 +656,7 @@ export async function finalizeMediaUpload(
     );
     if (error || !data?.success || !data.data)
       throw await normalizeFunctionInvokeError(error, data?.error);
-    if (data.data.url && rejectLocalUrl(data.data.url))
+    if (data.data.url && !isCanonicalPersistedMediaUrl(data.data.url))
       throw {
         message: "invalid_persisted_media_url",
         code: "invalid_persisted_media_url",
@@ -608,13 +681,58 @@ export async function finalizeMediaUpload(
 export async function uploadMediaFromUri(
   input: UploadMediaInput,
 ): Promise<MediaAssetDescriptor> {
+  return uploadMediaFromSource({
+    source: {
+      kind: "native-uri",
+      uri: input.uri,
+      mimeType: input.mimeType,
+      fileName: input.fileName ?? new File(input.uri).name,
+      sizeBytes: input.sizeBytes,
+    },
+    purpose: input.purpose,
+    visibility: input.visibility,
+    durationMs: input.durationMs,
+    signal: input.signal,
+    timeoutMs: input.timeoutMs,
+    premiumContentId: input.premiumContentId,
+  });
+}
+
+export async function uploadMediaFromBlob(
+  input: Omit<UploadMediaFromSourceInput, "source"> & {
+    blob: Blob;
+    mimeType: string;
+    fileName: string;
+  },
+): Promise<MediaAssetDescriptor> {
+  return uploadMediaFromSource({
+    ...input,
+    source: {
+      kind: "browser-blob",
+      blob: input.blob,
+      mimeType: input.mimeType,
+      fileName: input.fileName,
+      sizeBytes: input.blob.size,
+    },
+  });
+}
+
+export async function uploadMediaFromSource(
+  input: UploadMediaFromSourceInput,
+): Promise<MediaAssetDescriptor> {
   const operationId = createMediaOperationId("upload");
-  if (!input.uri)
+  if (
+    !input.source ||
+    !input.source.mimeType ||
+    !input.source.fileName ||
+    (input.source.kind === "native-uri" && !input.source.uri) ||
+    (input.source.kind === "browser-blob" && !(input.source.blob instanceof Blob))
+  )
     throw new MediaClientError({
       stage: "MEDIA_INPUT",
       code: "invalid_media_input",
       message: "invalid_media_input",
-      mimeType: input.mimeType,
+      mimeType: input.source?.mimeType,
       operationId,
     });
   const controller = new AbortController();
@@ -625,21 +743,43 @@ export async function uploadMediaFromUri(
     input.timeoutMs ?? 120_000,
   );
   try {
-    const normalized = IMAGE_PURPOSES.has(input.purpose)
-      ? await normalizeImageForR2Upload(input)
+    const normalized =
+      input.source.kind === "native-uri" && IMAGE_PURPOSES.has(input.purpose)
+      ? await normalizeImageForR2Upload({
+          uri: input.source.uri,
+          mimeType: input.source.mimeType,
+          fileName: input.source.fileName,
+          sizeBytes: input.source.sizeBytes,
+          purpose: input.purpose,
+        })
       : {
-          uri: input.uri,
-          mimeType: input.mimeType,
-          fileName: input.fileName ?? new File(input.uri).name,
-          sizeBytes: input.sizeBytes ?? new File(input.uri).size,
+          uri: input.source.kind === "native-uri" ? input.source.uri : undefined,
+          mimeType: input.source.mimeType,
+          fileName: input.source.fileName,
+          sizeBytes:
+            input.source.kind === "browser-blob"
+              ? input.source.sizeBytes
+              : input.source.sizeBytes ?? new File(input.source.uri).size,
         };
-    const normalizedInput = { ...input, ...normalized };
-    const { file, contract } = await createMediaUpload(
+    const normalizedInput = {
+      purpose: input.purpose,
+      visibility: input.visibility,
+      durationMs: input.durationMs,
+      premiumContentId: input.premiumContentId,
+      ...normalized,
+    };
+    const { contract } = await createMediaUpload(
       normalizedInput,
       operationId,
     );
+    const transport = {
+      body:
+        input.source.kind === "browser-blob"
+          ? input.source.blob
+          : new File(normalized.uri!),
+    };
     await putFileToR2WithRetry({
-      file,
+      body: transport.body,
       uploadUrl: contract.uploadUrl,
       headers: contract.headers,
       signal: controller.signal,
@@ -662,7 +802,7 @@ export async function getMediaUrl(assetId: string): Promise<string> {
   });
   if (error || !data?.success || !data.data?.url)
     throw new Error(data?.error ?? error?.message ?? "media_url_failed");
-  return data.data.url;
+  return assertCanonicalPersistedMediaUrl(data.data.url);
 }
 export async function deleteMediaAsset(assetId: string): Promise<void> {
   const operationId = createMediaOperationId("delete");
@@ -750,4 +890,27 @@ export async function findCommonLinkedEntityForAssets(
     .eq("user_id", userId)
     .maybeSingle();
   return entityError || !entity ? null : entityId;
+}
+
+export async function findLinkedPostForAsset(assetId: string): Promise<string | null> {
+  if (!UUID_PATTERN.test(assetId)) return null;
+  const { data: sessionData } = await supabase.auth.getSession();
+  const userId = sessionData.session?.user?.id;
+  if (!userId) return null;
+  const { data: link, error } = await supabase
+    .from("media_asset_links")
+    .select("entity_id,position,slot")
+    .eq("asset_id", assetId)
+    .eq("entity_type", "video_post")
+    .eq("slot", "media")
+    .eq("position", 0)
+    .maybeSingle();
+  if (error || !link || typeof link.entity_id !== "string") return null;
+  const { data: post, error: postError } = await supabase
+    .from("videos")
+    .select("id")
+    .eq("id", link.entity_id)
+    .eq("user_id", userId)
+    .maybeSingle();
+  return postError || !post ? null : String(post.id);
 }

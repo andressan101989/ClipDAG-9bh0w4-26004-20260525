@@ -28,6 +28,7 @@ import { PersonalizationFeedLoadCoordinator } from '@/services/personalizationRu
 import { mapVideoRow } from '@/services/videoPresentation';
 import {
   createMediaOperationId,
+  assertCanonicalPersistedMediaUrl,
   deleteMediaAsset,
   extractRpcUuid,
   getSafeMediaError,
@@ -52,13 +53,15 @@ export interface VideoWithMeta extends Video {
 
 export type AddVideoInput = Omit<
   Video,
-  'id' | 'likes' | 'comments' | 'shares' | 'isLiked' | 'createdAt'
+  'id' | 'userId' | 'likes' | 'comments' | 'shares' | 'isLiked' | 'createdAt'
 > & {
   mediaUrls?: string[];
   mediaAssetIds?: string[];
   isExclusive?: boolean;
   exclusivePrice?: number;
   exclusiveContentId?: string;
+  /** Stable UUID retained by the caller across ambiguous retries. */
+  publicationCommandId?: string;
 };
 
 export interface VideoAnalytics {
@@ -88,7 +91,7 @@ interface FeedContextType {
   toggleSave:      (videoId: string) => Promise<void>;
   isSaved:         (videoId: string) => boolean;
   addComment:      (videoId: string, comment: Omit<Comment, 'id' | 'likes' | 'createdAt'>) => Promise<void>;
-  addVideo:        (video: AddVideoInput) => Promise<string | undefined>;
+  addVideo:        (video: AddVideoInput) => Promise<string>;
   updateVideo:     (videoId: string, updates: { caption?: string; music?: string }) => Promise<{ success: boolean; error?: string }>;
   deleteVideo:     (videoId: string, videoUrl?: string, thumbnailUrl?: string) => Promise<{ success: boolean; error?: string }>;
   trackView:       (videoId: string, event: FinalizedVideoView) => Promise<void>;
@@ -564,7 +567,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   // ── Toggle Like ───────────────────────────────────────────────────────────
   const toggleLike = useCallback(async (videoId: string, creatorId: string) => {
     const supabase = supabaseRef.current;
-    if (!user) return undefined;
+    if (!user) return;
     const alreadyLiked = likedVideos.has(videoId);
 
     // Optimistic update
@@ -816,13 +819,23 @@ export function FeedProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   // ── Add Video ─────────────────────────────────────────────────────────────
-  const addVideo = useCallback(async (video: AddVideoInput) => {
+  const addVideo = useCallback(async (video: AddVideoInput): Promise<string> => {
     const supabase = supabaseRef.current;
-    if (!user) return;
-    if (!supabase || !supabaseOk.current) return undefined;
+    if (!user) throw new Error('publication_auth_required');
+    if (!supabase || !supabaseOk.current) throw new Error('publication_backend_unavailable');
     try {
-      if (video.mediaUrls && video.mediaUrls.length >= 2) {
-        const operationId=createMediaOperationId('carousel');
+      const mediaAssetIds=video.mediaAssetIds;
+      if (mediaAssetIds?.length) {
+        const kind=mediaAssetIds.length > 1 ? 'carousel' : 'photo';
+        const operationId=createMediaOperationId(kind);
+        if (!video.publicationCommandId) {
+          throw new MediaEntityRpcError({
+            stage:'PUBLICATION_COMMAND',code:'publication_command_required',
+            message:'publication_command_required',operationId,
+          });
+        }
+        assertCanonicalPersistedMediaUrl(video.videoUrl);
+        (video.mediaUrls ?? []).forEach(assertCanonicalPersistedMediaUrl);
         const {data:sessionData,error:sessionError}=await supabase.auth.getSession();
         if(sessionError||!sessionData.session) {
           throw new MediaEntityRpcError({
@@ -830,13 +843,15 @@ export function FeedProvider({ children }: { children: ReactNode }) {
             operationId,
           });
         }
-        const invokeCarousel=()=>supabase.rpc('create_carousel_post',{
+        const invokePublication=()=>supabase.rpc('publish_my_media_post_v1',{
+          p_client_command_id: video.publicationCommandId,
+          p_kind: mediaAssetIds.length > 1 ? 'carousel' : 'photo',
           p_caption:video.caption,
           p_music:video.music||'Sin musica',
-          p_asset_ids:video.mediaAssetIds??[],
+          p_asset_ids:mediaAssetIds,
         });
         const {data,error}=await invokeRpcWithSingleAuthRefresh(
-          invokeCarousel,
+          invokePublication,
           ()=>supabase.auth.refreshSession().then(result=>({
             error:result.error?new MediaEntityRpcError({
               stage:'CAROUSEL_AUTH',code:result.error.code??'session_refresh_failed',
@@ -846,7 +861,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         );
         if (error) {
           const safe=getSafeMediaError(error,'CAROUSEL_CREATE_POST',{operationId});
-          console.warn('[FeedContext] carousel RPC failed', {
+          console.warn('[FeedContext] publication RPC failed', {
             operationId:safe.operationId,stage:safe.stage,code:safe.code,
             message:safe.message,details:safe.details,hint:safe.hint,status:safe.httpStatus,
           });
@@ -856,7 +871,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
           });
         }
         let postId:string;
-        try { postId=extractRpcUuid(data,'create_carousel_post'); }
+        try { postId=extractRpcUuid(data,'publish_my_media_post_v1'); }
         catch(error) {
           const safe=getSafeMediaError(error,'CAROUSEL_CLIENT_RESPONSE',{operationId});
           throw new MediaEntityRpcError({...safe,operationId});
@@ -868,7 +883,7 @@ export function FeedProvider({ children }: { children: ReactNode }) {
           userAvatar: user.avatar || '',
           videoUrl: video.videoUrl,
           thumbnailUrl: video.thumbnailUrl || video.videoUrl,
-          mediaUrls: [...video.mediaUrls],
+          mediaUrls: video.mediaUrls ? [...video.mediaUrls] : undefined,
           caption: video.caption,
           likes: 0,
           comments: 0,
@@ -880,64 +895,20 @@ export function FeedProvider({ children }: { children: ReactNode }) {
         setVideos(prev => [newVideo, ...prev]);
         return postId;
       }
-      if (video.mediaAssetIds?.length === 1) {
-        const { data, error } = await supabase.rpc('create_photo_post_with_media', {
-          p_caption: video.caption,
-          p_music: video.music || 'Sin musica',
-          p_asset_id: video.mediaAssetIds[0],
-        });
-        if (error) {
-          throw Object.assign(new Error('PHOTO_CREATE_POST_FAILED'), {
-            code: error.code ?? 'unknown',
-            stage: 'PHOTO_CREATE_POST',
-          });
-        }
-        const photoId=extractRpcUuid(data,'create_photo_post_with_media');
-        const newVideo: VideoWithMeta = {
-          id:photoId,userId:user.id,username:user.username||'user',userAvatar:user.avatar||'',
-          videoUrl:video.videoUrl,thumbnailUrl:video.videoUrl,caption:video.caption,
-          likes:0,comments:0,shares:0,music:video.music||'Sin musica',
-          isLiked:false,createdAt:new Date().toISOString(),
-        };
-        setVideos(prev => [newVideo,...prev]);
-        return photoId;
-      }
-
-      const insertPayload: Record<string, unknown> = {
-        user_id:       user.id,
-        video_url:     video.videoUrl,
-        thumbnail_url: video.thumbnailUrl || '',
-        caption:       video.caption,
-        music:         video.music || 'Sin musica',
-      };
-      const { data, error } = await supabase.from('videos').insert(insertPayload)
-        .select('*, user_profiles!videos_user_id_fkey(username, avatar_url)').single();
-
-      if (!error && data) {
-        const profile = data.user_profiles as Record<string, string> | null;
-        const newVideo: VideoWithMeta = mapVideoRow(
-          data as unknown as Record<string, unknown>,
-          profile?.username || user.username || 'user',
-          profile?.avatar_url || user.avatar || '',
-        );
-        setVideos(prev => [newVideo, ...prev]);
-        return newVideo.id;
-      }
-      if (error) {
-        console.warn('[FeedContext] media entity creation failed', {
-          stage: 'CREATE_POST',
-          code: error.code ?? 'unknown',
-        });
-      }
-      return undefined;
+      // Stream publication owns its own canonical RPC. Every photo/carousel
+      // caller must provide canonical media asset IDs; never fall back to a
+      // direct table INSERT that bypasses receipts and ownership validation.
+      throw new MediaEntityRpcError({
+        stage:'PUBLICATION_COMMAND',code:'media_asset_required',
+        message:'media_asset_required',operationId:createMediaOperationId('photo'),
+      });
     } catch (e) {
       const controlled=getSafeMediaError(e,'CREATE_POST');
       console.warn('[FeedContext] addVideo failed', {
         operationId:controlled.operationId,stage:controlled.stage,code:controlled.code,
         message:controlled.message,details:controlled.details,hint:controlled.hint,
       });
-      if (controlled.stage.startsWith('CAROUSEL_') || controlled.stage === 'PHOTO_CREATE_POST') throw e;
-      return undefined;
+      throw e;
     }
   }, [user]);
 

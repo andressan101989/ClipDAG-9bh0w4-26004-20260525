@@ -369,10 +369,10 @@ export function useVideoEditor(maxClips = 5) {
   const exportAndPublish = useCallback(async (
     caption: string,
     useBackground = false,
-  ): Promise<{ uri: string; ok: boolean; error?: string }> => {
+  ): Promise<{ uri: string; ok: boolean; status: 'exported' | 'queued' | 'failed'; error?: string }> => {
     const active = clips[activeIdx];
-    if (!active) return { uri: '', ok: false, error: 'No active clip' };
-    if (exportAttempts.current >= 2) return { uri: '', ok: false, error: 'Export failed after retries' };
+    if (!active) return { uri: '', ok: false, status: 'failed', error: 'No active clip' };
+    if (exportAttempts.current >= 2) return { uri: '', ok: false, status: 'failed', error: 'Export failed after retries' };
 
     setIsPublishing(true);
     setIsExporting(true);
@@ -410,11 +410,13 @@ export function useVideoEditor(maxClips = 5) {
             ? 'Para silenciar clips se requiere EAS Build con FFmpeg instalado.'
             : 'Para recortar el video se requiere EAS Build con FFmpeg instalado.';
           setExportError(err);
-          return { uri: '', ok: false, error: err };
+          return { uri: '', ok: false, status: 'failed', error: err };
         }
         // Single clip, no trim — publish the original URI directly.
         log.editor.warn('FFmpeg unavailable — publishing original clip without processing');
-        return { uri: active.uri, ok: true };
+        // Export succeeded. Publication failures must not consume export retries.
+        exportAttempts.current = 0;
+        return { uri: active.uri, ok: true, status: 'exported' };
       }
 
       if (useBackground) {
@@ -423,7 +425,7 @@ export function useVideoEditor(maxClips = 5) {
         setRenderJobId(job.id);
         setExportProgress('En cola...');
         log.editor.info('Export queued', { jobId: job.id });
-        return { uri: '', ok: true };
+        return { uri: '', ok: false, status: 'queued', error: 'export_queued' };
       }
 
       // Foreground export
@@ -432,16 +434,16 @@ export function useVideoEditor(maxClips = 5) {
 
       if (result.success) {
         log.editor.perf('export', Date.now());
-        return { uri: result.uri, ok: true };
+        return { uri: result.uri, ok: true, status: 'exported' };
       } else {
         setExportError(result.error ?? 'Export failed');
-        return { uri: '', ok: false, error: result.error };
+        return { uri: '', ok: false, status: 'failed', error: result.error };
       }
     } catch (e: any) {
       const msg = e?.message ?? 'Export failed';
       log.editor.error('Export error', e);
       setExportError(msg);
-      return { uri: '', ok: false, error: msg };
+      return { uri: '', ok: false, status: 'failed', error: msg };
     } finally {
       setIsPublishing(false);
       setIsExporting(false);

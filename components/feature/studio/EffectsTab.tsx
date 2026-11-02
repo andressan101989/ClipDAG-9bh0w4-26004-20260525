@@ -19,9 +19,11 @@ import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { randomUUID } from 'expo-crypto';
 
 import { useAlert } from '@/template';
 import { useFeed } from '@/hooks/useFeed';
+import { useAuth } from '@/hooks/useAuth';
 import { useRouter } from 'expo-router';
 import {
   isDeepARAvailable, DEEPAR_FILTERS,
@@ -38,6 +40,19 @@ try {
 } catch { /* reanimated not ready */ }
 import { CameraCore, type CameraCoreHandle } from './camera/CameraCore';
 import { Colors, FontSize, FontWeight, Radius } from '@/constants/theme';
+import { uploadMediaFromUri, type MediaAssetDescriptor } from '@/services/mediaService';
+import {
+  getSafeStreamError,
+  resumeStreamVideoPublication,
+  uploadAndPublishStreamVideo,
+} from '@/services/streamService';
+import {
+  clearPendingStreamPublication,
+  fingerprintStreamSourceIdentity,
+  loadPendingStreamPublication,
+  savePendingStreamPublication,
+  type PendingStreamPublicationRecovery,
+} from '@/services/streamPublicationRecovery';
 
 // ── expo-video — lazy-loaded (same pattern as VideoCard.native.tsx) ───────────
 let _useVideoPlayer: any = (_src: any, _setup?: any): any => null;
@@ -158,6 +173,7 @@ function CircItem({
 // ── EffectsTab ────────────────────────────────────────────────────────────────
 export function EffectsTab() {
   const { addVideo }  = useFeed();
+  const { user }      = useAuth();
   const { showAlert } = useAlert();
   const router        = useRouter();
 
@@ -184,10 +200,20 @@ export function EffectsTab() {
   const [isCapturing,     setIsCapturing]     = useState(false);
   const [isRecording,     setIsRecording]     = useState(false);
   const [deepARCamReady,  setDeepARCamReady]  = useState(false);
+  const [isPublishing,    setIsPublishing]    = useState(false);
   // Tracks actual available height for the camera container (updated via onLayout)
   const [cameraAreaH,     setCameraAreaH]     = useState(DEFAULT_CAM_H);
 
   const shutterScale = useRef(new Animated.Value(1)).current;
+  const publishInFlightRef = useRef(false);
+  const publicationCommandIdRef = useRef(randomUUID());
+  const preparedPhotoRef = useRef<{ sourceUri: string; asset: MediaAssetDescriptor } | null>(null);
+  const pendingStreamPublicationRef = useRef<PendingStreamPublicationRecovery | null>(null);
+
+  useEffect(() => {
+    publicationCommandIdRef.current = randomUUID();
+    preparedPhotoRef.current = null;
+  }, [capturedUri]);
 
   const handleDeepARFilter = useCallback(async (filter: DeepARFilter) => {
     console.log('[CreatorFilters] selected AR filter:', filter.id);
@@ -242,7 +268,7 @@ export function EffectsTab() {
     if (isRecording) {
       setIsRecording(false);
       const uri = await cameraRef.current.stopRecording();
-      if (uri) { setCapturedUri(uri); setMode('preview'); }
+      if (uri) { setCapturedUri(uri); setCapturedType('video'); setMode('preview'); }
     } else {
       setIsRecording(true);
       cameraRef.current.startRecording();
@@ -275,22 +301,116 @@ export function EffectsTab() {
   }, [showAlert]);
 
   const handlePublish = useCallback(async () => {
-    if (!capturedUri) return;
+    if (!capturedUri || publishInFlightRef.current) return;
+    const ownerId=user?.id;
+    if(!ownerId) {
+      showAlert('Sesión requerida','Inicia sesión para publicar.');
+      return;
+    }
+    publishInFlightRef.current = true;
+    setIsPublishing(true);
+    let pending=pendingStreamPublicationRef.current?.ownerId===ownerId
+      ? pendingStreamPublicationRef.current
+      : null;
+    try {
+      pending??=await loadPendingStreamPublication('creator-studio-effects',ownerId);
+      pendingStreamPublicationRef.current=pending;
+    } catch(error) {
+      publishInFlightRef.current=false;
+      setIsPublishing(false);
+      showAlert('Error','No se pudo recuperar la publicación pendiente.');
+      return;
+    }
+    if(pending) {
+      try {
+        const published=await resumeStreamVideoPublication(pending);
+        if(!published.postId) throw new Error('stream_post_confirmation_missing');
+        pendingStreamPublicationRef.current=null;
+        await clearPendingStreamPublication('creator-studio-effects',ownerId);
+        showAlert('Publicado 🎉','La publicación pendiente fue confirmada',[
+          {text:'Ver feed',onPress:()=>router.replace('/(tabs)')},
+        ]);
+        if(await fingerprintStreamSourceIdentity(capturedUri)===pending.sourceFingerprint) {
+          setCapturedUri(null);setCapturedType(null);setMode('camera');
+        }
+      } catch(error) {
+        const safe=getSafeStreamError(error);
+        showAlert('Confirmación pendiente',`No se pudo confirmar todavía (${safe.stage}/${safe.code})`);
+      } finally {
+        publishInFlightRef.current=false;
+        setIsPublishing(false);
+      }
+      return;
+    }
     const activeFilter = deepARFilterId
       ? DEEPAR_FILTERS.find(f => f.id === deepARFilterId)
       : SKIA_EFFECTS.find(e => e.id === skiaEffectId);
     try {
-      await addVideo({
-        videoUrl: capturedUri, thumbnailUrl: capturedUri,
-        caption: `${activeFilter ? `${(activeFilter as any).emoji} ${activeFilter.name} ` : ''}#Nelyon #CreatorStudio`,
-        music: 'Sin música', username: '', userAvatar: '',
-      });
+      const caption = `${activeFilter ? `${(activeFilter as any).emoji} ${activeFilter.name} ` : ''}#Nelyon #CreatorStudio`;
+      let postId: string;
+      if (capturedType === 'video') {
+        const music='Sin música';
+        const published = await uploadAndPublishStreamVideo({
+          uri: capturedUri,
+          mimeType: 'video/mp4',
+          fileName: 'creator-effects.mp4',
+          caption,
+          music,
+        });
+        postId = published.postId;
+      } else {
+        const prepared = preparedPhotoRef.current?.sourceUri === capturedUri
+          ? preparedPhotoRef.current.asset
+          : await uploadMediaFromUri({
+              uri: capturedUri,
+              purpose: 'post_image',
+              mimeType: 'image/jpeg',
+              fileName: 'creator-effects.jpg',
+              visibility: 'public',
+            });
+        preparedPhotoRef.current = { sourceUri: capturedUri, asset: prepared };
+        if (!prepared.url) throw new Error('photo_delivery_url_missing');
+        postId = await addVideo({
+          videoUrl: prepared.url,
+          thumbnailUrl: prepared.url,
+          caption,
+          music: 'Sin música', username: '', userAvatar: '',
+          mediaAssetIds: [prepared.assetId],
+          publicationCommandId: publicationCommandIdRef.current,
+        });
+      }
+      if (!postId) throw new Error('publication_confirmation_missing');
       showAlert('Publicado 🎉', 'Publicado al feed', [
         { text: 'Ver feed', onPress: () => router.replace('/(tabs)') },
       ]);
+      preparedPhotoRef.current = null;
+      publicationCommandIdRef.current = randomUUID();
       setCapturedUri(null); setCapturedType(null); setMode('camera');
-    } catch (e: any) { showAlert('Error', e?.message || 'No se pudo publicar'); }
-  }, [capturedUri, deepARFilterId, skiaEffectId, addVideo, showAlert, router]);
+    } catch (error: any) {
+      if (capturedType === 'video') {
+        const safe = getSafeStreamError(error);
+        if(safe.code==='stream_publish_confirmation_pending'&&safe.assetId) {
+          const caption=`${activeFilter ? `${(activeFilter as any).emoji} ${activeFilter.name} ` : ''}#Nelyon #CreatorStudio`;
+          const pendingRecovery:PendingStreamPublicationRecovery={
+            ownerId,
+            assetId:safe.assetId,operationId:safe.operationId,
+            caption,music:'Sin música',
+            sourceFingerprint:await fingerprintStreamSourceIdentity(capturedUri),
+          };
+          await savePendingStreamPublication('creator-studio-effects',ownerId,pendingRecovery);
+          pendingStreamPublicationRef.current=pendingRecovery;
+          showAlert('Confirmación pendiente','El video ya fue subido. Reintenta para confirmar la misma publicación.');
+        } else {
+          showAlert('Error', `No se pudo publicar (${safe.stage}/${safe.code})`);
+        }
+      } else {
+        showAlert('Error', error?.message || 'No se pudo publicar');
+      }
+    } finally {
+      publishInFlightRef.current = false;
+      setIsPublishing(false);
+    }
+  }, [capturedUri, capturedType, deepARFilterId, skiaEffectId, addVideo, showAlert, router, user?.id]);
 
   // Skia overlay passed into CameraCore — minimal, rarely changes
   const cameraOverlay = useMemo(() => (
@@ -331,10 +451,10 @@ export function EffectsTab() {
             <MaterialCommunityIcons name="download" size={18} color={Colors.textSecondary} />
             <Text style={s.actionBtnText}>Guardar</Text>
           </Pressable>
-          <Pressable style={s.publishBtn} onPress={handlePublish}>
+          <Pressable style={[s.publishBtn, isPublishing && { opacity: 0.6 }]} onPress={handlePublish} disabled={isPublishing}>
             <LinearGradient colors={['#FF2D78', '#7C5CFF']} style={s.publishBtnGrad}>
-              <MaterialCommunityIcons name="send" size={18} color="#fff" />
-              <Text style={s.publishBtnText}>Publicar</Text>
+              {isPublishing ? <ActivityIndicator color="#fff" size="small" /> : <MaterialCommunityIcons name="send" size={18} color="#fff" />}
+              <Text style={s.publishBtnText}>{isPublishing ? 'Publicando…' : 'Publicar'}</Text>
             </LinearGradient>
           </Pressable>
         </View>

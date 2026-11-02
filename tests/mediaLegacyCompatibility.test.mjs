@@ -4,11 +4,13 @@ import test from 'node:test';
 
 const feed = fs.readFileSync('contexts/FeedContext.tsx', 'utf8');
 const upload = fs.readFileSync('app/(tabs)/upload.tsx', 'utf8');
+const presentation = fs.readFileSync('services/videoPresentation.ts', 'utf8');
 
 test('legacy HTTPS and Supabase paths remain readable', () => {
-  assert.match(feed, /PLAYABLE_URL_RE = \/\^\(https\?:/);
-  assert.match(feed, /normalizePlayableUrl/);
-  assert.match(feed, /getPublicUrl/);
+  assert.match(presentation, /PLAYABLE_URL_RE = \/\^\(https\?:/);
+  assert.match(presentation, /normalizePlayableUrl/);
+  assert.match(presentation, /getPublicUrl/);
+  assert.match(feed, /mapVideoRow/);
 });
 test('video remains legacy and image paths use the R2 media service', () => {
   assert.match(upload, /if \(isVideo\)/);

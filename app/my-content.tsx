@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList,
-  Dimensions, ActivityIndicator, ScrollView,
+  Dimensions, ActivityIndicator, ScrollView, TextInput,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -16,6 +16,9 @@ import { Colors, FontSize, FontWeight, Radius, Spacing } from '@/constants/theme
 import { formatNumber } from '@/services/mockData';
 import type { VideoWithMeta } from '@/contexts/FeedContext';
 import { fetchCreatorVideoFeed, fetchSavedVideoFeed } from '@/services/creatorService';
+import { randomUUID } from 'expo-crypto';
+import { DraftManager } from '@/modules/creator/drafts/DraftManager';
+import type { PublicationDraft } from '@/services/publicationDraftService';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const GRID_GAP = 2;
@@ -33,6 +36,25 @@ const TAB_CONFIG: { key: ContentTab; icon: string; label: string }[] = [
 
 // ── Sort options ───────────────────────────────────────────────────────────────
 type SortBy = 'newest' | 'oldest' | 'most_liked' | 'most_viewed';
+
+type DraftUpdateMutation={
+  id:string;expectedRevision:number;clientMutationId:string;
+  kind:PublicationDraft['kind'];caption:string;music:string;
+  composition:PublicationDraft['composition'];assetIds:string[];
+};
+type DraftDeleteMutation={id:string;expectedRevision:number;clientMutationId:string};
+
+function isAmbiguousDraftMutationError(error:unknown):boolean {
+  if(!error||typeof error!=='object') return true;
+  const candidate=error as {code?:unknown;status?:unknown;message?:unknown};
+  const code=typeof candidate.code==='string'?candidate.code:'';
+  const status=typeof candidate.status==='number'?candidate.status:0;
+  const message=typeof candidate.message==='string'?candidate.message.toLowerCase():'';
+  if(status>=500||/network|fetch|timeout|connection|aborted/.test(message)) return true;
+  // A PostgreSQL/PostgREST domain code is an authoritative rejection, not a
+  // lost response. Unknown transport failures stay fail-safe and replayable.
+  return !code;
+}
 
 interface ContentItemProps {
   video: VideoWithMeta;
@@ -95,6 +117,14 @@ export default function MyContentScreen() {
   const [isLoadingContent, setIsLoadingContent] = useState(true);
   const [ownVideos, setOwnVideos] = useState<VideoWithMeta[]>([]);
   const [savedVideos, setSavedVideos] = useState<VideoWithMeta[]>([]);
+  const [cloudDrafts,setCloudDrafts]=useState<PublicationDraft[]>([]);
+  const [isLoadingDrafts,setIsLoadingDrafts]=useState(false);
+  const [editingDraft,setEditingDraft]=useState<PublicationDraft|null>(null);
+  const [editingDraftCaption,setEditingDraftCaption]=useState('');
+  const draftPublishCommandsRef=useRef(new Map<string,string>());
+  const draftUpdateMutationsRef=useRef(new Map<string,DraftUpdateMutation>());
+  const draftDeleteMutationsRef=useRef(new Map<string,DraftDeleteMutation>());
+  const draftMutationInFlightRef=useRef(new Set<string>());
   const contentLoadRef = useRef(0);
 
   const loadContent = useCallback(async () => {
@@ -127,10 +157,19 @@ export default function MyContentScreen() {
     }
   }, [user?.id]);
 
+  const loadDrafts=useCallback(async()=>{
+    if(!user?.id) {setCloudDrafts([]);return;}
+    setIsLoadingDrafts(true);
+    try {setCloudDrafts(await DraftManager.listPublicationDrafts());}
+    catch(error) {console.warn('[MyContent] cloud draft load failed',error);}
+    finally {setIsLoadingDrafts(false);}
+  },[user?.id]);
+
   useFocusEffect(useCallback(() => {
     void loadContent();
+    void loadDrafts();
     return () => { contentLoadRef.current += 1; };
-  }, [loadContent]));
+  }, [loadContent,loadDrafts]));
 
   const myVideos = ownVideos;
 
@@ -232,6 +271,119 @@ export default function MyContentScreen() {
     ]);
   }, [showAlert]);
 
+  const restoreCloudDraft=useCallback(async(id:string)=>{
+    try {
+      const restored=await DraftManager.restorePublicationDraft(id);
+      setCloudDrafts(current=>current.map(item=>item.id===restored.id?restored:item));
+      setEditingDraft(restored);
+      setEditingDraftCaption(restored.caption);
+    } catch(error) {
+      showAlert('Error',error instanceof Error?error.message:'draft_restore_failed');
+    }
+  },[showAlert]);
+
+  const saveCloudDraftRevision=useCallback(async()=>{
+    const draft=editingDraft;
+    if(!draft) return;
+    const nextCaption=editingDraftCaption.trim();
+    if(nextCaption===draft.caption) {
+      showAlert('Sin cambios','Edita la descripción antes de guardar una nueva revisión.');
+      return;
+    }
+    const operationKey=`update:${draft.id}`;
+    if(draftMutationInFlightRef.current.has(operationKey)) return;
+    let mutation=draftUpdateMutationsRef.current.get(draft.id);
+    if(!mutation) {
+      mutation={
+        id:draft.id,expectedRevision:draft.revision,clientMutationId:randomUUID(),
+        kind:draft.kind,caption:nextCaption,music:draft.music,
+        composition:draft.composition,assetIds:[...draft.assetIds],
+      };
+      draftUpdateMutationsRef.current.set(draft.id,mutation);
+    }
+    draftMutationInFlightRef.current.add(operationKey);
+    try {
+      const updated=await DraftManager.updatePublicationDraft(mutation);
+      draftUpdateMutationsRef.current.delete(draft.id);
+      setCloudDrafts(current=>current.map(item=>item.id===updated.id?updated:item));
+      setEditingDraft(updated);
+      setEditingDraftCaption(updated.caption);
+      showAlert('Borrador sincronizado',`Revisión ${updated.revision}`);
+    } catch(error) {
+      if(!isAmbiguousDraftMutationError(error)) draftUpdateMutationsRef.current.delete(draft.id);
+      showAlert('Conflicto de borrador',error instanceof Error?error.message:'draft_update_failed');
+    } finally {
+      draftMutationInFlightRef.current.delete(operationKey);
+    }
+  },[editingDraft,editingDraftCaption,showAlert]);
+
+  const publishCloudDraft=useCallback(async()=>{
+    if(!editingDraft) return;
+    const operationKey=`publish:${editingDraft.id}`;
+    if(draftMutationInFlightRef.current.has(operationKey)) return;
+    let command=draftPublishCommandsRef.current.get(editingDraft.id);
+    if(!command) {
+      command=randomUUID();
+      draftPublishCommandsRef.current.set(editingDraft.id,command);
+    }
+    draftMutationInFlightRef.current.add(operationKey);
+    try {
+      const postId=await DraftManager.publishPublicationDraft({
+        id:editingDraft.id,clientCommandId:command,
+      });
+      draftPublishCommandsRef.current.delete(editingDraft.id);
+      setCloudDrafts(current=>current.filter(item=>item.id!==editingDraft.id));
+      setEditingDraft(null);setEditingDraftCaption('');
+      showAlert('Publicado','El borrador se publicó mediante la autoridad canónica.',[
+        {text:'Ver feed',onPress:()=>router.push('/(tabs)')},{text:'Cerrar'},
+      ]);
+      void postId;
+    } catch(error) {
+      if(!isAmbiguousDraftMutationError(error)) draftPublishCommandsRef.current.delete(editingDraft.id);
+      showAlert('Publicación pendiente',error instanceof Error?error.message:'draft_publish_failed');
+    } finally {
+      draftMutationInFlightRef.current.delete(operationKey);
+    }
+  },[editingDraft,router,showAlert]);
+
+  const deleteCloudDraft=useCallback((draft:PublicationDraft)=>{
+    showAlert('Eliminar borrador','Esta acción libera su reserva privada de media.',[
+      {text:'Cancelar',style:'cancel'},
+      {text:'Eliminar',style:'destructive',onPress:async()=>{
+        const operationKey=`delete:${draft.id}`;
+        if(draftMutationInFlightRef.current.has(operationKey)) return;
+        let mutation=draftDeleteMutationsRef.current.get(draft.id);
+        if(!mutation) {
+          mutation={id:draft.id,expectedRevision:draft.revision,clientMutationId:randomUUID()};
+          draftDeleteMutationsRef.current.set(draft.id,mutation);
+        }
+        draftMutationInFlightRef.current.add(operationKey);
+        try {
+          await DraftManager.deletePublicationDraft(mutation);
+          draftDeleteMutationsRef.current.delete(draft.id);
+          setCloudDrafts(current=>current.filter(item=>item.id!==draft.id));
+          if(editingDraft?.id===draft.id) {setEditingDraft(null);setEditingDraftCaption('');}
+        } catch(error) {
+          if(!isAmbiguousDraftMutationError(error)) draftDeleteMutationsRef.current.delete(draft.id);
+          showAlert('Error',error instanceof Error?error.message:'draft_delete_failed');
+        } finally {
+          draftMutationInFlightRef.current.delete(operationKey);
+        }
+      }},
+    ]);
+  },[editingDraft?.id,showAlert]);
+
+  const renderDraft=useCallback(({item}:{item:PublicationDraft})=>(
+    <View style={styles.draftCard}>
+      <View style={{flex:1,gap:4}}>
+        <Text style={styles.draftTitle} numberOfLines={2}>{item.caption||'Sin descripción'}</Text>
+        <Text style={styles.draftMeta}>{item.kind==='carousel'?'Carrusel':'Foto'} · revisión {item.revision}</Text>
+      </View>
+      <Pressable onPress={()=>void restoreCloudDraft(item.id)} style={styles.draftAction}><Text style={styles.draftActionText}>Restaurar</Text></Pressable>
+      <Pressable onPress={()=>deleteCloudDraft(item)} style={styles.draftDelete}><MaterialIcons name="delete-outline" size={20} color={Colors.error}/></Pressable>
+    </View>
+  ),[deleteCloudDraft,restoreCloudDraft]);
+
   const renderItem = useCallback(({ item }: { item: VideoWithMeta }) => (
     <ContentItem video={item} onPress={handleItemPress} onLongPress={handleItemLongPress} />
   ), [handleItemPress, handleItemLongPress]);
@@ -287,6 +439,7 @@ export default function MyContentScreen() {
           const count = t.key === 'posts' ? myPosts.length
             : t.key === 'reels' ? myReels.length
             : t.key === 'saved' ? savedVideos.length
+            : t.key === 'drafts' ? cloudDrafts.length
             : 0;
           return (
             <Pressable
@@ -313,11 +466,37 @@ export default function MyContentScreen() {
       </ScrollView>
 
       {/* Content grid */}
-      {isDeleting || isLoadingContent ? (
+      {isDeleting || isLoadingContent || (activeTab==='drafts'&&isLoadingDrafts) ? (
         <View style={styles.centered}>
           <ActivityIndicator color={Colors.primary} size="large" />
           <Text style={styles.loadingText}>{isDeleting ? 'Eliminando...' : 'Cargando contenido...'}</Text>
         </View>
+      ) : activeTab==='drafts'&&cloudDrafts.length>0 ? (
+        <FlatList
+          data={cloudDrafts}
+          keyExtractor={item=>item.id}
+          renderItem={renderDraft}
+          contentContainerStyle={{padding:Spacing.md,gap:Spacing.sm,paddingBottom:80+insets.bottom}}
+          ListHeaderComponent={editingDraft ? (
+            <View style={styles.draftEditor}>
+              <Text style={styles.draftEditorTitle}>Reanudar borrador privado</Text>
+              <TextInput
+                value={editingDraftCaption}
+                onChangeText={setEditingDraftCaption}
+                placeholder="Descripción"
+                placeholderTextColor={Colors.textSubtle}
+                multiline
+                maxLength={2200}
+                style={styles.draftInput}
+              />
+              <View style={styles.draftEditorActions}>
+                <Pressable onPress={()=>void saveCloudDraftRevision()} style={styles.draftAction}><Text style={styles.draftActionText}>Guardar cambios</Text></Pressable>
+                <Pressable onPress={()=>void publishCloudDraft()} style={styles.draftPublish}><Text style={styles.draftPublishText}>Publicar</Text></Pressable>
+                <Pressable onPress={()=>{setEditingDraft(null);setEditingDraftCaption('');}} style={styles.draftAction}><Text style={styles.draftActionText}>Cerrar</Text></Pressable>
+              </View>
+            </View>
+          ) : null}
+        />
       ) : currentItems.length === 0 ? (
         <View style={styles.emptyState}>
           <LinearGradient
@@ -467,6 +646,22 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.6)',
     alignItems: 'center', justifyContent: 'center',
   },
+  draftCard:{
+    minHeight:78,flexDirection:'row',alignItems:'center',gap:Spacing.sm,
+    padding:Spacing.md,borderRadius:Radius.lg,backgroundColor:Colors.surfaceElevated,
+    borderWidth:1,borderColor:Colors.border,
+  },
+  draftTitle:{color:Colors.textPrimary,fontWeight:FontWeight.semibold},
+  draftMeta:{color:Colors.textSubtle,fontSize:FontSize.xs},
+  draftAction:{paddingHorizontal:8,paddingVertical:7,borderRadius:Radius.md,backgroundColor:Colors.primaryDim},
+  draftActionText:{color:Colors.primaryLight,fontSize:FontSize.xs,fontWeight:FontWeight.semibold},
+  draftDelete:{padding:7},
+  draftEditor:{gap:Spacing.sm,padding:Spacing.md,borderRadius:Radius.lg,backgroundColor:Colors.surface,borderWidth:1,borderColor:Colors.primary},
+  draftEditorTitle:{color:Colors.textPrimary,fontWeight:FontWeight.bold},
+  draftInput:{minHeight:76,color:Colors.textPrimary,backgroundColor:Colors.surfaceElevated,borderRadius:Radius.md,padding:Spacing.sm,textAlignVertical:'top'},
+  draftEditorActions:{flexDirection:'row',alignItems:'center',gap:Spacing.sm,flexWrap:'wrap'},
+  draftPublish:{paddingHorizontal:12,paddingVertical:8,borderRadius:Radius.md,backgroundColor:Colors.primary},
+  draftPublishText:{color:'#fff',fontSize:FontSize.xs,fontWeight:FontWeight.bold},
 
   // Empty state
   emptyState: {

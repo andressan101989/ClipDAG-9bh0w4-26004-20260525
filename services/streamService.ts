@@ -54,9 +54,9 @@ export interface StoryStreamPlaybackGrant {
 }
 export interface SafeStreamError {
   name:string;stage:StreamUploadStage;code:string;message:string;
-  httpStatus?:number;operationId:string;
+  httpStatus?:number;operationId:string;assetId?:string;
 }
-type ErrorLike={name?:unknown;message?:unknown;code?:unknown;status?:unknown;httpStatus?:unknown;context?:{status?:number;clone?:()=>unknown;json?:()=>Promise<unknown>}};
+type ErrorLike={name?:unknown;message?:unknown;code?:unknown;status?:unknown;httpStatus?:unknown;assetId?:unknown;context?:{status?:number;clone?:()=>unknown;json?:()=>Promise<unknown>}};
 
 function safeText(value:unknown):string|undefined {
   if(typeof value!=='string'||!value.trim()) return undefined;
@@ -72,10 +72,10 @@ export function createStreamOperationId():string {
   return `stream_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,10)}`;
 }
 export class StreamClientError extends Error {
-  stage:StreamUploadStage;code:string;httpStatus?:number;operationId:string;
+  stage:StreamUploadStage;code:string;httpStatus?:number;operationId:string;assetId?:string;
   constructor(input:Omit<SafeStreamError,'name'>) {
     super(input.message);this.name='StreamClientError';this.stage=input.stage;this.code=input.code;
-    this.httpStatus=input.httpStatus;this.operationId=input.operationId;
+    this.httpStatus=input.httpStatus;this.operationId=input.operationId;this.assetId=input.assetId;
   }
 }
 interface PremiumStreamCleanupCarrier {
@@ -118,6 +118,7 @@ export function getSafeStreamError(
     code:existing?.code??safeText(source.code)??(aborted?'aborted':'stream_operation_failed'),
     message,httpStatus:existing?.httpStatus??numericStatus(source.httpStatus)??numericStatus(source.status),
     operationId:existing?.operationId??operationId,
+    assetId:existing?.assetId??(typeof source.assetId==='string'&&UUID_PATTERN.test(source.assetId)?source.assetId:undefined),
   };
 }
 function streamError(error:unknown,stage:StreamUploadStage,operationId:string):StreamClientError {
@@ -377,6 +378,31 @@ export async function postVideoToStreamUploadUrl(input:{
     const formData=new FormData();
     formData.append('file',file as unknown as Blob);
     throwIfStreamAborted(controller.signal,'STREAM_DIRECT_POST',operationId);
+    const response=await (input.fetcher??expoFetch)(input.uploadUrl,{
+      method:'POST',body:formData,signal:controller.signal,
+    });
+    if(!response.ok) throw {code:`stream_upload_http_${response.status}`,status:response.status};
+  } catch(error) { throw streamError(error,'STREAM_DIRECT_POST',operationId); }
+  finally {
+    clearTimeout(timer);
+    input.signal?.removeEventListener('abort',abort);
+  }
+}
+
+export async function postBlobToStreamUploadUrl(input:{
+  blob:Blob;fileName:string;uploadUrl:string;signal?:AbortSignal;operationId?:string;
+  fetcher?:typeof expoFetch;timeoutMs?:number;
+}):Promise<void> {
+  const operationId=input.operationId??createStreamOperationId();
+  throwIfStreamAborted(input.signal,'STREAM_DIRECT_POST',operationId);
+  const controller=new AbortController();
+  const abort=()=>controller.abort();
+  input.signal?.addEventListener('abort',abort,{once:true});
+  if(input.signal?.aborted) controller.abort();
+  const timer=setTimeout(()=>controller.abort(),input.timeoutMs??300_000);
+  try {
+    const formData=new FormData();
+    formData.append('file',input.blob,input.fileName);
     const response=await (input.fetcher??expoFetch)(input.uploadUrl,{
       method:'POST',body:formData,signal:controller.signal,
     });
@@ -691,9 +717,9 @@ function canRetryPublish(error:unknown):boolean {
   const safe=getSafeStreamError(error,'STREAM_PUBLISH');
   return safe.httpStatus===undefined||isTransientStreamError(error);
 }
-function confirmationPending(operationId:string):StreamClientError {
+function confirmationPending(operationId:string,assetId:string):StreamClientError {
   return new StreamClientError({stage:'STREAM_PUBLISH',code:'stream_publish_confirmation_pending',
-    message:'stream_publish_confirmation_pending',operationId});
+    message:'stream_publish_confirmation_pending',operationId,assetId});
 }
 async function publishWithRecovery(
   input:{assetId:string;caption:string;music:string;operationId:string},
@@ -708,50 +734,54 @@ async function publishWithRecovery(
   catch(firstError) {
     const firstLookup=await reconcile(input.assetId);
     if(firstLookup.state==='found') return firstLookup.postId;
-    if(firstLookup.state==='unknown') throw confirmationPending(input.operationId);
+    if(firstLookup.state==='unknown') throw confirmationPending(input.operationId,input.assetId);
     if(!canRetryPublish(firstError)) throw firstError;
     try { return await publish(input); }
     catch(secondError) {
       const secondLookup=await reconcile(input.assetId);
       if(secondLookup.state==='found') return secondLookup.postId;
-      if(secondLookup.state==='unknown') throw confirmationPending(input.operationId);
+      if(secondLookup.state==='unknown') throw confirmationPending(input.operationId,input.assetId);
       throw secondError;
     }
   }
 }
 
-export async function uploadAndPublishStreamVideo(input:{
-  uri:string;mimeType:string;fileName?:string;sizeBytes?:number;durationMs?:number|null;
-  caption:string;music:string;signal?:AbortSignal;
-  onStage?:(stage:StreamUploadStage,progress?:number|null)=>void;
+/**
+ * Resume only the publish/reconciliation phase for an already uploaded Stream
+ * asset. This function deliberately cannot allocate or upload another asset.
+ */
+export async function resumeStreamVideoPublication(input:{
+  assetId:string;caption:string;music:string;operationId:string;
+}):Promise<{postId:string;assetId:string}> {
+  if(!UUID_PATTERN.test(input.assetId)||!input.operationId) {
+    throw new StreamClientError({stage:'STREAM_PUBLISH',code:'invalid_stream_resume',
+      message:'invalid_stream_resume',operationId:input.operationId||createStreamOperationId()});
+  }
+  const lookup=await reconcilePublishedStreamPost(input.assetId);
+  if(lookup.state==='found') return {postId:lookup.postId,assetId:input.assetId};
+  if(lookup.state==='unknown') throw confirmationPending(input.operationId,input.assetId);
+  const postId=await publishWithRecovery(input);
+  return {postId,assetId:input.assetId};
+}
+
+async function allocateUploadProcessAndPublishStream(input:{
+  mimeType:string;sizeBytes:number;fileName:string;caption:string;music:string;
+  signal?:AbortSignal;onStage?:(stage:StreamUploadStage,progress?:number|null)=>void;
+  upload:(uploadUrl:string,operationId:string)=>Promise<void>;
 }):Promise<{postId:string;assetId:string;hlsUrl:string;thumbnailUrl:string|null}> {
   const operationId=createStreamOperationId();
   let assetId:string|undefined;
   let published=false;
   try {
-    throwIfStreamAborted(input.signal,'STREAM_INPUT',operationId);
-    input.onStage?.('STREAM_INPUT');
-    if(!input.uri) throw new Error('invalid_video_uri');
-    if(!validateStreamVideoMime(input.mimeType)) throw new Error('invalid_video_mime');
-    if(!validateStreamVideoDuration(input.durationMs)) throw new Error('invalid_video_duration');
-    throwIfStreamAborted(input.signal,'STREAM_INPUT',operationId);
-    const file=new File(input.uri);
-    throwIfStreamAborted(input.signal,'STREAM_INPUT',operationId);
-    if(!file.exists) throw new Error('video_file_not_found');
-    const realSize=file.size;
-    if(!validateStreamVideoSize(realSize)||input.sizeBytes!==undefined&&!validateStreamVideoSize(input.sizeBytes)) {
-      throw new Error('invalid_video_size');
-    }
     input.onStage?.('STREAM_CREATE_UPLOAD');
     throwIfStreamAborted(input.signal,'STREAM_CREATE_UPLOAD',operationId);
     const contract=await createStreamUpload({
-      mimeType:input.mimeType.trim().toLowerCase(),sizeBytes:realSize,
-      fileName:input.fileName||file.name||'video',operationId,
+      mimeType:input.mimeType,sizeBytes:input.sizeBytes,fileName:input.fileName,operationId,
     });
     assetId=contract.assetId;
     throwIfStreamAborted(input.signal,'STREAM_DIRECT_POST',operationId);
     input.onStage?.('STREAM_DIRECT_POST');
-    await postVideoToStreamUploadUrl({uri:input.uri,uploadUrl:contract.uploadUrl,signal:input.signal,operationId});
+    await input.upload(contract.uploadUrl,operationId);
     input.onStage?.('STREAM_PROCESSING');
     throwIfStreamAborted(input.signal,'STREAM_PROCESSING',operationId);
     const playback=await waitForStreamReady(assetId,{signal:input.signal,onProgress:value=>{
@@ -766,5 +796,67 @@ export async function uploadAndPublishStreamVideo(input:{
     const preserveAsset=error instanceof StreamClientError&&error.code==='stream_publish_confirmation_pending';
     if(assetId&&!published&&!preserveAsset) await deleteStreamVideo(assetId).catch(()=>{});
     throw streamError(error,error instanceof StreamClientError?error.stage:'STREAM_INPUT',operationId);
+  }
+}
+
+export async function uploadAndPublishStreamVideo(input:{
+  uri:string;mimeType:string;fileName?:string;sizeBytes?:number;durationMs?:number|null;
+  caption:string;music:string;signal?:AbortSignal;
+  onStage?:(stage:StreamUploadStage,progress?:number|null)=>void;
+}):Promise<{postId:string;assetId:string;hlsUrl:string;thumbnailUrl:string|null}> {
+  const operationId=createStreamOperationId();
+  try {
+    input.onStage?.('STREAM_INPUT');
+    if(!input.uri) throw new Error('invalid_video_uri');
+    if(!validateStreamVideoMime(input.mimeType)) throw new Error('invalid_video_mime');
+    if(!validateStreamVideoDuration(input.durationMs)) throw new Error('invalid_video_duration');
+    const file=new File(input.uri);
+    if(!file.exists) throw new Error('video_file_not_found');
+    const realSize=file.size;
+    if(!validateStreamVideoSize(realSize)||input.sizeBytes!==undefined&&!validateStreamVideoSize(input.sizeBytes)) {
+      throw new Error('invalid_video_size');
+    }
+    return allocateUploadProcessAndPublishStream({
+      mimeType:input.mimeType.trim().toLowerCase(),sizeBytes:realSize,
+      fileName:input.fileName||file.name||'video',caption:input.caption,music:input.music,
+      signal:input.signal,onStage:input.onStage,
+      upload:(uploadUrl,allocatedOperationId)=>postVideoToStreamUploadUrl({
+        uri:input.uri,uploadUrl,signal:input.signal,operationId:allocatedOperationId,
+      }),
+    });
+  } catch(error) {
+    throw streamError(error,error instanceof StreamClientError?error.stage:'STREAM_INPUT',
+      error instanceof StreamClientError?error.operationId:operationId);
+  }
+}
+
+/** Canonical Stream orchestration for an HTTPS provider result (AI avatar). */
+export async function uploadAndPublishRemoteStreamVideo(input:{
+  sourceUrl:string;fileName?:string;caption:string;music:string;signal?:AbortSignal;
+  onStage?:(stage:StreamUploadStage,progress?:number|null)=>void;
+}):Promise<{postId:string;assetId:string;hlsUrl:string;thumbnailUrl:string|null}> {
+  const operationId=createStreamOperationId();
+  try {
+    const source=new URL(input.sourceUrl);
+    if(source.protocol!=='https:') throw new Error('invalid_remote_stream_url');
+    input.onStage?.('STREAM_INPUT');
+    const response=await expoFetch(source.toString(),{method:'GET',signal:input.signal});
+    if(!response.ok) throw {code:`remote_stream_http_${response.status}`,status:response.status};
+    const blob=await response.blob();
+    const mimeType=(response.headers.get('content-type')||blob.type||'video/mp4').split(';')[0].trim().toLowerCase();
+    if(!validateStreamVideoMime(mimeType)||!validateStreamVideoSize(blob.size)) {
+      throw new Error('invalid_remote_stream_media');
+    }
+    return allocateUploadProcessAndPublishStream({
+      mimeType,sizeBytes:blob.size,fileName:input.fileName||'ai-avatar.mp4',
+      caption:input.caption,music:input.music,signal:input.signal,onStage:input.onStage,
+      upload:(uploadUrl,allocatedOperationId)=>postBlobToStreamUploadUrl({
+        blob,fileName:input.fileName||'ai-avatar.mp4',uploadUrl,
+        signal:input.signal,operationId:allocatedOperationId,
+      }),
+    });
+  } catch(error) {
+    throw streamError(error,error instanceof StreamClientError?error.stage:'STREAM_INPUT',
+      error instanceof StreamClientError?error.operationId:operationId);
   }
 }

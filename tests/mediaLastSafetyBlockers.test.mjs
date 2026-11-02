@@ -38,8 +38,11 @@ test('entity RPCs resolve URLs from media assets instead of client input', () =>
   }
   assert.match(migration, /array_agg\(a\.public_url order by ids\.ordinality\)/i);
   assert.doesNotMatch(migration, /p_media_urls text\[\]/i);
-  assert.match(feed, /create_photo_post_with_media/);
-  assert.match(feed, /create_carousel_post/);
+  assert.match(feed, /rpc\('publish_my_media_post_v1'/);
+  assert.match(feed, /p_kind:\s*mediaAssetIds\.length\s*>\s*1\s*\?\s*'carousel'\s*:\s*'photo'/);
+  assert.match(feed, /p_asset_ids:\s*mediaAssetIds/);
+  assert.match(feed, /p_client_command_id:\s*video\.publicationCommandId/);
+  assert.doesNotMatch(feed, /rpc\('create_(?:photo_post_with_media|carousel_post)'/);
   assert.match(stories, /create_story_with_media/);
   assert.match(storiesV2, /function public\.create_story_with_media/);
   assert.match(marketplace, /create_marketplace_product/);

@@ -40,19 +40,29 @@ import { uploadFileFromUri, detectMimeType } from '@/contexts/FeedContext';
 import { type MusicTrack } from '@/services/musicLibrary';
 import {
   createMediaOperationId,
-  deleteMediaAsset,
   findCommonLinkedEntityForAssets,
+  findLinkedPostForAsset,
   getSafeMediaError,
   uploadMediaFromUri,
+  type CanonicalUploadSource,
 } from '@/services/mediaService';
+import { DraftManager } from '@/modules/creator/drafts/DraftManager';
 import {
   getSafeStreamError,
+  resumeStreamVideoPublication,
   uploadAndPublishStreamVideo,
   validateStreamVideoDuration,
   validateStreamVideoMime,
   validateStreamVideoSize,
   type StreamUploadStage,
 } from '@/services/streamService';
+import {
+  clearPendingStreamPublication,
+  fingerprintStreamSourceIdentity,
+  loadPendingStreamPublication,
+  savePendingStreamPublication,
+  type PendingStreamPublicationRecovery,
+} from '@/services/streamPublicationRecovery';
 import {
   deleteOwnedIosVideoCache,
   type IosVideoResolutionCode,
@@ -96,6 +106,18 @@ interface SelectedMedia {
 interface UploadedMedia {
   url: string;
   assetId?: string;
+}
+
+function buildUploadVideoSourceIdentity(media:SelectedMedia):string {
+  return JSON.stringify({
+    uri:media.uri,
+    mimeType:media.mimeType??null,
+    fileName:media.fileName??null,
+    fileSize:media.fileSize??null,
+    durationMs:media.durationMs??null,
+    width:media.width??null,
+    height:media.height??null,
+  });
 }
 const wait=(milliseconds:number)=>new Promise(resolve=>setTimeout(resolve,milliseconds));
 
@@ -178,9 +200,31 @@ export default function UploadScreen() {
   const [selectedMusic, setSelectedMusic] = useState<MusicTrack | null>(null);
   const [musicPickerVisible, setMusicPickerVisible] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isSavingDraft,setIsSavingDraft]=useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
   const activeUploadControllerRef = useRef<AbortController | null>(null);
   const uploadInFlightRef = useRef(false);
+  const pendingStreamPublicationRef=useRef<PendingStreamPublicationRecovery|null>(null);
+  const singlePublicationCommandRef = useRef(randomUUID());
+  const carouselPublicationCommandRef = useRef(randomUUID());
+  const draftRequestIdRef=useRef(randomUUID());
+  const draftSourceKeyRef=useRef('');
+  const singleSourceKeyRef = useRef<string | null>(null);
+  const carouselSourceKeyRef = useRef<string>('');
+  const preparedSingleUploadRef = useRef<{
+    sourceKey: string;
+    upload: UploadedMedia;
+    caption: string;
+    music: string;
+    commandId: string;
+  } | null>(null);
+  const preparedCarouselUploadsRef = useRef<{
+    sourceKey: string;
+    uploads: ((UploadedMedia & { index: number }) | undefined)[];
+    caption: string;
+    music: string;
+    commandId: string;
+  } | null>(null);
 
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const [iosVideoGalleryVisible, setIosVideoGalleryVisible] = useState(false);
@@ -191,6 +235,36 @@ export default function UploadScreen() {
   const pendingProductTagSaveRef = useRef<PendingCreatorContentTagSave | null>(null);
   const [productTagOperation, setProductTagOperation] = useState<CreatorContentTagOperation>('idle');
   const productTagOperationRef = useRef<CreatorContentTagOperation>('idle');
+
+  useEffect(() => {
+    const nextKey = selectedMedia?.uri ?? null;
+    if (singleSourceKeyRef.current !== nextKey) {
+      // Do not delete an abandoned prepared asset here: a publisher response
+      // may have been lost after commit. MEDIA-C1 remains cleanup authority.
+      preparedSingleUploadRef.current = null;
+      singleSourceKeyRef.current = nextKey;
+      singlePublicationCommandRef.current = randomUUID();
+    }
+  }, [selectedMedia?.uri]);
+
+  useEffect(() => {
+    const nextKey = carouselMedias.map((media) => media.uri).join('\n');
+    if (carouselSourceKeyRef.current !== nextKey) {
+      preparedCarouselUploadsRef.current = null;
+      carouselSourceKeyRef.current = nextKey;
+      carouselPublicationCommandRef.current = randomUUID();
+    }
+  }, [carouselMedias]);
+
+  useEffect(()=>{
+    const nextKey=mode==='carousel'
+      ? carouselMedias.map(media=>media.uri).join('\n')
+      : mode==='photo'?(selectedMedia?.uri??''):'';
+    if(nextKey!==draftSourceKeyRef.current) {
+      draftSourceKeyRef.current=nextKey;
+      draftRequestIdRef.current=randomUUID();
+    }
+  },[mode,selectedMedia?.uri,carouselMedias]);
 
   const updatePendingProductTagSave = useCallback((pending: PendingCreatorContentTagSave | null) => {
     pendingProductTagSaveRef.current = pending;
@@ -628,6 +702,45 @@ export default function UploadScreen() {
     return { url: uploaded.url, assetId: uploaded.assetId };
   }, [user, supabase, mode]);
 
+  const handleSavePublicationDraft=useCallback(async()=>{
+    if(isSavingDraft||isUploading) return;
+    const selected=mode==='carousel'?carouselMedias:mode==='photo'&&selectedMedia?[selectedMedia]:[];
+    if(!selected.length||(mode==='carousel'&&selected.length<2)) {
+      showAlert('Sin contenido','Selecciona las fotos que deseas guardar.');
+      return;
+    }
+    setIsSavingDraft(true);
+    try {
+      const sources:CanonicalUploadSource[]=[];
+      for(const [index,media] of selected.entries()) {
+        const mimeType=media.mimeType||detectMimeType(media.uri,'image/jpeg');
+        const fileName=media.fileName||`draft-${index}.${mimeType==='image/png'?'png':'jpg'}`;
+        if(Platform.OS==='web') {
+          const response=await fetch(media.uri);
+          if(!response.ok) throw new Error(`draft_source_fetch_${response.status}`);
+          const blob=await response.blob();
+          sources.push({kind:'browser-blob',blob,mimeType,fileName,sizeBytes:blob.size});
+        } else {
+          sources.push({kind:'native-uri',uri:media.uri,mimeType,fileName,sizeBytes:media.fileSize??undefined});
+        }
+      }
+      const saved=await DraftManager.savePublicationDraft({
+        clientRequestId:draftRequestIdRef.current,
+        kind:mode==='carousel'?'carousel':'photo',
+        caption:caption.trim(),
+        music:selectedMusic?`${selectedMusic.title} - ${selectedMusic.artist}`:'Sin musica',
+        composition:{selected_product_ids:selectedProducts.map(product=>product.productId)},
+        sources,
+      });
+      draftRequestIdRef.current=randomUUID();
+      showAlert('Borrador guardado',`Guardado de forma privada (revisión ${saved.revision}).`);
+    } catch(error) {
+      showAlert('No se pudo guardar',error instanceof Error?error.message:'draft_save_failed');
+    } finally {
+      setIsSavingDraft(false);
+    }
+  },[caption,carouselMedias,isSavingDraft,isUploading,mode,selectedMedia,selectedMusic,selectedProducts,showAlert]);
+
   const handleUploadSingle = useCallback(async () => {
     if (!guardNewCreatorContentPublication()) return;
     if (!selectedMedia) { showAlert('Sin contenido', `Selecciona ${mode === 'photo' ? 'una foto' : 'un video'}`); return; }
@@ -640,6 +753,9 @@ export default function UploadScreen() {
     setUploadProgress(selectedMedia.type==='video'?'Preparando video...':'Subiendo media...');
     let uploadedAssetId: string | undefined;
     let postId: string | undefined;
+    let publicationAttempted=false;
+    let streamAttempt:{caption:string;music:string;sourceFingerprint:string}|null=null;
+    let resumedPendingStream:PendingStreamPublicationRecovery|null=null;
     try {
       if(selectedMedia.type==='video') {
         const mimeType=(selectedMedia.mimeType||detectMimeType(selectedMedia.uri,'video/mp4')).toLowerCase();
@@ -658,6 +774,8 @@ export default function UploadScreen() {
         const controller=new AbortController();
         activeUploadControllerRef.current=controller;
         const musicName=selectedMusic?`${selectedMusic.title} - ${selectedMusic.artist}`:'Sin musica';
+        const sourceFingerprint=await fingerprintStreamSourceIdentity(buildUploadVideoSourceIdentity(selectedMedia));
+        streamAttempt={caption:caption.trim(),music:musicName,sourceFingerprint};
         const stageMessage=(stage:StreamUploadStage,progress?:number|null)=>{
           if(stage==='STREAM_INPUT'||stage==='STREAM_CREATE_UPLOAD') setUploadProgress('Preparando video...');
           else if(stage==='STREAM_DIRECT_POST') setUploadProgress('Subiendo video a Cloudflare...');
@@ -666,6 +784,34 @@ export default function UploadScreen() {
           );
           else if(stage==='STREAM_PUBLISH') setUploadProgress('Publicando en el feed...');
         };
+        let pending=pendingStreamPublicationRef.current?.ownerId===user.id
+          ? pendingStreamPublicationRef.current
+          : null;
+        pending??=await loadPendingStreamPublication('feed-upload',user.id);
+        pendingStreamPublicationRef.current=pending;
+        if(pending) {
+          resumedPendingStream=pending;
+          setUploadProgress('Confirmando publicación anterior...');
+          const published=await resumeStreamVideoPublication(pending);
+          if(!published.postId) throw new Error('stream_post_confirmation_missing');
+          pendingStreamPublicationRef.current=null;
+          await clearPendingStreamPublication('feed-upload',user.id);
+          const isCurrentSource=sourceFingerprint===pending.sourceFingerprint;
+          if(isCurrentSource) {
+            await saveSelectedProductTags(published.postId,'reel');
+            deleteOwnedIosVideoCache(selectedMedia.ownedCacheUri);
+            setCaption('');setSelectedMedia(null);setSelectedMusic(null);setSelectedProducts([]);
+          }
+          await refreshFeed();
+          showAlert(
+            'Video publicado',
+            isCurrentSource
+              ?'La publicación pendiente fue confirmada.'
+              :'La publicación anterior fue confirmada. Tu video actual se conservó.',
+            [{text:'Ver Feed',onPress:()=>router.push('/(tabs)')},{text:'Cerrar'}],
+          );
+          return;
+        }
         const published = await uploadAndPublishStreamVideo({
           uri:selectedMedia.uri,mimeType,fileName:selectedMedia.fileName||undefined,
           sizeBytes:selectedMedia.fileSize??undefined,durationMs:selectedMedia.durationMs,
@@ -681,28 +827,48 @@ export default function UploadScreen() {
         ]);
         return;
       }
-      const uploaded = await uploadMediaToStorage(selectedMedia);
+      const sourceKey=selectedMedia.uri;
+      const cached=preparedSingleUploadRef.current;
+      let selectedUpload=cached?.sourceKey===sourceKey?cached.upload:null;
+      if(!selectedUpload) {
+        const uploaded = await uploadMediaToStorage(selectedMedia);
+        selectedUpload=uploaded;
+      }
+      const uploaded=selectedUpload;
       if (!uploaded?.url) throw new Error('Upload failed');
       uploadedAssetId = uploaded.assetId;
       const finalUrl = uploaded.url;
       setUploadProgress('Guardando en el feed...');
       const musicName = selectedMusic ? `${selectedMusic.title} - ${selectedMusic.artist}` : 'Sin musica';
+      const prepared = cached?.sourceKey===sourceKey
+        ? cached
+        : {
+            sourceKey,
+            upload: uploaded,
+            caption: caption.trim(),
+            music: musicName,
+            commandId: singlePublicationCommandRef.current,
+          };
+      preparedSingleUploadRef.current=prepared;
 
+      publicationAttempted=true;
       postId = await addVideo({
-        userId: user.id,
         username: user.username || user.email?.split('@')[0] || 'user',
         userAvatar: user.avatar || '',
         videoUrl: finalUrl,
         thumbnailUrl: selectedMedia.type === 'image' ? finalUrl : '',
-        caption: caption.trim(),
-        music: musicName,
+        caption: prepared.caption,
+        music: prepared.music,
+        publicationCommandId: prepared.commandId,
         ...(uploaded.assetId ? { mediaAssetIds: [uploaded.assetId] } : {}),
       });
-      if (uploaded.assetId && !postId) throw new Error('entity_create_failed');
+      if (!postId) throw new Error('entity_create_failed');
       if (postId && uploaded.assetId) uploadedAssetId = undefined;
       const tagsSaved = postId ? await saveSelectedProductTags(postId, 'feed') : true;
 
+      preparedSingleUploadRef.current=null;
       setCaption(''); setSelectedMedia(null); setSelectedMusic(null); setSelectedProducts([]);
+      singlePublicationCommandRef.current=randomUUID();
       setUploadProgress('');
       if (!tagsSaved) return;
       showAlert(
@@ -716,28 +882,62 @@ export default function UploadScreen() {
         console.warn('[Upload] Stream video publish failed',{
           operationId:safe.operationId,stage:safe.stage,code:safe.code,
         });
-        if(safe.code==='stream_publish_confirmation_pending') {
+        if(resumedPendingStream) {
+          showAlert(
+            'Publicación pendiente de confirmación',
+            'La misma publicación continúa pendiente. Reintenta sin volver a subir el video.',
+          );
+          return;
+        }
+        if(safe.code==='stream_publish_confirmation_pending'&&safe.assetId&&streamAttempt) {
+          const pendingRecovery:PendingStreamPublicationRecovery={
+            ownerId:user.id,
+            assetId:safe.assetId,operationId:safe.operationId,
+            caption:streamAttempt.caption,music:streamAttempt.music,
+            sourceFingerprint:streamAttempt.sourceFingerprint,
+          };
+          await savePendingStreamPublication('feed-upload',user.id,pendingRecovery);
+          pendingStreamPublicationRef.current=pendingRecovery;
           await refreshFeed().catch(()=>{});
           showAlert(
             'Publicación pendiente de confirmación',
-            'No pudimos confirmar el resultado de la publicación.\nRevisa el feed antes de volver a publicar el video.',
+            'No pudimos confirmar el resultado de la publicación. El video ya fue subido; reintenta para confirmar exactamente el mismo asset.',
           );
           return;
         }
         showAlert('No se pudo publicar el video.',`Código: ${safe.stage}/${safe.code}`);
         return;
       }
-      if (postId && uploadedAssetId) {
-        await supabase.from('videos').delete().eq('id', postId).eq('user_id', user.id);
+      if (publicationAttempted && uploadedAssetId) {
+        let reconciledPostId:string|null=null;
+        for(const delayMs of [250,750,1500]) {
+          await wait(delayMs);
+          reconciledPostId=await findLinkedPostForAsset(uploadedAssetId).catch(()=>null);
+          if(reconciledPostId) break;
+        }
+        if(reconciledPostId) {
+          await saveSelectedProductTags(reconciledPostId,'feed');
+          preparedSingleUploadRef.current=null;
+          singlePublicationCommandRef.current=randomUUID();
+          setCaption('');setSelectedMedia(null);setSelectedMusic(null);setSelectedProducts([]);
+          showAlert('Foto publicada!','Tu contenido ya está en el feed',[
+            {text:'Ver Feed',onPress:()=>router.push('/(tabs)')},{text:'Crear otro'},
+          ]);
+          return;
+        }
+        showAlert(
+          'Publicación pendiente de confirmación',
+          'Conservamos la misma foto y comando. Reintenta para confirmar sin duplicarla.',
+        );
+        return;
       }
-      if (uploadedAssetId) await deleteMediaAsset(uploadedAssetId).catch(() => {});
       showAlert('Error', 'No se pudo publicar. Intenta de nuevo.');
     } finally {
       activeUploadControllerRef.current=null;
       uploadInFlightRef.current=false;
       setIsUploading(false);setUploadProgress('');
     }
-  }, [guardNewCreatorContentPublication, selectedMedia, caption, mode, selectedMusic, user, uploadMediaToStorage, addVideo, refreshFeed, router, showAlert, supabase, saveSelectedProductTags]);
+  }, [guardNewCreatorContentPublication, selectedMedia, caption, mode, selectedMusic, user, uploadMediaToStorage, addVideo, refreshFeed, router, showAlert, saveSelectedProductTags]);
 
   const handleUploadCarousel = useCallback(async () => {
     if (!guardNewCreatorContentPublication()) return;
@@ -749,15 +949,31 @@ export default function UploadScreen() {
 
     setIsUploading(true);
     setUploadProgress(`Subiendo ${carouselMedias.length} fotos...`);
+    const sourceKey=carouselMedias.map((media)=>media.uri).join('\n');
+    const existingPrepared=preparedCarouselUploadsRef.current?.sourceKey===sourceKey
+      ? preparedCarouselUploadsRef.current
+      : null;
     const completedUploads: ((UploadedMedia & { index: number }) | undefined)[] =
-      new Array(carouselMedias.length);
+      existingPrepared
+        ? [...existingPrepared.uploads]
+        : new Array(carouselMedias.length);
+    const prepared={
+      sourceKey,
+      uploads:completedUploads,
+      caption:existingPrepared?.caption??caption.trim(),
+      music:existingPrepared?.music??'Sin musica',
+      commandId:existingPrepared?.commandId??carouselPublicationCommandRef.current,
+    };
+    preparedCarouselUploadsRef.current=prepared;
     let failureStage = 'CAROUSEL_UPLOAD_FAILED';
     try {
       const uploads = await mapWithConcurrency(carouselMedias, 3, async (media, index) => {
+        if(completedUploads[index]) return completedUploads[index]!;
         const uploaded = await uploadMediaToStorage(media, index);
         if (!uploaded?.url || !uploaded.assetId) throw new Error('CAROUSEL_UPLOAD_FAILED');
         const completed = { ...uploaded, index };
         completedUploads[index] = completed;
+        preparedCarouselUploadsRef.current={...prepared,uploads:completedUploads};
         return completed;
       });
       const orderedUploads = uploads
@@ -768,17 +984,19 @@ export default function UploadScreen() {
       setUploadProgress('Guardando carrusel...');
       failureStage = 'CAROUSEL_CREATE_POST_FAILED';
       const postId = await addVideo({
-        userId: user.id,
         username: user.username || user.email?.split('@')[0] || 'user',
         userAvatar: user.avatar || '',
         videoUrl: validUrls[0], thumbnailUrl: validUrls[0],
-        caption: caption.trim(), music: 'Sin musica',
+        caption: prepared.caption, music: prepared.music,
         mediaUrls: validUrls,
         mediaAssetIds: orderedUploads.map(item => item.assetId!),
+        publicationCommandId: prepared.commandId,
       });
       if (!postId) throw new Error('CAROUSEL_CREATE_POST_FAILED');
       const tagsSaved = await saveSelectedProductTags(postId, 'feed');
       completedUploads.fill(undefined);
+      preparedCarouselUploadsRef.current=null;
+      carouselPublicationCommandRef.current=randomUUID();
       setCaption(''); setCarouselMedias([]); setSelectedMusic(null); setSelectedProducts([]);
       if (!tagsSaved) {
         uploadInFlightRef.current=false;
@@ -806,6 +1024,8 @@ export default function UploadScreen() {
       }
       if(reconciledPostId) {
         completedUploads.fill(undefined);
+        preparedCarouselUploadsRef.current=null;
+        carouselPublicationCommandRef.current=randomUUID();
         setCaption('');setCarouselMedias([]);setSelectedMusic(null);
         console.warn('[Upload] carousel publish reconciled',{
           operationId:safe.operationId,
@@ -828,7 +1048,15 @@ export default function UploadScreen() {
         reconciled:false,uploadedCount:uploadedAssetIds.length,
         selectedCount:carouselMedias.length,
       });
-      await Promise.all(uploadedAssetIds.map(assetId => deleteMediaAsset(assetId).catch(() => {})));
+      if(uploadedAssetIds.length===carouselMedias.length) {
+        showAlert(
+          'Publicación pendiente de confirmación',
+          'Conservamos las mismas fotos y el mismo comando. Reintenta para confirmar sin duplicar el carrusel.',
+        );
+        uploadInFlightRef.current=false;
+        setIsUploading(false);setUploadProgress('');
+        return;
+      }
       showAlert('Error',`No se pudo publicar el carrusel.\nCódigo: ${safe.stage}/${safe.code}`);
     }
     uploadInFlightRef.current=false;
@@ -1142,6 +1370,15 @@ export default function UploadScreen() {
               ) : null}
 
               <CyberButton
+                label={isSavingDraft?'Guardando borrador...':'Guardar borrador privado'}
+                onPress={handleSavePublicationDraft}
+                loading={isSavingDraft}
+                variant="secondary"
+                size="lg"
+                fullWidth
+              />
+
+              <CyberButton
                 label={isUploading ? (uploadProgress || 'Publicando...') : `Publicar Carrusel (${carouselMedias.length} fotos)`}
                 onPress={handleUploadCarousel}
                 loading={isUploading}
@@ -1283,6 +1520,16 @@ export default function UploadScreen() {
                 size="lg"
                 fullWidth
               />
+              {mode==='photo' ? (
+                <CyberButton
+                  label={isSavingDraft?'Guardando borrador...':'Guardar borrador privado'}
+                  onPress={handleSavePublicationDraft}
+                  loading={isSavingDraft}
+                  variant="secondary"
+                  size="lg"
+                  fullWidth
+                />
+              ) : null}
             </>
           )}
         </ScrollView>
