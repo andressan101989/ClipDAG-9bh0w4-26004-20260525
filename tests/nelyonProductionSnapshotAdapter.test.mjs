@@ -1851,6 +1851,91 @@ test('Stories B1 baseline projection restores replaced findings and requires com
     /STORIES_B1_POSTCHECK_FAILED|REMOTE_BASELINE_MISMATCH/);
 });
 
+test('Web Control Centers B1 baseline accepts canonical PostgreSQL type spelling and rejects signature drift', async () => {
+  const adapter = await loadAdapter();
+  const controlled = structuredClone(installedPolicy);
+  controlled.baseline.latest_migration = '20261102065812_web_control_centers_b1_publication_drafts';
+  controlled.baseline.migration_count = 1;
+  controlled.baseline.blocked_resources = [];
+  controlled.supabase.managed_functions = [];
+  controlled.security_advisor.exceptions = [];
+  delete controlled.stories_qa_c1_transition;
+  delete controlled.superuser_control_center_transition;
+  delete controlled.superuser_qa_perf_c1_transition;
+  const transition = controlled.web_control_centers_b1_transition;
+  const migrationItems = [{
+    version: '20261102065812',
+    name: 'web_control_centers_b1_publication_drafts',
+  }];
+  const introduced = transition.security_advisor.introduced_exceptions.map(exception => ({
+    fingerprint: exception.advisor_fingerprint,
+    level: exception.advisor_severity,
+    resource_kind: exception.advisor_type,
+  })).sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+  const rpcItems = transition.security_advisor.introduced_exceptions
+    .filter(exception => Array.isArray(exception.object.argument_types))
+    .map(exception => ({
+      schema: exception.object.schema,
+      name: exception.object.name,
+      argument_types: exception.object.argument_types,
+    }));
+  assert.deepEqual(
+    rpcItems.find(item => item.name === 'list_my_publication_drafts_v1').argument_types,
+    ['integer', 'timestamp with time zone', 'uuid'],
+  );
+  const evidence = {
+    migrations: {
+      complete: true,
+      count: migrationItems.length,
+      items: migrationItems,
+      latest: migrationItems[0],
+      sha256: sha256(canonicalJson(migrationItems)),
+    },
+    functions: { complete: true, count: 0, items: [], sha256: sha256(canonicalJson([])) },
+    cron_security: {
+      cron: cronSnapshot(),
+      advisors: {
+        complete: true,
+        count: introduced.length,
+        items: introduced,
+        sha256: sha256(canonicalJson(introduced)),
+      },
+    },
+    finance: financeSnapshot({
+      policy: {
+        ...controlled.supabase.finance_policy,
+        policy_version: 'creator-premium-f4-general-v1',
+      },
+    }),
+    rpc_security: {
+      complete: true,
+      count: rpcItems.length,
+      items: rpcItems,
+      sha256: sha256(canonicalJson(rpcItems)),
+    },
+    web_control_centers_b1_state: {
+      schema_version: 1,
+      complete: true,
+      installed: true,
+      relations: structuredClone(transition.catalog.relations),
+      helpers: structuredClone(transition.catalog.helpers),
+      rpc_identities: transition.rpc_attestations.map(item => item.identity),
+      media_asset_links: structuredClone(transition.catalog.media_asset_links),
+    },
+  };
+  assert.match(adapter.buildProductionBaselineDigests({ evidence, policy: controlled }).migrations,
+    /^[0-9a-f]{64}$/);
+
+  for (const hostileType of ['date', 'timestamp  with time zone']) {
+    const hostile = structuredClone(evidence);
+    hostile.rpc_security.items.find(item => item.name === 'list_my_publication_drafts_v1')
+      .argument_types[1] = hostileType;
+    hostile.rpc_security.sha256 = sha256(canonicalJson(hostile.rpc_security.items));
+    assert.throws(() => adapter.buildProductionBaselineDigests({ evidence: hostile, policy: controlled }),
+      /REMOTE_BASELINE_MISMATCH/);
+  }
+});
+
 test('F3 disposable catalog verifies exact authority and detects real PostgreSQL security drift', {
   skip: process.env.RUN_F3_GOVERNANCE_LOCAL !== '1', timeout: 120000,
 }, async t => {
@@ -4971,6 +5056,7 @@ test('current successor RPC attestations require exact definition ACL owner and 
   const items = [
     { version: '20261029042807', name: 'stories_v2_qa_c1_question_answer_authority' },
     ...CONTROL_CENTER_MIGRATIONS.map(([version, name]) => ({ version, name })),
+    { version: '20261102065812', name: 'web_control_centers_b1_publication_drafts' },
   ];
   const migrations = {
     complete: true, count: items.length, items, latest: items.at(-1), sha256: sha256(canonicalJson(items)),
