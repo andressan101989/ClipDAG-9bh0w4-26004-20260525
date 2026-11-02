@@ -1966,11 +1966,11 @@ export const WEB_CONTROL_CENTERS_B1_STATE_SQL = `with expected_helpers(identity)
   where n.nspname='public' and r.relname='media_asset_links'
     and c.conname='media_asset_links_entity_type_check'
 ), policy_rows as (
-  select schemaname schema,tablename table_name,policyname name,permissive,roles,cmd command,qual,with_check
+  select schemaname schema,tablename as "table",policyname name,permissive,roles,cmd command,qual,with_check
   from pg_catalog.pg_policies where schemaname='public' and tablename='media_asset_links'
     and policyname in ('media_asset_links_owner_read','media_asset_links_public_read')
 ), index_rows as (
-  select n.nspname schema,t.relname table_name,i.relname name,owner_role.rolname owner,
+  select n.nspname schema,t.relname as "table",i.relname name,owner_role.rolname owner,
     pg_catalog.pg_get_indexdef(ix.indexrelid) definition,ix.indisvalid valid,ix.indisready ready,
     ix.indisunique unique,ix.indisprimary primary
   from pg_catalog.pg_index ix join pg_catalog.pg_class i on i.oid=ix.indexrelid
@@ -1979,7 +1979,7 @@ export const WEB_CONTROL_CENTERS_B1_STATE_SQL = `with expected_helpers(identity)
   where n.nspname='public' and t.relname='media_asset_links'
     and i.relname in ('publication_draft_media_position_uidx','publication_draft_media_asset_uidx')
 ), trigger_rows as (
-  select n.nspname schema,c.relname table_name,t.tgname name,t.tgenabled enabled,
+  select n.nspname schema,c.relname as "table",t.tgname name,t.tgenabled enabled,
     pn.nspname||'.'||p.proname||'('||pg_catalog.replace(pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' function_identity,
     pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_triggerdef(t.oid,true),'UTF8')),'hex') definition_sha256
   from pg_catalog.pg_trigger t join pg_catalog.pg_class c on c.oid=t.tgrelid

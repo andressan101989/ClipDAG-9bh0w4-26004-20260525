@@ -12,7 +12,10 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { WEB_CONTROL_CENTERS_B1_STATE_SQL } from "./nelyon-production-snapshot-adapter.mjs";
+import {
+  WEB_CONTROL_CENTERS_B1_STATE_SQL,
+  validateWebControlCentersB1StateTransition,
+} from "./nelyon-production-snapshot-adapter.mjs";
 
 const repo = resolve(import.meta.dirname, "..");
 const scratch = resolve("D:/CodexTemp");
@@ -30,6 +33,12 @@ const securityFixture = readFileSync(
   join(repo, "tests/fixtures/web-control-centers-b1-security.sql"),
   "utf8",
 );
+const releasePolicy = JSON.parse(readFileSync(
+  join(repo, ".github/nelyon-production-release-policy.json"),
+  "utf8",
+));
+const releaseTransition = releasePolicy.web_control_centers_b1_transition;
+assert.ok(releaseTransition, "missing B1 release transition");
 
 function extractFunction(source, signature) {
   const start = source.indexOf(signature);
@@ -212,10 +221,10 @@ create policy media_assets_owner_read on public.media_assets for select to authe
 create policy media_assets_public_read on public.media_assets for select to anon,authenticated
  using(visibility='public' and status='ready');
 create policy media_asset_links_owner_read on public.media_asset_links for select to authenticated
- using(exists(select 1 from public.media_assets asset
+ using(entity_type not in('story','creator_premium_content') and exists(select 1 from public.media_assets asset
   where asset.id=media_asset_links.asset_id and asset.owner_id=(select auth.uid())));
 create policy media_asset_links_public_read on public.media_asset_links for select to anon,authenticated
- using(exists(select 1 from public.media_assets asset
+ using(entity_type not in('story','creator_premium_content') and exists(select 1 from public.media_assets asset
   where asset.id=media_asset_links.asset_id and asset.visibility='public' and asset.status='ready'));
 grant usage on schema public,auth to anon,authenticated,service_role;
 grant select on public.media_assets,public.media_asset_links,public.videos to anon,authenticated;
@@ -272,6 +281,12 @@ try {
   assert.equal(postSnapshotState.helpers.length, 8);
   assert.equal(postSnapshotState.rpc_identities.length, 7);
   assert.equal(postSnapshotState.relations.length, 3);
+  const snapshotContractValidated = validateWebControlCentersB1StateTransition(
+    preSnapshotState,
+    postSnapshotState,
+    releaseTransition,
+  );
+  assert.equal(snapshotContractValidated, true);
 
   const created = JSON.parse(asUserScalar(owner, `
 select public.create_my_publication_draft_v1(
@@ -494,9 +509,9 @@ select pg_catalog.json_build_object(
   console.log(JSON.stringify({
     verdict: "WEB_CONTROL_CENTERS_B1_DISPOSABLE_PASS",
     postgres: scalar("show server_version;"),
-    assertions: 25,
-    snapshotPreState: true,
-    snapshotPostState: true,
+    assertions: 26,
+    snapshotPreState: snapshotContractValidated,
+    snapshotPostState: snapshotContractValidated,
     createReplay: true,
     createReplayAfterMutation: true,
     mutationReplay: true,
