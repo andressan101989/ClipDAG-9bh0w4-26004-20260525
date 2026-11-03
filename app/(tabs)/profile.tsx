@@ -76,6 +76,8 @@ function SettingsItem({
     <Pressable
       style={({ pressed }) => [styles.settingsItem, pressed && { opacity: 0.75 }]}
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={sublabel ? `${label}. ${sublabel}` : label}
     >
       <LinearGradient colors={gradient as [string, string, ...string[]]} style={styles.settingsItemIcon}>
         <MaterialCommunityIcons name={icon as any} size={16} color="#fff" />
@@ -598,6 +600,14 @@ export default function ProfileScreen() {
               sublabel="Editar perfil, foto, biografía"
               gradient={['#7C5CFF', '#B44FFF']}
               onPress={openEditModal}
+            />
+            <View style={styles.settingsDivider} />
+            <SettingsItem
+              icon="folder-multiple-outline"
+              label="Mis contenidos"
+              sublabel="Publicaciones, borradores y contenido propio."
+              gradient={['#2D9EFF', '#7C5CFF']}
+              onPress={() => router.push('/my-content?tab=drafts' as never)}
             />
             <View style={styles.settingsDivider} />
             <SettingsItem
