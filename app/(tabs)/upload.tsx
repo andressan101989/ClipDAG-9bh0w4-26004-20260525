@@ -733,13 +733,20 @@ export default function UploadScreen() {
         sources,
       });
       draftRequestIdRef.current=randomUUID();
-      showAlert('Borrador guardado',`Guardado de forma privada (revisión ${saved.revision}).`);
+      showAlert(
+        'Borrador guardado',
+        `Guardado de forma privada (revisión ${saved.revision}).`,
+        [
+          {text:'Ver borradores',onPress:()=>router.push('/my-content?tab=drafts' as never)},
+          {text:'Seguir creando',style:'cancel'},
+        ],
+      );
     } catch(error) {
       showAlert('No se pudo guardar',error instanceof Error?error.message:'draft_save_failed');
     } finally {
       setIsSavingDraft(false);
     }
-  },[caption,carouselMedias,isSavingDraft,isUploading,mode,selectedMedia,selectedMusic,selectedProducts,showAlert]);
+  },[caption,carouselMedias,isSavingDraft,isUploading,mode,router,selectedMedia,selectedMusic,selectedProducts,showAlert]);
 
   const handleUploadSingle = useCallback(async () => {
     if (!guardNewCreatorContentPublication()) return;

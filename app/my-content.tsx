@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList,
   Dimensions, ActivityIndicator, ScrollView, TextInput,
@@ -8,7 +8,7 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { useFeed } from '@/hooks/useFeed';
 import { useAlert } from '@/template';
@@ -33,6 +33,11 @@ const TAB_CONFIG: { key: ContentTab; icon: string; label: string }[] = [
   { key: 'stories', icon: 'circle-outline', label: 'Historias' },
   { key: 'drafts', icon: 'file-outline', label: 'Borradores' },
 ];
+
+function normalizeContentTab(value: string | string[] | undefined): ContentTab {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return TAB_CONFIG.some(tab => tab.key === candidate) ? candidate as ContentTab : 'posts';
+}
 
 // ── Sort options ───────────────────────────────────────────────────────────────
 type SortBy = 'newest' | 'oldest' | 'most_liked' | 'most_viewed';
@@ -107,11 +112,13 @@ const ContentItem = React.memo(function ContentItem({ video, onPress, onLongPres
 export default function MyContentScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { tab } = useLocalSearchParams<{ tab?: string | string[] }>();
   const { user } = useAuth();
   const { deleteVideo } = useFeed();
   const { showAlert } = useAlert();
 
-  const [activeTab, setActiveTab] = useState<ContentTab>('posts');
+  const requestedTab = normalizeContentTab(tab);
+  const [activeTab, setActiveTab] = useState<ContentTab>(requestedTab);
   const [sortBy, setSortBy] = useState<SortBy>('newest');
   const [isDeleting, setIsDeleting] = useState(false);
   const [isLoadingContent, setIsLoadingContent] = useState(true);
@@ -126,6 +133,10 @@ export default function MyContentScreen() {
   const draftDeleteMutationsRef=useRef(new Map<string,DraftDeleteMutation>());
   const draftMutationInFlightRef=useRef(new Set<string>());
   const contentLoadRef = useRef(0);
+
+  useEffect(() => {
+    setActiveTab(requestedTab);
+  }, [requestedTab]);
 
   const loadContent = useCallback(async () => {
     const generation = contentLoadRef.current + 1;
