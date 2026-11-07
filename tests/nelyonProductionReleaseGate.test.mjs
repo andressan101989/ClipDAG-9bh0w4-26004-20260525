@@ -3847,15 +3847,15 @@ test('expanded managed scope has a verified static cutover control', async () =>
   }), policy).mode, 'release');
 });
 
-test('Web Control Centers B1 production baseline is promoted from independently verified owner evidence', async () => {
+test('Web Control Centers B1 QA-C3 production baseline is promoted from independently verified owner evidence', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   assert.equal(gate.validatePolicy(policy), true);
   assert.deepEqual(policy.baseline, {
     authority_source: 'owner-control-plane',
     blocked_resources: [],
-    evidence: '15601d713e1ba8dcc7f085e8795a113fa8072783cc7ced1ef7e9cd813f3c7f9e',
+    evidence: 'fdf5f4ffbd1794c7cb8b6ab6de5fc3383f4390ea2a4c7d5181850d88f3ee99d6',
     evidence_digests: {
-      migrations: '4c8b0255a013b9ccb2529e9d92738fd28241d75a5dd77a3adfd98371028d42cd',
+      migrations: 'fa6b5f36693a0edd7c4a0bef91701c2b58751589c7f748249ecdeb380e4509c6',
       managed_functions: '93eddb2a83d06900a78277827a5f00eec185bc75a06202653969b2a539fb2d6c',
       unmanaged_functions: '26f9c59179198817e55c7940177bf72cf7024f77b4b3c707d205ab7d5c3eaafc',
       function_source_parity: '031993a08f4e7178169e26468e746c13178cd752e30d1694e9904781cde8c9c4',
@@ -3863,19 +3863,19 @@ test('Web Control Centers B1 production baseline is promoted from independently 
       cron_security: '14e2f511010a0bd1dddb859223d730c24fc99ac3ca6fa5ddafd19184e55583ba',
       finance: 'f94d54264c5d7658dc04aba34b028c815e99d7eb8ccf2490410817d47566754f',
     },
-    latest_migration: '20261102065812_web_control_centers_b1_publication_drafts',
-    migration_count: 366,
+    latest_migration: '20261107053930_web_control_centers_b1_qa_c3_draft_list_recovery',
+    migration_count: 367,
     prior_release: {
       kind: 'post-release',
-      release_id: 'web-control-centers-b1-release-20261102-r5',
-      manifest_sha256: '347f323272ba7fe6454ed9c6b1b0fcd7c651e8738bd3053bbb2d66263837b295',
-      postcheck_evidence_sha256: 'f1f765a344aae446ac15a13160db4b1aa8c89969cce09c6aa7824d99218960f0',
+      release_id: 'web-control-centers-b1-qa-c3-release-20261107-r1',
+      manifest_sha256: '8757ecfae9487f4ab6e8c9e692b119d98e36226a8b0712ed49225f2afe6d46c7',
+      postcheck_evidence_sha256: '59fb4a3a8ee8432d57f28a7084d3f77efccc91fda1ece436bfa5bd79d278958b',
     },
     requires_separate_policy_commit: true,
-    reviewed_policy_sha256: '6e24ba86b4b3bc67b75df2305d08289defea3b128bbf57df221c368bafb8b688',
-    sha: '6966c8af714cf7d5763cccfccbc0802f6c2ffdc3',
+    reviewed_policy_sha256: 'fac2c49c746a30cc3e147ab494fe1f5447111dbc4c0d70ddc2b41c012f81623b',
+    sha: '612a90d087817f06e2c979665a63c054bbddcf18',
     state: 'verified',
-    verified_at: '2026-11-02T09:27:52.769Z',
+    verified_at: '2026-11-07T06:40:20.313Z',
     verified_by: OWNER,
   });
 

@@ -5057,6 +5057,7 @@ test('current successor RPC attestations require exact definition ACL owner and 
     { version: '20261029042807', name: 'stories_v2_qa_c1_question_answer_authority' },
     ...CONTROL_CENTER_MIGRATIONS.map(([version, name]) => ({ version, name })),
     { version: '20261102065812', name: 'web_control_centers_b1_publication_drafts' },
+    { version: '20261107053930', name: 'web_control_centers_b1_qa_c3_draft_list_recovery' },
   ];
   const migrations = {
     complete: true, count: items.length, items, latest: items.at(-1), sha256: sha256(canonicalJson(items)),
@@ -5065,6 +5066,11 @@ test('current successor RPC attestations require exact definition ACL owner and 
   const evidence = {};
   bindRpcSecurityEvidence(evidence, exceptions);
   assert.equal(adapter.validateRpcSecurityAttestations(evidence.rpc_security, exceptions), true);
+  assert.equal(
+    exceptions.find(item => item.object?.name === 'list_my_publication_drafts_v1')
+      .attestation.definition_sha256,
+    'adc7f6e9126e1abc7a3c1dd741ae5e13428ab6252b3a1f4243d88fc7a88720c7',
+  );
   for (const name of ['get_creator_premium_commerce_v1', 'get_my_creator_premium_subscriptions_v1']) {
     for (const change of [
       { definition_sha256: '0'.repeat(64) }, { acl: [] }, { owner: 'other_owner' },
