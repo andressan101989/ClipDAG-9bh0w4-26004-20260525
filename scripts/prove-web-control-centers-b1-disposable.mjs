@@ -29,6 +29,13 @@ const migration = readFileSync(
   join(repo, "supabase/migrations", migrationNames[0]),
   "utf8",
 );
+const recoveryMigrationNames = readdirSync(join(repo, "supabase/migrations"))
+  .filter((name) => name.endsWith("_web_control_centers_b1_qa_c3_draft_list_recovery.sql"));
+assert.equal(recoveryMigrationNames.length, 1, "missing focal QA-C3 recovery migration");
+const recoveryMigration = readFileSync(
+  join(repo, "supabase/migrations", recoveryMigrationNames[0]),
+  "utf8",
+);
 const securityFixture = readFileSync(
   join(repo, "tests/fixtures/web-control-centers-b1-security.sql"),
   "utf8",
@@ -274,6 +281,131 @@ try {
   assert.deepEqual(preSnapshotState.helpers, []);
   assert.deepEqual(preSnapshotState.rpc_identities, []);
   sql(migration);
+
+  const listRpcCatalogSql = `
+select pg_catalog.concat_ws('|',
+  p.oid::text,
+  pg_catalog.pg_get_userbyid(p.proowner),
+  coalesce(p.proacl::text,''),
+  p.provolatile::text,
+  p.prosecdef::text,
+  coalesce(p.proconfig::text,''),
+  pg_catalog.pg_get_function_identity_arguments(p.oid),
+  pg_catalog.pg_get_function_arguments(p.oid),
+  pg_catalog.pg_get_function_result(p.oid)
+)
+from pg_catalog.pg_proc p
+where p.oid='public.list_my_publication_drafts_v1(integer,timestamptz,uuid)'::regprocedure;`;
+  const otherFunctionDefinitionsSql = `
+select encode(extensions.digest(pg_catalog.string_agg(
+  pg_catalog.pg_get_functiondef(p.oid), E'\\n' order by n.nspname,p.proname,p.oid
+),'sha256'),'hex')
+from pg_catalog.pg_proc p
+join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+where n.nspname in('public','private')
+  and p.oid <> 'public.list_my_publication_drafts_v1(integer,timestamptz,uuid)'::regprocedure;`;
+  const preRepairCatalog = scalar(listRpcCatalogSql);
+  const preRepairOtherDefinitions = scalar(otherFunctionDefinitionsSql);
+  const preRepairList = asUser(owner, `
+\\set VERBOSITY verbose
+select count(*) from public.list_my_publication_drafts_v1(20,null,null);`, true);
+  assert.notEqual(preRepairList.status, 0);
+  assert.match(preRepairList.stderr, /42883:[\s\S]*pg_catalog\.least/i);
+
+  sql(recoveryMigration);
+  assert.equal(scalar(listRpcCatalogSql), preRepairCatalog,
+    "QA-C3 must preserve OID, owner, ACL, volatility, SECURITY DEFINER, search_path and signature");
+  assert.equal(scalar(otherFunctionDefinitionsSql), preRepairOtherDefinitions,
+    "QA-C3 must not alter another function definition");
+  const repairedDefinition = scalar(`select pg_catalog.pg_get_functiondef(
+    'public.list_my_publication_drafts_v1(integer,timestamptz,uuid)'::regprocedure
+  );`);
+  assert.match(repairedDefinition,
+    /greatest\s*\(\s*1\s*,\s*least\s*\(\s*coalesce\s*\(\s*p_limit\s*,\s*20\s*\)\s*,\s*50\s*\)\s*\)/i);
+  assert.doesNotMatch(repairedDefinition, /pg_catalog\.(?:least|greatest)/i);
+  assert.equal(asUserScalar(owner,
+    "select count(*) from public.list_my_publication_drafts_v1(20,null,null);"), "0");
+  const unauthenticatedList = sql(`begin;
+set local role authenticated;
+select count(*) from public.list_my_publication_drafts_v1(20,null,null);
+commit;`, true);
+  assert.notEqual(unauthenticatedList.status, 0);
+  assert.match(unauthenticatedList.stderr, /publication_auth_required/);
+
+  sql(`
+insert into private.publication_drafts(
+ id,owner_id,client_request_id,kind,caption,music,composition,state,revision,
+ request_fingerprint,created_at,updated_at
+)
+select
+ ('91000000-0000-4000-8000-'||pg_catalog.lpad(i::text,12,'0'))::uuid,
+ '${restrictedOwner}',
+ ('92000000-0000-4000-8000-'||pg_catalog.lpad(i::text,12,'0'))::uuid,
+ 'photo','page-'||i,'Sin musica','{}'::jsonb,'draft',1,
+ encode(extensions.digest(('page-'||i)::bytea,'sha256'),'hex'),
+ '2026-11-07 00:00:00+00'::timestamptz,
+ '2026-11-07 00:00:00+00'::timestamptz
+from pg_catalog.generate_series(1,55) i;
+insert into private.publication_drafts(
+ id,owner_id,client_request_id,kind,caption,music,composition,state,revision,
+ request_fingerprint,published_post_id,created_at,updated_at,published_at
+) values(
+ '93000000-0000-4000-8000-000000000001','${restrictedOwner}',
+ '94000000-0000-4000-8000-000000000001','photo','published','Sin musica','{}'::jsonb,
+ 'published',1,repeat('a',64),'95000000-0000-4000-8000-000000000001',
+ '2026-11-08 00:00:00+00','2026-11-08 00:00:00+00','2026-11-08 00:00:00+00'
+);
+insert into private.publication_drafts(
+ id,owner_id,client_request_id,kind,caption,music,composition,state,revision,
+ request_fingerprint,created_at,updated_at,deleted_at
+) values(
+ '93000000-0000-4000-8000-000000000002','${restrictedOwner}',
+ '94000000-0000-4000-8000-000000000002','photo','deleted','Sin musica','{}'::jsonb,
+ 'deleted',1,repeat('b',64),
+ '2026-11-08 00:00:00+00','2026-11-08 00:00:00+00','2026-11-08 00:00:00+00'
+);
+insert into private.publication_drafts(
+ id,owner_id,client_request_id,kind,caption,music,composition,state,revision,
+ request_fingerprint,created_at,updated_at
+) values(
+ '96000000-0000-4000-8000-000000000001','${otherOwner}',
+ '97000000-0000-4000-8000-000000000001','photo','other-owner','Sin musica','{}'::jsonb,
+ 'draft',1,repeat('c',64),'2026-11-09 00:00:00+00','2026-11-09 00:00:00+00'
+);`);
+
+  assert.equal(asUserScalar(restrictedOwner,
+    "select count(*) from public.list_my_publication_drafts_v1(0,null,null);"), "1");
+  assert.equal(asUserScalar(restrictedOwner,
+    "select count(*) from public.list_my_publication_drafts_v1(999,null,null);"), "50");
+  const listPage = (cursor = null) => JSON.parse(asUserScalar(restrictedOwner, `
+select coalesce(pg_catalog.jsonb_agg(item.value),'[]'::jsonb)::text
+from public.list_my_publication_drafts_v1(
+  20,
+  ${cursor ? `'${cursor.updated_at}'::timestamptz` : "null"},
+  ${cursor ? `'${cursor.id}'::uuid` : "null"}
+) as item(value);`));
+  const firstPage = listPage();
+  const secondPage = listPage(firstPage.at(-1));
+  const thirdPage = listPage(secondPage.at(-1));
+  assert.deepEqual([firstPage.length, secondPage.length, thirdPage.length], [20,20,15]);
+  const listedIds = [...firstPage,...secondPage,...thirdPage].map(item => item.id);
+  assert.equal(new Set(listedIds).size, 55);
+  assert.ok(listedIds.every(id => id.startsWith('91000000-')));
+  assert.deepEqual(listedIds, [...listedIds].sort().reverse(),
+    "equal timestamps must use the UUID tie-breaker without gaps or duplicates");
+  const halfCursorTimestamp = asUser(restrictedOwner, `
+select count(*) from public.list_my_publication_drafts_v1(
+  20,'2026-11-07 00:00:00+00'::timestamptz,null
+);`, true);
+  assert.notEqual(halfCursorTimestamp.status, 0);
+  assert.match(halfCursorTimestamp.stderr, /publication_draft_cursor_invalid/);
+  const halfCursorId = asUser(restrictedOwner, `
+select count(*) from public.list_my_publication_drafts_v1(
+  20,null,'91000000-0000-4000-8000-000000000055'::uuid
+);`, true);
+  assert.notEqual(halfCursorId.status, 0);
+  assert.match(halfCursorId.stderr, /publication_draft_cursor_invalid/);
+
   sql(securityFixture);
   const postSnapshotState = JSON.parse(scalar(WEB_CONTROL_CENTERS_B1_STATE_SQL));
   assert.equal(postSnapshotState.complete, true);
@@ -509,7 +641,7 @@ select pg_catalog.json_build_object(
   console.log(JSON.stringify({
     verdict: "WEB_CONTROL_CENTERS_B1_DISPOSABLE_PASS",
     postgres: scalar("show server_version;"),
-    assertions: 26,
+    assertions: 45,
     snapshotPreState: snapshotContractValidated,
     snapshotPostState: snapshotContractValidated,
     createReplay: true,

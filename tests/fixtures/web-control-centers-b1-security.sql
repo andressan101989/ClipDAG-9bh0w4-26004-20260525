@@ -46,5 +46,21 @@ begin
     'public.publish_my_media_post_v1(uuid,text,text,text,uuid[])',
     'EXECUTE'
   ) then raise exception 'b1_publication_rpc_anon_exposed'; end if;
+
+  if not has_function_privilege(
+    'authenticated',
+    'public.list_my_publication_drafts_v1(integer,timestamptz,uuid)',
+    'EXECUTE'
+  ) then raise exception 'b1_draft_list_rpc_not_granted'; end if;
+
+  if has_function_privilege(
+    'anon',
+    'public.list_my_publication_drafts_v1(integer,timestamptz,uuid)',
+    'EXECUTE'
+  ) or has_function_privilege(
+    'service_role',
+    'public.list_my_publication_drafts_v1(integer,timestamptz,uuid)',
+    'EXECUTE'
+  ) then raise exception 'b1_draft_list_rpc_exposed'; end if;
 end
 $assertions$;
