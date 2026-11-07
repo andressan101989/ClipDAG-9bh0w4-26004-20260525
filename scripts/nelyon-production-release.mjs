@@ -1276,6 +1276,71 @@ export const WEB_CONTROL_CENTERS_B1_RELEASE_TRANSITION = Object.freeze({
   requires_separate_baseline_promotion: true,
 });
 
+const WEB_CONTROL_CENTERS_B1_QA_C3_REVIEWED_SOURCE_SHA =
+  '874bf029cbbd573a1a18c530c1034e028bf5e556';
+const WEB_CONTROL_CENTERS_B1_QA_C3_MIGRATION = Object.freeze({
+  version: '20261107053930',
+  path: 'supabase/migrations/20261107053930_web_control_centers_b1_qa_c3_draft_list_recovery.sql',
+  blob: '94344ab595e4a648211a5adeca92be80e265edc9',
+  sha256: 'b43f61a88f32325f71d5d8d13ef1455834c494eb2402277f29c224c6c440b378',
+  byte_length: 1271,
+});
+const WEB_CONTROL_CENTERS_B1_QA_C3_PREDECESSOR = Object.freeze(
+  WEB_CONTROL_CENTERS_B1_RPCS.find(item => (
+    item.identity === 'public.list_my_publication_drafts_v1(integer,timestampwithtimezone,uuid)'
+  )),
+);
+const WEB_CONTROL_CENTERS_B1_QA_C3_SUCCESSOR = Object.freeze({
+  ...WEB_CONTROL_CENTERS_B1_QA_C3_PREDECESSOR,
+  definition_sha256: 'adc7f6e9126e1abc7a3c1dd741ae5e13428ab6252b3a1f4243d88fc7a88720c7',
+});
+const WEB_CONTROL_CENTERS_B1_QA_C3_ADVISOR_EXCEPTION = Object.freeze({
+  advisor_fingerprint: WEB_CONTROL_CENTERS_B1_QA_C3_SUCCESSOR.advisor_fingerprint,
+  advisor_type: 'authenticated_security_definer_function_executable',
+  advisor_severity: 'WARN',
+  object: {
+    schema: 'public', name: 'list_my_publication_drafts_v1',
+    argument_types: WEB_CONTROL_CENTERS_B1_QA_C3_SUCCESSOR.argument_types,
+    identity_arguments: WEB_CONTROL_CENTERS_B1_QA_C3_SUCCESSOR.identity_arguments,
+  },
+  attestation: {
+    security_definer: WEB_CONTROL_CENTERS_B1_QA_C3_SUCCESSOR.security_definer,
+    owner: WEB_CONTROL_CENTERS_B1_QA_C3_SUCCESSOR.owner,
+    search_path: WEB_CONTROL_CENTERS_B1_QA_C3_SUCCESSOR.search_path,
+    acl: WEB_CONTROL_CENTERS_B1_QA_C3_SUCCESSOR.acl,
+    execute: WEB_CONTROL_CENTERS_B1_QA_C3_SUCCESSOR.execute,
+    definition_sha256: WEB_CONTROL_CENTERS_B1_QA_C3_SUCCESSOR.definition_sha256,
+  },
+  origin: {
+    migration: '20261107053930_web_control_centers_b1_qa_c3_draft_list_recovery',
+    migration_blob: WEB_CONTROL_CENTERS_B1_QA_C3_MIGRATION.blob,
+    source_sha: WEB_CONTROL_CENTERS_B1_QA_C3_REVIEWED_SOURCE_SHA,
+  },
+});
+
+export const WEB_CONTROL_CENTERS_B1_QA_C3_RELEASE_TRANSITION = Object.freeze({
+  id: 'web-control-centers-b1-qa-c3-draft-list-recovery-v1',
+  from_phase: 'web_control_centers_b1',
+  to_phase: 'web_control_centers_b1_qa_c3',
+  baseline_sha: '6966c8af714cf7d5763cccfccbc0802f6c2ffdc3',
+  integration_base_sha: 'd2409094ac131e1455c70a4b1905ea51358751e5',
+  reviewed_source_sha: WEB_CONTROL_CENTERS_B1_QA_C3_REVIEWED_SOURCE_SHA,
+  approved_sha_ancestry: 'verified_integration_base',
+  migrations: [WEB_CONTROL_CENTERS_B1_QA_C3_MIGRATION],
+  productive_paths: [WEB_CONTROL_CENTERS_B1_QA_C3_MIGRATION.path],
+  functions: [], config_changed: false,
+  rpc_replacement: {
+    predecessor: WEB_CONTROL_CENTERS_B1_QA_C3_PREDECESSOR,
+    successor: WEB_CONTROL_CENTERS_B1_QA_C3_SUCCESSOR,
+  },
+  security_advisor: {
+    replacement_exception: WEB_CONTROL_CENTERS_B1_QA_C3_ADVISOR_EXCEPTION,
+  },
+  finance_policy: { platform_fee_bps: 2000, purchase_enabled: true,
+    refunds_enabled: true, subscription_enabled: true },
+  requires_separate_baseline_promotion: true,
+});
+
 export const STORIES_SAFETY_C1_RELEASE_TRANSITION = Object.freeze({
   id: 'stories-v2-safety-c1-technical-policy-prep-v1',
   from_phase: 'stories_v2_interactive_b1_fail_closed',
@@ -2108,6 +2173,11 @@ export function validatePolicy(policy) {
     !== canonicalJson(WEB_CONTROL_CENTERS_B1_RELEASE_TRANSITION)) {
     deny('INVALID_WEB_CONTROL_CENTERS_B1_TRANSITION',
       'Web Control Centers B1 authority must match the exact reviewed one-migration contract');
+  }
+  if (canonicalJson(policy.web_control_centers_b1_qa_c3_transition ?? null)
+    !== canonicalJson(WEB_CONTROL_CENTERS_B1_QA_C3_RELEASE_TRANSITION)) {
+    deny('INVALID_WEB_CONTROL_CENTERS_B1_QA_C3_TRANSITION',
+      'Web Control Centers B1 QA-C3 authority must match the exact reviewed RPC repair contract');
   }
   const c2AdminFinanceRpc = policy.finance_security_advisor?.c2_rpc_replacements?.find(exception =>
     exception?.object?.schema === 'public'
@@ -3296,6 +3366,92 @@ export function attestWebControlCentersB1Transition({
   };
 }
 
+export function attestWebControlCentersB1QaC3Transition({
+  cwd,
+  policy,
+  mode,
+  approvedSha,
+  changes,
+  migrations,
+  affectedFunctions,
+  runGit,
+}) {
+  if (isReadOnlyRecoveryMode(mode)) return { migrations, attestation: null };
+  const transition = WEB_CONTROL_CENTERS_B1_QA_C3_RELEASE_TRANSITION;
+  const expectedPaths = transition.migrations.map(item => item.path).sort();
+  const migrationPaths = [...(migrations ?? [])].map(item => item?.path).sort();
+  if (!migrationPaths.some(path => expectedPaths.includes(path))) {
+    return { migrations, attestation: null };
+  }
+  const code = 'INVALID_WEB_CONTROL_CENTERS_B1_QA_C3_TRANSITION';
+  const supabaseChanges = (changes ?? []).filter(item => item?.path?.startsWith('supabase/'))
+    .map(item => ({ path: item.path, status: item.status }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const expectedChanges = transition.productive_paths.map(path => ({ path, status: 'A' }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  if (canonicalJson(policy?.web_control_centers_b1_qa_c3_transition ?? null)
+      !== canonicalJson(transition)
+    || policy?.baseline?.sha !== transition.baseline_sha
+    || canonicalJson(policy?.supabase?.finance_policy ?? null)
+      !== canonicalJson(transition.finance_policy)
+    || !SHA_PATTERN.test(approvedSha ?? '') || typeof runGit !== 'function'
+    || !SHA_PATTERN.test(transition.reviewed_source_sha)
+    || canonicalJson(migrationPaths) !== canonicalJson(expectedPaths)
+    || (affectedFunctions ?? []).length !== 0
+    || canonicalJson(supabaseChanges) !== canonicalJson(expectedChanges)) {
+    deny(code, 'QA-C3 permits one reviewed migration, zero Edge/config/finance changes, and exact RPC provenance');
+  }
+  const expectedByPath = new Map(transition.migrations.map(item => [item.path, item]));
+  for (const migration of migrations) {
+    const expected = expectedByPath.get(migration.path);
+    if (!expected || migration.version !== expected.version) {
+      deny(code, 'QA-C3 migration version differs from the reviewed authority');
+    }
+  }
+  try {
+    for (const sha of [approvedSha, transition.reviewed_source_sha]) {
+      runGit(['cat-file', '-e', `${sha}^{commit}`], { cwd });
+    }
+    runGit(['merge-base', '--is-ancestor', transition.baseline_sha, transition.integration_base_sha], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.integration_base_sha, transition.reviewed_source_sha], { cwd });
+    runGit(['merge-base', '--is-ancestor', transition.reviewed_source_sha, approvedSha], { cwd });
+    for (const source of transition.migrations) {
+      for (const sha of [transition.reviewed_source_sha, approvedSha]) {
+        if (gitText(runGit, ['rev-parse', `${sha}:${source.path}`], cwd) !== source.blob
+          || fileTypeAtCommit(runGit, cwd, sha, source.path) !== 'file') {
+          deny(code, `QA-C3 migration blob/type differs from reviewed Git bytes: ${source.path}`);
+        }
+        const bytes = runGit(['show', `${sha}:${source.path}`], { cwd });
+        if (sha256Hex(bytes) !== source.sha256 || Buffer.from(bytes).byteLength !== source.byte_length
+          || Buffer.from(bytes).includes(13)) {
+          deny(code, `QA-C3 migration is not the exact reviewed Git-LF source: ${source.path}`);
+        }
+      }
+    }
+    const actualChanges = parseNameStatusZ(runGit([
+      'diff', '--name-status', '-z', transition.integration_base_sha, approvedSha, '--', 'supabase/',
+    ], { cwd })).map(item => ({ path: item.path, status: item.status }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    if (canonicalJson(actualChanges) !== canonicalJson(expectedChanges)) {
+      deny(code, 'QA-C3 committed Supabase closure differs from the exact one-migration authority');
+    }
+  } catch (error) {
+    if (error?.code === code) throw error;
+    deny(code, 'approved commit does not attest exact QA-C3 ancestry and bytes');
+  }
+  return {
+    migrations: migrations.map(item => {
+      const expected = expectedByPath.get(item.path);
+      return { ...item, blob: expected.blob, sha256: expected.sha256 };
+    }),
+    attestation: {
+      ...stableCopy(transition), approved_sha: approvedSha,
+      baseline_descendant_verified: true, integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true, reviewed_bytes_verified: true,
+    },
+  };
+}
+
 export function attestFinanceAuthorityTransition({ mode, policy, approvedSha, changes, migrations, affectedFunctions, runGit, cwd }) {
   if (isReadOnlyRecoveryMode(mode)) return { migrations, attestation: null };
   const f5 = F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION;
@@ -4137,6 +4293,11 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     changes: gitState.changes, migrations: superuserQaPerfC1Transition.migrations,
     affectedFunctions, runGit,
   });
+  const webControlCentersB1QaC3Transition = attestWebControlCentersB1QaC3Transition({
+    cwd, policy, mode: request.mode, approvedSha: request.approvedSha,
+    changes: gitState.changes, migrations: webControlCentersB1Transition.migrations,
+    affectedFunctions, runGit,
+  });
   const risk = classifyRisk({
     affectedFunctions,
     changedPaths: gitState.changes.map(change => change.path),
@@ -4148,7 +4309,7 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   return {
     gitState,
     classified,
-    migrations: webControlCentersB1Transition.migrations,
+    migrations: webControlCentersB1QaC3Transition.migrations,
     managedScopeTransition: transitionEvidence.attestation,
     financeAuthorityTransition: financeTransition.attestation,
     storiesB1Transition: storiesB1Transition.attestation,
@@ -4158,6 +4319,7 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     superuserControlCenterTransition: superuserControlCenterTransition.attestation,
     superuserQaPerfC1Transition: superuserQaPerfC1Transition.attestation,
     webControlCentersB1Transition: webControlCentersB1Transition.attestation,
+    webControlCentersB1QaC3Transition: webControlCentersB1QaC3Transition.attestation,
     affectedFunctions,
     functionContracts,
     reproducibility,
@@ -4191,6 +4353,7 @@ export function buildManifest({
   superuserControlCenterTransition,
   superuserQaPerfC1Transition,
   webControlCentersB1Transition,
+  webControlCentersB1QaC3Transition,
   affectedFunctions,
   functionContracts,
   reproducibility,
@@ -4511,6 +4674,43 @@ export function buildManifest({
   } else if (webControlCentersB1Transition !== undefined && webControlCentersB1Transition !== null) {
     deny('INVALID_WEB_CONTROL_CENTERS_B1_TRANSITION', 'B1 transition attestation is not applicable');
   }
+  const webB1QaC3 = WEB_CONTROL_CENTERS_B1_QA_C3_RELEASE_TRANSITION;
+  const webB1QaC3Candidate = !recoveryMode
+    && migrations?.some(item => webB1QaC3.productive_paths.includes(item?.path));
+  if (webB1QaC3Candidate) {
+    const expectedAttestation = {
+      ...stableCopy(webB1QaC3), approved_sha: request.approvedSha,
+      baseline_descendant_verified: true, integration_base_descendant_verified: true,
+      reviewed_source_descendant_verified: true, reviewed_bytes_verified: true,
+    };
+    const expectedMigrations = webB1QaC3.migrations.map(item => ({
+      version: item.version, path: item.path, blob: item.blob, sha256: item.sha256,
+    })).sort((left, right) => left.version.localeCompare(right.version));
+    const actualMigrations = [...(migrations ?? [])].map(item => ({
+      version: item.version, path: item.path, blob: item.blob, sha256: item.sha256,
+    })).sort((left, right) => left.version.localeCompare(right.version));
+    if (canonicalJson(policy?.web_control_centers_b1_qa_c3_transition ?? null)
+        !== canonicalJson(webB1QaC3)
+      || policy.baseline.sha !== webB1QaC3.baseline_sha
+      || gitState.approvedSha !== request.approvedSha || gitState.originMainSha !== request.approvedSha
+      || request.mainSha !== request.approvedSha || gitState.baselineSha !== webB1QaC3.baseline_sha
+      || risk.level !== 'HIGH' || canonicalJson(actualMigrations) !== canonicalJson(expectedMigrations)
+      || functionNames.length !== 0 || contracts.length !== 0
+      || canonicalJson(webControlCentersB1QaC3Transition ?? null)
+        !== canonicalJson(expectedAttestation)
+      || classified.config.length !== 0
+      || canonicalJson(classified.productive.map(item => item.path).sort())
+        !== canonicalJson([...webB1QaC3.productive_paths].sort())
+      || canonicalJson(policy.supabase.finance_policy)
+        !== canonicalJson(webB1QaC3.finance_policy)) {
+      deny('INVALID_WEB_CONTROL_CENTERS_B1_QA_C3_TRANSITION',
+        'manifest lacks the exact QA-C3 one-migration zero-Edge/config/finance attestation');
+    }
+  } else if (webControlCentersB1QaC3Transition !== undefined
+    && webControlCentersB1QaC3Transition !== null) {
+    deny('INVALID_WEB_CONTROL_CENTERS_B1_QA_C3_TRANSITION',
+      'QA-C3 transition attestation is not applicable');
+  }
   const f5 = F5_AUTONOMOUS_FINANCE_AUTHORITY_TRANSITION;
   const f5Candidate = !recoveryMode && migrations?.some(item => item.version === '20261026072512'
     || item.path === f5.migration_path);
@@ -4698,6 +4898,9 @@ export function buildManifest({
         : {}),
       ...(webControlCentersB1Transition
         ? { web_control_centers_b1_transition: stableCopy(webControlCentersB1Transition) }
+        : {}),
+      ...(webControlCentersB1QaC3Transition
+        ? { web_control_centers_b1_qa_c3_transition: stableCopy(webControlCentersB1QaC3Transition) }
         : {}),
     },
     risk: stableCopy(risk),
