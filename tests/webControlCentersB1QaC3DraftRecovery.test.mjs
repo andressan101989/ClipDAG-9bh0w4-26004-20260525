@@ -78,4 +78,3 @@ test('QA-C3 preserves historical B1 bytes, ACL and ownership instead of recreati
   assert.doesNotMatch(sql, /\b(?:grant|revoke)\b/i, 'CREATE OR REPLACE must preserve the existing ACL');
   assert.doesNotMatch(sql, /alter\s+function[\s\S]{0,180}\bowner\s+to\b/i);
 });
-
