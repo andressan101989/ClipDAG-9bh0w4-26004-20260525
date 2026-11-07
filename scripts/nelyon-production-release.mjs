@@ -1277,7 +1277,7 @@ export const WEB_CONTROL_CENTERS_B1_RELEASE_TRANSITION = Object.freeze({
 });
 
 const WEB_CONTROL_CENTERS_B1_QA_C3_REVIEWED_SOURCE_SHA =
-  '874bf029cbbd573a1a18c530c1034e028bf5e556';
+  '44d2f9a8e827a83dcab2a63f7f82c386dcbd05b6';
 const WEB_CONTROL_CENTERS_B1_QA_C3_MIGRATION = Object.freeze({
   version: '20261107053930',
   path: 'supabase/migrations/20261107053930_web_control_centers_b1_qa_c3_draft_list_recovery.sql',
