@@ -199,8 +199,9 @@ export default function MyContentScreen() {
 
   const loadDrafts=useCallback(async()=>{
     const generation=draftLoadRef.current+1;
+    const ownerId=user?.id;
     draftLoadRef.current=generation;
-    if(!user?.id) {
+    if(!ownerId) {
       setCloudDrafts([]);
       setDraftLoadError(null);
       setIsLoadingDrafts(false);
@@ -210,14 +211,18 @@ export default function MyContentScreen() {
     setDraftLoadError(null);
     try {
       const drafts=await DraftManager.listPublicationDrafts();
-      if(draftLoadRef.current===generation) setCloudDrafts(drafts);
+      if(draftLoadRef.current===generation&&activeUserIdRef.current===ownerId) {
+        setCloudDrafts(drafts);
+      }
     } catch(error) {
       console.warn('[MyContent] cloud draft load failed',error);
-      if(draftLoadRef.current===generation) {
+      if(draftLoadRef.current===generation&&activeUserIdRef.current===ownerId) {
         setDraftLoadError('No se pudieron cargar tus borradores');
       }
     } finally {
-      if(draftLoadRef.current===generation) setIsLoadingDrafts(false);
+      if(draftLoadRef.current===generation&&activeUserIdRef.current===ownerId) {
+        setIsLoadingDrafts(false);
+      }
     }
   },[user?.id]);
 

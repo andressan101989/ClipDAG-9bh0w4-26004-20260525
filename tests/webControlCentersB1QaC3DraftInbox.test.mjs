@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import React from 'react';
 import { loadStoryQaComponent } from './helpers/loadStoryQaComponent.mjs';
@@ -316,6 +318,49 @@ test('an older draft-list response cannot overwrite a newer focus reload', async
     await app.flush();
     assert.ok(app.nodes().some(node => node.text === draft.caption));
     assert.equal(app.nodes().some(node => node.text === 'Sin borradores'), false);
+  } finally {
+    await app.unmount();
+  }
+});
+
+test('a late draft-list response is fenced to the authenticated owner', async () => {
+  const source = readFileSync(path.join(import.meta.dirname, '..', 'app', 'my-content.tsx'), 'utf8');
+  const loadDraftsSource = source.match(
+    /const loadDrafts=useCallback\(async\(\)=>\{([\s\S]*?)\n  \},\[user\?\.id\]\);/,
+  )?.[1] ?? '';
+  assert.match(loadDraftsSource, /const ownerId=user\?\.id;/);
+  assert.match(loadDraftsSource, /activeUserIdRef\.current===ownerId/);
+
+  const first = deferred();
+  let calls = 0;
+  let setAuthenticatedUser;
+  const nextActorId = '20000000-0000-4000-8000-000000000099';
+  const harness = draftFixture({
+    fixture: {
+      useAuth: () => {
+        const [user, setUser] = React.useState({ id: actorId });
+        setAuthenticatedUser = setUser;
+        return { user };
+      },
+    },
+    DraftManager: {
+      listPublicationDrafts: async () => {
+        calls += 1;
+        return calls === 1 ? first.promise : [];
+      },
+    },
+  });
+  const { default: MyContentScreen } = await loadStoryQaComponent('app/my-content.tsx', harness.fixture);
+  const app = await mount(MyContentScreen);
+  try {
+    assert.equal(calls, 1);
+    await app.flush(() => {
+      setAuthenticatedUser({ id: nextActorId });
+      first.resolve([draft]);
+    });
+    assert.ok(calls >= 2, 'the new authenticated owner must receive a fresh list request');
+    assert.equal(app.nodes().some(node => node.text === draft.caption), false,
+      'a previous owner draft must never render after the account changes');
   } finally {
     await app.unmount();
   }
