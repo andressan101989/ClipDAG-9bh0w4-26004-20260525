@@ -19,6 +19,7 @@ import { fetchCreatorVideoFeed, fetchSavedVideoFeed } from '@/services/creatorSe
 import { randomUUID } from 'expo-crypto';
 import { DraftManager } from '@/modules/creator/drafts/DraftManager';
 import type { PublicationDraft } from '@/services/publicationDraftService';
+import { getMediaUrl } from '@/services/mediaService';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const GRID_GAP = 2;
@@ -126,17 +127,45 @@ export default function MyContentScreen() {
   const [savedVideos, setSavedVideos] = useState<VideoWithMeta[]>([]);
   const [cloudDrafts,setCloudDrafts]=useState<PublicationDraft[]>([]);
   const [isLoadingDrafts,setIsLoadingDrafts]=useState(false);
+  const [draftLoadError,setDraftLoadError]=useState<string|null>(null);
   const [editingDraft,setEditingDraft]=useState<PublicationDraft|null>(null);
   const [editingDraftCaption,setEditingDraftCaption]=useState('');
+  const [draftPreviewUrls,setDraftPreviewUrls]=useState<string[]>([]);
+  const [isLoadingDraftPreview,setIsLoadingDraftPreview]=useState(false);
+  const [draftPreviewError,setDraftPreviewError]=useState<string|null>(null);
+  const tabsScrollRef=useRef<ScrollView>(null);
   const draftPublishCommandsRef=useRef(new Map<string,string>());
   const draftUpdateMutationsRef=useRef(new Map<string,DraftUpdateMutation>());
   const draftDeleteMutationsRef=useRef(new Map<string,DraftDeleteMutation>());
   const draftMutationInFlightRef=useRef(new Set<string>());
+  const draftLoadRef=useRef(0);
+  const draftRestoreRef=useRef(0);
+  const draftPreviewRef=useRef(0);
+  const activeUserIdRef=useRef(user?.id);
   const contentLoadRef = useRef(0);
+  activeUserIdRef.current=user?.id;
 
   useEffect(() => {
     setActiveTab(requestedTab);
   }, [requestedTab]);
+
+  useEffect(() => {
+    if(activeTab==='drafts') tabsScrollRef.current?.scrollToEnd?.({animated:false});
+  },[activeTab]);
+
+  useEffect(() => {
+    draftLoadRef.current += 1;
+    draftRestoreRef.current += 1;
+    draftPreviewRef.current += 1;
+    setCloudDrafts([]);
+    setDraftLoadError(null);
+    setIsLoadingDrafts(false);
+    setEditingDraft(null);
+    setEditingDraftCaption('');
+    setDraftPreviewUrls([]);
+    setDraftPreviewError(null);
+    setIsLoadingDraftPreview(false);
+  },[user?.id]);
 
   const loadContent = useCallback(async () => {
     const generation = contentLoadRef.current + 1;
@@ -169,17 +198,77 @@ export default function MyContentScreen() {
   }, [user?.id]);
 
   const loadDrafts=useCallback(async()=>{
-    if(!user?.id) {setCloudDrafts([]);return;}
+    const generation=draftLoadRef.current+1;
+    draftLoadRef.current=generation;
+    if(!user?.id) {
+      setCloudDrafts([]);
+      setDraftLoadError(null);
+      setIsLoadingDrafts(false);
+      return;
+    }
     setIsLoadingDrafts(true);
-    try {setCloudDrafts(await DraftManager.listPublicationDrafts());}
-    catch(error) {console.warn('[MyContent] cloud draft load failed',error);}
-    finally {setIsLoadingDrafts(false);}
+    setDraftLoadError(null);
+    try {
+      const drafts=await DraftManager.listPublicationDrafts();
+      if(draftLoadRef.current===generation) setCloudDrafts(drafts);
+    } catch(error) {
+      console.warn('[MyContent] cloud draft load failed',error);
+      if(draftLoadRef.current===generation) {
+        setDraftLoadError('No se pudieron cargar tus borradores');
+      }
+    } finally {
+      if(draftLoadRef.current===generation) setIsLoadingDrafts(false);
+    }
   },[user?.id]);
+
+  const loadDraftPreview=useCallback(async(draft:PublicationDraft)=>{
+    const generation=draftPreviewRef.current+1;
+    const ownerId=user?.id;
+    draftPreviewRef.current=generation;
+    setDraftPreviewUrls([]);
+    setDraftPreviewError(null);
+    if(!ownerId||draft.assetIds.length===0) {
+      setIsLoadingDraftPreview(false);
+      return;
+    }
+    setIsLoadingDraftPreview(true);
+    try {
+      const urls=await Promise.all(draft.assetIds.map(assetId=>getMediaUrl(assetId)));
+      if(draftPreviewRef.current===generation&&activeUserIdRef.current===ownerId) {
+        setDraftPreviewUrls(urls);
+      }
+    } catch(error) {
+      console.warn('[MyContent] private draft preview failed',error);
+      if(draftPreviewRef.current===generation&&activeUserIdRef.current===ownerId) {
+        setDraftPreviewError('No se pudo cargar la vista previa privada');
+      }
+    } finally {
+      if(draftPreviewRef.current===generation&&activeUserIdRef.current===ownerId) {
+        setIsLoadingDraftPreview(false);
+      }
+    }
+  },[user?.id]);
+
+  useEffect(()=>{
+    if(!editingDraft) {
+      draftPreviewRef.current+=1;
+      setDraftPreviewUrls([]);
+      setDraftPreviewError(null);
+      setIsLoadingDraftPreview(false);
+      return;
+    }
+    void loadDraftPreview(editingDraft);
+    return ()=>{draftPreviewRef.current+=1;};
+  },[editingDraft,loadDraftPreview]);
 
   useFocusEffect(useCallback(() => {
     void loadContent();
     void loadDrafts();
-    return () => { contentLoadRef.current += 1; };
+    return () => {
+      contentLoadRef.current += 1;
+      draftLoadRef.current += 1;
+      draftRestoreRef.current += 1;
+    };
   }, [loadContent,loadDrafts]));
 
   const myVideos = ownVideos;
@@ -225,29 +314,6 @@ export default function MyContentScreen() {
   const totalLikes = useMemo(() => myVideos.reduce((s, v) => s + (v.likes || 0), 0), [myVideos]);
   const totalViews = useMemo(() => myVideos.reduce((s, v) => s + (v.viewsCount || 0), 0), [myVideos]);
 
-  const handleItemPress = useCallback((video: VideoWithMeta) => {
-    showAlert(
-      `@${video.username}`,
-      video.caption || 'Sin descripcion',
-      [
-        {
-          text: 'Ver Analytics',
-          onPress: () => showAlert('Analytics', `Likes: ${formatNumber(video.likes || 0)}\nVistas: ${formatNumber(video.viewsCount || 0)}\nComentarios: ${formatNumber(video.comments || 0)}`),
-        },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: () => handleDelete(video),
-        },
-        { text: 'Cancelar', style: 'cancel' },
-      ]
-    );
-  }, [showAlert]);
-
-  const handleItemLongPress = useCallback((video: VideoWithMeta) => {
-    handleItemPress(video);
-  }, [handleItemPress]);
-
   const handleDelete = useCallback(async (video: VideoWithMeta) => {
     showAlert('Eliminar publicacion', 'Esta accion es permanente.', [
       { text: 'Cancelar', style: 'cancel' },
@@ -269,6 +335,29 @@ export default function MyContentScreen() {
     ]);
   }, [deleteVideo, showAlert]);
 
+  const handleItemPress = useCallback((video: VideoWithMeta) => {
+    showAlert(
+      `@${video.username}`,
+      video.caption || 'Sin descripcion',
+      [
+        {
+          text: 'Ver Analytics',
+          onPress: () => showAlert('Analytics', `Likes: ${formatNumber(video.likes || 0)}\nVistas: ${formatNumber(video.viewsCount || 0)}\nComentarios: ${formatNumber(video.comments || 0)}`),
+        },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: () => handleDelete(video),
+        },
+        { text: 'Cancelar', style: 'cancel' },
+      ]
+    );
+  }, [handleDelete, showAlert]);
+
+  const handleItemLongPress = useCallback((video: VideoWithMeta) => {
+    handleItemPress(video);
+  }, [handleItemPress]);
+
   const handleSort = useCallback(() => {
     const options: { text: string; key: SortBy }[] = [
       { text: 'Mas reciente', key: 'newest' },
@@ -283,15 +372,22 @@ export default function MyContentScreen() {
   }, [showAlert]);
 
   const restoreCloudDraft=useCallback(async(id:string)=>{
+    const generation=draftRestoreRef.current+1;
+    const ownerId=user?.id;
+    draftRestoreRef.current=generation;
+    if(!ownerId) return;
     try {
       const restored=await DraftManager.restorePublicationDraft(id);
+      if(draftRestoreRef.current!==generation||activeUserIdRef.current!==ownerId) return;
       setCloudDrafts(current=>current.map(item=>item.id===restored.id?restored:item));
       setEditingDraft(restored);
       setEditingDraftCaption(restored.caption);
     } catch(error) {
-      showAlert('Error',error instanceof Error?error.message:'draft_restore_failed');
+      if(draftRestoreRef.current===generation&&activeUserIdRef.current===ownerId) {
+        showAlert('Error',error instanceof Error?error.message:'draft_restore_failed');
+      }
     }
-  },[showAlert]);
+  },[showAlert,user?.id]);
 
   const saveCloudDraftRevision=useCallback(async()=>{
     const draft=editingDraft;
@@ -441,10 +537,14 @@ export default function MyContentScreen() {
 
       {/* Content tabs */}
       <ScrollView
+        ref={tabsScrollRef}
         horizontal
         showsHorizontalScrollIndicator={false}
         style={styles.tabsScroll}
         contentContainerStyle={styles.tabsContent}
+        onContentSizeChange={()=>{
+          if(activeTab==='drafts') tabsScrollRef.current?.scrollToEnd?.({animated:false});
+        }}
       >
         {TAB_CONFIG.map(t => {
           const count = t.key === 'posts' ? myPosts.length
@@ -457,6 +557,9 @@ export default function MyContentScreen() {
               key={t.key}
               style={[styles.tab, activeTab === t.key && styles.tabActive]}
               onPress={() => setActiveTab(t.key)}
+              accessibilityRole="tab"
+              accessibilityState={{selected:activeTab===t.key}}
+              accessibilityLabel={t.label}
             >
               <MaterialCommunityIcons
                 name={t.icon as any}
@@ -476,11 +579,40 @@ export default function MyContentScreen() {
         })}
       </ScrollView>
 
+      {activeTab==='drafts' ? (
+        <View style={styles.draftSectionHeader}>
+          <Text style={styles.draftSectionTitle}>Borradores privados</Text>
+          <Text style={styles.draftSectionSub}>Guardados en tu cuenta y visibles solo para ti.</Text>
+        </View>
+      ) : null}
+
+      {activeTab==='drafts'&&draftLoadError ? (
+        <View style={styles.draftError} accessibilityRole="alert">
+          <MaterialCommunityIcons name="cloud-alert-outline" size={22} color={Colors.error}/>
+          <View style={styles.draftErrorCopy}>
+            <Text style={styles.draftErrorTitle}>{draftLoadError}</Text>
+            <Text style={styles.draftErrorSub}>Comprueba tu conexión e inténtalo de nuevo.</Text>
+          </View>
+          <Pressable
+            onPress={()=>void loadDrafts()}
+            style={styles.draftRetry}
+            accessibilityRole="button"
+            accessibilityLabel="Reintentar cargar borradores"
+          >
+            <Text style={styles.draftRetryText}>Reintentar</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       {/* Content grid */}
-      {isDeleting || isLoadingContent || (activeTab==='drafts'&&isLoadingDrafts) ? (
+      {isDeleting || (activeTab==='drafts'
+        ? isLoadingDrafts&&cloudDrafts.length===0
+        : isLoadingContent) ? (
         <View style={styles.centered}>
           <ActivityIndicator color={Colors.primary} size="large" />
-          <Text style={styles.loadingText}>{isDeleting ? 'Eliminando...' : 'Cargando contenido...'}</Text>
+          <Text style={styles.loadingText}>{isDeleting
+            ? 'Eliminando...'
+            : activeTab==='drafts' ? 'Cargando borradores...' : 'Cargando contenido...'}</Text>
         </View>
       ) : activeTab==='drafts'&&cloudDrafts.length>0 ? (
         <FlatList
@@ -491,6 +623,38 @@ export default function MyContentScreen() {
           ListHeaderComponent={editingDraft ? (
             <View style={styles.draftEditor}>
               <Text style={styles.draftEditorTitle}>Reanudar borrador privado</Text>
+              {isLoadingDraftPreview ? (
+                <View style={styles.draftPreviewStatus}>
+                  <ActivityIndicator color={Colors.primary}/>
+                  <Text style={styles.draftPreviewStatusText}>Cargando fotografía privada...</Text>
+                </View>
+              ) : null}
+              {draftPreviewUrls.length>0 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.draftPreviews}>
+                  {draftPreviewUrls.map((url,index)=>(
+                    <Image
+                      key={`${editingDraft.assetIds[index]??index}`}
+                      source={{uri:url}}
+                      style={styles.draftPreviewImage}
+                      contentFit="cover"
+                      accessibilityLabel={`Vista previa privada ${index+1}`}
+                    />
+                  ))}
+                </ScrollView>
+              ) : null}
+              {draftPreviewError ? (
+                <View style={styles.draftPreviewFailure} accessibilityRole="alert">
+                  <Text style={styles.draftPreviewFailureText}>{draftPreviewError}</Text>
+                  <Pressable
+                    onPress={()=>void loadDraftPreview(editingDraft)}
+                    style={styles.draftAction}
+                    accessibilityRole="button"
+                    accessibilityLabel="Reintentar vista previa privada"
+                  >
+                    <Text style={styles.draftActionText}>Reintentar vista previa</Text>
+                  </Pressable>
+                </View>
+              ) : null}
               <TextInput
                 value={editingDraftCaption}
                 onChangeText={setEditingDraftCaption}
@@ -503,11 +667,18 @@ export default function MyContentScreen() {
               <View style={styles.draftEditorActions}>
                 <Pressable onPress={()=>void saveCloudDraftRevision()} style={styles.draftAction}><Text style={styles.draftActionText}>Guardar cambios</Text></Pressable>
                 <Pressable onPress={()=>void publishCloudDraft()} style={styles.draftPublish}><Text style={styles.draftPublishText}>Publicar</Text></Pressable>
-                <Pressable onPress={()=>{setEditingDraft(null);setEditingDraftCaption('');}} style={styles.draftAction}><Text style={styles.draftActionText}>Cerrar</Text></Pressable>
+                <Pressable onPress={()=>{
+                  draftRestoreRef.current+=1;
+                  draftPreviewRef.current+=1;
+                  setEditingDraft(null);
+                  setEditingDraftCaption('');
+                }} style={styles.draftAction}><Text style={styles.draftActionText}>Cerrar</Text></Pressable>
               </View>
             </View>
           ) : null}
         />
+      ) : activeTab==='drafts'&&draftLoadError ? (
+        <View style={styles.draftErrorFiller}/>
       ) : currentItems.length === 0 ? (
         <View style={styles.emptyState}>
           <LinearGradient
@@ -669,10 +840,30 @@ const styles = StyleSheet.create({
   draftDelete:{padding:7},
   draftEditor:{gap:Spacing.sm,padding:Spacing.md,borderRadius:Radius.lg,backgroundColor:Colors.surface,borderWidth:1,borderColor:Colors.primary},
   draftEditorTitle:{color:Colors.textPrimary,fontWeight:FontWeight.bold},
+  draftPreviewStatus:{minHeight:96,alignItems:'center',justifyContent:'center',gap:Spacing.xs},
+  draftPreviewStatusText:{color:Colors.textSubtle,fontSize:FontSize.xs},
+  draftPreviews:{gap:Spacing.sm},
+  draftPreviewImage:{width:160,height:160,borderRadius:Radius.md,backgroundColor:Colors.surfaceElevated},
+  draftPreviewFailure:{gap:Spacing.sm,padding:Spacing.sm,borderRadius:Radius.md,borderWidth:1,borderColor:Colors.error},
+  draftPreviewFailureText:{color:Colors.textPrimary,fontSize:FontSize.sm},
   draftInput:{minHeight:76,color:Colors.textPrimary,backgroundColor:Colors.surfaceElevated,borderRadius:Radius.md,padding:Spacing.sm,textAlignVertical:'top'},
   draftEditorActions:{flexDirection:'row',alignItems:'center',gap:Spacing.sm,flexWrap:'wrap'},
   draftPublish:{paddingHorizontal:12,paddingVertical:8,borderRadius:Radius.md,backgroundColor:Colors.primary},
   draftPublishText:{color:'#fff',fontSize:FontSize.xs,fontWeight:FontWeight.bold},
+  draftSectionHeader:{paddingHorizontal:Spacing.md,paddingTop:Spacing.xs,paddingBottom:Spacing.sm,gap:2},
+  draftSectionTitle:{color:Colors.textPrimary,fontSize:FontSize.md,fontWeight:FontWeight.bold},
+  draftSectionSub:{color:Colors.textSubtle,fontSize:FontSize.xs},
+  draftError:{
+    flexDirection:'row',alignItems:'center',gap:Spacing.sm,marginHorizontal:Spacing.md,
+    marginBottom:Spacing.sm,padding:Spacing.sm,borderRadius:Radius.md,
+    backgroundColor:Colors.surfaceElevated,borderWidth:1,borderColor:Colors.error,
+  },
+  draftErrorCopy:{flex:1,gap:2},
+  draftErrorTitle:{color:Colors.textPrimary,fontSize:FontSize.sm,fontWeight:FontWeight.semibold},
+  draftErrorSub:{color:Colors.textSubtle,fontSize:FontSize.xs},
+  draftRetry:{paddingHorizontal:10,paddingVertical:8,borderRadius:Radius.md,backgroundColor:Colors.primaryDim},
+  draftRetryText:{color:Colors.primaryLight,fontSize:FontSize.xs,fontWeight:FontWeight.bold},
+  draftErrorFiller:{flex:1},
 
   // Empty state
   emptyState: {
