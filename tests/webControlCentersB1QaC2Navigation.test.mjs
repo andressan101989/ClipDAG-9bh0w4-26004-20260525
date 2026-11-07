@@ -119,6 +119,13 @@ test('My Content validates deep-link tabs and follows navigation parameter chang
   const app = await mount(MyContentScreen);
   try {
     assert.ok(app.nodes().some(node => node.text === 'Sin borradores'), 'tab=drafts must open the cloud draft inbox');
+    assert.ok(app.nodes().some(node => node.text === 'Borradores privados'), 'the draft destination must be visibly identified');
+    const selectedDraftTab = app.find(node =>
+      node.type === 'Pressable'
+      && node.props.accessibilityRole === 'tab'
+      && node.props.accessibilityLabel === 'Borradores'
+    );
+    assert.deepEqual(selectedDraftTab.props.accessibilityState, { selected: true });
 
     state.params = { tab: 'not-a-real-tab' };
     await app.update({});
