@@ -22,6 +22,17 @@ const predecessorDefinition =
 const successorDefinition =
   'adc7f6e9126e1abc7a3c1dd741ae5e13428ab6252b3a1f4243d88fc7a88720c7';
 
+function withPreQaC3Baseline(value) {
+  const historical = structuredClone(value);
+  historical.baseline.sha = historical.web_control_centers_b1_qa_c3_transition.baseline_sha;
+  historical.baseline.migration_count = 366;
+  historical.baseline.latest_migration =
+    '20261102065812_web_control_centers_b1_publication_drafts';
+  historical.baseline.evidence_digests.migrations =
+    '4c8b0255a013b9ccb2529e9d92738fd28241d75a5dd77a3adfd98371028d42cd';
+  return historical;
+}
+
 async function load(relative) {
   return import(`${pathToFileURL(path.join(root, relative)).href}?qa-c3=${Date.now()}-${Math.random()}`);
 }
@@ -120,7 +131,8 @@ test('QA-C3 policy rejects migration, RPC, Advisor, Edge, config and finance dri
 
 test('QA-C3 compiler binds reviewed Git-LF bytes and exact one-migration closure', async () => {
   const compiler = await load('scripts/nelyon-production-release.mjs');
-  const transition = policy.web_control_centers_b1_qa_c3_transition;
+  const historicalPolicy = withPreQaC3Baseline(policy);
+  const transition = historicalPolicy.web_control_centers_b1_qa_c3_transition;
   const runGit = args => execFileSync('git', args, {
     cwd: root,
     encoding: args.includes('-z') ? 'buffer' : 'utf8',
@@ -128,7 +140,7 @@ test('QA-C3 compiler binds reviewed Git-LF bytes and exact one-migration closure
   });
   const input = {
     cwd: root,
-    policy,
+    policy: historicalPolicy,
     mode: 'plan_only',
     approvedSha: reviewedSourceSha,
     changes: [{ path: migrationPath, status: 'A' }],
@@ -153,6 +165,7 @@ test('QA-C3 compiler binds reviewed Git-LF bytes and exact one-migration closure
 
 test('QA-C3 compiler accepts the exact protected rebase result on main', async () => {
   const compiler = await load('scripts/nelyon-production-release.mjs');
+  const historicalPolicy = withPreQaC3Baseline(policy);
   const runGit = args => execFileSync('git', args, {
     cwd: root,
     encoding: args.includes('-z') ? 'buffer' : 'utf8',
@@ -160,7 +173,7 @@ test('QA-C3 compiler accepts the exact protected rebase result on main', async (
   });
   const result = compiler.attestWebControlCentersB1QaC3Transition({
     cwd: root,
-    policy,
+    policy: historicalPolicy,
     mode: 'plan_only',
     approvedSha: integratedMainSha,
     changes: [{ path: migrationPath, status: 'A' }],
@@ -175,7 +188,8 @@ test('QA-C3 compiler accepts the exact protected rebase result on main', async (
 
 test('QA-C3 manifest exposes only the exact migration and transition attestation', async () => {
   const compiler = await load('scripts/nelyon-production-release.mjs');
-  const transition = policy.web_control_centers_b1_qa_c3_transition;
+  const historicalPolicy = withPreQaC3Baseline(policy);
+  const transition = historicalPolicy.web_control_centers_b1_qa_c3_transition;
   const attestation = {
     ...structuredClone(transition),
     approved_sha: reviewedSourceSha,
@@ -200,7 +214,7 @@ test('QA-C3 manifest exposes only the exact migration and transition attestation
       releaseId: 'web-control-centers-b1-qa-c3-plan-test', mode: 'plan_only',
       scopeConfirmation: 'PLAN_ONLY', runId: '1', runAttempt: 1,
     },
-    policy,
+    policy: historicalPolicy,
     gitState: {
       baselineSha: transition.baseline_sha,
       approvedSha: reviewedSourceSha,
@@ -268,7 +282,8 @@ test('QA-C3 snapshot contract proves the exact predecessor and successor definit
 test('QA-C3 Advisor authority swaps only the target definition after migration', async () => {
   const adapter = await load('scripts/nelyon-production-snapshot-adapter.mjs');
   const compiler = await load('scripts/nelyon-production-release.mjs');
-  const transition = policy.web_control_centers_b1_qa_c3_transition;
+  const historicalPolicy = withPreQaC3Baseline(policy);
+  const transition = historicalPolicy.web_control_centers_b1_qa_c3_transition;
   const manifest = {
     identity: { approved_sha: reviewedSourceSha },
     resources: {
@@ -286,7 +301,7 @@ test('QA-C3 Advisor authority swaps only the target definition after migration',
   const preMigrations = installedMigrationInventory();
   preMigrations.sha256 = compiler.sha256Hex(compiler.canonicalJson(preMigrations.items));
   const context = { migrations: preMigrations };
-  const before = adapter.advisorExceptionsForPhase(policy, manifest, 'pre', context);
+  const before = adapter.advisorExceptionsForPhase(historicalPolicy, manifest, 'pre', context);
   const postMigrations = installedMigrationInventory();
   postMigrations.items.push({
     version: '20261107053930',
@@ -295,7 +310,7 @@ test('QA-C3 Advisor authority swaps only the target definition after migration',
   postMigrations.count = postMigrations.items.length;
   postMigrations.latest = postMigrations.items.at(-1);
   postMigrations.sha256 = compiler.sha256Hex(compiler.canonicalJson(postMigrations.items));
-  const after = adapter.advisorExceptionsForPhase(policy, manifest, 'post', {
+  const after = adapter.advisorExceptionsForPhase(historicalPolicy, manifest, 'post', {
     migrations: postMigrations,
   });
   const fingerprint = transition.security_advisor.replacement_exception.advisor_fingerprint;
