@@ -13,7 +13,8 @@ const policy = JSON.parse(readFileSync(
 ));
 const migrationPath =
   'supabase/migrations/20261107053930_web_control_centers_b1_qa_c3_draft_list_recovery.sql';
-const reviewedSourceSha = '874bf029cbbd573a1a18c530c1034e028bf5e556';
+const reviewedSourceSha = '44d2f9a8e827a83dcab2a63f7f82c386dcbd05b6';
+const integratedMainSha = 'c68bed398dc263409e8e2ea9d0c0764ef6ea3b4a';
 const targetIdentity =
   'public.list_my_publication_drafts_v1(integer,timestampwithtimezone,uuid)';
 const predecessorDefinition =
@@ -148,6 +149,28 @@ test('QA-C3 compiler binds reviewed Git-LF bytes and exact one-migration closure
     }),
     error => error?.code === 'INVALID_WEB_CONTROL_CENTERS_B1_QA_C3_TRANSITION',
   );
+});
+
+test('QA-C3 compiler accepts the exact protected rebase result on main', async () => {
+  const compiler = await load('scripts/nelyon-production-release.mjs');
+  const runGit = args => execFileSync('git', args, {
+    cwd: root,
+    encoding: args.includes('-z') ? 'buffer' : 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const result = compiler.attestWebControlCentersB1QaC3Transition({
+    cwd: root,
+    policy,
+    mode: 'plan_only',
+    approvedSha: integratedMainSha,
+    changes: [{ path: migrationPath, status: 'A' }],
+    migrations: [{ version: '20261107053930', path: migrationPath }],
+    affectedFunctions: [],
+    runGit,
+  });
+  assert.equal(result.attestation.approved_sha, integratedMainSha);
+  assert.equal(result.attestation.reviewed_source_descendant_verified, true);
+  assert.equal(result.attestation.reviewed_bytes_verified, true);
 });
 
 test('QA-C3 manifest exposes only the exact migration and transition attestation', async () => {
