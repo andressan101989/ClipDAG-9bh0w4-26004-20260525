@@ -2018,6 +2018,39 @@ select pg_catalog.jsonb_build_object(
   )
 ) snapshot from counts;`;
 
+export const WEB_CONTROL_CENTERS_B1_QA_C3_STATE_SQL = `with target_function as (
+  select n.nspname||'.'||p.proname||'('||pg_catalog.replace(
+      pg_catalog.oidvectortypes(p.proargtypes),' ','')||')' identity,
+    owner_role.rolname owner,p.provolatile volatility,p.prosecdef security_definer,
+    coalesce(pg_catalog.to_jsonb(p.proconfig),'[]'::jsonb) search_path,
+    pg_catalog.jsonb_build_object(
+      'anon',pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE'),
+      'authenticated',pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE'),
+      'public',pg_catalog.has_function_privilege('public',p.oid,'EXECUTE'),
+      'service_role',pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE')) execute,
+    coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'grantee',case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+      'privilege_type',acl.privilege_type,'is_grantable',acl.is_grantable)
+      order by case when acl.grantee=0 then 'PUBLIC' else grantee_role.rolname end,
+        acl.privilege_type,acl.is_grantable)
+      from pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) acl
+      left join pg_catalog.pg_roles grantee_role on grantee_role.oid=acl.grantee),'[]'::jsonb) acl,
+    pg_catalog.jsonb_build_array('integer','timestamp with time zone','uuid') argument_types,
+    pg_catalog.pg_get_function_identity_arguments(p.oid) identity_arguments,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+      pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex') definition_sha256
+  from pg_catalog.pg_proc p
+  join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+  join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
+  where p.oid='public.list_my_publication_drafts_v1(integer,timestamptz,uuid)'::pg_catalog.regprocedure
+    and p.prokind='f'
+)
+select pg_catalog.jsonb_build_object(
+  'schema_version',1,
+  'complete',(select pg_catalog.count(*) from target_function)=1,
+  'function',(select pg_catalog.to_jsonb(row) from target_function row)
+) snapshot;`;
+
 function fail(code, message) {
   const error = new Error(`${code}: ${message}`);
   error.code = code;
@@ -3130,6 +3163,107 @@ export function validateWebControlCentersB1StateTransition(preSnapshot, postSnap
   return true;
 }
 
+function webControlCentersB1QaC3Transition(policy, manifest) {
+  const expected = policy?.web_control_centers_b1_qa_c3_transition;
+  const attestation = manifest?.resources?.web_control_centers_b1_qa_c3_transition;
+  if (!attestation) return null;
+  const expectedAttestation = expected && {
+    ...expected, approved_sha: manifest?.identity?.approved_sha,
+    baseline_descendant_verified: true, integration_base_descendant_verified: true,
+    reviewed_source_descendant_verified: true, reviewed_bytes_verified: true,
+  };
+  if (!expected || canonicalJson(attestation) !== canonicalJson(expectedAttestation)) {
+    fail('INVALID_WEB_CONTROL_CENTERS_B1_QA_C3_TRANSITION',
+      'QA-C3 manifest attestation differs from policy');
+  }
+  return expected;
+}
+
+export function webControlCentersB1QaC3StateRequirement(policy, manifest, phase, context = {}) {
+  const code = 'WEB_CONTROL_CENTERS_B1_QA_C3_POSTCHECK_FAILED';
+  if (!['pre','post','recovery'].includes(phase)) fail(code, 'QA-C3 snapshot phase is invalid');
+  const transition = webControlCentersB1QaC3Transition(policy, manifest);
+  const authority = policy?.web_control_centers_b1_qa_c3_transition;
+  const migration = authority?.migrations?.[0]?.path?.split('/').at(-1)?.replace(/\.sql$/u, '');
+  const promoted = Boolean(migration) && String(policy?.baseline?.latest_migration ?? '') >= migration;
+  const items = Array.isArray(context.migrations?.items) ? context.migrations.items : [];
+  const observed = Boolean(migration) && items.filter(item => baselineMigrationName(item) === migration).length === 1;
+  if (transition && phase === 'pre' && observed) {
+    fail(code, 'QA-C3 pre state already contains the transition migration');
+  }
+  if (transition && phase === 'post' && context.migrations && !observed) {
+    fail(code, 'QA-C3 post state lacks the reviewed migration');
+  }
+  if (promoted && context.migrations && !observed) {
+    fail(code, 'promoted QA-C3 baseline lacks the exact migration');
+  }
+  const exactObservedAppend = !promoted && observed && context.migrations
+    ? hasExactBaselineMigrationAppend(policy, context.migrations, migration)
+    : false;
+  const observedForBaselinePromotion = !transition && phase === 'post' && exactObservedAppend;
+  const installed = promoted || observedForBaselinePromotion
+    || (Boolean(transition) && phase !== 'pre');
+  return {
+    required: Boolean(transition) || installed,
+    installed,
+    transition,
+    query: WEB_CONTROL_CENTERS_B1_QA_C3_STATE_SQL,
+    query_id: 'nelyon-web-control-centers-b1-qa-c3-state-v1',
+  };
+}
+
+function normalizeWebControlCentersB1QaC3State(snapshot) {
+  const code = 'WEB_CONTROL_CENTERS_B1_QA_C3_POSTCHECK_FAILED';
+  exactKeys(snapshot, ['schema_version','complete','function'], code);
+  if (snapshot.schema_version !== 1 || snapshot.complete !== true
+    || !snapshot.function || typeof snapshot.function !== 'object'
+    || Array.isArray(snapshot.function)) {
+    fail(code, 'QA-C3 snapshot envelope is incomplete');
+  }
+  exactKeys(snapshot.function, ['identity','definition_sha256','owner','volatility',
+    'security_definer','search_path','execute','acl','argument_types','identity_arguments'], code);
+  if (!Array.isArray(snapshot.function.argument_types)
+    || snapshot.function.argument_types.some(value => typeof value !== 'string')
+    || typeof snapshot.function.identity_arguments !== 'string') {
+    fail(code, 'QA-C3 function signature evidence is malformed');
+  }
+  const { argument_types, identity_arguments, ...catalog } = snapshot.function;
+  const normalized = normalizeControlCenterFunctions([catalog], code)[0];
+  return {
+    schema_version: 1,
+    complete: true,
+    function: { ...normalized, argument_types: [...argument_types], identity_arguments },
+  };
+}
+
+function qaC3ExpectedFunction(attestation) {
+  const { advisor_fingerprint: _advisorFingerprint, ...catalogAttestation } = attestation ?? {};
+  return catalogAttestation;
+}
+
+function validateWebControlCentersB1QaC3State(snapshot, expected) {
+  const code = 'WEB_CONTROL_CENTERS_B1_QA_C3_POSTCHECK_FAILED';
+  const state = normalizeWebControlCentersB1QaC3State(snapshot);
+  if (canonicalJson(state.function) !== canonicalJson(qaC3ExpectedFunction(expected))) {
+    fail(code, 'QA-C3 target RPC differs from the exact reviewed catalog');
+  }
+  return true;
+}
+
+export function validateWebControlCentersB1QaC3InstalledState(snapshot, transition) {
+  return validateWebControlCentersB1QaC3State(snapshot, transition?.rpc_replacement?.successor);
+}
+
+function validateWebControlCentersB1QaC3PreState(snapshot, transition) {
+  return validateWebControlCentersB1QaC3State(snapshot, transition?.rpc_replacement?.predecessor);
+}
+
+export function validateWebControlCentersB1QaC3StateTransition(preSnapshot, postSnapshot, transition) {
+  validateWebControlCentersB1QaC3PreState(preSnapshot, transition);
+  validateWebControlCentersB1QaC3InstalledState(postSnapshot, transition);
+  return true;
+}
+
 export function validateAdminRecoveryControlCenterPostState({ migrations, state, policy }) {
   const code = 'ADMIN_RECOVERY_POSTCHECK_FAILED';
   const transition = policy?.superuser_control_center_transition;
@@ -4198,6 +4332,12 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     migrations: evidence?.migrations,
   });
   const requireWebB1 = webB1Requirement.required;
+  const webB1QaC3Requirement = webControlCentersB1QaC3StateRequirement(policy, manifest, phase, {
+    evidence,
+    request,
+    migrations: evidence?.migrations,
+  });
+  const requireWebB1QaC3 = webB1QaC3Requirement.required;
   exactKeys(evidence, [
     'adapter', 'backup', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
     'health', 'identity', 'migrations', 'observed_at', 'phase', 'premium_state', 'project_ref',
@@ -4210,6 +4350,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     ...(requireControlCenter ? ['superuser_control_center_state'] : []),
     ...(requirePerfC1 ? ['superuser_qa_perf_c1_state'] : []),
     ...(requireWebB1 ? ['web_control_centers_b1_state'] : []),
+    ...(requireWebB1QaC3 ? ['web_control_centers_b1_qa_c3_state'] : []),
   ], 'INVALID_SNAPSHOT');
   const { evidence_sha256: claimedDigest, ...unsigned } = evidence;
   if (!HASH_PATTERN.test(claimedDigest ?? '') || claimedDigest !== sha256(canonicalJson(unsigned))) {
@@ -4260,6 +4401,10 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       id: webB1Requirement.query_id,
       sha256: sha256(webB1Requirement.query),
     }] : []),
+    ...(requireWebB1QaC3 ? [{
+      id: webB1QaC3Requirement.query_id,
+      sha256: sha256(webB1QaC3Requirement.query),
+    }] : []),
   ];
   if (!HASH_PATTERN.test(adapterSourceSha256 ?? '')
     || evidence.adapter.source_sha256 !== adapterSourceSha256
@@ -4288,6 +4433,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   if (requireControlCenter) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (requirePerfC1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (requireWebB1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
+  if (requireWebB1QaC3) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (!Array.isArray(evidence.requests) || evidence.requests.length !== expectedRequests.length
     || evidence.requests.some((receipt, index) => {
       try {
@@ -4417,6 +4563,27 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       validateWebControlCentersB1PreState(
         evidence.web_control_centers_b1_state,
         policy?.web_control_centers_b1_transition,
+      );
+    }
+  }
+  if (requireWebB1QaC3) {
+    const matching = evidence.adapter.queries.filter(item => (
+      item?.id === webB1QaC3Requirement.query_id
+    ));
+    if (matching.length !== 1
+      || matching[0].sha256 !== sha256(webB1QaC3Requirement.query)) {
+      fail('WEB_CONTROL_CENTERS_B1_QA_C3_POSTCHECK_FAILED',
+        'QA-C3 query receipt differs from the fixed authority');
+    }
+    if (webB1QaC3Requirement.installed) {
+      validateWebControlCentersB1QaC3InstalledState(
+        evidence.web_control_centers_b1_qa_c3_state,
+        policy?.web_control_centers_b1_qa_c3_transition,
+      );
+    } else {
+      validateWebControlCentersB1QaC3PreState(
+        evidence.web_control_centers_b1_qa_c3_state,
+        policy?.web_control_centers_b1_qa_c3_transition,
       );
     }
   }
@@ -4990,6 +5157,23 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
     validateWebControlCentersB1InstalledState(
       post.web_control_centers_b1_state,
       policy?.web_control_centers_b1_transition,
+    );
+  }
+  const webB1QaC3Transition = webControlCentersB1QaC3Transition(policy, manifest);
+  if (webB1QaC3Transition) {
+    validateWebControlCentersB1QaC3StateTransition(
+      pre.web_control_centers_b1_qa_c3_state,
+      post.web_control_centers_b1_qa_c3_state,
+      webB1QaC3Transition,
+    );
+  } else if (webControlCentersB1QaC3StateRequirement(policy, manifest, 'post', {
+    request,
+    migrations: post.migrations,
+    evidence: post,
+  }).required) {
+    validateWebControlCentersB1QaC3InstalledState(
+      post.web_control_centers_b1_qa_c3_state,
+      policy?.web_control_centers_b1_qa_c3_transition,
     );
   }
   validatePremiumStateTransition(pre.premium_state, post.premium_state, manifest, policy);
@@ -5847,6 +6031,35 @@ export function advisorExceptionsForPhase(policy, manifest, phase, context = {})
     const fingerprints = new Set(additions.map(item => item.advisor_fingerprint));
     result = [...result.filter(item => !fingerprints.has(item?.advisor_fingerprint)), ...additions];
   }
+  const webB1QaC3Requirement = webControlCentersB1QaC3StateRequirement(
+    policy, manifest, phase, context,
+  );
+  if (webB1QaC3Requirement.required && webB1QaC3Requirement.installed) {
+    const authority = policy?.web_control_centers_b1_qa_c3_transition;
+    const replacement = authority?.security_advisor?.replacement_exception;
+    const successor = authority?.rpc_replacement?.successor;
+    if (!replacement || replacement.advisor_fingerprint !== successor?.advisor_fingerprint
+      || replacement.origin?.migration
+        !== '20261107053930_web_control_centers_b1_qa_c3_draft_list_recovery'
+      || replacement.origin?.migration_blob !== authority?.migrations?.[0]?.blob
+      || replacement.origin?.source_sha !== authority?.reviewed_source_sha
+      || canonicalJson(replacement.attestation) !== canonicalJson({
+        security_definer: successor?.security_definer,
+        owner: successor?.owner,
+        search_path: successor?.search_path,
+        acl: successor?.acl,
+        execute: successor?.execute,
+        definition_sha256: successor?.definition_sha256,
+      })) {
+      fail('RPC_SECURITY_ATTESTATION_FAILED', 'QA-C3 Advisor replacement authority is unavailable');
+    }
+    const matching = result.filter(item => item?.advisor_fingerprint === replacement.advisor_fingerprint);
+    if (matching.length !== 1) {
+      fail('RPC_SECURITY_ATTESTATION_FAILED', 'QA-C3 Advisor predecessor is missing or duplicate');
+    }
+    result = [...result.filter(item => item?.advisor_fingerprint !== replacement.advisor_fingerprint),
+      replacement];
+  }
   return phaseBoundRpcExceptions(result, manifest, phase, { policy, migrations: context.migrations });
 }
 
@@ -6259,6 +6472,10 @@ export async function captureProductionSnapshot({
     request,
     migrations,
   });
+  const webB1QaC3Requirement = webControlCentersB1QaC3StateRequirement(policy, manifest, phase, {
+    request,
+    migrations,
+  });
   if (storiesRequirement.required) assertReadOnlySql(storiesQuery);
   if (storiesSafetyRequirement.required) assertReadOnlySql(storiesSafetyRequirement.query);
   if (storiesSafetyC2Requirement.required) assertReadOnlySql(storiesSafetyC2Authority.query);
@@ -6266,6 +6483,7 @@ export async function captureProductionSnapshot({
   if (controlCenterRequirement.required) assertReadOnlySql(controlCenterRequirement.query);
   if (perfC1Requirement.required) assertReadOnlySql(perfC1Requirement.query);
   if (webB1Requirement.required) assertReadOnlySql(webB1Requirement.query);
+  if (webB1QaC3Requirement.required) assertReadOnlySql(webB1QaC3Requirement.query);
   const financeQueries = selectFinanceSnapshotQueries(migrations);
   const requireFinanceAuthority = Boolean(activeFinanceAuthorityTransition(policy, manifest)) || financeQueries.phase !== 'legacy';
   const functionsBody = await get(`${base}/functions`, 'function inventory');
@@ -6325,6 +6543,10 @@ export async function captureProductionSnapshot({
   const webControlCentersB1State = webB1Requirement.required
     ? singleSnapshot(await sql(webB1Requirement.query, null, 'Web Control Centers B1 authority state'),
       normalizeWebControlCentersB1State, 'Web Control Centers B1 authority state') : null;
+  const webControlCentersB1QaC3State = webB1QaC3Requirement.required
+    ? singleSnapshot(await sql(webB1QaC3Requirement.query, null,
+      'Web Control Centers B1 QA-C3 RPC state'),
+      normalizeWebControlCentersB1QaC3State, 'Web Control Centers B1 QA-C3 RPC state') : null;
   const rpcSecurity = normalizeRpcSecurityAttestations(rpcSecurityBody);
   validateRpcIdentitySet(rpcSecurity, phaseExceptions);
   const evidence = {
@@ -6371,6 +6593,10 @@ export async function captureProductionSnapshot({
           id: webB1Requirement.query_id,
           sha256: sha256(webB1Requirement.query),
         }] : []),
+        ...(webB1QaC3Requirement.required ? [{
+          id: webB1QaC3Requirement.query_id,
+          sha256: sha256(webB1QaC3Requirement.query),
+        }] : []),
       ],
     },
     observed_at: new Date(observedAt).toISOString(),
@@ -6401,6 +6627,9 @@ export async function captureProductionSnapshot({
       : {}),
     ...(webB1Requirement.required
       ? { web_control_centers_b1_state: webControlCentersB1State }
+      : {}),
+    ...(webB1QaC3Requirement.required
+      ? { web_control_centers_b1_qa_c3_state: webControlCentersB1QaC3State }
       : {}),
     requests: calls,
   };

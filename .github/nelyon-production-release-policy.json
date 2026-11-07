@@ -5716,5 +5716,98 @@
       "subscription_enabled": true
     },
     "requires_separate_baseline_promotion": true
+  },
+  "web_control_centers_b1_qa_c3_transition": {
+    "id": "web-control-centers-b1-qa-c3-draft-list-recovery-v1",
+    "from_phase": "web_control_centers_b1",
+    "to_phase": "web_control_centers_b1_qa_c3",
+    "baseline_sha": "6966c8af714cf7d5763cccfccbc0802f6c2ffdc3",
+    "integration_base_sha": "d2409094ac131e1455c70a4b1905ea51358751e5",
+    "reviewed_source_sha": "874bf029cbbd573a1a18c530c1034e028bf5e556",
+    "approved_sha_ancestry": "verified_integration_base",
+    "migrations": [
+      {
+        "version": "20261107053930",
+        "path": "supabase/migrations/20261107053930_web_control_centers_b1_qa_c3_draft_list_recovery.sql",
+        "blob": "94344ab595e4a648211a5adeca92be80e265edc9",
+        "sha256": "b43f61a88f32325f71d5d8d13ef1455834c494eb2402277f29c224c6c440b378",
+        "byte_length": 1271
+      }
+    ],
+    "productive_paths": [
+      "supabase/migrations/20261107053930_web_control_centers_b1_qa_c3_draft_list_recovery.sql"
+    ],
+    "functions": [],
+    "config_changed": false,
+    "rpc_replacement": {
+      "predecessor": {
+        "identity": "public.list_my_publication_drafts_v1(integer,timestampwithtimezone,uuid)",
+        "definition_sha256": "4a826e0ac92c77dfe7e10f725f1278152bbd7e544763c809f34007c1d1b53ff1",
+        "owner": "postgres",
+        "volatility": "s",
+        "security_definer": true,
+        "search_path": ["search_path=\"\""],
+        "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false },
+        "acl": [
+          { "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false },
+          { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }
+        ],
+        "argument_types": ["integer", "timestamp with time zone", "uuid"],
+        "identity_arguments": "p_limit integer, p_cursor_updated_at timestamp with time zone, p_cursor_id uuid",
+        "advisor_fingerprint": "32370dc3b431acac6f74e8d9e3f99d0bf6050b128dc5ff7bd797306310352d16"
+      },
+      "successor": {
+        "identity": "public.list_my_publication_drafts_v1(integer,timestampwithtimezone,uuid)",
+        "definition_sha256": "adc7f6e9126e1abc7a3c1dd741ae5e13428ab6252b3a1f4243d88fc7a88720c7",
+        "owner": "postgres",
+        "volatility": "s",
+        "security_definer": true,
+        "search_path": ["search_path=\"\""],
+        "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false },
+        "acl": [
+          { "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false },
+          { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }
+        ],
+        "argument_types": ["integer", "timestamp with time zone", "uuid"],
+        "identity_arguments": "p_limit integer, p_cursor_updated_at timestamp with time zone, p_cursor_id uuid",
+        "advisor_fingerprint": "32370dc3b431acac6f74e8d9e3f99d0bf6050b128dc5ff7bd797306310352d16"
+      }
+    },
+    "security_advisor": {
+      "replacement_exception": {
+        "advisor_fingerprint": "32370dc3b431acac6f74e8d9e3f99d0bf6050b128dc5ff7bd797306310352d16",
+        "advisor_type": "authenticated_security_definer_function_executable",
+        "advisor_severity": "WARN",
+        "object": {
+          "schema": "public",
+          "name": "list_my_publication_drafts_v1",
+          "argument_types": ["integer", "timestamp with time zone", "uuid"],
+          "identity_arguments": "p_limit integer, p_cursor_updated_at timestamp with time zone, p_cursor_id uuid"
+        },
+        "attestation": {
+          "security_definer": true,
+          "owner": "postgres",
+          "search_path": ["search_path=\"\""],
+          "acl": [
+            { "grantee": "authenticated", "privilege_type": "EXECUTE", "is_grantable": false },
+            { "grantee": "postgres", "privilege_type": "EXECUTE", "is_grantable": false }
+          ],
+          "execute": { "anon": false, "authenticated": true, "public": false, "service_role": false },
+          "definition_sha256": "adc7f6e9126e1abc7a3c1dd741ae5e13428ab6252b3a1f4243d88fc7a88720c7"
+        },
+        "origin": {
+          "migration": "20261107053930_web_control_centers_b1_qa_c3_draft_list_recovery",
+          "migration_blob": "94344ab595e4a648211a5adeca92be80e265edc9",
+          "source_sha": "874bf029cbbd573a1a18c530c1034e028bf5e556"
+        }
+      }
+    },
+    "finance_policy": {
+      "platform_fee_bps": 2000,
+      "purchase_enabled": true,
+      "refunds_enabled": true,
+      "subscription_enabled": true
+    },
+    "requires_separate_baseline_promotion": true
   }
 }
