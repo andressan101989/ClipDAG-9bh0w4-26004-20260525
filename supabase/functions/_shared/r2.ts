@@ -84,19 +84,83 @@ export async function verifyObjectAbsent(
     throw error;
   }
 }
-export async function getObjectBytes(bucket:string,key:string,maxBytes:number):Promise<{bytes:Uint8Array;contentType:string|null}> {
+type R2ReadableBody={
+  getReader?:()=>ReadableStreamDefaultReader<Uint8Array>;
+  stream?:()=>ReadableStream<Uint8Array>;
+  [Symbol.asyncIterator]?:()=>AsyncIterator<Uint8Array>;
+  destroy?:()=>unknown;
+};
+
+/** Bound consumption itself: ContentLength is advisory, never an allocation authority. */
+async function readObjectBody(body:unknown,maxBytes:number,declared:number,signal:AbortSignal):Promise<Uint8Array> {
+  if(!body) throw new Error('r2_object_empty');
+  const candidate=body as R2ReadableBody;
+  // AWS browser/Deno bodies are streams (or Blob.stream()); Node bodies are async iterables.
+  const stream=typeof candidate.getReader==='function'?candidate:
+    typeof candidate.stream==='function'?candidate.stream():null;
+  const reader=stream?.getReader?.();
+  const iterator=!reader&&typeof candidate[Symbol.asyncIterator]==='function'
+    ?candidate[Symbol.asyncIterator]!():null;
+  if(!reader&&!iterator) throw new Error('r2_object_unreadable');
+  let stopped=false;
+  const stop=()=>{
+    if(stopped) return;
+    stopped=true;
+    try {
+      // Cancellation must not itself keep an aborted/oversized request alive.
+      if(!reader) candidate.destroy?.();
+      const pending=reader?reader.cancel():iterator?.return?.();
+      void Promise.resolve(pending).catch(()=>{});
+    } catch { /* Preserve the bounded reader's sanitized failure. */ }
+  };
+  const abortError=()=>Object.assign(new Error('r2_object_read_aborted'),{name:'AbortError'});
+  const next=async()=>{
+    if(signal.aborted) throw abortError();
+    let onAbort!:()=>void;
+    const aborted=new Promise<never>((_resolve,reject)=>{
+      onAbort=()=>{stop();reject(abortError());};
+      signal.addEventListener('abort',onAbort,{once:true});
+    });
+    try {return await Promise.race([reader?reader.read():iterator!.next(),aborted]);}
+    finally {signal.removeEventListener('abort',onAbort);}
+  };
+  try {
+    if(signal.aborted) throw abortError();
+    if(declared>maxBytes) throw new Error('r2_object_too_large');
+    let bytes=new Uint8Array(Math.min(maxBytes,64*1024));
+    let size=0;
+    while(true) {
+      if(signal.aborted) throw abortError();
+      const part=await next();
+      if(signal.aborted) throw abortError();
+      if(part.done) break;
+      if(!(part.value instanceof Uint8Array)) throw new Error('r2_object_unreadable');
+      if(part.value.byteLength>maxBytes-size) throw new Error('r2_object_too_large');
+      const needed=size+part.value.byteLength;
+      if(needed>bytes.length) {
+        const grown=new Uint8Array(Math.min(maxBytes,Math.max(needed,bytes.length*2)));
+        grown.set(bytes);bytes=grown;
+      }
+      // Copy only accepted bytes; neither chunk count nor backing buffers can grow unbounded.
+      bytes.set(part.value,size);size=needed;
+    }
+    if(!size) throw new Error('r2_object_empty');
+    return bytes.slice(0,size);
+  } catch(error) {stop();throw error;}
+  finally {
+    try {reader?.releaseLock();} catch { /* A pending cancelled read may retain its lock briefly. */ }
+  }
+}
+
+export async function getObjectBytes(bucket:string,key:string,maxBytes:number,options:{ifMatch?:string;signal?:AbortSignal|null}={}):Promise<{bytes:Uint8Array;contentType:string|null;etag:string|null}> {
   if(!bucket.trim()||!key.trim()||!Number.isInteger(maxBytes)||maxBytes<1) throw new Error('invalid_r2_object_request');
+  const signal=r2AbortSignal(options.signal);
   const result=await r2Client().send(
-    new GetObjectCommand({Bucket:bucket,Key:key}),
-    {abortSignal:r2AbortSignal()},
+    new GetObjectCommand({Bucket:bucket,Key:key,...(options.ifMatch?{IfMatch:`"${options.ifMatch}"`}:{})}),
+    {abortSignal:signal},
   );
-  const declared=Number(result.ContentLength??0);
-  if(declared>maxBytes) throw new Error('r2_object_too_large');
-  if(!result.Body) throw new Error('r2_object_empty');
-  const bytes=await result.Body.transformToByteArray();
-  if(!bytes.length) throw new Error('r2_object_empty');
-  if(bytes.length>maxBytes) throw new Error('r2_object_too_large');
-  return {bytes,contentType:result.ContentType??null};
+  const bytes=await readObjectBody(result.Body,maxBytes,Number(result.ContentLength??0),signal);
+  return {bytes,contentType:result.ContentType??null,etag:result.ETag?.replace(/^"|"$/g, '').toLowerCase()??null};
 }
 export const publicUrl=(key:string)=>`${R2_PUBLIC_BASE_URL()}/${key.split('/').map(encodeURIComponent).join('/')}`;
 
@@ -114,3 +178,12 @@ export function isR2Transient(error:unknown):boolean {
   const name=error&&typeof error==='object'?'name' in error?String(error.name):'':'';
   return status===429||Boolean(status&&status>=500)||name==='TimeoutError'||name==='AbortError';
 }
+
+/** Server-side write-once materialization; existing objects are never overwritten. */
+export const putObjectIfAbsent=(
+  bucket:string,key:string,bytes:Uint8Array,
+  options:{contentType:string;signal?:AbortSignal|null},
+)=>r2Client().send(
+  new PutObjectCommand({Bucket:bucket,Key:key,Body:bytes,ContentType:options.contentType,IfNoneMatch:'*'}),
+  {abortSignal:r2AbortSignal(options.signal)},
+);

@@ -54,3 +54,6 @@ verify_jwt = false
 
 [functions.ai-handoff-mcp]
 verify_jwt = false
+
+[functions.process-scheduled-publications]
+verify_jwt = false
