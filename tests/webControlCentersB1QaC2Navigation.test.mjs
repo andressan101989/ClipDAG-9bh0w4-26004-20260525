@@ -109,7 +109,7 @@ test('My Content validates deep-link tabs and follows navigation parameter chang
     fetchCreatorVideoFeed: async () => [],
     fetchSavedVideoFeed: async () => [],
     DraftManager: {
-      listPublicationDrafts: async () => [], restorePublicationDraft: async () => null,
+      listPublicationDrafts: async () => ({ items: [], nextCursor: null }), restorePublicationDraft: async () => null,
       updatePublicationDraft: async () => null, deletePublicationDraft: async () => null,
       publishPublicationDraft: async () => null,
     },
@@ -139,8 +139,14 @@ test('My Content validates deep-link tabs and follows navigation parameter chang
   }
 });
 
-async function uploadHarness({ failSave = false } = {}) {
-  const state = { alerts: [], routes: [], saves: [] };
+function deferred() {
+  let resolve;
+  const promise = new Promise(settle => { resolve = settle; });
+  return { promise, resolve };
+}
+
+async function uploadHarness({ failSave = false, saveDeferred, uploadDeferred } = {}) {
+  const state = { alerts: [], routes: [], saves: [], uploads: [] };
   const fixture = {
     ...baseFixture(),
     useRouter: () => ({ push: route => state.routes.push(route) }),
@@ -151,10 +157,19 @@ async function uploadHarness({ failSave = false } = {}) {
     getSupabaseClient: () => ({}),
     canStartCreatorContentPublication: () => true,
     detectMimeType: () => 'image/jpeg',
+    uploadMediaFromUri: async input => {
+      const uploadNumber = state.uploads.push(input);
+      if (uploadDeferred) await uploadDeferred.promise;
+      return {
+        url: `https://media.example.test/upload-${uploadNumber}.jpg`,
+        assetId: `asset-${uploadNumber}`,
+      };
+    },
     DraftManager: {
       savePublicationDraft: async input => {
         state.saves.push(input);
         if (failSave) throw new Error('draft_save_failed');
+        if (saveDeferred) return saveDeferred.promise;
         return { revision: 2 };
       },
     },
@@ -166,13 +181,37 @@ async function uploadHarness({ failSave = false } = {}) {
     launchCameraAsync: async () => ({ canceled: true, assets: [] }),
     launchImageLibraryAsync: async () => ({
       canceled: false,
-      assets: [{ uri: 'file://draft-photo.jpg', type: 'image', mimeType: 'image/jpeg', fileName: 'draft-photo.jpg', fileSize: 1234 }],
+      assets: [
+        { uri: 'file://draft-photo-1.jpg', type: 'image', mimeType: 'image/jpeg', fileName: 'draft-photo-1.jpg', fileSize: 1234 },
+        { uri: 'file://draft-photo-2.jpg', type: 'image', mimeType: 'image/jpeg', fileName: 'draft-photo-2.jpg', fileSize: 2345 },
+      ],
     }),
   };
 
   const { default: UploadScreen } = await loadStoryQaComponent('app/(tabs)/upload.tsx', fixture);
   const app = await mount(UploadScreen);
   return { app, state };
+}
+
+async function prepareUploadMutationRace(app, kind) {
+  const modeLabel = kind === 'photo' ? 'Foto' : 'Carrusel';
+  await app.flush(() => findPressableByText(app, modeLabel).props.onPress());
+  await app.flush(() => findPressableByText(app, 'Galería').props.onPress());
+  const caption = app.find(node => node.type === 'TextInput');
+  assert.ok(caption, `${modeLabel} must expose its caption editor`);
+  await app.flush(() => caption.props.onChangeText('Race-safe caption'));
+}
+
+function uploadMutationButtons(app) {
+  const save = app.find(node =>
+    node.type === 'CyberButton'
+    && node.props.variant === 'secondary'
+    && String(node.props.label).toLowerCase().includes('borrador')
+  );
+  const publish = app.find(node => node.type === 'CyberButton' && node.props.variant !== 'secondary');
+  assert.ok(save, 'the Save Draft action must be rendered');
+  assert.ok(publish, 'the Publish action must be rendered');
+  return { save, publish };
 }
 
 test('confirmed cloud save offers draft navigation without saving twice or clearing the editor', async () => {
@@ -215,3 +254,63 @@ test('failed cloud save exposes no success navigation and preserves the selected
     await app.unmount();
   }
 });
+
+for (const kind of ['photo', 'carousel']) {
+  for (const firstAction of ['save', 'publish']) {
+    test(`${kind} ${firstAction}-first same-turn Save Draft and Publish starts only the first mutation`, async () => {
+      const saveDeferred = deferred();
+      const uploadDeferred = deferred();
+      const { app, state } = await uploadHarness({ saveDeferred, uploadDeferred });
+      let firstPromise;
+      let secondPromise;
+      try {
+        await prepareUploadMutationRace(app, kind);
+        const initial = uploadMutationButtons(app);
+
+        await app.flush(() => {
+          if (firstAction === 'save') {
+            firstPromise = initial.save.props.onPress();
+            secondPromise = initial.publish.props.onPress();
+          } else {
+            firstPromise = initial.publish.props.onPress();
+            secondPromise = initial.save.props.onPress();
+          }
+        });
+
+        const expectedUploadStarts = kind === 'carousel' ? 2 : 1;
+        if (firstAction === 'save') {
+          assert.equal(state.saves.length, 1, 'Save Draft must start synchronously');
+          assert.equal(state.uploads.length, 0, 'same-turn Publish must not start behind Save Draft');
+        } else {
+          assert.equal(state.uploads.length, expectedUploadStarts, 'Publish must start its selected media uploads');
+          assert.equal(state.saves.length, 0, 'same-turn Save Draft must not start behind Publish');
+        }
+
+        const pending = uploadMutationButtons(app);
+        assert.equal(pending.save.props.disabled, true, 'Save Draft must be disabled while either mutation is active');
+        assert.equal(pending.publish.props.disabled, true, 'Publish must be disabled while either mutation is active');
+        assert.equal(pending.save.props.loading, firstAction === 'save');
+        assert.equal(pending.publish.props.loading, firstAction === 'publish');
+
+        if (firstAction === 'save') saveDeferred.resolve({ revision: 2 });
+        else uploadDeferred.resolve();
+        await Promise.all([firstPromise, secondPromise]);
+        await app.flush();
+
+        if (firstAction === 'save') {
+          assert.equal(state.uploads.length, 0, 'resolving Save Draft must not queue Publish');
+        } else {
+          assert.equal(state.saves.length, 0, 'resolving Publish must not queue Save Draft');
+        }
+        const settled = uploadMutationButtons(app);
+        assert.equal(settled.save.props.disabled, false);
+        assert.equal(settled.publish.props.disabled, false);
+      } finally {
+        saveDeferred.resolve({ revision: 2 });
+        uploadDeferred.resolve();
+        await Promise.allSettled([firstPromise, secondPromise].filter(Boolean));
+        await app.unmount();
+      }
+    });
+  }
+}
