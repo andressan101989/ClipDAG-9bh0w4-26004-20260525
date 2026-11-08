@@ -18,7 +18,7 @@ import type { VideoWithMeta } from '@/contexts/FeedContext';
 import { fetchCreatorVideoFeed, fetchSavedVideoFeed } from '@/services/creatorService';
 import { randomUUID } from 'expo-crypto';
 import { DraftManager } from '@/modules/creator/drafts/DraftManager';
-import type { PublicationDraft } from '@/services/publicationDraftService';
+import type { PublicationDraft, PublicationDraftPage } from '@/services/publicationDraftService';
 import { getMediaUrl } from '@/services/mediaService';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -49,6 +49,17 @@ type DraftUpdateMutation={
   composition:PublicationDraft['composition'];assetIds:string[];
 };
 type DraftDeleteMutation={id:string;expectedRevision:number;clientMutationId:string};
+type DraftPublishAttempt={clientCommandId:string;revision:number;draft:PublicationDraft};
+
+function mergeDraftPages(current:PublicationDraft[],incoming:PublicationDraft[]):PublicationDraft[] {
+  const merged=new Map(current.map(item=>[item.id,item]));
+  for(const item of incoming) merged.set(item.id,item);
+  return [...merged.values()];
+}
+
+function draftCursorKey(cursor:NonNullable<PublicationDraftPage['nextCursor']>):string {
+  return `${cursor.updatedAt}:${cursor.id}`;
+}
 
 function isAmbiguousDraftMutationError(error:unknown):boolean {
   if(!error||typeof error!=='object') return true;
@@ -56,6 +67,7 @@ function isAmbiguousDraftMutationError(error:unknown):boolean {
   const code=typeof candidate.code==='string'?candidate.code:'';
   const status=typeof candidate.status==='number'?candidate.status:0;
   const message=typeof candidate.message==='string'?candidate.message.toLowerCase():'';
+  if(code==='draft_publish_command_conflict'||message==='draft_publish_command_conflict') return false;
   if(status>=500||/network|fetch|timeout|connection|aborted/.test(message)) return true;
   // A PostgreSQL/PostgREST domain code is an authoritative rejection, not a
   // lost response. Unknown transport failures stay fail-safe and replayable.
@@ -128,21 +140,42 @@ export default function MyContentScreen() {
   const [cloudDrafts,setCloudDrafts]=useState<PublicationDraft[]>([]);
   const [isLoadingDrafts,setIsLoadingDrafts]=useState(false);
   const [draftLoadError,setDraftLoadError]=useState<string|null>(null);
+  const [draftNextCursor,setDraftNextCursor]=useState<PublicationDraftPage['nextCursor']>(null);
+  const [isLoadingMoreDrafts,setIsLoadingMoreDrafts]=useState(false);
+  const [draftContinuationError,setDraftContinuationError]=useState<string|null>(null);
   const [editingDraft,setEditingDraft]=useState<PublicationDraft|null>(null);
   const [editingDraftCaption,setEditingDraftCaption]=useState('');
   const [draftPreviewUrls,setDraftPreviewUrls]=useState<string[]>([]);
   const [isLoadingDraftPreview,setIsLoadingDraftPreview]=useState(false);
   const [draftPreviewError,setDraftPreviewError]=useState<string|null>(null);
   const tabsScrollRef=useRef<ScrollView>(null);
-  const draftPublishCommandsRef=useRef(new Map<string,string>());
+  const draftPublishCommandsRef=useRef(new Map<string,DraftPublishAttempt>());
   const draftUpdateMutationsRef=useRef(new Map<string,DraftUpdateMutation>());
   const draftDeleteMutationsRef=useRef(new Map<string,DraftDeleteMutation>());
   const draftMutationInFlightRef=useRef(new Set<string>());
+  const draftMutationOwnerRef=useRef(user?.id);
+  const draftMutationGenerationRef=useRef(0);
   const draftLoadRef=useRef(0);
+  const draftInitialLoadGenerationRef=useRef<number|null>(null);
+  const draftNextCursorRef=useRef<PublicationDraftPage['nextCursor']>(null);
+  const draftContinuationInFlightRef=useRef(new Set<string>());
+  const draftConsumedCursorKeysRef=useRef(new Set<string>());
   const draftRestoreRef=useRef(0);
+  const draftRestoreDraftIdRef=useRef<string|null>(null);
   const draftPreviewRef=useRef(0);
+  const draftEditorGenerationRef=useRef(0);
+  const draftEditorTargetIdRef=useRef<string|null>(null);
+  const draftResolvedEditorIdRef=useRef<string|null>(null);
   const activeUserIdRef=useRef(user?.id);
   const contentLoadRef = useRef(0);
+  if(draftMutationOwnerRef.current!==user?.id) {
+    draftMutationOwnerRef.current=user?.id;
+    draftMutationGenerationRef.current+=1;
+    draftPublishCommandsRef.current.clear();
+    draftUpdateMutationsRef.current.clear();
+    draftDeleteMutationsRef.current.clear();
+    draftMutationInFlightRef.current.clear();
+  }
   activeUserIdRef.current=user?.id;
 
   useEffect(() => {
@@ -155,11 +188,22 @@ export default function MyContentScreen() {
 
   useEffect(() => {
     draftLoadRef.current += 1;
+    draftInitialLoadGenerationRef.current=null;
     draftRestoreRef.current += 1;
+    draftRestoreDraftIdRef.current=null;
     draftPreviewRef.current += 1;
+    draftEditorGenerationRef.current += 1;
+    draftEditorTargetIdRef.current=null;
+    draftResolvedEditorIdRef.current=null;
+    draftNextCursorRef.current=null;
+    draftContinuationInFlightRef.current.clear();
+    draftConsumedCursorKeysRef.current.clear();
     setCloudDrafts([]);
     setDraftLoadError(null);
     setIsLoadingDrafts(false);
+    setDraftNextCursor(null);
+    setIsLoadingMoreDrafts(false);
+    setDraftContinuationError(null);
     setEditingDraft(null);
     setEditingDraftCaption('');
     setDraftPreviewUrls([]);
@@ -201,18 +245,28 @@ export default function MyContentScreen() {
     const generation=draftLoadRef.current+1;
     const ownerId=user?.id;
     draftLoadRef.current=generation;
+    draftInitialLoadGenerationRef.current=generation;
+    draftContinuationInFlightRef.current.clear();
+    draftConsumedCursorKeysRef.current.clear();
+    setIsLoadingMoreDrafts(false);
+    setDraftContinuationError(null);
     if(!ownerId) {
+      draftInitialLoadGenerationRef.current=null;
+      draftNextCursorRef.current=null;
       setCloudDrafts([]);
       setDraftLoadError(null);
       setIsLoadingDrafts(false);
+      setDraftNextCursor(null);
       return;
     }
     setIsLoadingDrafts(true);
     setDraftLoadError(null);
     try {
-      const drafts=await DraftManager.listPublicationDrafts();
+      const page=await DraftManager.listPublicationDrafts({limit:50,cursor:null});
       if(draftLoadRef.current===generation&&activeUserIdRef.current===ownerId) {
-        setCloudDrafts(drafts);
+        setCloudDrafts(mergeDraftPages([],page.items));
+        draftNextCursorRef.current=page.nextCursor;
+        setDraftNextCursor(page.nextCursor);
       }
     } catch(error) {
       console.warn('[MyContent] cloud draft load failed',error);
@@ -222,6 +276,41 @@ export default function MyContentScreen() {
     } finally {
       if(draftLoadRef.current===generation&&activeUserIdRef.current===ownerId) {
         setIsLoadingDrafts(false);
+      }
+      if(draftInitialLoadGenerationRef.current===generation) {
+        draftInitialLoadGenerationRef.current=null;
+      }
+    }
+  },[user?.id]);
+
+  const loadMoreDrafts=useCallback(async()=>{
+    const cursor=draftNextCursorRef.current;
+    const ownerId=user?.id;
+    const generation=draftLoadRef.current;
+    if(!ownerId||!cursor||draftInitialLoadGenerationRef.current!==null) return;
+    const cursorKey=draftCursorKey(cursor);
+    const requestKey=`${generation}:${cursorKey}`;
+    if(draftContinuationInFlightRef.current.has(requestKey)
+      ||draftConsumedCursorKeysRef.current.has(cursorKey)) return;
+    draftContinuationInFlightRef.current.add(requestKey);
+    setIsLoadingMoreDrafts(true);
+    setDraftContinuationError(null);
+    try {
+      const page=await DraftManager.listPublicationDrafts({limit:50,cursor});
+      if(draftLoadRef.current===generation&&activeUserIdRef.current===ownerId) {
+        draftConsumedCursorKeysRef.current.add(cursorKey);
+        setCloudDrafts(current=>mergeDraftPages(current,page.items));
+        draftNextCursorRef.current=page.nextCursor;
+        setDraftNextCursor(page.nextCursor);
+      }
+    } catch {
+      if(draftLoadRef.current===generation&&activeUserIdRef.current===ownerId) {
+        setDraftContinuationError('No se pudieron cargar más borradores');
+      }
+    } finally {
+      draftContinuationInFlightRef.current.delete(requestKey);
+      if(draftLoadRef.current===generation&&activeUserIdRef.current===ownerId) {
+        setIsLoadingMoreDrafts(false);
       }
     }
   },[user?.id]);
@@ -266,13 +355,19 @@ export default function MyContentScreen() {
     return ()=>{draftPreviewRef.current+=1;};
   },[editingDraft,loadDraftPreview]);
 
+  useEffect(()=>{
+    if(!editingDraft&&editingDraftCaption) setEditingDraftCaption('');
+  },[editingDraft,editingDraftCaption]);
+
   useFocusEffect(useCallback(() => {
     void loadContent();
     void loadDrafts();
     return () => {
       contentLoadRef.current += 1;
       draftLoadRef.current += 1;
+      draftInitialLoadGenerationRef.current=null;
       draftRestoreRef.current += 1;
+      draftRestoreDraftIdRef.current=null;
     };
   }, [loadContent,loadDrafts]));
 
@@ -376,93 +471,225 @@ export default function MyContentScreen() {
     ]);
   }, [showAlert]);
 
+  const invalidateDraftReadsAfterMutation=useCallback((draftId:string)=>{
+    draftLoadRef.current+=1;
+    draftInitialLoadGenerationRef.current=null;
+    if(draftRestoreDraftIdRef.current===draftId) {
+      draftRestoreRef.current+=1;
+      draftRestoreDraftIdRef.current=null;
+    }
+    draftContinuationInFlightRef.current.clear();
+    draftConsumedCursorKeysRef.current.clear();
+    setIsLoadingDrafts(false);
+    setIsLoadingMoreDrafts(false);
+    setDraftContinuationError(null);
+  },[]);
+
   const restoreCloudDraft=useCallback(async(id:string)=>{
-    const generation=draftRestoreRef.current+1;
     const ownerId=user?.id;
-    draftRestoreRef.current=generation;
     if(!ownerId) return;
+    const generation=draftRestoreRef.current+1;
+    const editorGeneration=draftEditorGenerationRef.current+1;
+    const previousResolvedEditorId=draftResolvedEditorIdRef.current;
+    draftRestoreRef.current=generation;
+    draftRestoreDraftIdRef.current=id;
+    draftEditorGenerationRef.current=editorGeneration;
+    draftEditorTargetIdRef.current=id;
     try {
       const restored=await DraftManager.restorePublicationDraft(id);
-      if(draftRestoreRef.current!==generation||activeUserIdRef.current!==ownerId) return;
+      if(draftRestoreRef.current!==generation
+        ||draftRestoreDraftIdRef.current!==id
+        ||draftEditorGenerationRef.current!==editorGeneration
+        ||draftEditorTargetIdRef.current!==id
+        ||activeUserIdRef.current!==ownerId) return;
       setCloudDrafts(current=>current.map(item=>item.id===restored.id?restored:item));
+      draftResolvedEditorIdRef.current=restored.id;
       setEditingDraft(restored);
       setEditingDraftCaption(restored.caption);
     } catch(error) {
       if(draftRestoreRef.current===generation&&activeUserIdRef.current===ownerId) {
+        if(draftEditorTargetIdRef.current===id) {
+          draftEditorTargetIdRef.current=previousResolvedEditorId;
+        }
         showAlert('Error',error instanceof Error?error.message:'draft_restore_failed');
+      }
+    } finally {
+      if(draftRestoreRef.current===generation&&draftRestoreDraftIdRef.current===id) {
+        draftRestoreDraftIdRef.current=null;
       }
     }
   },[showAlert,user?.id]);
 
+  const updateCloudDraftRevision=useCallback(async(
+    draft:PublicationDraft,
+    nextCaption:string,
+    ownerId:string,
+    generation:number,
+  ):Promise<PublicationDraft>=>{
+    const pendingMutation=draftUpdateMutationsRef.current.get(draft.id);
+    const createMutation=(base:PublicationDraft):DraftUpdateMutation=>({
+      id:base.id,expectedRevision:base.revision,clientMutationId:randomUUID(),
+      kind:base.kind,caption:nextCaption,music:base.music,
+      composition:base.composition,assetIds:[...base.assetIds],
+    });
+    const runMutation=async(mutation:DraftUpdateMutation):Promise<PublicationDraft>=>{
+      try {
+        const updated=await DraftManager.updatePublicationDraft(mutation);
+        if(draftUpdateMutationsRef.current.get(draft.id)===mutation) {
+          draftUpdateMutationsRef.current.delete(draft.id);
+        }
+        return updated;
+      } catch(error) {
+        if(!isAmbiguousDraftMutationError(error)
+          &&draftUpdateMutationsRef.current.get(draft.id)===mutation) {
+          draftUpdateMutationsRef.current.delete(draft.id);
+        }
+        throw error;
+      }
+    };
+
+    if(pendingMutation) {
+      const confirmed=await runMutation(pendingMutation);
+      if(confirmed.caption===nextCaption
+        ||draftMutationGenerationRef.current!==generation
+        ||activeUserIdRef.current!==ownerId) return confirmed;
+      const nextMutation=createMutation(confirmed);
+      draftUpdateMutationsRef.current.set(draft.id,nextMutation);
+      return runMutation(nextMutation);
+    }
+
+    const mutation=createMutation(draft);
+    draftUpdateMutationsRef.current.set(draft.id,mutation);
+    return runMutation(mutation);
+  },[]);
+
   const saveCloudDraftRevision=useCallback(async()=>{
     const draft=editingDraft;
-    if(!draft) return;
-    const nextCaption=editingDraftCaption.trim();
-    if(nextCaption===draft.caption) {
-      showAlert('Sin cambios','Edita la descripción antes de guardar una nueva revisión.');
+    const ownerId=user?.id;
+    const generation=draftMutationGenerationRef.current;
+    const editorGeneration=draftEditorGenerationRef.current;
+    if(!draft||!ownerId) return;
+    if(draftPublishCommandsRef.current.has(draft.id)) {
+      if(draftEditorTargetIdRef.current===draft.id&&activeUserIdRef.current===ownerId) {
+        showAlert(
+          'Publicación pendiente',
+          'Reintenta Publicar para confirmar el intento anterior antes de guardar otros cambios.',
+        );
+      }
       return;
     }
-    const operationKey=`update:${draft.id}`;
+    const operationKey=draft.id;
     if(draftMutationInFlightRef.current.has(operationKey)) return;
-    let mutation=draftUpdateMutationsRef.current.get(draft.id);
-    if(!mutation) {
-      mutation={
-        id:draft.id,expectedRevision:draft.revision,clientMutationId:randomUUID(),
-        kind:draft.kind,caption:nextCaption,music:draft.music,
-        composition:draft.composition,assetIds:[...draft.assetIds],
-      };
-      draftUpdateMutationsRef.current.set(draft.id,mutation);
+    const nextCaption=editingDraftCaption.trim();
+    const hasPendingUpdate=draftUpdateMutationsRef.current.has(draft.id);
+    if(nextCaption===draft.caption&&!hasPendingUpdate) {
+      if(draftEditorTargetIdRef.current===draft.id&&activeUserIdRef.current===ownerId) {
+        showAlert('Sin cambios','Edita la descripción antes de guardar una nueva revisión.');
+      }
+      return;
     }
     draftMutationInFlightRef.current.add(operationKey);
     try {
-      const updated=await DraftManager.updatePublicationDraft(mutation);
-      draftUpdateMutationsRef.current.delete(draft.id);
-      setCloudDrafts(current=>current.map(item=>item.id===updated.id?updated:item));
-      setEditingDraft(updated);
-      setEditingDraftCaption(updated.caption);
-      showAlert('Borrador sincronizado',`Revisión ${updated.revision}`);
+      const updated=await updateCloudDraftRevision(draft,nextCaption,ownerId,generation);
+      if(draftMutationGenerationRef.current!==generation||activeUserIdRef.current!==ownerId) return;
+      invalidateDraftReadsAfterMutation(draft.id);
+      setCloudDrafts(current=>current.map(item=>item.id===updated.id&&item.revision<=updated.revision?updated:item));
+      setEditingDraft(current=>current?.id===updated.id&&current.revision<=updated.revision?updated:current);
+      const isCurrentEditor=draftEditorTargetIdRef.current===draft.id;
+      if(isCurrentEditor&&draftEditorGenerationRef.current===editorGeneration) {
+        setEditingDraftCaption(updated.caption);
+      }
+      if(isCurrentEditor) showAlert('Borrador sincronizado',`Revisión ${updated.revision}`);
     } catch(error) {
-      if(!isAmbiguousDraftMutationError(error)) draftUpdateMutationsRef.current.delete(draft.id);
-      showAlert('Conflicto de borrador',error instanceof Error?error.message:'draft_update_failed');
+      if(draftMutationGenerationRef.current===generation
+        &&activeUserIdRef.current===ownerId
+        &&draftEditorTargetIdRef.current===draft.id) {
+        showAlert('Conflicto de borrador',error instanceof Error?error.message:'draft_update_failed');
+      }
     } finally {
-      draftMutationInFlightRef.current.delete(operationKey);
+      if(draftMutationGenerationRef.current===generation&&activeUserIdRef.current===ownerId) {
+        draftMutationInFlightRef.current.delete(operationKey);
+      }
     }
-  },[editingDraft,editingDraftCaption,showAlert]);
+  },[editingDraft,editingDraftCaption,invalidateDraftReadsAfterMutation,showAlert,updateCloudDraftRevision,user?.id]);
 
   const publishCloudDraft=useCallback(async()=>{
-    if(!editingDraft) return;
-    const operationKey=`publish:${editingDraft.id}`;
+    const draft=editingDraft;
+    const ownerId=user?.id;
+    const generation=draftMutationGenerationRef.current;
+    const editorGeneration=draftEditorGenerationRef.current;
+    if(!draft||!ownerId) return;
+    const operationKey=draft.id;
+    const existingAttempt=draftPublishCommandsRef.current.get(draft.id);
     if(draftMutationInFlightRef.current.has(operationKey)) return;
-    let command=draftPublishCommandsRef.current.get(editingDraft.id);
-    if(!command) {
-      command=randomUUID();
-      draftPublishCommandsRef.current.set(editingDraft.id,command);
-    }
     draftMutationInFlightRef.current.add(operationKey);
     try {
+      let attempt=existingAttempt;
+      let draftToPublish:PublicationDraft;
+      if(attempt) {
+        draftToPublish=attempt.draft;
+      } else {
+        const nextCaption=editingDraftCaption.trim();
+        const hasPendingUpdate=draftUpdateMutationsRef.current.has(draft.id);
+        draftToPublish=nextCaption===draft.caption&&!hasPendingUpdate
+          ? draft
+          : await updateCloudDraftRevision(draft,nextCaption,ownerId,generation);
+        if(draftMutationGenerationRef.current!==generation||activeUserIdRef.current!==ownerId) return;
+        if(draftToPublish!==draft) {
+          invalidateDraftReadsAfterMutation(draft.id);
+          setCloudDrafts(current=>current.map(item=>item.id===draftToPublish.id&&item.revision<=draftToPublish.revision?draftToPublish:item));
+          setEditingDraft(current=>current?.id===draftToPublish.id&&current.revision<=draftToPublish.revision?draftToPublish:current);
+          if(draftEditorTargetIdRef.current===draft.id
+            &&draftEditorGenerationRef.current===editorGeneration) {
+            setEditingDraftCaption(draftToPublish.caption);
+          }
+        }
+        attempt={clientCommandId:randomUUID(),revision:draftToPublish.revision,draft:draftToPublish};
+        draftPublishCommandsRef.current.set(draft.id,attempt);
+      }
       const postId=await DraftManager.publishPublicationDraft({
-        id:editingDraft.id,clientCommandId:command,
+        draft:attempt.draft,clientCommandId:attempt.clientCommandId,
       });
-      draftPublishCommandsRef.current.delete(editingDraft.id);
-      setCloudDrafts(current=>current.filter(item=>item.id!==editingDraft.id));
-      setEditingDraft(null);setEditingDraftCaption('');
-      showAlert('Publicado','El borrador se publicó mediante la autoridad canónica.',[
-        {text:'Ver feed',onPress:()=>router.push('/(tabs)')},{text:'Cerrar'},
-      ]);
+      if(draftMutationGenerationRef.current!==generation||activeUserIdRef.current!==ownerId) return;
+      draftPublishCommandsRef.current.delete(draft.id);
+      invalidateDraftReadsAfterMutation(draft.id);
+      setCloudDrafts(current=>current.filter(item=>item.id!==draft.id));
+      const isCurrentEditor=draftEditorTargetIdRef.current===draft.id;
+      setEditingDraft(current=>{
+        if(current?.id!==draft.id) return current;
+        if(draftEditorTargetIdRef.current===draft.id) draftEditorTargetIdRef.current=null;
+        if(draftResolvedEditorIdRef.current===draft.id) draftResolvedEditorIdRef.current=null;
+        return null;
+      });
+      if(isCurrentEditor) {
+        showAlert('Publicado','El borrador se publicó mediante la autoridad canónica.',[
+          {text:'Ver feed',onPress:()=>router.push('/(tabs)')},{text:'Cerrar'},
+        ]);
+      }
       void postId;
     } catch(error) {
-      if(!isAmbiguousDraftMutationError(error)) draftPublishCommandsRef.current.delete(editingDraft.id);
-      showAlert('Publicación pendiente',error instanceof Error?error.message:'draft_publish_failed');
+      if(draftMutationGenerationRef.current===generation&&activeUserIdRef.current===ownerId) {
+        if(!isAmbiguousDraftMutationError(error)) draftPublishCommandsRef.current.delete(draft.id);
+        if(draftEditorTargetIdRef.current===draft.id) {
+          showAlert('Publicación pendiente',error instanceof Error?error.message:'draft_publish_failed');
+        }
+      }
     } finally {
-      draftMutationInFlightRef.current.delete(operationKey);
+      if(draftMutationGenerationRef.current===generation&&activeUserIdRef.current===ownerId) {
+        draftMutationInFlightRef.current.delete(operationKey);
+      }
     }
-  },[editingDraft,router,showAlert]);
+  },[editingDraft,editingDraftCaption,invalidateDraftReadsAfterMutation,router,showAlert,updateCloudDraftRevision,user?.id]);
 
   const deleteCloudDraft=useCallback((draft:PublicationDraft)=>{
+    const ownerId=user?.id;
+    const generation=draftMutationGenerationRef.current;
+    if(!ownerId) return;
     showAlert('Eliminar borrador','Esta acción libera su reserva privada de media.',[
       {text:'Cancelar',style:'cancel'},
       {text:'Eliminar',style:'destructive',onPress:async()=>{
-        const operationKey=`delete:${draft.id}`;
+        if(draftMutationGenerationRef.current!==generation||activeUserIdRef.current!==ownerId) return;
+        const operationKey=draft.id;
         if(draftMutationInFlightRef.current.has(operationKey)) return;
         let mutation=draftDeleteMutationsRef.current.get(draft.id);
         if(!mutation) {
@@ -472,18 +699,29 @@ export default function MyContentScreen() {
         draftMutationInFlightRef.current.add(operationKey);
         try {
           await DraftManager.deletePublicationDraft(mutation);
+          if(draftMutationGenerationRef.current!==generation||activeUserIdRef.current!==ownerId) return;
           draftDeleteMutationsRef.current.delete(draft.id);
+          invalidateDraftReadsAfterMutation(draft.id);
           setCloudDrafts(current=>current.filter(item=>item.id!==draft.id));
-          if(editingDraft?.id===draft.id) {setEditingDraft(null);setEditingDraftCaption('');}
+          setEditingDraft(current=>{
+            if(current?.id!==draft.id) return current;
+            if(draftEditorTargetIdRef.current===draft.id) draftEditorTargetIdRef.current=null;
+            if(draftResolvedEditorIdRef.current===draft.id) draftResolvedEditorIdRef.current=null;
+            return null;
+          });
         } catch(error) {
-          if(!isAmbiguousDraftMutationError(error)) draftDeleteMutationsRef.current.delete(draft.id);
-          showAlert('Error',error instanceof Error?error.message:'draft_delete_failed');
+          if(draftMutationGenerationRef.current===generation&&activeUserIdRef.current===ownerId) {
+            if(!isAmbiguousDraftMutationError(error)) draftDeleteMutationsRef.current.delete(draft.id);
+            showAlert('Error',error instanceof Error?error.message:'draft_delete_failed');
+          }
         } finally {
-          draftMutationInFlightRef.current.delete(operationKey);
+          if(draftMutationGenerationRef.current===generation&&activeUserIdRef.current===ownerId) {
+            draftMutationInFlightRef.current.delete(operationKey);
+          }
         }
       }},
     ]);
-  },[editingDraft?.id,showAlert]);
+  },[invalidateDraftReadsAfterMutation,showAlert,user?.id]);
 
   const renderDraft=useCallback(({item}:{item:PublicationDraft})=>(
     <View style={styles.draftCard}>
@@ -619,11 +857,13 @@ export default function MyContentScreen() {
             ? 'Eliminando...'
             : activeTab==='drafts' ? 'Cargando borradores...' : 'Cargando contenido...'}</Text>
         </View>
-      ) : activeTab==='drafts'&&cloudDrafts.length>0 ? (
+      ) : activeTab==='drafts'&&(cloudDrafts.length>0||editingDraft) ? (
         <FlatList
           data={cloudDrafts}
           keyExtractor={item=>item.id}
           renderItem={renderDraft}
+          onEndReached={()=>{if(draftNextCursor&&!draftContinuationError) void loadMoreDrafts();}}
+          onEndReachedThreshold={0.4}
           contentContainerStyle={{padding:Spacing.md,gap:Spacing.sm,paddingBottom:80+insets.bottom}}
           ListHeaderComponent={editingDraft ? (
             <View style={styles.draftEditor}>
@@ -662,7 +902,10 @@ export default function MyContentScreen() {
               ) : null}
               <TextInput
                 value={editingDraftCaption}
-                onChangeText={setEditingDraftCaption}
+                onChangeText={value=>{
+                  draftEditorGenerationRef.current+=1;
+                  setEditingDraftCaption(value);
+                }}
                 placeholder="Descripción"
                 placeholderTextColor={Colors.textSubtle}
                 multiline
@@ -675,10 +918,31 @@ export default function MyContentScreen() {
                 <Pressable onPress={()=>{
                   draftRestoreRef.current+=1;
                   draftPreviewRef.current+=1;
+                  draftEditorGenerationRef.current+=1;
+                  draftEditorTargetIdRef.current=null;
+                  draftResolvedEditorIdRef.current=null;
                   setEditingDraft(null);
                   setEditingDraftCaption('');
                 }} style={styles.draftAction}><Text style={styles.draftActionText}>Cerrar</Text></Pressable>
               </View>
+            </View>
+          ) : null}
+          ListFooterComponent={isLoadingMoreDrafts ? (
+            <View style={styles.draftContinuationStatus}>
+              <ActivityIndicator color={Colors.primary}/>
+              <Text style={styles.draftPreviewStatusText}>Cargando más borradores...</Text>
+            </View>
+          ) : draftContinuationError ? (
+            <View style={styles.draftContinuationError} accessibilityRole="alert">
+              <Text style={styles.draftErrorTitle}>{draftContinuationError}</Text>
+              <Pressable
+                onPress={()=>void loadMoreDrafts()}
+                style={styles.draftRetry}
+                accessibilityRole="button"
+                accessibilityLabel="Reintentar cargar más borradores"
+              >
+                <Text style={styles.draftRetryText}>Reintentar</Text>
+              </Pressable>
             </View>
           ) : null}
         />
@@ -869,6 +1133,12 @@ const styles = StyleSheet.create({
   draftRetry:{paddingHorizontal:10,paddingVertical:8,borderRadius:Radius.md,backgroundColor:Colors.primaryDim},
   draftRetryText:{color:Colors.primaryLight,fontSize:FontSize.xs,fontWeight:FontWeight.bold},
   draftErrorFiller:{flex:1},
+  draftContinuationStatus:{padding:Spacing.md,alignItems:'center',gap:Spacing.xs},
+  draftContinuationError:{
+    flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:Spacing.sm,
+    marginTop:Spacing.sm,padding:Spacing.sm,borderRadius:Radius.md,
+    backgroundColor:Colors.surfaceElevated,borderWidth:1,borderColor:Colors.error,
+  },
 
   // Empty state
   emptyState: {

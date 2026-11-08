@@ -26,6 +26,7 @@ import {
   type PublicationDraft,
   type PublicationDraftComposition,
   type PublicationDraftKind,
+  type PublicationDraftPage,
 } from '@/services/publicationDraftService';
 import type { CanonicalUploadSource } from '@/services/mediaService';
 
@@ -233,8 +234,11 @@ class DraftManagerImpl {
     return getPublicationDraft(id);
   }
 
-  async listPublicationDrafts(): Promise<PublicationDraft[]> {
-    return (await listPublicationDrafts({ limit: 50 })).items;
+  async listPublicationDrafts(input: {
+    limit?: number;
+    cursor?: PublicationDraftPage['nextCursor'];
+  } = {}): Promise<PublicationDraftPage> {
+    return listPublicationDrafts(input);
   }
 
   async updatePublicationDraft(input: {
@@ -272,12 +276,15 @@ class DraftManagerImpl {
   }
 
   async publishPublicationDraft(input: {
-    id: string;
+    draft: PublicationDraft;
     clientCommandId: string;
     signal?: AbortSignal;
   }): Promise<string> {
-    const draft = await getPublicationDraft(input.id);
-    return publishPublicationDraft({ draft, clientCommandId: input.clientCommandId, signal: input.signal });
+    return publishPublicationDraft({
+      draft: input.draft,
+      clientCommandId: input.clientCommandId,
+      signal: input.signal,
+    });
   }
 }
 

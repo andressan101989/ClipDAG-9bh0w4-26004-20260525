@@ -47,7 +47,25 @@ const preparedDraftPublications = new Map<string, {
   draftId: string;
   revision: number;
   publicAssetIds: string[];
+  inFlight?: Promise<string>;
 }>();
+
+function draftPublishCommandConflict():Error&{code:'draft_publish_command_conflict'} {
+  return Object.assign(new Error('draft_publish_command_conflict'), {
+    code:'draft_publish_command_conflict' as const,
+  });
+}
+
+function isAmbiguousDraftPublishError(error:unknown):boolean {
+  if(!error||typeof error!=='object') return true;
+  const candidate=error as {code?:unknown;status?:unknown;message?:unknown};
+  const code=typeof candidate.code==='string'?candidate.code:'';
+  const status=typeof candidate.status==='number'?candidate.status:0;
+  const message=typeof candidate.message==='string'?candidate.message.toLowerCase():'';
+  if(code==='draft_publish_command_conflict'||message==='draft_publish_command_conflict') return false;
+  if(status>=500||/network|fetch|timeout|connection|aborted/.test(message)) return true;
+  return !code;
+}
 
 function requireUuid(value: string, field: string): string {
   if (!UUID_PATTERN.test(value)) throw new Error(`invalid_${field}`);
@@ -245,33 +263,49 @@ export async function publishPublicationDraft(input: {
   if (input.draft.state !== 'draft') throw new Error('draft_not_publishable');
   const existing = preparedDraftPublications.get(commandId);
   if (existing && (existing.draftId !== input.draft.id || existing.revision !== input.draft.revision)) {
-    throw new Error('draft_publish_command_conflict');
+    throw draftPublishCommandConflict();
   }
-  const publicAssetIds = [...(existing?.publicAssetIds ?? [])];
+  if(existing?.inFlight) return existing.inFlight;
+  const prepared=existing??{
+    draftId:input.draft.id,
+    revision:input.draft.revision,
+    publicAssetIds:[],
+  };
+  if(!existing) preparedDraftPublications.set(commandId,prepared);
+  const publicAssetIds = [...prepared.publicAssetIds];
   if (publicAssetIds.length > input.draft.assetIds.length) {
-    throw new Error('draft_publish_command_conflict');
+    throw draftPublishCommandConflict();
   }
-  for (let index = publicAssetIds.length; index < input.draft.assetIds.length; index += 1) {
-    const materialized = await materializePrivateDraftAsset({
-      assetId: input.draft.assetIds[index], kind: input.draft.kind, signal: input.signal,
+  const operation=(async()=>{
+    for (let index = publicAssetIds.length; index < input.draft.assetIds.length; index += 1) {
+      const materialized = await materializePrivateDraftAsset({
+        assetId: input.draft.assetIds[index], kind: input.draft.kind, signal: input.signal,
+      });
+      publicAssetIds.push(materialized.assetId);
+      // Persist each completed index before the next upload. Ambiguous retries
+      // reuse these assets and the same publish arguments.
+      preparedDraftPublications.set(commandId,prepared);
+      prepared.publicAssetIds=[...publicAssetIds];
+    }
+    const { data, error } = await supabase.rpc('publish_my_publication_draft_v1', {
+      p_draft_id: input.draft.id,
+      p_expected_revision: input.draft.revision,
+      p_client_command_id: commandId,
+      p_public_asset_ids: publicAssetIds,
     });
-    publicAssetIds.push(materialized.assetId);
-    // Persist each completed index in the prepared command before attempting
-    // the next upload. A retry never rematerializes indices 0..N-1.
-    preparedDraftPublications.set(commandId, {
-      draftId: input.draft.id,
-      revision: input.draft.revision,
-      publicAssetIds:[...publicAssetIds],
-    });
+    if (error) throw error;
+    const postId = requireUuid(String(data ?? ''), 'post_id');
+    preparedDraftPublications.delete(commandId);
+    return postId;
+  })();
+  prepared.inFlight=operation;
+  try {
+    return await operation;
+  } catch(error) {
+    if(preparedDraftPublications.get(commandId)===prepared) {
+      if(isAmbiguousDraftPublishError(error)) prepared.inFlight=undefined;
+      else preparedDraftPublications.delete(commandId);
+    }
+    throw error;
   }
-  const { data, error } = await supabase.rpc('publish_my_publication_draft_v1', {
-    p_draft_id: input.draft.id,
-    p_expected_revision: input.draft.revision,
-    p_client_command_id: commandId,
-    p_public_asset_ids: publicAssetIds,
-  });
-  if (error) throw error;
-  const postId = requireUuid(String(data ?? ''), 'post_id');
-  preparedDraftPublications.delete(commandId);
-  return postId;
 }

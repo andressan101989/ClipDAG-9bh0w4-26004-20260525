@@ -703,12 +703,13 @@ export default function UploadScreen() {
   }, [user, supabase, mode]);
 
   const handleSavePublicationDraft=useCallback(async()=>{
-    if(isSavingDraft||isUploading) return;
     const selected=mode==='carousel'?carouselMedias:mode==='photo'&&selectedMedia?[selectedMedia]:[];
     if(!selected.length||(mode==='carousel'&&selected.length<2)) {
       showAlert('Sin contenido','Selecciona las fotos que deseas guardar.');
       return;
     }
+    if(uploadInFlightRef.current) return;
+    uploadInFlightRef.current=true;
     setIsSavingDraft(true);
     try {
       const sources:CanonicalUploadSource[]=[];
@@ -744,9 +745,10 @@ export default function UploadScreen() {
     } catch(error) {
       showAlert('No se pudo guardar',error instanceof Error?error.message:'draft_save_failed');
     } finally {
+      uploadInFlightRef.current=false;
       setIsSavingDraft(false);
     }
-  },[caption,carouselMedias,isSavingDraft,isUploading,mode,router,selectedMedia,selectedMusic,selectedProducts,showAlert]);
+  },[caption,carouselMedias,mode,router,selectedMedia,selectedMusic,selectedProducts,showAlert]);
 
   const handleUploadSingle = useCallback(async () => {
     if (!guardNewCreatorContentPublication()) return;
@@ -1005,11 +1007,7 @@ export default function UploadScreen() {
       preparedCarouselUploadsRef.current=null;
       carouselPublicationCommandRef.current=randomUUID();
       setCaption(''); setCarouselMedias([]); setSelectedMusic(null); setSelectedProducts([]);
-      if (!tagsSaved) {
-        uploadInFlightRef.current=false;
-        setIsUploading(false);setUploadProgress('');
-        return;
-      }
+      if (!tagsSaved) return;
       showAlert(
         'Carrusel publicado!',
         `${validUrls.length} fotos publicadas`,
@@ -1045,8 +1043,6 @@ export default function UploadScreen() {
           `${carouselMedias.length} fotos publicadas`,
           [{text:'Ver Feed',onPress:()=>router.push('/(tabs)')},{text:'Crear otro'}],
         );
-        setIsUploading(false);setUploadProgress('');
-        uploadInFlightRef.current=false;
         return;
       }
       console.warn('[Upload] carousel publish failed', {
@@ -1060,14 +1056,13 @@ export default function UploadScreen() {
           'Publicación pendiente de confirmación',
           'Conservamos las mismas fotos y el mismo comando. Reintenta para confirmar sin duplicar el carrusel.',
         );
-        uploadInFlightRef.current=false;
-        setIsUploading(false);setUploadProgress('');
         return;
       }
       showAlert('Error',`No se pudo publicar el carrusel.\nCódigo: ${safe.stage}/${safe.code}`);
+    } finally {
+      uploadInFlightRef.current=false;
+      setIsUploading(false); setUploadProgress('');
     }
-    uploadInFlightRef.current=false;
-    setIsUploading(false); setUploadProgress('');
   }, [guardNewCreatorContentPublication, carouselMedias, caption, user, uploadMediaToStorage, addVideo, router, showAlert, saveSelectedProductTags]);
 
   const MODES: { key: Mode; icon: string; label: string; color?: string }[] = [
@@ -1077,6 +1072,7 @@ export default function UploadScreen() {
     { key: 'camera',   icon: 'auto-awesome',  label: 'Cámara',  color: '#B44FFF' },
     { key: 'live',     icon: 'live-tv',       label: 'En Vivo' },
   ];
+  const isPublicationMutationActive=isUploading||isSavingDraft;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -1380,6 +1376,7 @@ export default function UploadScreen() {
                 label={isSavingDraft?'Guardando borrador...':'Guardar borrador privado'}
                 onPress={handleSavePublicationDraft}
                 loading={isSavingDraft}
+                disabled={isPublicationMutationActive}
                 variant="secondary"
                 size="lg"
                 fullWidth
@@ -1389,6 +1386,7 @@ export default function UploadScreen() {
                 label={isUploading ? (uploadProgress || 'Publicando...') : `Publicar Carrusel (${carouselMedias.length} fotos)`}
                 onPress={handleUploadCarousel}
                 loading={isUploading}
+                disabled={isPublicationMutationActive}
                 size="lg"
                 fullWidth
               />
@@ -1524,6 +1522,7 @@ export default function UploadScreen() {
                   : mode === 'photo' ? 'Publicar Foto' : 'Publicar Video'}
                 onPress={handleUploadSingle}
                 loading={isUploading}
+                disabled={isPublicationMutationActive}
                 size="lg"
                 fullWidth
               />
@@ -1532,6 +1531,7 @@ export default function UploadScreen() {
                   label={isSavingDraft?'Guardando borrador...':'Guardar borrador privado'}
                   onPress={handleSavePublicationDraft}
                   loading={isSavingDraft}
+                  disabled={isPublicationMutationActive}
                   variant="secondary"
                   size="lg"
                   fullWidth
