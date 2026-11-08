@@ -49,7 +49,7 @@ type DraftUpdateMutation={
   composition:PublicationDraft['composition'];assetIds:string[];
 };
 type DraftDeleteMutation={id:string;expectedRevision:number;clientMutationId:string};
-type DraftPublishAttempt={clientCommandId:string;revision:number};
+type DraftPublishAttempt={clientCommandId:string;revision:number;draft:PublicationDraft};
 
 function mergeDraftPages(current:PublicationDraft[],incoming:PublicationDraft[]):PublicationDraft[] {
   const merged=new Map(current.map(item=>[item.id,item]));
@@ -164,6 +164,8 @@ export default function MyContentScreen() {
   const draftRestoreDraftIdRef=useRef<string|null>(null);
   const draftPreviewRef=useRef(0);
   const draftEditorGenerationRef=useRef(0);
+  const draftEditorTargetIdRef=useRef<string|null>(null);
+  const draftResolvedEditorIdRef=useRef<string|null>(null);
   const activeUserIdRef=useRef(user?.id);
   const contentLoadRef = useRef(0);
   if(draftMutationOwnerRef.current!==user?.id) {
@@ -191,6 +193,8 @@ export default function MyContentScreen() {
     draftRestoreDraftIdRef.current=null;
     draftPreviewRef.current += 1;
     draftEditorGenerationRef.current += 1;
+    draftEditorTargetIdRef.current=null;
+    draftResolvedEditorIdRef.current=null;
     draftNextCursorRef.current=null;
     draftContinuationInFlightRef.current.clear();
     draftConsumedCursorKeysRef.current.clear();
@@ -486,20 +490,27 @@ export default function MyContentScreen() {
     if(!ownerId) return;
     const generation=draftRestoreRef.current+1;
     const editorGeneration=draftEditorGenerationRef.current+1;
+    const previousResolvedEditorId=draftResolvedEditorIdRef.current;
     draftRestoreRef.current=generation;
     draftRestoreDraftIdRef.current=id;
     draftEditorGenerationRef.current=editorGeneration;
+    draftEditorTargetIdRef.current=id;
     try {
       const restored=await DraftManager.restorePublicationDraft(id);
       if(draftRestoreRef.current!==generation
         ||draftRestoreDraftIdRef.current!==id
         ||draftEditorGenerationRef.current!==editorGeneration
+        ||draftEditorTargetIdRef.current!==id
         ||activeUserIdRef.current!==ownerId) return;
       setCloudDrafts(current=>current.map(item=>item.id===restored.id?restored:item));
+      draftResolvedEditorIdRef.current=restored.id;
       setEditingDraft(restored);
       setEditingDraftCaption(restored.caption);
     } catch(error) {
       if(draftRestoreRef.current===generation&&activeUserIdRef.current===ownerId) {
+        if(draftEditorTargetIdRef.current===id) {
+          draftEditorTargetIdRef.current=previousResolvedEditorId;
+        }
         showAlert('Error',error instanceof Error?error.message:'draft_restore_failed');
       }
     } finally {
@@ -558,12 +569,23 @@ export default function MyContentScreen() {
     const generation=draftMutationGenerationRef.current;
     const editorGeneration=draftEditorGenerationRef.current;
     if(!draft||!ownerId) return;
+    if(draftPublishCommandsRef.current.has(draft.id)) {
+      if(draftEditorTargetIdRef.current===draft.id&&activeUserIdRef.current===ownerId) {
+        showAlert(
+          'Publicación pendiente',
+          'Reintenta Publicar para confirmar el intento anterior antes de guardar otros cambios.',
+        );
+      }
+      return;
+    }
     const operationKey=draft.id;
     if(draftMutationInFlightRef.current.has(operationKey)) return;
     const nextCaption=editingDraftCaption.trim();
     const hasPendingUpdate=draftUpdateMutationsRef.current.has(draft.id);
     if(nextCaption===draft.caption&&!hasPendingUpdate) {
-      showAlert('Sin cambios','Edita la descripción antes de guardar una nueva revisión.');
+      if(draftEditorTargetIdRef.current===draft.id&&activeUserIdRef.current===ownerId) {
+        showAlert('Sin cambios','Edita la descripción antes de guardar una nueva revisión.');
+      }
       return;
     }
     draftMutationInFlightRef.current.add(operationKey);
@@ -573,12 +595,15 @@ export default function MyContentScreen() {
       invalidateDraftReadsAfterMutation(draft.id);
       setCloudDrafts(current=>current.map(item=>item.id===updated.id&&item.revision<=updated.revision?updated:item));
       setEditingDraft(current=>current?.id===updated.id&&current.revision<=updated.revision?updated:current);
-      if(draftEditorGenerationRef.current===editorGeneration) {
+      const isCurrentEditor=draftEditorTargetIdRef.current===draft.id;
+      if(isCurrentEditor&&draftEditorGenerationRef.current===editorGeneration) {
         setEditingDraftCaption(updated.caption);
       }
-      showAlert('Borrador sincronizado',`Revisión ${updated.revision}`);
+      if(isCurrentEditor) showAlert('Borrador sincronizado',`Revisión ${updated.revision}`);
     } catch(error) {
-      if(draftMutationGenerationRef.current===generation&&activeUserIdRef.current===ownerId) {
+      if(draftMutationGenerationRef.current===generation
+        &&activeUserIdRef.current===ownerId
+        &&draftEditorTargetIdRef.current===draft.id) {
         showAlert('Conflicto de borrador',error instanceof Error?error.message:'draft_update_failed');
       }
     } finally {
@@ -599,41 +624,55 @@ export default function MyContentScreen() {
     if(draftMutationInFlightRef.current.has(operationKey)) return;
     draftMutationInFlightRef.current.add(operationKey);
     try {
-      const nextCaption=editingDraftCaption.trim();
-      const hasPendingUpdate=draftUpdateMutationsRef.current.has(draft.id);
-      const draftToPublish=nextCaption===draft.caption&&!hasPendingUpdate
-        ? draft
-        : await updateCloudDraftRevision(draft,nextCaption,ownerId,generation);
-      if(draftMutationGenerationRef.current!==generation||activeUserIdRef.current!==ownerId) return;
-      if(draftToPublish!==draft) {
-        invalidateDraftReadsAfterMutation(draft.id);
-        setCloudDrafts(current=>current.map(item=>item.id===draftToPublish.id&&item.revision<=draftToPublish.revision?draftToPublish:item));
-        setEditingDraft(current=>current?.id===draftToPublish.id&&current.revision<=draftToPublish.revision?draftToPublish:current);
-        if(draftEditorGenerationRef.current===editorGeneration) {
-          setEditingDraftCaption(draftToPublish.caption);
-        }
-      }
       let attempt=existingAttempt;
-      if(!attempt||attempt.revision!==draftToPublish.revision) {
-        attempt={clientCommandId:randomUUID(),revision:draftToPublish.revision};
+      let draftToPublish:PublicationDraft;
+      if(attempt) {
+        draftToPublish=attempt.draft;
+      } else {
+        const nextCaption=editingDraftCaption.trim();
+        const hasPendingUpdate=draftUpdateMutationsRef.current.has(draft.id);
+        draftToPublish=nextCaption===draft.caption&&!hasPendingUpdate
+          ? draft
+          : await updateCloudDraftRevision(draft,nextCaption,ownerId,generation);
+        if(draftMutationGenerationRef.current!==generation||activeUserIdRef.current!==ownerId) return;
+        if(draftToPublish!==draft) {
+          invalidateDraftReadsAfterMutation(draft.id);
+          setCloudDrafts(current=>current.map(item=>item.id===draftToPublish.id&&item.revision<=draftToPublish.revision?draftToPublish:item));
+          setEditingDraft(current=>current?.id===draftToPublish.id&&current.revision<=draftToPublish.revision?draftToPublish:current);
+          if(draftEditorTargetIdRef.current===draft.id
+            &&draftEditorGenerationRef.current===editorGeneration) {
+            setEditingDraftCaption(draftToPublish.caption);
+          }
+        }
+        attempt={clientCommandId:randomUUID(),revision:draftToPublish.revision,draft:draftToPublish};
         draftPublishCommandsRef.current.set(draft.id,attempt);
       }
       const postId=await DraftManager.publishPublicationDraft({
-        draft:draftToPublish,clientCommandId:attempt.clientCommandId,
+        draft:attempt.draft,clientCommandId:attempt.clientCommandId,
       });
       if(draftMutationGenerationRef.current!==generation||activeUserIdRef.current!==ownerId) return;
       draftPublishCommandsRef.current.delete(draft.id);
       invalidateDraftReadsAfterMutation(draft.id);
       setCloudDrafts(current=>current.filter(item=>item.id!==draft.id));
-      setEditingDraft(current=>current?.id===draft.id?null:current);
-      showAlert('Publicado','El borrador se publicó mediante la autoridad canónica.',[
-        {text:'Ver feed',onPress:()=>router.push('/(tabs)')},{text:'Cerrar'},
-      ]);
+      const isCurrentEditor=draftEditorTargetIdRef.current===draft.id;
+      setEditingDraft(current=>{
+        if(current?.id!==draft.id) return current;
+        if(draftEditorTargetIdRef.current===draft.id) draftEditorTargetIdRef.current=null;
+        if(draftResolvedEditorIdRef.current===draft.id) draftResolvedEditorIdRef.current=null;
+        return null;
+      });
+      if(isCurrentEditor) {
+        showAlert('Publicado','El borrador se publicó mediante la autoridad canónica.',[
+          {text:'Ver feed',onPress:()=>router.push('/(tabs)')},{text:'Cerrar'},
+        ]);
+      }
       void postId;
     } catch(error) {
       if(draftMutationGenerationRef.current===generation&&activeUserIdRef.current===ownerId) {
         if(!isAmbiguousDraftMutationError(error)) draftPublishCommandsRef.current.delete(draft.id);
-        showAlert('Publicación pendiente',error instanceof Error?error.message:'draft_publish_failed');
+        if(draftEditorTargetIdRef.current===draft.id) {
+          showAlert('Publicación pendiente',error instanceof Error?error.message:'draft_publish_failed');
+        }
       }
     } finally {
       if(draftMutationGenerationRef.current===generation&&activeUserIdRef.current===ownerId) {
@@ -664,7 +703,12 @@ export default function MyContentScreen() {
           draftDeleteMutationsRef.current.delete(draft.id);
           invalidateDraftReadsAfterMutation(draft.id);
           setCloudDrafts(current=>current.filter(item=>item.id!==draft.id));
-          setEditingDraft(current=>current?.id===draft.id?null:current);
+          setEditingDraft(current=>{
+            if(current?.id!==draft.id) return current;
+            if(draftEditorTargetIdRef.current===draft.id) draftEditorTargetIdRef.current=null;
+            if(draftResolvedEditorIdRef.current===draft.id) draftResolvedEditorIdRef.current=null;
+            return null;
+          });
         } catch(error) {
           if(draftMutationGenerationRef.current===generation&&activeUserIdRef.current===ownerId) {
             if(!isAmbiguousDraftMutationError(error)) draftDeleteMutationsRef.current.delete(draft.id);
@@ -813,7 +857,7 @@ export default function MyContentScreen() {
             ? 'Eliminando...'
             : activeTab==='drafts' ? 'Cargando borradores...' : 'Cargando contenido...'}</Text>
         </View>
-      ) : activeTab==='drafts'&&cloudDrafts.length>0 ? (
+      ) : activeTab==='drafts'&&(cloudDrafts.length>0||editingDraft) ? (
         <FlatList
           data={cloudDrafts}
           keyExtractor={item=>item.id}
@@ -875,6 +919,8 @@ export default function MyContentScreen() {
                   draftRestoreRef.current+=1;
                   draftPreviewRef.current+=1;
                   draftEditorGenerationRef.current+=1;
+                  draftEditorTargetIdRef.current=null;
+                  draftResolvedEditorIdRef.current=null;
                   setEditingDraft(null);
                   setEditingDraftCaption('');
                 }} style={styles.draftAction}><Text style={styles.draftActionText}>Cerrar</Text></Pressable>

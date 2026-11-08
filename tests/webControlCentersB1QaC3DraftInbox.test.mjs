@@ -1429,3 +1429,502 @@ test('a refocus response started before delete cannot re-add the deleted draft',
     await app.unmount();
   }
 });
+
+test('save A completing after pending restore B never mutates B or carries A caption into its next save', async () => {
+  const restoreBGate = deferred();
+  const updateAGate = deferred();
+  const alerts = [];
+  const captionA = 'A NEW CAPTION';
+  const captionB = 'B NEW CAPTION';
+  const draftB = Object.freeze({
+    ...draft,
+    id: '21000000-0000-4000-8000-000000000002',
+    clientRequestId: '23000000-0000-4000-8000-000000000002',
+    caption: 'B ORIGINAL',
+    assetIds: ['22000000-0000-4000-8000-000000000002'],
+  });
+  const confirmedA = Object.freeze({ ...draft, caption: captionA, revision: 2 });
+  const confirmedB = Object.freeze({ ...draftB, caption: captionB, revision: 2 });
+  const updates = [];
+  const harness = draftFixture({
+    fixture: {
+      useAlert: () => ({
+        showAlert: (title, message, actions = []) => alerts.push({ title, message, actions }),
+      }),
+    },
+    DraftManager: {
+      listPublicationDrafts: async () => ({ items: [draft, draftB], nextCursor: null }),
+      restorePublicationDraft: id => id === draft.id ? Promise.resolve(draft) : restoreBGate.promise,
+      updatePublicationDraft: input => {
+        updates.push(input);
+        return updates.length === 1 ? updateAGate.promise : Promise.resolve(confirmedB);
+      },
+    },
+  });
+  const { default: MyContentScreen } = await loadStoryQaComponent('app/my-content.tsx', harness.fixture);
+  const app = await mount(MyContentScreen);
+  try {
+    let restoreButtons = app.nodes().filter(node => node.type === 'Pressable' && nodeText(node) === 'Restaurar');
+    await app.flush(() => restoreButtons[0].props.onPress());
+    await app.flush(() => app.find(node => node.type === 'TextInput').props.onChangeText(captionA));
+    await app.flush(() => restoreButtons[1].props.onPress());
+    await app.flush(() => findPressableByText(app, 'Guardar cambios').props.onPress());
+
+    await app.flush(() => {
+      restoreBGate.resolve(draftB);
+      updateAGate.resolve(confirmedA);
+    });
+
+    assert.equal(app.find(node => node.type === 'TextInput').props.value, draftB.caption,
+      'the completed save for A must not write A caption into the newer B editor');
+    assert.equal(alerts.some(entry => entry.title === 'Borrador sincronizado'), false,
+      'a stale A completion must not show a success alert over B');
+
+    await app.flush(() => app.find(node => node.type === 'TextInput').props.onChangeText(captionB));
+    await app.flush(() => findPressableByText(app, 'Guardar cambios').props.onPress());
+
+    assert.deepEqual(updates.map(input => ({ id: input.id, caption: input.caption, expectedRevision: input.expectedRevision })), [
+      { id: draft.id, caption: captionA, expectedRevision: 1 },
+      { id: draftB.id, caption: captionB, expectedRevision: 1 },
+    ]);
+  } finally {
+    restoreBGate.resolve(draftB);
+    updateAGate.resolve(confirmedA);
+    await app.flush();
+    await app.unmount();
+  }
+});
+
+test('dirty publish A completing after pending restore B preserves B and publishes only the confirmed A snapshot', async () => {
+  const restoreBGate = deferred();
+  const updateAGate = deferred();
+  const alerts = [];
+  const captionA = 'A DIRTY PUBLISH';
+  const captionB = 'B AFTER A PUBLISH';
+  const draftB = Object.freeze({
+    ...draft,
+    id: '21000000-0000-4000-8000-000000000002',
+    clientRequestId: '23000000-0000-4000-8000-000000000002',
+    caption: 'B ORIGINAL',
+    assetIds: ['22000000-0000-4000-8000-000000000002'],
+  });
+  const confirmedA = Object.freeze({ ...draft, caption: captionA, revision: 2 });
+  const confirmedB = Object.freeze({ ...draftB, caption: captionB, revision: 2 });
+  const updates = [];
+  const publishes = [];
+  const harness = draftFixture({
+    fixture: {
+      useAlert: () => ({
+        showAlert: (title, message, actions = []) => alerts.push({ title, message, actions }),
+      }),
+    },
+    DraftManager: {
+      listPublicationDrafts: async () => ({ items: [draft, draftB], nextCursor: null }),
+      restorePublicationDraft: id => id === draft.id ? Promise.resolve(draft) : restoreBGate.promise,
+      updatePublicationDraft: input => {
+        updates.push(input);
+        return updates.length === 1 ? updateAGate.promise : Promise.resolve(confirmedB);
+      },
+      publishPublicationDraft: async input => {
+        publishes.push(input);
+        return '24000000-0000-4000-8000-000000000001';
+      },
+    },
+  });
+  const { default: MyContentScreen } = await loadStoryQaComponent('app/my-content.tsx', harness.fixture);
+  const app = await mount(MyContentScreen);
+  try {
+    const restoreButtons = app.nodes().filter(node => node.type === 'Pressable' && nodeText(node) === 'Restaurar');
+    await app.flush(() => restoreButtons[0].props.onPress());
+    await app.flush(() => app.find(node => node.type === 'TextInput').props.onChangeText(captionA));
+    await app.flush(() => restoreButtons[1].props.onPress());
+    await app.flush(() => findPressableByText(app, 'Publicar').props.onPress());
+
+    await app.flush(() => {
+      restoreBGate.resolve(draftB);
+      updateAGate.resolve(confirmedA);
+    });
+
+    assert.equal(publishes.length, 1);
+    assert.equal(publishes[0].draft, confirmedA);
+    assert.equal(app.find(node => node.type === 'TextInput').props.value, draftB.caption,
+      'A autosave/publish completion must not write A caption into B');
+    assert.equal(alerts.some(entry => entry.title === 'Publicado'), false,
+      'a stale A publication must not show a completion alert over B');
+
+    await app.flush(() => app.find(node => node.type === 'TextInput').props.onChangeText(captionB));
+    await app.flush(() => findPressableByText(app, 'Guardar cambios').props.onPress());
+    assert.deepEqual(updates.map(input => ({ id: input.id, caption: input.caption, expectedRevision: input.expectedRevision })), [
+      { id: draft.id, caption: captionA, expectedRevision: 1 },
+      { id: draftB.id, caption: captionB, expectedRevision: 1 },
+    ]);
+  } finally {
+    restoreBGate.resolve(draftB);
+    updateAGate.resolve(confirmedA);
+    await app.flush();
+    await app.unmount();
+  }
+});
+
+test('ambiguous publish remains accessible after an empty refocus and replays the exact command snapshot', async () => {
+  const commandA = '25000000-0000-4000-8000-000000000001';
+  const publishes = [];
+  let listCalls = 0;
+  const harness = draftFixture({
+    fixture: { randomUUID: () => commandA },
+    DraftManager: {
+      listPublicationDrafts: async () => {
+        listCalls += 1;
+        return { items: listCalls === 1 ? [draft] : [], nextCursor: null };
+      },
+      restorePublicationDraft: async () => draft,
+      publishPublicationDraft: async input => {
+        publishes.push(input);
+        if (publishes.length === 1) throw new Error('network response lost after commit');
+        return '24000000-0000-4000-8000-000000000001';
+      },
+    },
+  });
+  const { default: MyContentScreen } = await loadStoryQaComponent('app/my-content.tsx', harness.fixture);
+  const app = await mount(MyContentScreen);
+  try {
+    await app.flush(() => findPressableByText(app, 'Restaurar').props.onPress());
+    await app.flush(() => findPressableByText(app, 'Publicar').props.onPress());
+    await app.flush(() => harness.focus.callback());
+
+    assert.ok(app.nodes().some(node => node.type === 'TextInput'),
+      'the pending editor must stay reachable even when the refreshed cloud list is empty');
+    assert.ok(findPressableByText(app, 'Publicar'));
+    assert.equal(app.nodes().some(node => node.text === 'Sin borradores'), false);
+
+    await app.flush(() => findPressableByText(app, 'Publicar').props.onPress());
+    assert.equal(publishes.length, 2);
+    assert.deepEqual(publishes.map(input => input.clientCommandId), [commandA, commandA]);
+    assert.ok(publishes.every(input => input.draft === draft),
+      'the replay must use the exact canonical draft snapshot from the first attempt');
+  } finally {
+    await app.unmount();
+  }
+});
+
+test('editing after an ambiguous publish reconciles the prior command before any caption update', async () => {
+  const commandA = '25000000-0000-4000-8000-000000000001';
+  const newCaption = 'Caption editada después de respuesta incierta';
+  const updates = [];
+  const publishes = [];
+  const harness = draftFixture({
+    fixture: { randomUUID: () => commandA },
+    DraftManager: {
+      listPublicationDrafts: async () => ({ items: [draft], nextCursor: null }),
+      restorePublicationDraft: async () => draft,
+      updatePublicationDraft: async input => {
+        updates.push(input);
+        return { ...draft, caption: input.caption, revision: 2 };
+      },
+      publishPublicationDraft: async input => {
+        publishes.push(input);
+        if (publishes.length === 1) throw new Error('network response lost after commit');
+        return '24000000-0000-4000-8000-000000000001';
+      },
+    },
+  });
+  const { default: MyContentScreen } = await loadStoryQaComponent('app/my-content.tsx', harness.fixture);
+  const app = await mount(MyContentScreen);
+  try {
+    await app.flush(() => findPressableByText(app, 'Restaurar').props.onPress());
+    await app.flush(() => findPressableByText(app, 'Publicar').props.onPress());
+    await app.flush(() => app.find(node => node.type === 'TextInput').props.onChangeText(newCaption));
+    await app.flush(() => findPressableByText(app, 'Publicar').props.onPress());
+
+    assert.deepEqual(updates, [], 'the uncertain prior publish must be replayed before creating a new revision');
+    assert.equal(publishes.length, 2);
+    assert.deepEqual(publishes.map(input => input.clientCommandId), [commandA, commandA]);
+    assert.ok(publishes.every(input => input.draft === draft));
+    assert.deepEqual(publishes.map(input => input.draft.caption), [draft.caption, draft.caption]);
+  } finally {
+    await app.unmount();
+  }
+});
+
+test('save is blocked while an ambiguous publish command still requires exact replay', async () => {
+  const newCaption = 'No debe crear una revisión antes del replay';
+  const updates = [];
+  const publishes = [];
+  const alerts = [];
+  const harness = draftFixture({
+    fixture: {
+      useAlert: () => ({
+        showAlert: (title, message, actions = []) => alerts.push({ title, message, actions }),
+      }),
+    },
+    DraftManager: {
+      listPublicationDrafts: async () => ({ items: [draft], nextCursor: null }),
+      restorePublicationDraft: async () => draft,
+      updatePublicationDraft: async input => {
+        updates.push(input);
+        return { ...draft, caption: input.caption, revision: 2 };
+      },
+      publishPublicationDraft: async input => {
+        publishes.push(input);
+        throw new Error('network response lost after commit');
+      },
+    },
+  });
+  const { default: MyContentScreen } = await loadStoryQaComponent('app/my-content.tsx', harness.fixture);
+  const app = await mount(MyContentScreen);
+  try {
+    await app.flush(() => findPressableByText(app, 'Restaurar').props.onPress());
+    await app.flush(() => findPressableByText(app, 'Publicar').props.onPress());
+    await app.flush(() => app.find(node => node.type === 'TextInput').props.onChangeText(newCaption));
+    await app.flush(() => findPressableByText(app, 'Guardar cambios').props.onPress());
+
+    assert.equal(publishes.length, 1);
+    assert.deepEqual(updates, [], 'Guardar must not mutate a draft with an unresolved publish command');
+    assert.ok(alerts.some(entry => entry.title === 'Publicación pendiente'),
+      'the user must be directed to reconcile the pending publication');
+  } finally {
+    await app.unmount();
+  }
+});
+
+test('pending-publish alert from A is suppressed while restore B is the active target', async () => {
+  const restoreBGate = deferred();
+  const alerts = [];
+  const draftB = Object.freeze({
+    ...draft,
+    id: '21000000-0000-4000-8000-000000000002',
+    clientRequestId: '23000000-0000-4000-8000-000000000002',
+    caption: 'B PENDING',
+  });
+  const harness = draftFixture({
+    fixture: {
+      useAlert: () => ({
+        showAlert: (title, message, actions = []) => alerts.push({ title, message, actions }),
+      }),
+    },
+    DraftManager: {
+      listPublicationDrafts: async () => ({ items: [draft, draftB], nextCursor: null }),
+      restorePublicationDraft: id => id === draft.id ? Promise.resolve(draft) : restoreBGate.promise,
+      publishPublicationDraft: async () => {
+        throw new Error('network response lost after commit');
+      },
+    },
+  });
+  const { default: MyContentScreen } = await loadStoryQaComponent('app/my-content.tsx', harness.fixture);
+  const app = await mount(MyContentScreen);
+  try {
+    const restoreButtons = app.nodes().filter(node => node.type === 'Pressable' && nodeText(node) === 'Restaurar');
+    await app.flush(() => restoreButtons[0].props.onPress());
+    await app.flush(() => findPressableByText(app, 'Publicar').props.onPress());
+    alerts.length = 0;
+
+    await app.flush(() => restoreButtons[1].props.onPress());
+    await app.flush(() => findPressableByText(app, 'Guardar cambios').props.onPress());
+
+    assert.deepEqual(alerts, [], 'A must not surface its pending-publish alert after B becomes the active target');
+  } finally {
+    restoreBGate.resolve(draftB);
+    await app.flush();
+    await app.unmount();
+  }
+});
+
+test('no-change alert from A is suppressed while restore B is the active target', async () => {
+  const restoreBGate = deferred();
+  const alerts = [];
+  const draftB = Object.freeze({
+    ...draft,
+    id: '21000000-0000-4000-8000-000000000002',
+    clientRequestId: '23000000-0000-4000-8000-000000000002',
+    caption: 'B PENDING',
+  });
+  const harness = draftFixture({
+    fixture: {
+      useAlert: () => ({
+        showAlert: (title, message, actions = []) => alerts.push({ title, message, actions }),
+      }),
+    },
+    DraftManager: {
+      listPublicationDrafts: async () => ({ items: [draft, draftB], nextCursor: null }),
+      restorePublicationDraft: id => id === draft.id ? Promise.resolve(draft) : restoreBGate.promise,
+    },
+  });
+  const { default: MyContentScreen } = await loadStoryQaComponent('app/my-content.tsx', harness.fixture);
+  const app = await mount(MyContentScreen);
+  try {
+    const restoreButtons = app.nodes().filter(node => node.type === 'Pressable' && nodeText(node) === 'Restaurar');
+    await app.flush(() => restoreButtons[0].props.onPress());
+    alerts.length = 0;
+
+    await app.flush(() => restoreButtons[1].props.onPress());
+    await app.flush(() => findPressableByText(app, 'Guardar cambios').props.onPress());
+
+    assert.deepEqual(alerts, [], 'A must not surface its no-change alert after B becomes the active target');
+  } finally {
+    restoreBGate.resolve(draftB);
+    await app.flush();
+    await app.unmount();
+  }
+});
+
+test('failed superseding restore rolls selection back to the resolved editor instead of an invalidated pending target', async () => {
+  const restoreBGate = deferred();
+  const alerts = [];
+  const savedCaption = 'A guardado después del fallo de C';
+  const draftB = Object.freeze({
+    ...draft,
+    id: '21000000-0000-4000-8000-000000000002',
+    clientRequestId: '23000000-0000-4000-8000-000000000002',
+    caption: 'B PENDING',
+  });
+  const draftC = Object.freeze({
+    ...draft,
+    id: '21000000-0000-4000-8000-000000000003',
+    clientRequestId: '23000000-0000-4000-8000-000000000003',
+    caption: 'C FAILS',
+  });
+  const confirmedA = Object.freeze({ ...draft, caption: savedCaption, revision: 2 });
+  const updates = [];
+  const harness = draftFixture({
+    fixture: {
+      useAlert: () => ({
+        showAlert: (title, message, actions = []) => alerts.push({ title, message, actions }),
+      }),
+    },
+    DraftManager: {
+      listPublicationDrafts: async () => ({ items: [draft, draftB, draftC], nextCursor: null }),
+      restorePublicationDraft: id => {
+        if (id === draft.id) return Promise.resolve(draft);
+        if (id === draftB.id) return restoreBGate.promise;
+        return Promise.reject(new Error('C restore failed'));
+      },
+      updatePublicationDraft: async input => {
+        updates.push(input);
+        return confirmedA;
+      },
+    },
+  });
+  const { default: MyContentScreen } = await loadStoryQaComponent('app/my-content.tsx', harness.fixture);
+  const app = await mount(MyContentScreen);
+  try {
+    const restoreButtons = app.nodes().filter(node => node.type === 'Pressable' && nodeText(node) === 'Restaurar');
+    await app.flush(() => restoreButtons[0].props.onPress());
+    await app.flush(() => restoreButtons[1].props.onPress());
+    await app.flush(() => restoreButtons[2].props.onPress());
+    assert.equal(app.find(node => node.type === 'TextInput').props.value, draft.caption);
+
+    await app.flush(() => app.find(node => node.type === 'TextInput').props.onChangeText(savedCaption));
+    await app.flush(() => findPressableByText(app, 'Guardar cambios').props.onPress());
+
+    assert.deepEqual(updates.map(input => ({ id: input.id, expectedRevision: input.expectedRevision })), [
+      { id: draft.id, expectedRevision: 1 },
+    ]);
+    assert.ok(alerts.some(entry => entry.title === 'Borrador sincronizado'),
+      'after C fails, A must again be the authoritative editor target');
+
+    restoreBGate.resolve(draftB);
+    await app.flush();
+    assert.equal(app.find(node => node.type === 'TextInput').props.value, savedCaption,
+      'the invalidated B restore must not replace resolved A');
+  } finally {
+    restoreBGate.resolve(draftB);
+    await app.flush();
+    await app.unmount();
+  }
+});
+
+test('late save A rejection after restore B does not surface A conflict on B', async () => {
+  const restoreBGate = deferred();
+  const updateAGate = deferred();
+  const alerts = [];
+  const draftB = Object.freeze({
+    ...draft,
+    id: '21000000-0000-4000-8000-000000000002',
+    clientRequestId: '23000000-0000-4000-8000-000000000002',
+    caption: 'B ORIGINAL',
+  });
+  const harness = draftFixture({
+    fixture: {
+      useAlert: () => ({
+        showAlert: (title, message, actions = []) => alerts.push({ title, message, actions }),
+      }),
+    },
+    DraftManager: {
+      listPublicationDrafts: async () => ({ items: [draft, draftB], nextCursor: null }),
+      restorePublicationDraft: id => id === draft.id ? Promise.resolve(draft) : restoreBGate.promise,
+      updatePublicationDraft: () => updateAGate.promise,
+    },
+  });
+  const { default: MyContentScreen } = await loadStoryQaComponent('app/my-content.tsx', harness.fixture);
+  const app = await mount(MyContentScreen);
+  try {
+    const restoreButtons = app.nodes().filter(node => node.type === 'Pressable' && nodeText(node) === 'Restaurar');
+    await app.flush(() => restoreButtons[0].props.onPress());
+    await app.flush(() => app.find(node => node.type === 'TextInput').props.onChangeText('A WILL FAIL'));
+    await app.flush(() => restoreButtons[1].props.onPress());
+    await app.flush(() => findPressableByText(app, 'Guardar cambios').props.onPress());
+    await app.flush(() => {
+      restoreBGate.resolve(draftB);
+      updateAGate.reject(Object.assign(new Error('draft_revision_conflict'), { code: 'P0001' }));
+    });
+
+    assert.equal(app.find(node => node.type === 'TextInput').props.value, draftB.caption);
+    assert.equal(alerts.some(entry => entry.title === 'Conflicto de borrador'), false);
+  } finally {
+    restoreBGate.resolve(draftB);
+    updateAGate.reject(Object.assign(new Error('draft_revision_conflict'), { code: 'P0001' }));
+    await app.flush();
+    await app.unmount();
+  }
+});
+
+test('late publish autosave A rejection after restore B does not surface A publication error on B', async () => {
+  const restoreBGate = deferred();
+  const updateAGate = deferred();
+  const alerts = [];
+  const publishes = [];
+  const draftB = Object.freeze({
+    ...draft,
+    id: '21000000-0000-4000-8000-000000000002',
+    clientRequestId: '23000000-0000-4000-8000-000000000002',
+    caption: 'B ORIGINAL',
+  });
+  const harness = draftFixture({
+    fixture: {
+      useAlert: () => ({
+        showAlert: (title, message, actions = []) => alerts.push({ title, message, actions }),
+      }),
+    },
+    DraftManager: {
+      listPublicationDrafts: async () => ({ items: [draft, draftB], nextCursor: null }),
+      restorePublicationDraft: id => id === draft.id ? Promise.resolve(draft) : restoreBGate.promise,
+      updatePublicationDraft: () => updateAGate.promise,
+      publishPublicationDraft: async input => {
+        publishes.push(input);
+        return '24000000-0000-4000-8000-000000000001';
+      },
+    },
+  });
+  const { default: MyContentScreen } = await loadStoryQaComponent('app/my-content.tsx', harness.fixture);
+  const app = await mount(MyContentScreen);
+  try {
+    const restoreButtons = app.nodes().filter(node => node.type === 'Pressable' && nodeText(node) === 'Restaurar');
+    await app.flush(() => restoreButtons[0].props.onPress());
+    await app.flush(() => app.find(node => node.type === 'TextInput').props.onChangeText('A PUBLISH WILL FAIL'));
+    await app.flush(() => restoreButtons[1].props.onPress());
+    await app.flush(() => findPressableByText(app, 'Publicar').props.onPress());
+    await app.flush(() => {
+      restoreBGate.resolve(draftB);
+      updateAGate.reject(Object.assign(new Error('draft_revision_conflict'), { code: 'P0001' }));
+    });
+
+    assert.equal(publishes.length, 0);
+    assert.equal(app.find(node => node.type === 'TextInput').props.value, draftB.caption);
+    assert.equal(alerts.some(entry => entry.title === 'Publicación pendiente'), false);
+  } finally {
+    restoreBGate.resolve(draftB);
+    updateAGate.reject(Object.assign(new Error('draft_revision_conflict'), { code: 'P0001' }));
+    await app.flush();
+    await app.unmount();
+  }
+});
