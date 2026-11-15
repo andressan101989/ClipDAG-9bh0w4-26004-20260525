@@ -1,0 +1,333 @@
+import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
+import test from 'node:test';
+
+const cliModule = await import('../scripts/nelyon-private-authority-cli.mjs').catch(error => {
+  if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error;
+  return {};
+});
+const {
+  adminRecoveryRequiresProtectedB2Runtime,
+  assertProductionInvocationIdentity,
+  createPrivateAuthorityProductionHost,
+  runPrivateAuthorityCli,
+} = cliModule;
+const MARKER = 'PRIVATE_CLI_SYNTHETIC_MARKER';
+const COMMON = [
+  '--policy', 'policy.json',
+  '--request', 'request.json',
+  '--bundle', 'bundle',
+  '--verification-output', 'verification.json',
+];
+const ACTIONS = [
+  'authority-proof',
+  'stage-b2-recovery-source',
+  'revalidate',
+  'verify-gate',
+  'pre-snapshot',
+  'verify-pre-snapshot',
+  'post-snapshot',
+  'postcheck',
+  'verify-recovery-source',
+  'recovery-authority-proof',
+  'admin-recovery-authority-proof',
+  'revalidate-b2-recovery',
+  'revalidate-b2-admin-recovery',
+  'verify-b2-recovery-gate',
+  'verify-b2-admin-recovery-gate',
+  'recovery-snapshot',
+  'postcheck-recovery',
+  'verify-admin-recovery-source',
+  'verify-admin-recovery-postcheck-chain',
+  'postcheck-admin-recovery',
+  'verify-admin-recovery-cloudflare-prestate',
+];
+
+test('step-scoped authority-plane brand keeps legacy Admin recovery outside the B2 runtime even when a root is installed', () => {
+  const root = 'a'.repeat(64);
+  const legacyEnvironment = Object.freeze({
+    NELYON_ADMIN_RECOVERY_B2_REQUIRED: 'false',
+    NELYON_B2_RECOVERY_AUTHORIZATION_SHA256: root,
+  });
+  const b2Environment = Object.freeze({
+    NELYON_ADMIN_RECOVERY_B2_REQUIRED: 'true',
+    NELYON_B2_RECOVERY_AUTHORIZATION_SHA256: root,
+  });
+  assert.equal(adminRecoveryRequiresProtectedB2Runtime({ request: { mode: 'admin_recovery' }, environment: legacyEnvironment }), false);
+  assert.equal(adminRecoveryRequiresProtectedB2Runtime({ request: { mode: 'admin_recovery' }, environment: b2Environment }), true);
+  assert.equal(adminRecoveryRequiresProtectedB2Runtime({ request: { mode: 'postcheck_recovery' }, environment: Object.freeze({}) }), true);
+  assert.throws(() => adminRecoveryRequiresProtectedB2Runtime({
+    request: { mode: 'admin_recovery' }, environment: Object.freeze({ NELYON_ADMIN_RECOVERY_B2_REQUIRED: '' }),
+  }), /blocked/);
+});
+const EXTRA = {
+  'authority-proof': [],
+  'stage-b2-recovery-source': ['--recovery-source-run', '123'],
+  revalidate: ['--compiler-sha256', 'a'.repeat(64), '--remote-evidence', 'remote.json', '--stage-output', 'stage.json'],
+  'verify-gate': ['--policy-sha256', 'b'.repeat(64), '--compiler-sha256', 'a'.repeat(64),
+    '--environment', 'environment.json', '--branch-policies', 'branches.json', '--approvals', 'approvals.json',
+    '--runs', 'runs.json', '--auto-deploy-expected', 'OFF', '--stage-output', 'stage.json'],
+  'pre-snapshot': ['--snapshot-output', 'snapshot.json'],
+  'verify-pre-snapshot': ['--manifest', 'manifest.json', '--pre-snapshot', 'pre.json', '--stage-output', 'stage.json'],
+  'post-snapshot': ['--pre-snapshot', 'pre.json', '--snapshot-output', 'snapshot.json'],
+  postcheck: ['--manifest', 'manifest.json', '--pre-snapshot', 'pre.json', '--post-snapshot', 'post.json',
+    '--stage-output', 'stage.json'],
+  'verify-recovery-source': ['--recovery-source-run', '123', '--run', 'run.json', '--artifacts', 'artifacts.json',
+    '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence', '--stage-output', 'stage.json'],
+  'recovery-authority-proof': ['--recovery-source-run', '123', '--run', 'run.json', '--artifacts', 'artifacts.json',
+    '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence'],
+  'admin-recovery-authority-proof': ['--recovery-source-run', '123', '--run', 'run.json', '--artifacts', 'artifacts.json',
+    '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence', '--admin-evidence', 'admin-evidence'],
+  'revalidate-b2-recovery': ['--recovery-source-run', '123', '--run', 'run.json', '--artifacts', 'artifacts.json',
+    '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence', '--compiler-sha256', 'a'.repeat(64),
+    '--remote-evidence', 'remote.json', '--stage-output', 'stage.json'],
+  'revalidate-b2-admin-recovery': ['--recovery-source-run', '123', '--run', 'run.json', '--artifacts', 'artifacts.json',
+    '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence', '--admin-evidence', 'admin-evidence',
+    '--compiler-sha256', 'a'.repeat(64), '--remote-evidence', 'remote.json', '--stage-output', 'stage.json'],
+  'verify-b2-recovery-gate': ['--recovery-source-run', '123', '--run', 'run.json', '--artifacts', 'artifacts.json',
+    '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence', '--policy-sha256', 'b'.repeat(64),
+    '--compiler-sha256', 'a'.repeat(64), '--environment', 'environment.json', '--branch-policies', 'branches.json',
+    '--approvals', 'approvals.json', '--runs', 'runs.json', '--auto-deploy-expected', 'OFF',
+    '--revalidated', 'revalidated.json', '--stage-output', 'stage.json'],
+  'verify-b2-admin-recovery-gate': ['--recovery-source-run', '123', '--run', 'run.json', '--artifacts', 'artifacts.json',
+    '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence', '--admin-evidence', 'admin-evidence',
+    '--policy-sha256', 'b'.repeat(64), '--compiler-sha256', 'a'.repeat(64), '--environment', 'environment.json',
+    '--branch-policies', 'branches.json', '--approvals', 'approvals.json', '--runs', 'runs.json',
+    '--auto-deploy-expected', 'OFF', '--revalidated', 'revalidated.json', '--stage-output', 'stage.json'],
+  'recovery-snapshot': ['--recovery-source-run', '123', '--run', 'run.json', '--artifacts', 'artifacts.json',
+    '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence', '--current-gate', 'gate.json',
+    '--snapshot-output', 'snapshot.json'],
+  'postcheck-recovery': ['--recovery-source-run', '123', '--run', 'run.json', '--artifacts', 'artifacts.json',
+    '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence', '--current-gate', 'gate.json', '--current-snapshot', 'current.json',
+    '--verified-source', 'verified.json', '--stage-output', 'stage.json'],
+  'verify-admin-recovery-source': ['--recovery-source-run', '123', '--run', 'run.json', '--artifacts', 'artifacts.json',
+    '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence', '--admin-evidence', 'admin-evidence',
+    '--stage-output', 'stage.json'],
+  'verify-admin-recovery-postcheck-chain': ['--recovery-source-run', '123', '--run', 'run.json',
+    '--artifacts', 'artifacts.json', '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence',
+    '--postcheck-recovery-evidence', 'recovery-evidence', '--stage-output', 'stage.json'],
+  'postcheck-admin-recovery': ['--recovery-source-run', '123', '--run', 'run.json', '--artifacts', 'artifacts.json',
+    '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence', '--admin-evidence', 'admin-evidence', '--current-gate', 'gate.json', '--current-snapshot', 'current.json',
+    '--verified-source', 'verified.json', '--admin-manifest', 'admin.json', '--build', 'build.json', '--stage-output', 'stage.json'],
+  'verify-admin-recovery-cloudflare-prestate': ['--recovery-source-run', '123', '--run', 'run.json',
+    '--artifacts', 'artifacts.json', '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence',
+    '--admin-evidence', 'admin-evidence',
+    '--verified-source', 'verified.json', '--previous', 'previous.json', '--routes', 'routes.json', '--stage-output', 'stage.json'],
+};
+
+function sink() {
+  let text = '';
+  return Object.freeze({
+    write(value) { text += value; },
+    read() { return text; },
+  });
+}
+
+function trustedHost(execute) {
+  const stdout = sink();
+  const stderr = sink();
+  return { execute, stdout, stderr };
+}
+
+test('strict authority-proof CLI emits exact closed success and passes only parsed public invocation', async () => {
+  assert.equal(typeof runPrivateAuthorityCli, 'function');
+  let received;
+  const host = trustedHost(async invocation => {
+    received = invocation;
+    return Object.freeze({ schemaVersion: 1, result: 'VERIFIED', releaseReady: false });
+  });
+  const code = await runPrivateAuthorityCli(['authority-proof', ...COMMON], host);
+  assert.equal(code, 0);
+  assert.equal(host.stdout.read(), '{"schemaVersion":1,"result":"VERIFIED","releaseReady":false}\n');
+  assert.equal(host.stderr.read(), '');
+  assert.deepEqual(received, {
+    action: 'authority-proof',
+    inputs: { policy: 'policy.json', request: 'request.json', bundle: 'bundle' },
+    verificationOutput: 'verification.json',
+  });
+  assert.ok(Object.isFrozen(received));
+  assert.ok(Object.isFrozen(received.inputs));
+});
+
+test('production authority-proof is provider-only and never reads Supabase operation inventory', async () => {
+  assert.equal(typeof createPrivateAuthorityProductionHost, 'function');
+  const receipt = Object.freeze({
+    schemaVersion: 1,
+    authorityId: 'synthetic-authority',
+    descriptorSha256: '1'.repeat(64),
+    publicContractSha256: '2'.repeat(64),
+    privateAuthoritySha256: '3'.repeat(64),
+    bindingSha256: '4'.repeat(64),
+    successorCatalogSha256: '5'.repeat(64),
+    securityAdvisorSha256: '6'.repeat(64),
+    backupSha256: '7'.repeat(64),
+    approvalSha256: '8'.repeat(64),
+    verified: true,
+  });
+  let operationFetches = 0;
+  const host = createPrivateAuthorityProductionHost({
+    publicInputs: Object.freeze({
+      policyBytes: Buffer.from('{}'),
+      requestBytes: Buffer.from('{}'),
+    }),
+    environment: Object.freeze({}),
+    fetchImpl: async () => { operationFetches += 1; throw new Error(MARKER); },
+    repositoryRoot: 'D:\\synthetic-private-authority',
+    recoveryRuntime: null,
+  });
+
+  const actual = await host.dispatch({
+    action: 'authority-proof',
+    inputs: Object.freeze({}),
+    authorityContext: Object.freeze({}),
+    receipt,
+    manifest: Object.freeze({}),
+    now: '2026-11-08T12:00:00.000Z',
+  });
+
+  assert.equal(actual, receipt);
+  assert.equal(operationFetches, 0);
+});
+
+test('production invocation identity binds the approved checkout rather than dispatch GITHUB_SHA', () => {
+  assert.equal(typeof assertProductionInvocationIdentity, 'function');
+  const approvedSha = 'a'.repeat(40);
+  const request = {
+    runId: '123456789',
+    runAttempt: 2,
+    approvedSha,
+    mainSha: approvedSha,
+    repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+    workflowRef: 'andressan101989/ClipDAG-9bh0w4-26004-20260525/.github/workflows/nelyon-production-release.yml@refs/heads/main',
+  };
+  const publicInputs = Object.freeze({ requestBytes: Buffer.from(JSON.stringify(request)) });
+  const environment = Object.freeze({
+    GITHUB_RUN_ID: request.runId,
+    GITHUB_RUN_ATTEMPT: String(request.runAttempt),
+    GITHUB_SHA: 'b'.repeat(40),
+    GITHUB_REPOSITORY: request.repository,
+    GITHUB_WORKFLOW_REF: request.workflowRef,
+    NELYON_APPROVED_SHA: approvedSha,
+  });
+
+  assert.doesNotThrow(() => assertProductionInvocationIdentity(publicInputs, environment));
+  assert.throws(() => assertProductionInvocationIdentity(publicInputs, {
+    ...environment,
+    NELYON_APPROVED_SHA: 'c'.repeat(40),
+  }));
+});
+
+test('every runtime action is a closed enum and reaches only the trusted execute capability', async () => {
+  const seen = [];
+  const host = trustedHost(async invocation => {
+    seen.push(invocation.action);
+    return Object.freeze({ schemaVersion: 1, result: 'VERIFIED', releaseReady: false });
+  });
+  for (const action of ACTIONS) {
+    const code = await runPrivateAuthorityCli([action, ...COMMON, ...EXTRA[action]], host);
+    assert.equal(code, 0, action);
+  }
+  assert.deepEqual(seen, ACTIONS);
+});
+
+test('unknown actions, duplicate/unknown flags, passthrough and private authority inputs fail before execute', async () => {
+  let calls = 0;
+  const host = trustedHost(async () => { calls += 1; throw new Error(MARKER); });
+  const invalid = [
+    ['release', ...COMMON],
+    ['authority-proof', ...COMMON, '--policy', 'other.json'],
+    ['authority-proof', ...COMMON, '--unknown', 'value'],
+    ['authority-proof', ...COMMON, '--'],
+    ['authority-proof', ...COMMON, '--source-parity', 'candidate.json'],
+    ['authority-proof', ...COMMON, '--database-functions', 'candidate.json'],
+    ['authority-proof', ...COMMON, '--protected-steps', 'candidate.json'],
+    ['verify-admin-recovery-source', ...COMMON, ...EXTRA['verify-admin-recovery-source'], '--authorization', 'candidate.json'],
+    ['verify-admin-recovery-source', ...COMMON, ...EXTRA['verify-admin-recovery-source'], '--authorization-sha256', 'a'.repeat(64)],
+    ['verify-admin-recovery-source', ...COMMON, ...EXTRA['verify-admin-recovery-source'], '--approved-source', 'candidate.json'],
+    ['verify-admin-recovery-source', ...COMMON, ...EXTRA['verify-admin-recovery-source'], '--chain-run', 'candidate.json'],
+    ['authority-proof', ...COMMON, '--requested-at', '2026-11-08T12:00:00.000Z'],
+    ['authority-proof', ...COMMON, '--module', MARKER],
+    ['authority-proof', ...COMMON, '--command', MARKER],
+  ];
+  for (const argv of invalid) {
+    const beforeOut = host.stdout.read().length;
+    const beforeErr = host.stderr.read().length;
+    const code = await runPrivateAuthorityCli(argv, host);
+    assert.equal(code, 2);
+    assert.equal(host.stdout.read().slice(beforeOut),
+      '{"schemaVersion":1,"result":"BLOCKED","releaseReady":false,"code":"PRIVATE_AUTHORITY_STAGE_INVALID"}\n');
+    assert.equal(host.stderr.read().slice(beforeErr), 'DENY PRIVATE_AUTHORITY_STAGE_INVALID\n');
+  }
+  assert.equal(calls, 0);
+  assert.equal(host.stdout.read().includes(MARKER), false);
+  assert.equal(host.stderr.read().includes(MARKER), false);
+});
+
+test('missing required common flags and non-string/proxy argv fail closed without coercion', async () => {
+  let calls = 0;
+  const host = trustedHost(async () => { calls += 1; });
+  for (const argv of [
+    ['authority-proof'],
+    ['authority-proof', '--policy', 'policy.json'],
+    ['authority-proof', ...COMMON.slice(0, -1)],
+    ['authority-proof', ...COMMON.slice(0, -2), '--verification-output', ''],
+    new Proxy(['authority-proof', ...COMMON], {}),
+  ]) {
+    const code = await runPrivateAuthorityCli(argv, host);
+    assert.equal(code, 2);
+  }
+  assert.equal(calls, 0);
+});
+
+test('recognized runtime failures have exact public status and no native diagnostics', async () => {
+  for (const expectedCode of [
+    'PRIVATE_AUTHORITY_PROVIDER_UNCONFIGURED',
+    'PRIVATE_AUTHORITY_PROVIDER_INVALID',
+    'PRIVATE_AUTHORITY_VERSION_UNAVAILABLE',
+    'RELEASE_AUTHORITY_CONTEXT_INVALID',
+    'AUTHORITY_RECEIPT_MISMATCH',
+    'PRIVATE_AUTHORITY_STAGE_INVALID',
+    'PRIVATE_AUTHORITY_SOURCE_INVALID',
+    'PRIVATE_AUTHORITY_STAGE_BLOCKED',
+    'PRIVATE_AUTHORITY_OUTPUT_INVALID',
+    'PRIVATE_AUTHORITY_CLEANUP_FAILED',
+  ]) {
+    const host = trustedHost(async () => {
+      const error = new Error('Private authority operation blocked');
+      Object.defineProperty(error, 'code', { value: expectedCode, enumerable: true });
+      Object.defineProperty(error, 'stack', { value: 'Error: Private authority operation blocked' });
+      throw error;
+    });
+    const code = await runPrivateAuthorityCli(['authority-proof', ...COMMON], host);
+    assert.equal(code, 2);
+    assert.equal(host.stdout.read(),
+      `{"schemaVersion":1,"result":"BLOCKED","releaseReady":false,"code":"${expectedCode}"}\n`);
+    assert.equal(host.stderr.read(), `DENY ${expectedCode}\n`);
+    assert.equal(host.stdout.read().includes(MARKER), false);
+    assert.equal(host.stderr.read().includes(MARKER), false);
+  }
+});
+
+test('unknown thrown values and hostile error getters collapse to stage blocked without leakage', async () => {
+  for (const thrown of [
+    new Error(MARKER),
+    MARKER,
+    { code: 'PRIVATE_AUTHORITY_PROVIDER_UNCONFIGURED', message: MARKER },
+    Object.defineProperty({}, 'code', { enumerable: true, get() { throw new Error(MARKER); } }),
+  ]) {
+    const host = trustedHost(async () => { throw thrown; });
+    const code = await runPrivateAuthorityCli(['authority-proof', ...COMMON], host);
+    assert.equal(code, 2);
+    assert.equal(host.stdout.read(),
+      '{"schemaVersion":1,"result":"BLOCKED","releaseReady":false,"code":"PRIVATE_AUTHORITY_STAGE_BLOCKED"}\n');
+    assert.equal(host.stderr.read(), 'DENY PRIVATE_AUTHORITY_STAGE_BLOCKED\n');
+    assert.equal(`${host.stdout.read()}${host.stderr.read()}`.includes(MARKER), false);
+  }
+});
+
+test('malformed trusted host sinks are contained and never cause an uncaught rejection', async () => {
+  for (const host of [null, {}, { execute: async () => {}, stdout: {}, stderr: {} }, new Proxy({}, {})]) {
+    const code = await runPrivateAuthorityCli(['authority-proof', ...COMMON], host);
+    assert.equal(code, 2);
+  }
+});

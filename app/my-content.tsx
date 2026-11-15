@@ -19,13 +19,17 @@ import { fetchCreatorVideoFeed, fetchSavedVideoFeed } from '@/services/creatorSe
 import { randomUUID } from 'expo-crypto';
 import { DraftManager } from '@/modules/creator/drafts/DraftManager';
 import type { PublicationDraft, PublicationDraftPage } from '@/services/publicationDraftService';
+import type {
+  PublicationSchedule, PublicationSchedulePage, SchedulePublicationDraftInput,
+  ReschedulePublicationInput, PublicationScheduleCommand,
+} from '@/services/publicationScheduleService';
 import { getMediaUrl } from '@/services/mediaService';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const GRID_GAP = 2;
 const THUMB_SIZE = (SCREEN_W - GRID_GAP * 2) / 3;
 
-type ContentTab = 'posts' | 'reels' | 'saved' | 'stories' | 'drafts';
+type ContentTab = 'posts' | 'reels' | 'saved' | 'stories' | 'drafts' | 'scheduled';
 
 const TAB_CONFIG: { key: ContentTab; icon: string; label: string }[] = [
   { key: 'posts', icon: 'grid', label: 'Publicaciones' },
@@ -33,6 +37,7 @@ const TAB_CONFIG: { key: ContentTab; icon: string; label: string }[] = [
   { key: 'saved', icon: 'bookmark-outline', label: 'Guardados' },
   { key: 'stories', icon: 'circle-outline', label: 'Historias' },
   { key: 'drafts', icon: 'file-outline', label: 'Borradores' },
+  { key: 'scheduled', icon: 'clock-outline', label: 'Programados' },
 ];
 
 function normalizeContentTab(value: string | string[] | undefined): ContentTab {
@@ -50,6 +55,48 @@ type DraftUpdateMutation={
 };
 type DraftDeleteMutation={id:string;expectedRevision:number;clientMutationId:string};
 type DraftPublishAttempt={clientCommandId:string;revision:number;draft:PublicationDraft};
+type ScheduleAction =
+  | { kind: 'schedule'; input: SchedulePublicationDraftInput }
+  | { kind: 'reschedule'; input: ReschedulePublicationInput }
+  | { kind: 'cancel' | 'retry'; input: PublicationScheduleCommand };
+const scheduleStateLabels: Record<PublicationSchedule['state'],string> = {
+  scheduled: 'Programada', claimed: 'En curso', materializing: 'En curso', publishing: 'En curso',
+  published: 'Publicada', retryable_failed: 'Fallo recuperable', terminal_failed: 'Fallo definitivo', cancelled: 'Cancelada',
+};
+const scheduleFailureLabels: Record<string,string> = {
+  provider_timeout: 'El servicio de publicación tardó demasiado en responder.',
+  provider_unavailable: 'El servicio de publicación no está disponible temporalmente.',
+  network_error: 'No se pudo conectar con el servicio de publicación.',
+  lease_expired: 'Se agotó el tiempo disponible para este intento.',
+  media_not_ready: 'Los archivos multimedia aún no están listos.',
+  source_missing: 'No se encontró un archivo de origen.',
+  source_invalid: 'Un archivo de origen no es válido.',
+  draft_changed: 'El borrador cambió desde que se programó.',
+  ownership_invalid: 'No se pudo verificar la propiedad del contenido.',
+  identity_conflict: 'Un archivo no coincide con el contenido programado.',
+  fingerprint_mismatch: 'El contenido cambió desde que se programó.',
+  integrity_failed: 'No se pudo verificar la integridad de los archivos.',
+  content_blocked: 'El contenido no se puede publicar.',
+  configuration_missing: 'El servicio de publicación necesita configuración.',
+};
+function scheduleErrorText(error: unknown): string {
+  const code = error && typeof error === 'object' ? (error as {code?:unknown}).code : null;
+  const messages: Record<string,string> = {
+    auth: 'Inicia sesión para gestionar tus publicaciones.', forbidden: 'Esta publicación no está disponible en tu cuenta.',
+    invalid_input: 'Revisa la fecha local, zona IANA y desfase UTC.',
+    invalid_time: 'La fecha, zona o desfase no son válidos o están fuera del plazo permitido.',
+    stale_revision: 'La publicación cambió. Actualiza la lista antes de continuar.',
+    conflict: 'Existe un conflicto con otra acción. Actualiza la lista.',
+    retry_forbidden: 'El servidor no permite reintentar esta publicación.',
+  };
+  return typeof code === 'string' && Object.hasOwn(messages,code)
+    ? messages[code] : 'No se pudo confirmar la acción. Reintenta la misma acción.';
+}
+function scheduleOutcomeKnown(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const e = error as {outcomeKnown?:unknown;code?:unknown};
+  return e.outcomeKnown === true || ['auth','forbidden','invalid_input','invalid_time','stale_revision','conflict','retry_forbidden'].includes(String(e.code));
+}
 
 function mergeDraftPages(current:PublicationDraft[],incoming:PublicationDraft[]):PublicationDraft[] {
   const merged=new Map(current.map(item=>[item.id,item]));
@@ -168,6 +215,40 @@ export default function MyContentScreen() {
   const draftResolvedEditorIdRef=useRef<string|null>(null);
   const activeUserIdRef=useRef(user?.id);
   const contentLoadRef = useRef(0);
+  const [schedules,setSchedules] = useState<PublicationSchedule[]>([]);
+  const [scheduleCursor,setScheduleCursor] = useState<PublicationSchedulePage['nextCursor']>(null);
+  const [scheduleLoading,setScheduleLoading] = useState(false);
+  const [scheduleLoadingMore,setScheduleLoadingMore] = useState(false);
+  const [scheduleLoadError,setScheduleLoadError] = useState<string|null>(null);
+  const [scheduleMoreError,setScheduleMoreError] = useState<string|null>(null);
+  const [scheduleActionError,setScheduleActionError] = useState<string|null>(null);
+  const [scheduleBusy,setScheduleBusy] = useState(false);
+  const [pendingScheduleAction,setPendingScheduleAction] = useState<ScheduleAction|null>(null);
+  const [scheduleEditor,setScheduleEditor] = useState<{draft:PublicationDraft}|{schedule:PublicationSchedule}|null>(null);
+  const [scheduleLocal,setScheduleLocal] = useState('');
+  const [scheduleZone,setScheduleZone] = useState(()=>Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  const [scheduleOffset,setScheduleOffset] = useState('');
+  const scheduleOwnerRef = useRef(user?.id);
+  const scheduleReadRef = useRef(0);
+  const scheduleActionRef = useRef<ScheduleAction|null>(null);
+  const scheduleActionEpochRef = useRef(0);
+  const scheduleActionBusyRef = useRef(false);
+  const scheduleListAbortRef = useRef<AbortController|null>(null);
+  const scheduleMoreAbortRef = useRef<AbortController|null>(null);
+  const scheduleActionAbortRef = useRef<AbortController|null>(null);
+  const scheduleCursorRef = useRef<PublicationSchedulePage['nextCursor']>(null);
+  const scheduleConsumedRef = useRef(new Set<string>());
+  const scheduleTabRef = useRef(activeTab);
+  const previousScheduleTabRef = useRef(activeTab);
+  scheduleTabRef.current = activeTab;
+  if (scheduleOwnerRef.current !== user?.id) {
+    scheduleOwnerRef.current = user?.id;
+    scheduleReadRef.current++;
+    scheduleActionEpochRef.current++;
+    scheduleListAbortRef.current?.abort(); scheduleMoreAbortRef.current?.abort(); scheduleActionAbortRef.current?.abort();
+    scheduleActionRef.current = null; scheduleActionBusyRef.current = false;
+    scheduleCursorRef.current = null; scheduleConsumedRef.current.clear();
+  }
   if(draftMutationOwnerRef.current!==user?.id) {
     draftMutationOwnerRef.current=user?.id;
     draftMutationGenerationRef.current+=1;
@@ -183,7 +264,7 @@ export default function MyContentScreen() {
   }, [requestedTab]);
 
   useEffect(() => {
-    if(activeTab==='drafts') tabsScrollRef.current?.scrollToEnd?.({animated:false});
+    if(activeTab==='drafts'||activeTab==='scheduled') tabsScrollRef.current?.scrollToEnd?.({animated:false});
   },[activeTab]);
 
   useEffect(() => {
@@ -210,6 +291,140 @@ export default function MyContentScreen() {
     setDraftPreviewError(null);
     setIsLoadingDraftPreview(false);
   },[user?.id]);
+
+  useEffect(()=>{
+    setSchedules([]); setScheduleCursor(null); setScheduleLoading(false); setScheduleLoadingMore(false);
+    setScheduleLoadError(null); setScheduleMoreError(null); setScheduleActionError(null);
+    setScheduleBusy(false); setPendingScheduleAction(null); setScheduleEditor(null);
+    setScheduleLocal(''); setScheduleOffset('');
+  },[user?.id]);
+
+  const invalidateScheduleRequests = useCallback(()=>{
+    scheduleReadRef.current++;
+    scheduleActionEpochRef.current++;
+    scheduleListAbortRef.current?.abort(); scheduleMoreAbortRef.current?.abort(); scheduleActionAbortRef.current?.abort();
+    scheduleMoreAbortRef.current = null;
+    scheduleActionBusyRef.current = false;
+    setScheduleBusy(false);
+    if (scheduleActionRef.current) setScheduleActionError('No se pudo confirmar la acción. Reintenta la misma acción.');
+  },[]);
+
+  const loadSchedules = useCallback(async()=>{
+    const owner = user?.id, generation = ++scheduleReadRef.current;
+    scheduleListAbortRef.current?.abort(); scheduleMoreAbortRef.current?.abort();
+    const controller = new AbortController(); scheduleListAbortRef.current = controller;
+    scheduleMoreAbortRef.current = null;
+    scheduleConsumedRef.current.clear();
+    setScheduleLoadingMore(false); setScheduleMoreError(null);
+    if (!owner) { setSchedules([]); setScheduleCursor(null); setScheduleLoading(false); return; }
+    setScheduleLoading(true); setScheduleLoadError(null);
+    const current = ()=>!controller.signal.aborted && generation === scheduleReadRef.current && activeUserIdRef.current === owner;
+    try {
+      const page = await DraftManager.listPublicationSchedules({limit:20,signal:controller.signal});
+      if (!current()) return;
+      scheduleCursorRef.current = page.nextCursor;
+      setSchedules(page.items); setScheduleCursor(page.nextCursor);
+    } catch (error) {
+      if (current()) setScheduleLoadError(scheduleErrorText(error));
+    } finally { if (current()) setScheduleLoading(false); }
+  },[user?.id]);
+
+  useEffect(()=>{
+    if (previousScheduleTabRef.current === activeTab) return;
+    previousScheduleTabRef.current = activeTab;
+    invalidateScheduleRequests();
+    if (activeTab === 'scheduled') void loadSchedules();
+  },[activeTab,invalidateScheduleRequests,loadSchedules]);
+
+  const loadMoreSchedules = useCallback(async()=>{
+    const cursor = scheduleCursorRef.current, owner = user?.id;
+    if (!cursor || !owner || scheduleMoreAbortRef.current || scheduleLoading) return;
+    const key = `${cursor.createdAt}:${cursor.id}`;
+    if (scheduleConsumedRef.current.has(key)) return;
+    const generation = scheduleReadRef.current, controller = new AbortController();
+    scheduleMoreAbortRef.current = controller;
+    setScheduleLoadingMore(true); setScheduleMoreError(null);
+    const current = ()=>!controller.signal.aborted && generation === scheduleReadRef.current && activeUserIdRef.current === owner
+      && scheduleCursorRef.current === cursor;
+    try {
+      const page = await DraftManager.listPublicationSchedules({limit:20,cursor,signal:controller.signal});
+      if (!current()) return;
+      scheduleConsumedRef.current.add(key);
+      const nextKey = page.nextCursor ? `${page.nextCursor.createdAt}:${page.nextCursor.id}` : null;
+      const next = nextKey && !scheduleConsumedRef.current.has(nextKey) ? page.nextCursor : null;
+      setSchedules(existing=>{
+        const merged = new Map(existing.map(entry=>[entry.id,entry]));
+        for (const entry of page.items) if (!merged.has(entry.id)) merged.set(entry.id,entry);
+        return [...merged.values()];
+      });
+      scheduleCursorRef.current = next; setScheduleCursor(next);
+    } catch (error) { if (current()) setScheduleMoreError(scheduleErrorText(error)); }
+    finally {
+      if (scheduleMoreAbortRef.current === controller) {
+        scheduleMoreAbortRef.current = null;
+        if (!controller.signal.aborted && generation === scheduleReadRef.current && activeUserIdRef.current === owner) setScheduleLoadingMore(false);
+      }
+    }
+  },[scheduleLoading,user?.id]);
+
+  const runScheduleAction = useCallback(async(action:ScheduleAction)=>{
+    const owner = user?.id;
+    if (!owner || scheduleActionBusyRef.current) return;
+    // Only one uncertain command can be reconciled at a time; its exact payload is frozen.
+    const pending = scheduleActionRef.current ?? action;
+    scheduleActionRef.current = pending; setPendingScheduleAction(pending);
+    scheduleActionBusyRef.current = true; setScheduleBusy(true); setScheduleActionError(null);
+    const epoch = ++scheduleActionEpochRef.current, controller = new AbortController();
+    scheduleActionAbortRef.current = controller;
+    const current = ()=>!controller.signal.aborted && epoch === scheduleActionEpochRef.current && activeUserIdRef.current === owner;
+    try {
+      let result: PublicationSchedule;
+      switch (pending.kind) {
+        case 'schedule': result = await DraftManager.schedulePublicationDraft({...pending.input,signal:controller.signal}); break;
+        case 'reschedule': result = await DraftManager.reschedulePublication({...pending.input,signal:controller.signal}); break;
+        case 'cancel': result = await DraftManager.cancelPublicationSchedule({...pending.input,signal:controller.signal}); break;
+        case 'retry': result = await DraftManager.retryPublicationSchedule({...pending.input,signal:controller.signal}); break;
+      }
+      if (!current()) return;
+      scheduleActionRef.current = null; setPendingScheduleAction(null); setScheduleEditor(null);
+      // An action invalidates all older list/continuation reads without losing the current page on errors.
+      scheduleReadRef.current++; scheduleListAbortRef.current?.abort(); scheduleMoreAbortRef.current?.abort();
+      scheduleMoreAbortRef.current = null;
+      setScheduleLoading(false); setScheduleLoadingMore(false);
+      setSchedules(existing=>existing.some(entry=>entry.id===result.id)
+        ? existing.map(entry=>entry.id===result.id&&entry.revision<=result.revision?result:entry) : [result,...existing]);
+    } catch (error) {
+      if (!current()) return;
+      if (scheduleOutcomeKnown(error)) { scheduleActionRef.current = null; setPendingScheduleAction(null); }
+      setScheduleActionError(scheduleErrorText(error));
+    } finally {
+      if (current()) { scheduleActionBusyRef.current = false; setScheduleBusy(false); }
+    }
+  },[user?.id]);
+
+  const openScheduleEditor = useCallback((target:{draft:PublicationDraft}|{schedule:PublicationSchedule})=>{
+    if (scheduleActionRef.current || scheduleActionBusyRef.current) return;
+    setScheduleEditor(target); setScheduleActionError(null);
+    if ('schedule' in target) {
+      setScheduleLocal(target.schedule.localScheduledAt); setScheduleZone(target.schedule.timezoneName);
+      setScheduleOffset(target.schedule.utcOffsetMinutes === null ? '' : String(target.schedule.utcOffsetMinutes));
+    } else {
+      setScheduleLocal(''); setScheduleOffset('');
+      setScheduleZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+    }
+  },[]);
+
+  const confirmSchedule = useCallback(()=>{
+    if (!scheduleEditor || scheduleActionRef.current || scheduleActionBusyRef.current) return;
+    // Blank means no explicit offset; invalid numeric text is rejected by the service.
+    const time = {localScheduledAt:scheduleLocal,timezoneName:scheduleZone,
+      utcOffsetMinutes:scheduleOffset.trim()===''?null:/^-?\d+$/.test(scheduleOffset.trim())?Number(scheduleOffset):Number.NaN};
+    const clientCommandId = randomUUID();
+    const action:ScheduleAction = 'draft' in scheduleEditor
+      ? {kind:'schedule',input:{draftId:scheduleEditor.draft.id,expectedRevision:scheduleEditor.draft.revision,clientCommandId,...time}}
+      : {kind:'reschedule',input:{scheduleId:scheduleEditor.schedule.id,expectedRevision:scheduleEditor.schedule.revision,clientCommandId,...time}};
+    void runScheduleAction(action);
+  },[scheduleEditor,scheduleLocal,scheduleZone,scheduleOffset,runScheduleAction]);
 
   const loadContent = useCallback(async () => {
     const generation = contentLoadRef.current + 1;
@@ -362,14 +577,16 @@ export default function MyContentScreen() {
   useFocusEffect(useCallback(() => {
     void loadContent();
     void loadDrafts();
+    if (scheduleTabRef.current === 'scheduled') void loadSchedules();
     return () => {
       contentLoadRef.current += 1;
       draftLoadRef.current += 1;
       draftInitialLoadGenerationRef.current=null;
       draftRestoreRef.current += 1;
       draftRestoreDraftIdRef.current=null;
+      invalidateScheduleRequests();
     };
-  }, [loadContent,loadDrafts]));
+  }, [loadContent,loadDrafts,loadSchedules,invalidateScheduleRequests]));
 
   const myVideos = ownVideos;
 
@@ -730,9 +947,15 @@ export default function MyContentScreen() {
         <Text style={styles.draftMeta}>{item.kind==='carousel'?'Carrusel':'Foto'} · revisión {item.revision}</Text>
       </View>
       <Pressable onPress={()=>void restoreCloudDraft(item.id)} style={styles.draftAction}><Text style={styles.draftActionText}>Restaurar</Text></Pressable>
+      {item.state==='draft'&&(item.kind==='photo'||item.kind==='carousel') ? (
+        <Pressable onPress={()=>openScheduleEditor({draft:item})} style={styles.draftAction}
+          disabled={!!pendingScheduleAction||scheduleBusy} accessibilityRole="button" accessibilityLabel="Programar borrador">
+          <Text style={styles.draftActionText}>Programar</Text>
+        </Pressable>
+      ) : null}
       <Pressable onPress={()=>deleteCloudDraft(item)} style={styles.draftDelete}><MaterialIcons name="delete-outline" size={20} color={Colors.error}/></Pressable>
     </View>
-  ),[deleteCloudDraft,restoreCloudDraft]);
+  ),[deleteCloudDraft,restoreCloudDraft,openScheduleEditor,pendingScheduleAction,scheduleBusy]);
 
   const renderItem = useCallback(({ item }: { item: VideoWithMeta }) => (
     <ContentItem video={item} onPress={handleItemPress} onLongPress={handleItemLongPress} />
@@ -786,7 +1009,7 @@ export default function MyContentScreen() {
         style={styles.tabsScroll}
         contentContainerStyle={styles.tabsContent}
         onContentSizeChange={()=>{
-          if(activeTab==='drafts') tabsScrollRef.current?.scrollToEnd?.({animated:false});
+          if(activeTab==='drafts'||activeTab==='scheduled') tabsScrollRef.current?.scrollToEnd?.({animated:false});
         }}
       >
         {TAB_CONFIG.map(t => {
@@ -794,6 +1017,7 @@ export default function MyContentScreen() {
             : t.key === 'reels' ? myReels.length
             : t.key === 'saved' ? savedVideos.length
             : t.key === 'drafts' ? cloudDrafts.length
+            : t.key === 'scheduled' ? schedules.length
             : 0;
           return (
             <Pressable
@@ -847,8 +1071,97 @@ export default function MyContentScreen() {
         </View>
       ) : null}
 
+      {(activeTab==='drafts'||activeTab==='scheduled')&&scheduleActionError ? (
+        <View style={styles.draftError} accessibilityRole="alert">
+          <Text style={styles.draftErrorTitle}>{scheduleActionError}</Text>
+          {pendingScheduleAction ? <Pressable accessibilityRole="button" accessibilityLabel="Reintentar acción de programación"
+            disabled={scheduleBusy} onPress={()=>void runScheduleAction(pendingScheduleAction)} style={styles.draftRetry}>
+            <Text style={styles.draftRetryText}>Reintentar acción</Text>
+          </Pressable> : null}
+        </View>
+      ) : null}
+      {scheduleBusy ? <ActivityIndicator color={Colors.primary} accessibilityLabel="Guardando programación"/> : null}
+      {scheduleEditor&&(activeTab==='drafts'||activeTab==='scheduled') ? (
+        <View style={styles.draftEditor}>
+          <Text style={styles.draftEditorTitle}>{'draft' in scheduleEditor?'Programar borrador':'Cambiar programación'}</Text>
+          <Text style={styles.draftMeta}>Fecha local: AAAA-MM-DDTHH:mm. El servidor valida la hora y el plazo.</Text>
+          <TextInput accessibilityLabel="Fecha y hora local" placeholder="2027-01-01T12:00" value={scheduleLocal}
+            editable={!pendingScheduleAction&&!scheduleBusy} onChangeText={setScheduleLocal} style={styles.scheduleInput}/>
+          <TextInput accessibilityLabel="Zona horaria IANA" placeholder="America/New_York" value={scheduleZone}
+            autoCapitalize="none" editable={!pendingScheduleAction&&!scheduleBusy} onChangeText={setScheduleZone} style={styles.scheduleInput}/>
+          <Text style={styles.draftMeta}>Desfase opcional en minutos (p. ej. -300). Necesario si la hora local ocurre dos veces.</Text>
+          <TextInput accessibilityLabel="Desfase UTC en minutos" placeholder="Opcional: -300" value={scheduleOffset}
+            editable={!pendingScheduleAction&&!scheduleBusy} onChangeText={setScheduleOffset} style={styles.scheduleInput}/>
+          <View style={styles.draftEditorActions}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Confirmar programación" disabled={!!pendingScheduleAction||scheduleBusy}
+              onPress={confirmSchedule} style={styles.draftPublish}><Text style={styles.draftPublishText}>Confirmar</Text></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Cerrar editor de programación" disabled={!!pendingScheduleAction||scheduleBusy}
+              onPress={()=>setScheduleEditor(null)} style={styles.draftAction}><Text style={styles.draftActionText}>Cerrar</Text></Pressable>
+          </View>
+        </View>
+      ) : null}
+
       {/* Content grid */}
-      {isDeleting || (activeTab==='drafts'
+      {activeTab==='scheduled' ? (
+        <View style={{flex:1}}>
+          <View style={styles.draftSectionHeader}>
+            <Text style={styles.draftSectionTitle}>Publicaciones programadas</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Actualizar programados" onPress={()=>void loadSchedules()} style={styles.draftAction}>
+              <Text style={styles.draftActionText}>Actualizar</Text>
+            </Pressable>
+          </View>
+          {scheduleLoadError ? <View style={styles.draftError} accessibilityRole="alert">
+            <Text style={styles.draftErrorTitle}>{scheduleLoadError}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Reintentar cargar programados" onPress={()=>void loadSchedules()} style={styles.draftRetry}>
+              <Text style={styles.draftRetryText}>Reintentar</Text>
+            </Pressable>
+          </View> : null}
+          {scheduleLoading ? <ActivityIndicator color={Colors.primary} accessibilityLabel="Cargando programados"/> : null}
+          {!scheduleLoading&&!scheduleLoadError&&schedules.length===0 ? <View style={styles.centered}>
+            <Text style={styles.emptyTitle}>Sin publicaciones programadas</Text>
+          </View> : null}
+          <FlatList data={schedules} keyExtractor={entry=>entry.id}
+            refreshing={scheduleLoading} onRefresh={()=>void loadSchedules()}
+            contentContainerStyle={{padding:Spacing.md,gap:Spacing.sm,paddingBottom:80+insets.bottom}}
+            renderItem={({item:entry})=>{
+              const draftId=entry.draftId.replace(/-/g,'').toUpperCase();
+              const reference=`Borrador ${draftId.slice(0,8)}…${draftId.slice(-4)}`;
+              const failure=(entry.state==='retryable_failed'||entry.state==='terminal_failed')&&entry.lastErrorCode
+                ? `Causa: ${Object.hasOwn(scheduleFailureLabels,entry.lastErrorCode)
+                  ? scheduleFailureLabels[entry.lastErrorCode] : 'No se pudo completar la publicación.'}` : null;
+              return (<View style={styles.draftEditor}>
+              <Text accessibilityRole="header" style={styles.draftTitle}>{reference}</Text>
+              <Text style={styles.draftTitle}>{scheduleStateLabels[entry.state]}</Text>
+              {failure ? <Text accessibilityLabel={failure} style={styles.draftMeta}>{failure}</Text> : null}
+              <Text style={styles.draftMeta}>{entry.localScheduledAt} · {entry.timezoneName}</Text>
+              <Text style={styles.draftMeta}>UTC: {entry.scheduledFor} · Intentos {entry.attemptCount}/{entry.maxAttempts}</Text>
+              {entry.state==='retryable_failed' ? <Text style={styles.draftMeta}>Próximo intento: {entry.nextAttemptAt}</Text> : null}
+              <View style={styles.draftEditorActions}>
+                {(entry.state==='scheduled'||entry.state==='retryable_failed'&&entry.retryable&&entry.attemptCount<entry.maxAttempts) ? (
+                  <Pressable accessibilityRole="button" accessibilityLabel={`Cambiar programación: ${reference}`} disabled={!!pendingScheduleAction||scheduleBusy}
+                    onPress={()=>openScheduleEditor({schedule:entry})} style={styles.draftAction}><Text style={styles.draftActionText}>Cambiar hora</Text></Pressable>
+                ) : null}
+                {entry.state!=='published'&&entry.state!=='cancelled' ? (
+                  <Pressable accessibilityRole="button" accessibilityLabel={`Cancelar publicación programada: ${reference}`} disabled={!!pendingScheduleAction||scheduleBusy}
+                    onPress={()=>void runScheduleAction({kind:'cancel',input:{scheduleId:entry.id,expectedRevision:entry.revision,clientCommandId:randomUUID()}})}
+                    style={styles.draftAction}><Text style={styles.draftActionText}>Cancelar</Text></Pressable>
+                ) : null}
+                {entry.state==='retryable_failed'&&entry.retryable===true&&entry.attemptCount<entry.maxAttempts ? (
+                  <Pressable accessibilityRole="button" accessibilityLabel={`Reintentar publicación programada: ${reference}`} disabled={!!pendingScheduleAction||scheduleBusy}
+                    onPress={()=>void runScheduleAction({kind:'retry',input:{scheduleId:entry.id,expectedRevision:entry.revision,clientCommandId:randomUUID()}})}
+                    style={styles.draftAction}><Text style={styles.draftActionText}>Reintentar publicación</Text></Pressable>
+                ) : null}
+              </View>
+            </View>);}}
+            ListFooterComponent={<View>
+              {scheduleMoreError ? <Text accessibilityRole="alert" style={styles.draftErrorTitle}>{scheduleMoreError}</Text> : null}
+              {scheduleCursor ? <Pressable accessibilityRole="button" accessibilityLabel="Cargar más programados"
+                disabled={scheduleLoading||scheduleLoadingMore} onPress={()=>void loadMoreSchedules()} style={styles.draftAction}>
+                {scheduleLoadingMore ? <ActivityIndicator color={Colors.primary}/> : <Text style={styles.draftActionText}>{scheduleMoreError?'Reintentar carga':'Cargar más'}</Text>}
+              </Pressable> : null}
+            </View>}/>
+        </View>
+      ) : isDeleting || (activeTab==='drafts'
         ? isLoadingDrafts&&cloudDrafts.length===0
         : isLoadingContent) ? (
         <View style={styles.centered}>
@@ -1006,6 +1319,7 @@ export default function MyContentScreen() {
 }
 
 const styles = StyleSheet.create({
+  scheduleInput: { minHeight:44,color:Colors.textPrimary,backgroundColor:Colors.surfaceElevated,borderRadius:Radius.md,padding:Spacing.sm },
   container: { flex: 1, backgroundColor: Colors.bg },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.md },
   loadingText: { color: Colors.textSubtle, fontSize: FontSize.sm },

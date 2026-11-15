@@ -29,6 +29,10 @@ import {
   type PublicationDraftPage,
 } from '@/services/publicationDraftService';
 import type { CanonicalUploadSource } from '@/services/mediaService';
+import type {
+  SchedulePublicationDraftInput, ReschedulePublicationInput, PublicationScheduleCommand,
+  ListPublicationSchedulesInput, PublicationSchedulePage, PublicationSchedule,
+} from '@/services/publicationScheduleService';
 
 export type DraftStatus =
   | 'recording'    // being captured
@@ -70,6 +74,27 @@ interface PreparedCloudDraftCommand {
 }
 
 class DraftManagerImpl {
+  // Keep B1 recovery/list imports independent of the optional scheduling surface.
+  async schedulePublicationDraft(input: SchedulePublicationDraftInput): Promise<PublicationSchedule> {
+    return (await import('@/services/publicationScheduleService')).schedulePublicationDraft(input);
+  }
+
+  async listPublicationSchedules(input: ListPublicationSchedulesInput = {}): Promise<PublicationSchedulePage> {
+    return (await import('@/services/publicationScheduleService')).listPublicationSchedules(input);
+  }
+
+  async reschedulePublication(input: ReschedulePublicationInput): Promise<PublicationSchedule> {
+    return (await import('@/services/publicationScheduleService')).reschedulePublication(input);
+  }
+
+  async cancelPublicationSchedule(input: PublicationScheduleCommand): Promise<PublicationSchedule> {
+    return (await import('@/services/publicationScheduleService')).cancelPublicationSchedule(input);
+  }
+
+  async retryPublicationSchedule(input: PublicationScheduleCommand): Promise<PublicationSchedule> {
+    return (await import('@/services/publicationScheduleService')).retryPublicationSchedule(input);
+  }
+
   private _drafts: Draft[] = [];
   private _loaded  = false;
   private _preparedCloudDrafts = new Map<string,PreparedCloudDraftCommand>();

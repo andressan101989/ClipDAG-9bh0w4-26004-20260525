@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
@@ -445,7 +446,9 @@ test('canonical workflow exposes Admin plan but mutates Cloudflare only after HI
   assert.match(workflow, /triggers deploy/);
   assert.match(workflow, /Purge exact Admin production cache prefix/);
   assert.match(workflow, /Verify exact Admin production version, routes, and HTTP matrix/);
-  assert.match(workflow, /Recover previous Admin production version and routes/);
+  assert.match(workflow, /Recover previous Admin production version/);
+  assert.match(workflow, /Restore previous Admin production routes/);
+  assert.match(workflow, /Purge recovered Admin production cache/);
   assert.doesNotMatch(workflow, /wrangler@4\.135\.0 deploy(?:\s|\\)/);
   assert.ok(
     workflow.indexOf('- name: Upload one immutable Admin version')
@@ -454,14 +457,14 @@ test('canonical workflow exposes Admin plan but mutates Cloudflare only after HI
   );
   const finalizeSection = workflow.slice(
     workflow.indexOf('- name: Verify exact Admin production version, routes, and HTTP matrix'),
-    workflow.indexOf('- name: Recover previous Admin production version and routes'),
+    workflow.indexOf('- name: Recover previous Admin production version'),
   );
   const purgeSection = workflow.slice(
     workflow.indexOf('- name: Purge exact Admin production cache prefix'),
     workflow.indexOf('- name: Verify exact Admin production version, routes, and HTTP matrix'),
   );
   const recoverySection = workflow.slice(
-    workflow.indexOf('- name: Recover previous Admin production version and routes'),
+    workflow.indexOf('- name: Recover previous Admin production version'),
     workflow.indexOf('- name: Require complete protected release success'),
   );
   const previewSection = workflow.slice(
@@ -597,7 +600,7 @@ test('canonical Admin recovery is forward-only, source-bound, and never invokes 
   assert.doesNotMatch(apply, /admin_recovery/);
   assert.doesNotMatch(functions, /admin_recovery/);
   assert.match(workflow, /admin_recovery[\s\S]*Capture Admin recovery read-only production post-state/);
-  assert.match(workflow, /Recover previous Admin production version and routes[\s\S]*mode == 'admin_recovery'/);
+  assert.match(workflow, /Recover previous Admin production version[\s\S]*mode == 'admin_recovery'/);
 });
 
 test('Admin recovery accepts only a verified one-hop postcheck recovery and downloads both evidence levels', () => {

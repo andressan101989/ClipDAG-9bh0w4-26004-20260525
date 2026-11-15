@@ -1,9 +1,18 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, posix, relative, resolve } from 'node:path';
+import { closeSync, constants as fsConstants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { types } from 'node:util';
+import { buildPrivateRuntimeClosure } from './nelyon-private-runtime-closure.mjs';
+import {
+  readTrustedB2HistoricalRuntimeClosure,
+  readTrustedB2RecoveryProvenance,
+  readTrustedB2ChainProvenance,
+} from './nelyon-b2-recovery-provenance.mjs';
+import { createReleaseAuthorityContext, publicAuthorityReceipt, assertAuthorityReceiptMatch } from './nelyon-release-authority-context.mjs';
+import { assertB2CatalogSecurityCoverage } from './nelyon-b2-source-parity.mjs';
 import {
   advisorExceptionsForPhase,
   F5_SECURITY_ADVISOR_RELATION_ADDITIONS,
@@ -12,6 +21,7 @@ import {
   normalizeCronCommand,
   projectCronBaselineItems,
   projectProductionBaselineFinance,
+  selectRecentCompletedBackup,
   validateWebControlCentersB1InstalledState,
   verifyAdminRecoveryInfrastructurePostState,
   verifyProductionAdminRecoverySnapshot,
@@ -23,6 +33,23 @@ import {
 } from './nelyon-production-snapshot-adapter.mjs';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
+const GIT_CHILD_ENV_KEYS = Object.freeze([
+  'CI', 'COMSPEC', 'GIT_OPTIONAL_LOCKS', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'LANG', 'LC_ALL',
+  'PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'SystemRoot', 'TEMP', 'TMP', 'TMPDIR', 'USERPROFILE',
+]);
+
+function gitChildEnvironment(environment = process.env) {
+  const result = Object.create(null);
+  for (const key of GIT_CHILD_ENV_KEYS) {
+    const descriptor = Object.getOwnPropertyDescriptor(environment, key);
+    if (descriptor && Object.hasOwn(descriptor, 'value') && typeof descriptor.value === 'string') {
+      result[key] = descriptor.value;
+    }
+  }
+  result.GIT_TERMINAL_PROMPT = '0';
+  return result;
+}
+
 export const F3_FINANCE_AUTHORITY_TRANSITION = Object.freeze({
   "id": "creator-premium-f3-foundation-v1",
   "phase": "foundation_only",
@@ -2395,6 +2422,490 @@ export function loadPolicy(filePath) {
   return policy;
 }
 
+const B2_PRODUCTIVE_PATHS = Object.freeze([
+  'supabase/config.toml',
+  'supabase/functions/_shared/r2.ts',
+  'supabase/functions/process-scheduled-publications/index.ts',
+  'supabase/functions/process-scheduled-publications/worker.ts',
+  'supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql',
+]);
+const B2_FUNCTION_NAMES = Object.freeze(['ai-handoff', 'cleanup-stale-media-uploads', 'content-safety-scan',
+  'create-media-upload', 'finalize-media-upload', 'get-media-url',
+  'process-scheduled-publications', 'video-semantic-index']);
+const B2_HEX64 = /^[0-9a-f]{64}$/;
+const b2Matches = (value, pattern) => typeof value === 'string' && pattern.test(value);
+const B2_UNSAFE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+const b2TypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+const b2ByteAccessor = key => Object.getOwnPropertyDescriptor(b2TypedArrayPrototype, key).get;
+const b2Buffer = b2ByteAccessor('buffer');
+const b2Offset = b2ByteAccessor('byteOffset');
+const b2Length = b2ByteAccessor('byteLength');
+
+function b2Reject() {
+  const error = new Error('B2 descriptor rejected');
+  error.code = 'B2_DESCRIPTOR_INVALID';
+  error.stack = 'Error: B2 descriptor rejected';
+  throw Object.freeze(error);
+}
+
+function b2Exact(value, keys) {
+  if (!value || typeof value !== 'object' || types.isProxy(value) || Array.isArray(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) b2Reject();
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Reflect.ownKeys(descriptors).length !== keys.length
+    || Reflect.ownKeys(descriptors).some(key => typeof key !== 'string' || !keys.includes(key)
+      || B2_UNSAFE_KEYS.has(key) || !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], 'value'))) b2Reject();
+}
+
+function b2Bytes(value, maxBytes) {
+  let bytes;
+  if (typeof value === 'string') {
+    if (value.length > maxBytes) b2Reject();
+    bytes = Buffer.from(value, 'utf8');
+  } else {
+    if (types.isProxy(value) || !types.isUint8Array(value)) b2Reject();
+    const length = Reflect.apply(b2Length, value, []);
+    if (length > maxBytes) b2Reject();
+    bytes = Buffer.from(new Uint8Array(Reflect.apply(b2Buffer, value, []), Reflect.apply(b2Offset, value, []), length));
+  }
+  if (bytes.length === 0 || bytes.length > maxBytes) b2Reject();
+  const text = bytes.toString('utf8');
+  if (!Buffer.from(text, 'utf8').equals(bytes) || (typeof value === 'string' && text !== value)) b2Reject();
+  return bytes;
+}
+
+function b2Json(text) {
+  const value = JSON.parse(text);
+  const stack = [];
+  for (const match of text.matchAll(/"(?:\\[\s\S]|[^"\\])*"|[{}\[\],]/gu)) {
+    const token = match[0];
+    if (token === '{') stack.push({ keys: new Set(), keyNext: true });
+    else if (token === '[') stack.push(null);
+    else if (token === '}' || token === ']') stack.pop();
+    else if (token === ',') { if (stack.at(-1)) stack.at(-1).keyNext = true; }
+    else if (stack.at(-1)?.keyNext) {
+      const object = stack.at(-1);
+      const key = JSON.parse(token);
+      if (object.keys.has(key) || B2_UNSAFE_KEYS.has(key)) b2Reject();
+      object.keys.add(key); object.keyNext = false;
+    }
+  }
+  let nodes = 0;
+  function freeze(item, depth = 0) {
+    if (++nodes > 4096 || depth > 16) b2Reject();
+    if (typeof item === 'string' && (item.normalize('NFC') !== item || /[\u0000-\u001f\u007f-\u009f]/u.test(item))) b2Reject();
+    if (typeof item === 'number' && !Number.isSafeInteger(item)) b2Reject();
+    if (item && typeof item === 'object') {
+      for (const key of Object.keys(item)) freeze(item[key], depth + 1);
+      Object.freeze(item);
+    }
+  }
+  freeze(value);
+  return value;
+}
+
+/** Pure exact-byte public boundary. An approved descriptor alone grants no authority. */
+export function parseB2ReleaseDescriptor(descriptorBytes, expectedDescriptorSha256) {
+  try {
+    const bytes = b2Bytes(descriptorBytes, 128 * 1024);
+    if (typeof expectedDescriptorSha256 !== 'string' || !B2_HEX64.test(expectedDescriptorSha256)
+      || sha256Hex(bytes) !== expectedDescriptorSha256) b2Reject();
+    const descriptor = b2Json(bytes.toString('utf8'));
+    b2Exact(descriptor, ['schema_version', 'contract', 'public_contract_sha256', 'private_authority']);
+    const c = descriptor.contract;
+    b2Exact(c, ['id', 'state', 'release_ready', 'from_phase', 'to_phase', 'baseline_sha', 'reviewed_source_sha',
+      'integration_base_sha', 'approved_sha_ancestry', 'productive_changes', 'functions', 'function_inventory',
+      'managed_scope_transition', 'cron_activation', 'finance_invariants', 'private_authority_max_bytes',
+      'requires_separate_baseline_promotion']);
+    const approved = c.state === 'approved';
+    if (descriptor.schema_version !== 1 || !['candidate', 'approved'].includes(c.state)
+      || c.release_ready !== approved || c.id !== 'web-control-centers-b2-scheduled-publishing-v1'
+      || c.from_phase !== 'web_control_centers_b1_qa_c3' || c.to_phase !== 'web-control-centers-b2'
+      || !b2Matches(c.baseline_sha, SHA_PATTERN)
+      || c.approved_sha_ancestry !== 'verified_integration_base'
+      || c.cron_activation !== false || c.requires_separate_baseline_promotion !== true
+      || c.private_authority_max_bytes !== 2 * 1024 * 1024
+      || !b2Matches(descriptor.public_contract_sha256, B2_HEX64)
+      || sha256Hex(canonicalJson(c)) !== descriptor.public_contract_sha256) b2Reject();
+    for (const key of ['reviewed_source_sha', 'integration_base_sha']) {
+      if (approved ? !b2Matches(c[key], SHA_PATTERN) : c[key] !== null) b2Reject();
+    }
+    if (!Array.isArray(c.productive_changes) || c.productive_changes.length !== B2_PRODUCTIVE_PATHS.length) b2Reject();
+    c.productive_changes.forEach((item, index) => {
+      b2Exact(item, ['path', 'status', 'blob', 'sha256', 'byte_length']);
+      if (item.path !== B2_PRODUCTIVE_PATHS[index] || item.status !== (index < 2 ? 'M' : 'A')
+        || !b2Matches(item.blob, SHA_PATTERN) || !b2Matches(item.sha256, B2_HEX64)
+        || !Number.isSafeInteger(item.byte_length) || item.byte_length < 1 || item.byte_length > 2 * 1024 * 1024) b2Reject();
+    });
+    if (!Array.isArray(c.functions) || c.functions.length !== B2_FUNCTION_NAMES.length) b2Reject();
+    c.functions.forEach((item, index) => {
+      b2Exact(item, ['name', 'verify_jwt', 'source_sha256', 'config_sha256']);
+      if (item.name !== B2_FUNCTION_NAMES[index] || item.verify_jwt !== ![0, 1, 6].includes(index)) b2Reject();
+      for (const key of ['source_sha256', 'config_sha256']) {
+        if (approved ? !b2Matches(item[key], B2_HEX64) : item[key] !== null) b2Reject();
+      }
+    });
+    b2Exact(c.function_inventory, ['before', 'after']);
+    if (approved ? (!Number.isSafeInteger(c.function_inventory.before) || c.function_inventory.before < 8
+      || c.function_inventory.after !== c.function_inventory.before + 1)
+      : (c.function_inventory.before !== null || c.function_inventory.after !== null)) b2Reject();
+    b2Exact(c.managed_scope_transition, ['add', 'remove']);
+    if (canonicalJson(c.managed_scope_transition) !== canonicalJson({ add: ['process-scheduled-publications'], remove: [] })) b2Reject();
+    b2Exact(c.finance_invariants, ['platform_fee_bps', 'purchase_enabled', 'refunds_enabled', 'subscription_enabled', 'require_no_movement']);
+    if (canonicalJson(c.finance_invariants) !== canonicalJson({ platform_fee_bps: 2000, purchase_enabled: true,
+      refunds_enabled: true, subscription_enabled: true, require_no_movement: true })) b2Reject();
+    b2Exact(descriptor.private_authority, ['required', 'schema_version', 'authority_id', 'sha256']);
+    const authority = descriptor.private_authority;
+    if (authority.required !== true || authority.schema_version !== 1
+      || authority.authority_id !== 'web-control-centers-b2-release-authority-v1'
+      || (approved ? !b2Matches(authority.sha256, B2_HEX64) : authority.sha256 !== null)) b2Reject();
+    return descriptor;
+  } catch { b2Reject(); }
+}
+
+/** Validate caller-supplied Git-LF ordinary-file bytes, without checkout or filesystem access. */
+export function validateB2ReleaseDescriptorSources(options) {
+  try {
+    b2Exact(options, ['descriptorBytes', 'expectedDescriptorSha256', 'productiveFiles', 'affectedFunctions']);
+    const descriptor = parseB2ReleaseDescriptor(options.descriptorBytes, options.expectedDescriptorSha256);
+    const entries = options.productiveFiles;
+    if (types.isProxy(entries) || !Array.isArray(entries) || entries.length !== 5
+      || types.isProxy(options.affectedFunctions) || !Array.isArray(options.affectedFunctions)) b2Reject();
+    // Copy arrays through data descriptors only, so supplied accessors cannot execute.
+    function dataArray(value) {
+      const properties = Object.getOwnPropertyDescriptors(value);
+      if (Reflect.ownKeys(properties).length !== value.length + 1) b2Reject();
+      return Array.from({ length: value.length }, (_, i) => {
+        if (!Object.hasOwn(properties, i) || !Object.hasOwn(properties[i], 'value')) b2Reject();
+        return properties[i].value;
+      });
+    }
+    const actualNames = dataArray(options.affectedFunctions);
+    if (actualNames.some(name => typeof name !== 'string')
+      || canonicalJson([...actualNames].sort()) !== canonicalJson(B2_FUNCTION_NAMES)) b2Reject();
+    const files = dataArray(entries);
+    const seen = new Set();
+    for (const entry of files) {
+      b2Exact(entry, ['path', 'status', 'type', 'bytes']);
+      const expected = descriptor.contract.productive_changes.find(item => item.path === entry.path);
+      if (!expected || seen.has(entry.path) || entry.type !== 'file' || entry.status !== expected.status) b2Reject();
+      seen.add(entry.path);
+      const bytes = b2Bytes(entry.bytes, 2 * 1024 * 1024);
+      if (bytes.includes(13) || bytes.length !== expected.byte_length || sha256Hex(bytes) !== expected.sha256
+        || createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes])).digest('hex') !== expected.blob) b2Reject();
+      if (entry.path === 'supabase/config.toml') {
+        const config = parseFunctionConfig(bytes.toString('utf8'));
+        for (const fn of descriptor.contract.functions) {
+          if (config[fn.name]?.verify_jwt !== fn.verify_jwt) b2Reject();
+        }
+      }
+    }
+    return descriptor;
+  } catch { b2Reject(); }
+}
+
+const B2_DESCRIPTOR_PATH = '.github/nelyon-web-control-centers-b2-release-descriptor.json';
+const isB2Delta = changes => changes?.some(item => item.path === B2_PRODUCTIVE_PATHS[4]
+  || item.path?.startsWith('supabase/functions/process-scheduled-publications/'));
+
+function b2PublicBinding(descriptor, descriptorSha256) {
+  return { contract: descriptor.contract, descriptorSha256,
+    publicContractSha256: descriptor.public_contract_sha256,
+    expectedPrivateAuthoritySha256: descriptor.private_authority.sha256,
+    privateAuthorityRequired: true };
+}
+
+// Retained B2 data is built field-by-field. Unknown fields, executable object
+// properties and object-valued scalar fields are rejected at every depth.
+function b2Projection(value, schema) {
+  if (typeof schema === 'function') return schema(value);
+  if (Array.isArray(schema)) {
+    if (types.isProxy(value) || !Array.isArray(value) || value.length > 50_000) b2Reject();
+    const properties = Object.getOwnPropertyDescriptors(value);
+    if (Reflect.ownKeys(properties).length !== value.length + 1) b2Reject();
+    return Array.from({ length: value.length }, (_, i) => {
+      if (!Object.hasOwn(properties, i) || !Object.hasOwn(properties[i], 'value')) b2Reject();
+      return b2Projection(properties[i].value, schema[0]);
+    });
+  }
+  const keys = Object.keys(schema).map(key => key.replace(/\?$/, ''));
+  const required = Object.keys(schema).filter(key => !key.endsWith('?'));
+  if (!value || typeof value !== 'object' || types.isProxy(value)) b2Reject();
+  const present = Reflect.ownKeys(value);
+  b2Exact(value, present);
+  if (required.some(key => !present.includes(key)) || present.some(key => !keys.includes(key))) b2Reject();
+  return Object.fromEntries(Object.entries(schema).filter(([key]) => Object.hasOwn(value, key.replace(/\?$/, '')))
+    .map(([key, child]) => { const name = key.replace(/\?$/, ''); return [name, b2Projection(value[name], child)]; }));
+}
+const b2String = value => {
+  if (typeof value !== 'string' || value.length > 128 * 1024 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value)) b2Reject();
+  return value;
+};
+const b2Boolean = value => { if (typeof value !== 'boolean') b2Reject(); return value; };
+const b2Integer = value => { if (!Number.isSafeInteger(value)) b2Reject(); return value; };
+const b2NullableString = value => value === null ? null : b2String(value);
+const b2FunctionName = value => { if (!B2_FUNCTION_NAMES.includes(value)) b2Reject(); return value; };
+const B2_CHANGE_SCHEMA = { path: b2String, status: b2String, 'fileType?': b2String };
+const B2_MIGRATION_SCHEMA = { path: b2String, version: b2String, blob: b2String, sha256: b2String, byte_length: b2Integer };
+const B2_COMPILER_SCHEMA = { path: b2String, sha256: b2String, snapshot_adapter_path: b2String, snapshot_adapter_sha256: b2String };
+const B2_RUNTIME_CLOSURE_PATHS = Object.freeze([
+  '.github/workflows/nelyon-production-release.yml',
+  'package-lock.json',
+  'package.json',
+  'scripts/nelyon-admin-production-release.mjs',
+  'scripts/nelyon-b2-recovery-provenance.mjs',
+  'scripts/nelyon-b2-source-parity.mjs',
+  'scripts/nelyon-private-authority-cli.mjs',
+  'scripts/nelyon-private-authority-provider.mjs',
+  'scripts/nelyon-private-authority-runtime.mjs',
+  'scripts/nelyon-private-authority.mjs',
+  'scripts/nelyon-private-runtime-closure.mjs',
+  'scripts/nelyon-production-release.mjs',
+  'scripts/nelyon-production-snapshot-adapter.mjs',
+  'scripts/nelyon-release-authority-context.mjs',
+  'shared/web-deployment/publicSupabaseBuildEnv.mjs',
+]);
+const b2ClosureCanonical = value => {
+  if (Array.isArray(value)) return `[${value.map(b2ClosureCanonical).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${b2ClosureCanonical(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+};
+function b2RuntimeClosure(value) {
+  const projected = b2Projection(value, {
+    schema_version: b2Integer,
+    identity: b2String,
+    algorithm: b2String,
+    files: [{ path: b2String, sha256: b2String }],
+    runtime: { node: b2String, setup_node_action: b2String },
+    dependencies: [{ name: b2String, version: b2String, integrity: b2String, lock_path: b2String }],
+    operation_tools: { wrangler: b2String, supabase_setup_action: b2String },
+    closure_sha256: b2String,
+  });
+  const { closure_sha256: closureSha256, ...withoutDigest } = projected;
+  if (projected.schema_version !== 1 || projected.identity !== 'nelyon-b2-private-release-runtime-v1'
+    || projected.algorithm !== 'sha256' || !b2Matches(closureSha256, B2_HEX64)
+    || canonicalJson(projected.files.map(item => item.path)) !== canonicalJson(B2_RUNTIME_CLOSURE_PATHS)
+    || projected.files.some(item => !b2Matches(item.sha256, B2_HEX64))
+    || projected.runtime.node !== '24.21.0'
+    || projected.runtime.setup_node_action !== '949feb2413d6458794dcd2491c4babbbce0c15c1'
+    || canonicalJson(projected.dependencies) !== canonicalJson([{
+      name: 'aws4fetch', version: '1.0.20',
+      integrity: 'sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==',
+      lock_path: 'node_modules/aws4fetch',
+    }])
+    || projected.operation_tools.wrangler !== '4.135.0'
+    || projected.operation_tools.supabase_setup_action !== '45a513f8c64c0bc8e0e3dfe572b5c95be85f6359'
+    || sha256Hex(Buffer.from(b2ClosureCanonical(withoutDigest), 'utf8')) !== closureSha256) b2Reject();
+  return projected;
+}
+function b2AssertCompilerClosure(compiler, runtimeClosure) {
+  const files = new Map(runtimeClosure.files.map(item => [item.path, item.sha256]));
+  if (compiler.path !== 'scripts/nelyon-production-release.mjs'
+    || compiler.snapshot_adapter_path !== 'scripts/nelyon-production-snapshot-adapter.mjs'
+    || compiler.sha256 !== files.get(compiler.path)
+    || compiler.snapshot_adapter_sha256 !== files.get(compiler.snapshot_adapter_path)) b2Reject();
+}
+const B2_CONTRACT_SCHEMA = { name: b2String, entrypoint: b2String, import_map: b2NullableString,
+  verify_jwt: b2Boolean, source_changed: b2Boolean, source_sha256: b2String,
+  source_files: [{ path: b2String, sha256: b2String }] };
+const B2_FINDING_MESSAGES = Object.freeze({
+  FINANCE_RESOURCE: 'financial or Stripe resource', WEBHOOK_RESOURCE: 'webhook resource', BDAG_RESOURCE: 'BDAG resource',
+  PRIVATE_MEDIA_RESOURCE: 'private media resource', MODERATION_RESOURCE: 'moderation resource', AUTH_RESOURCE: 'authentication or token resource',
+  VERIFY_JWT_CHANGED: 'verify_jwt changed', VERIFY_JWT_DISABLED: 'verify_jwt is disabled', DATABASE_MIGRATION: 'production database migration',
+  ADMIN_WEB_PRODUCTION_RESOURCE: 'Admin Web production bundle or deployment authority changed', GATE_AUTHORITY_CHANGE: 'release authority changed',
+  FUNCTION_SOURCE_MISSING: 'managed function source is missing', UNRESOLVED_IMPORT: 'resolved dependency is absent from graph',
+  FLOATING_DEPENDENCY: 'dependency is not immutably pinned', BASELINE_RESOURCE_UNREPRODUCIBLE: 'verified baseline marks this resource unreproducible',
+});
+function b2Finding(value) {
+  const item = b2Projection(value, { severity: b2String, code: b2String, path: b2NullableString,
+    resource: b2NullableString, message: b2String, 'specifier?': b2String });
+  if (!Object.hasOwn(B2_FINDING_MESSAGES, item.code) || !['HIGH', 'BLOCKING'].includes(item.severity)
+    || ![null, ...B2_FUNCTION_NAMES, 'database', 'admin-web', 'release-gate'].includes(item.resource)
+    || (item.path !== null && (!/^(?:supabase|scripts|apps|shared|assets|\.github)\/[A-Za-z0-9_./()[\]@-]+\.[A-Za-z0-9]+$/.test(item.path)
+      || item.path.split('/').includes('..')))) b2Reject();
+  // Diagnostic paths are untrusted locator text even when syntactically valid.
+  // Keep exact paths only in the independently bound public resource contracts.
+  // Never retain diagnostic path/specifier values or free-form message text.
+  return { severity: item.severity, code: item.code, path: null, resource: item.resource,
+    message: B2_FINDING_MESSAGES[item.code] };
+}
+const B2_RISK_SCHEMA = { level: b2String, findings: [b2Finding] };
+function projectB2EvidenceParts(value) {
+  const projected = b2Projection(value, {
+    gitState: { baselineSha: b2String, approvedSha: b2String, originMainSha: b2String, 'remote?': b2String, changes: [B2_CHANGE_SCHEMA] },
+    classified: Object.fromEntries(['all', 'config', 'functions', 'governance', 'migrations', 'other', 'productive', 'shared'].map(key => [key, [B2_CHANGE_SCHEMA]])),
+    migrations: [B2_MIGRATION_SCHEMA], functionContracts: [B2_CONTRACT_SCHEMA], affectedFunctions: [b2String],
+    risk: B2_RISK_SCHEMA, reproducibility: { 'allowed?': b2Boolean, 'blockedFunctions?': [b2FunctionName], findings: [b2Finding] },
+    runtimeClosure: b2RuntimeClosure, compiler: B2_COMPILER_SCHEMA, generatedAt: b2String,
+  });
+  // Repository identity is already public in the request. A raw Git remote URL
+  // is not needed in retained evidence and may carry credentials or locators.
+  delete projected.gitState.remote;
+  return projected;
+}
+function projectB2ReleaseEvidence(value, policy) {
+  const names = [...policy.supabase.managed_functions, 'process-scheduled-publications'];
+  return b2Projection(value, { descriptorBytes: b2String, descriptorSha256: b2String, configBytes: b2String,
+    configAfter: Object.fromEntries(names.map(name => [name, { verify_jwt: b2Boolean, 'entrypoint?': b2String, 'import_map?': b2String }])),
+    ancestry: { baseline: b2Boolean, reviewedSource: b2Boolean, integrationBase: b2Boolean } });
+}
+function projectB2Manifest(manifest) {
+  const projected = b2Projection(manifest, {
+    schema_version: b2Integer, generated_at: b2String,
+    identity: { actor: b2String, triggering_actor: b2String, repository: b2String, workflow_ref: b2String, ref: b2String,
+      run_id: b2String, run_attempt: b2Integer, release_id: b2String, approved_sha: b2String, mode: b2String, scope_confirmation: b2String },
+    baseline: { state: b2String, sha: b2String, origin_main_sha: b2String },
+    delta: { files: [{ file_type: b2NullableString, path: b2String, status: b2String }], productive_change_count: b2Integer },
+    resources: { functions: [b2String], function_contracts: [B2_CONTRACT_SCHEMA], migrations: [B2_MIGRATION_SCHEMA], config_changed: b2Boolean,
+      web_control_centers_b2_transition: binding => {
+        b2Exact(binding, ['contract', 'descriptorSha256', 'publicContractSha256', 'expectedPrivateAuthoritySha256', 'privateAuthorityRequired']);
+        const descriptor = { schema_version: 1, contract: binding.contract, public_contract_sha256: binding.publicContractSha256,
+          private_authority: { required: true, schema_version: 1, authority_id: 'web-control-centers-b2-release-authority-v1', sha256: binding.expectedPrivateAuthoritySha256 } };
+        const bytes = canonicalJson(descriptor);
+        const parsed = parseB2ReleaseDescriptor(bytes, sha256Hex(bytes));
+        if (!b2Matches(binding.descriptorSha256, B2_HEX64) || binding.privateAuthorityRequired !== true) b2Reject();
+        return b2PublicBinding(parsed, binding.descriptorSha256);
+      } },
+    risk: B2_RISK_SCHEMA, blockers: [b2Finding], compiler: B2_COMPILER_SCHEMA,
+    runtime_closure: b2RuntimeClosure, result: b2String,
+  });
+  b2AssertCompilerClosure(projected.compiler, projected.runtime_closure);
+  return projected;
+}
+
+function validateB2FunctionContracts(contracts, expectedFunctions) {
+  if (contracts.length !== expectedFunctions.length) b2Reject();
+  for (const [index, actual] of contracts.entries()) {
+    b2Exact(actual, ['name', 'entrypoint', 'import_map', 'verify_jwt', 'source_changed', 'source_files', 'source_sha256']);
+    const expected = expectedFunctions[index];
+    if (actual.name !== expected.name || actual.verify_jwt !== expected.verify_jwt || actual.source_changed !== true
+      || actual.source_sha256 !== expected.source_sha256) b2Reject();
+    for (const file of actual.source_files) b2Exact(file, ['path', 'sha256']);
+    if (sha256Hex(canonicalJson({ entrypoint: actual.entrypoint, import_map: actual.import_map,
+      source_files: actual.source_files })) !== actual.source_sha256) b2Reject();
+  }
+}
+
+function validateB2CompiledPublic({ b2Release, policy, gitState, classified, functionContracts, migrations }) {
+  try {
+    b2Exact(b2Release, ['descriptorBytes', 'descriptorSha256', 'configBytes', 'configAfter', 'ancestry']);
+    const descriptor = parseB2ReleaseDescriptor(b2Release.descriptorBytes, b2Release.descriptorSha256);
+    const c = descriptor.contract;
+    const configBytes = b2Bytes(b2Release.configBytes, 128 * 1024);
+    if (sha256Hex(configBytes) !== c.productive_changes[0].sha256
+      || configBytes.length !== c.productive_changes[0].byte_length
+      || canonicalJson(parseFunctionConfig(configBytes.toString('utf8'))) !== canonicalJson(b2Release.configAfter)) b2Reject();
+    b2Exact(b2Release.ancestry, ['baseline', 'reviewedSource', 'integrationBase']);
+    if (c.state !== 'approved' || c.release_ready !== true
+      || Object.values(b2Release.ancestry).some(value => value !== true)
+      || policy.baseline.sha !== c.baseline_sha || gitState.baselineSha !== c.baseline_sha
+      || gitState.approvedSha !== gitState.originMainSha
+      || canonicalJson(classified.productive.map(({ path, status, fileType }) => ({ path, status, type: fileType })).sort((a, b) => a.path.localeCompare(b.path)))
+        !== canonicalJson(c.productive_changes.map(({ path, status }) => ({ path, status, type: 'file' })))) b2Reject();
+    const migration = c.productive_changes.at(-1);
+    if (migrations.length !== 1 || ['path', 'blob', 'sha256', 'byte_length'].some(key => migrations[0][key] !== migration[key])
+      || migrations[0].version !== '20261108061946') b2Reject();
+    const finance = { ...c.finance_invariants }; delete finance.require_no_movement;
+    if (canonicalJson(policy.supabase.finance_policy) !== canonicalJson(finance)) b2Reject();
+    if (canonicalJson(Object.keys(b2Release.configAfter).sort())
+      !== canonicalJson([...policy.supabase.managed_functions, 'process-scheduled-publications'].sort())) b2Reject();
+    validateB2FunctionContracts(functionContracts, c.functions);
+    for (const expected of c.functions) {
+      if (sha256Hex(canonicalJson(b2Release.configAfter[expected.name])) !== expected.config_sha256
+        || b2Release.configAfter[expected.name].verify_jwt !== expected.verify_jwt) b2Reject();
+    }
+    return b2PublicBinding(descriptor, b2Release.descriptorSha256);
+  } catch { b2Reject(); }
+}
+
+/** Public compiler boundary: no authority, provider, environment or callback input. */
+export function compileB2PublicEvidence({ descriptorBytes, expectedDescriptorSha256, productiveFiles,
+  graph, configBefore, configAfter, changes, gitState, policy, ancestry, runtimeClosure }) {
+  try {
+    runtimeClosure = b2RuntimeClosure(runtimeClosure);
+    const descriptor = parseB2ReleaseDescriptor(descriptorBytes, expectedDescriptorSha256);
+    if (descriptor.contract.state !== 'approved') b2Reject();
+    const affectedFunctions = resolveAffectedFunctions({ changes, graph, configBefore, configAfter,
+      managedFunctions: [...policy.supabase.managed_functions, 'process-scheduled-publications'],
+      forbiddenFunctions: policy.supabase.forbidden_functions });
+    validateB2ReleaseDescriptorSources({ descriptorBytes, expectedDescriptorSha256, productiveFiles, affectedFunctions });
+    const boundConfig = productiveFiles.find(file => file.path === 'supabase/config.toml');
+    if (canonicalJson(configAfter) !== canonicalJson(parseFunctionConfig(b2Bytes(boundConfig.bytes, 2 * 1024 * 1024).toString('utf8')))) b2Reject();
+    const functionContracts = buildFunctionContracts({ affectedFunctions, graph, configBefore, configAfter, changes });
+    const migration = descriptor.contract.productive_changes.at(-1);
+    const { status: _status, ...identity } = migration;
+    const migrations = [{ ...identity, version: '20261108061946' }];
+    const b2Release = projectB2ReleaseEvidence({ descriptorBytes: b2Bytes(descriptorBytes, 128 * 1024).toString('utf8'),
+      descriptorSha256: expectedDescriptorSha256, configBytes: b2Bytes(boundConfig.bytes, 128 * 1024).toString('utf8'), configAfter, ancestry }, policy);
+    validateB2CompiledPublic({ b2Release, policy, gitState, classified: classifyChangedPaths(changes), functionContracts, migrations });
+    return { b2Release, affectedFunctions, functionContracts, migrations, runtimeClosure };
+  } catch { b2Reject(); }
+}
+
+function b2AuthorityReject() {
+  const error = new Error('B2 protected authority required');
+  error.code = 'B2_AUTHORITY_REQUIRED';
+  error.stack = 'Error: B2 protected authority required';
+  throw Object.freeze(error);
+}
+
+/** Protected callers supply a Task 2 minted context, never a candidate receipt. */
+export function verifyB2ProtectedAuthority({ manifest, authorityContext, inventory, requestedAt }) {
+  try {
+    const binding = manifest?.resources?.web_control_centers_b2_transition;
+    if (!binding) {
+      if (isB2Delta(manifest?.delta?.files) || authorityContext !== undefined) b2AuthorityReject();
+      return {};
+    }
+    b2Exact(binding, ['contract', 'descriptorSha256', 'publicContractSha256', 'expectedPrivateAuthoritySha256', 'privateAuthorityRequired']);
+    // WeakSet membership is tested before inspecting any caller context fields.
+    const receipt = publicAuthorityReceipt(authorityContext);
+    assertB2CatalogSecurityCoverage(authorityContext);
+    manifest = projectB2Manifest(manifest);
+    if (typeof requestedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(requestedAt)) b2AuthorityReject();
+    const operationTime = Date.parse(requestedAt);
+    if (!Number.isFinite(operationTime) || new Date(operationTime).toISOString() !== requestedAt) b2AuthorityReject();
+    // Only after WeakSet authentication may the non-enumerable private plane be
+    // inspected. These values are compared in memory and never projected.
+    const { backup, approval } = authorityContext.privateAuthority;
+    if (operationTime < Date.parse(backup.completedObservedAt) || operationTime < Date.parse(approval.approvedAt)
+      || operationTime >= Date.parse(backup.expiresAt) || operationTime >= Date.parse(approval.expiresAt)) b2AuthorityReject();
+    const descriptor = parseB2ReleaseDescriptor(canonicalJson(authorityContext.descriptor), sha256Hex(canonicalJson(authorityContext.descriptor)));
+    if (descriptor.contract.state !== 'approved'
+      || canonicalJson(binding) !== canonicalJson(b2PublicBinding(descriptor, receipt.descriptorSha256))
+      || manifest.baseline.sha !== descriptor.contract.baseline_sha
+      || !b2Matches(manifest.identity.approved_sha, SHA_PATTERN)) b2AuthorityReject();
+    validateB2FunctionContracts(manifest.resources.function_contracts, descriptor.contract.functions);
+    if (canonicalJson(manifest.resources.functions) !== canonicalJson(B2_FUNCTION_NAMES)
+      || manifest.delta.productive_change_count !== 5
+      || canonicalJson(manifest.delta.files.filter(item => item.path.startsWith('supabase/'))
+        .map(({ path, status, file_type }) => ({ path, status, type: file_type })))
+        !== canonicalJson(descriptor.contract.productive_changes.map(({ path, status }) => ({ path, status, type: 'file' })))
+      || manifest.resources.migrations.length !== 1
+      || ['path', 'blob', 'sha256', 'byte_length'].some(key => manifest.resources.migrations[0][key]
+        !== descriptor.contract.productive_changes.at(-1)[key])) b2AuthorityReject();
+    const expectedBinding = sha256Hex(canonicalJson({ schemaVersion: 1,
+      authorityId: descriptor.private_authority.authority_id, transitionId: descriptor.contract.id,
+      baselineSha: descriptor.contract.baseline_sha, reviewedSourceSha: descriptor.contract.reviewed_source_sha,
+      publicContractSha256: binding.publicContractSha256, descriptorSha256: binding.descriptorSha256,
+      privateAuthoritySha256: binding.expectedPrivateAuthoritySha256 }));
+    assertAuthorityReceiptMatch(receipt, { ...receipt, bindingSha256: expectedBinding,
+      descriptorSha256: binding.descriptorSha256, publicContractSha256: binding.publicContractSha256,
+      privateAuthoritySha256: binding.expectedPrivateAuthoritySha256 });
+    b2Exact(inventory, ['schemaVersion', 'complete', 'capturedAt', 'names']);
+    const age = Date.parse(requestedAt) - Date.parse(inventory.capturedAt);
+    if (inventory.schemaVersion !== 1 || inventory.complete !== true || !Number.isFinite(age) || age < 0 || age > 300_000
+      || !Array.isArray(inventory.names) || inventory.names.some(name => typeof name !== 'string')
+      || new Set(inventory.names).size !== inventory.names.length
+      || inventory.names.length !== descriptor.contract.function_inventory.before
+      || inventory.names.includes('process-scheduled-publications')
+      || B2_FUNCTION_NAMES.filter(name => name !== 'process-scheduled-publications').some(name => !inventory.names.includes(name))) b2AuthorityReject();
+    return { authorityReceipt: receipt };
+  } catch { b2AuthorityReject(); }
+}
+
 function expectedConfirmation(request, policy) {
   if (request.mode === 'plan_only') return policy.scope_confirmations.plan_only;
   if (request.mode === 'gate_proof') return policy.scope_confirmations.gate_proof;
@@ -2409,7 +2920,7 @@ function expectedConfirmation(request, policy) {
   return null;
 }
 
-export function validateRequest(request, policy) {
+function validateRequestStructure(request, policy) {
   validatePolicy(policy);
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
     deny('INVALID_REQUEST', 'release request must be an object');
@@ -2443,10 +2954,9 @@ export function validateRequest(request, policy) {
     deny('CUTOVER_NOT_VERIFIED', 'production cutover is not verified');
   }
   if (request.mode === 'postcheck_recovery') {
-    const source = policy.postcheck_recovery.approved_sources.find(item => (
-      item.run_id === String(request.recoverySourceRunId ?? '')
-    ));
-    if (!source) deny('INVALID_RECOVERY_SOURCE', 'recovery source run is not an exact approved authority');
+    if (!/^[1-9][0-9]*$/.test(String(request.recoverySourceRunId ?? ''))) {
+      deny('INVALID_RECOVERY_SOURCE', 'recovery source run must be an exact numeric selector');
+    }
   } else if (request.mode === 'admin_recovery') {
     if (!/^[1-9][0-9]*$/.test(String(request.recoverySourceRunId ?? ''))) {
       deny('INVALID_RECOVERY_SOURCE', 'Admin recovery requires one exact numeric source run');
@@ -2458,6 +2968,63 @@ export function validateRequest(request, policy) {
     deny('INVALID_RECOVERY_SOURCE', 'recovery source run is valid only for an explicit recovery mode');
   }
   return Object.freeze({ ...request });
+}
+
+export function validateRequest(request, policy) {
+  const validated = validateRequestStructure(request, policy);
+  if (request.mode === 'postcheck_recovery' && !policy.postcheck_recovery.approved_sources.some(item => (
+    item.run_id === String(request.recoverySourceRunId ?? '')
+  ))) deny('INVALID_RECOVERY_SOURCE', 'recovery source run is not an exact approved authority');
+  return validated;
+}
+
+const pendingB2RecoveryRequests = new WeakMap();
+export function parsePendingB2RecoveryRequest(request, policy) {
+  validateRequestStructure(request, policy);
+  if (request.mode !== 'postcheck_recovery' || !Array.isArray(request.productiveResources)
+    || request.productiveResources.length !== 0 || policy.postcheck_recovery.approved_sources.some(item => (
+      item.run_id === String(request.recoverySourceRunId ?? '')
+    ))) deny('INVALID_RECOVERY_SOURCE', 'pending B2 source must be an unlisted zero-resource selector');
+  const output = Object.freeze({ schemaVersion: 1, result: 'PRIVATE_B2_AUTHORITY_PENDING' });
+  pendingB2RecoveryRequests.set(output, { request: canonicalJson(request), policy: sha256Hex(canonicalJson(policy)) });
+  return output;
+}
+
+export function classifyAdminRecoveryAuthorityPlane({
+  policy,
+  sourceKind,
+  declaredSourceRunId,
+  directSource,
+  postcheckSource,
+}) {
+  const reject = () => deny('ADMIN_RECOVERY_AUTHORITY_PLANE_INVALID',
+    'Admin recovery source cannot be assigned to an authenticated authority plane');
+  if (!policy || !Array.isArray(policy.postcheck_recovery?.approved_sources)
+    || !/^[1-9][0-9]*$/.test(String(declaredSourceRunId ?? ''))) reject();
+  let sourceManifest; let originalSourceRunId;
+  if (sourceKind === 'direct_release') {
+    if (!directSource || postcheckSource !== undefined
+      || String(directSource.request?.runId ?? '') !== String(declaredSourceRunId)
+      || !directSource.manifest || typeof directSource.manifest !== 'object') reject();
+    sourceManifest = directSource.manifest;
+    originalSourceRunId = String(directSource.request.runId);
+  } else if (sourceKind === 'postcheck_recovery') {
+    if (directSource !== undefined || postcheckSource?.result !== 'RECOVERY_SOURCE_VERIFIED'
+      || !/^[1-9][0-9]*$/.test(String(postcheckSource?.source_run_id ?? ''))
+      || !postcheckSource.source_manifest || typeof postcheckSource.source_manifest !== 'object') reject();
+    sourceManifest = postcheckSource.source_manifest;
+    originalSourceRunId = String(postcheckSource.source_run_id);
+  } else reject();
+  const resources = sourceManifest?.resources;
+  if (!resources || typeof resources !== 'object' || Array.isArray(resources)) reject();
+  const b2Required = Object.hasOwn(resources, 'web_control_centers_b2_transition');
+  const legacyKeys = ['superuser_control_center_transition', 'superuser_qa_perf_c1_transition']
+    .filter(key => Object.hasOwn(resources, key));
+  const exactLegacySource = policy.postcheck_recovery.approved_sources
+    .some(item => item?.run_id === originalSourceRunId);
+  if ((b2Required && legacyKeys.length !== 0)
+    || (!b2Required && (legacyKeys.length !== 1 || !exactLegacySource))) reject();
+  return Object.freeze({ b2Required, originalSourceRunId });
 }
 
 function normalizeCanonical(value, seen) {
@@ -4199,7 +4766,10 @@ function collectFunctionSources(directory, root, files = {}) {
 }
 
 export function compileLocalEvidence({ cwd, policy, request, generatedAt = new Date().toISOString() }) {
-  const runGit = args => execFileSync('git', args, { cwd, encoding: args.includes('-z') ? 'buffer' : 'utf8' });
+  // Keep failing Git diagnostics captured: execFileSync otherwise echoes stderr
+  // before callers can turn a private preparation failure into a generic result.
+  const runGit = args => execFileSync('git', args, { cwd, env: gitChildEnvironment(), stdio: 'pipe',
+    encoding: args.includes('-z') ? 'buffer' : 'utf8' });
   const gitState = resolveGitState({
     cwd,
     baselineSha: policy.baseline.sha,
@@ -4217,6 +4787,43 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
   const currentConfig = readFileSync(join(cwd, 'supabase', 'config.toml'), 'utf8');
   const configBefore = parseFunctionConfig(baselineConfig);
   const configAfter = parseFunctionConfig(currentConfig);
+  if (!isReadOnlyRecoveryMode(request.mode) && isB2Delta(gitState.changes)) {
+    const descriptorBytes = readFileSync(join(cwd, B2_DESCRIPTOR_PATH));
+    const expectedDescriptorSha256 = sha256Hex(descriptorBytes);
+    const descriptor = parseB2ReleaseDescriptor(descriptorBytes, expectedDescriptorSha256);
+    // Candidate descriptors never expand the historical managed allowlist.
+    if (descriptor.contract.state !== 'approved') b2Reject();
+    const committedDescriptor = runGit(['show', `${request.approvedSha}:${B2_DESCRIPTOR_PATH}`]);
+    if (sha256Hex(Buffer.from(committedDescriptor, 'utf8')) !== expectedDescriptorSha256) b2Reject();
+    try {
+      for (const ancestor of [descriptor.contract.baseline_sha, descriptor.contract.reviewed_source_sha,
+        descriptor.contract.integration_base_sha]) runGit(['merge-base', '--is-ancestor', ancestor, request.approvedSha]);
+    } catch { b2Reject(); }
+    const productiveFiles = classified.productive.map(change => ({ path: change.path, status: change.status,
+      type: change.fileType, bytes: Buffer.from(runGit(['show', `${request.approvedSha}:${change.path}`]), 'utf8') }));
+    const repositoryRoot = resolve(cwd);
+    const runtimeClosure = buildPrivateRuntimeClosure({
+      repositoryRoot,
+      readFile: absolutePath => {
+        const member = relative(repositoryRoot, absolutePath).replaceAll('\\', '/');
+        if (!member || member.startsWith('../') || isAbsolute(member)) b2Reject();
+        return execFileSync('git', ['show', `${request.approvedSha}:${member}`], {
+          cwd, env: gitChildEnvironment(), stdio: 'pipe',
+        });
+      },
+    });
+    const publicEvidence = compileB2PublicEvidence({ descriptorBytes, expectedDescriptorSha256, productiveFiles,
+      graph, configBefore, configAfter, changes: gitState.changes, gitState, policy,
+      ancestry: { baseline: true, reviewedSource: true, integrationBase: true }, runtimeClosure });
+    return { ...publicEvidence, gitState, classified,
+      reproducibility: analyzeFunctionReproducibility({ affectedFunctions: publicEvidence.affectedFunctions, graph }),
+      risk: classifyRisk({ affectedFunctions: publicEvidence.affectedFunctions,
+        changedPaths: gitState.changes.map(change => change.path), configBefore, configAfter }),
+      compiler: { path: 'scripts/nelyon-production-release.mjs',
+        sha256: runtimeClosure.files.find(item => item.path === 'scripts/nelyon-production-release.mjs').sha256,
+        snapshot_adapter_path: 'scripts/nelyon-production-snapshot-adapter.mjs',
+        snapshot_adapter_sha256: runtimeClosure.files.find(item => item.path === 'scripts/nelyon-production-snapshot-adapter.mjs').sha256 }, generatedAt };
+  }
   const affectedFunctions = resolveAffectedFunctions({
     changes: gitState.changes,
     graph,
@@ -4354,14 +4961,35 @@ export function buildManifest({
   superuserQaPerfC1Transition,
   webControlCentersB1Transition,
   webControlCentersB1QaC3Transition,
+  b2Release,
   affectedFunctions,
   functionContracts,
   reproducibility,
   risk,
+  runtimeClosure,
   compiler,
   generatedAt,
+  pendingB2Recovery,
 }) {
-  validateRequest(request, policy);
+  if (pendingB2Recovery !== undefined) {
+    const state = pendingB2RecoveryRequests.get(pendingB2Recovery);
+    if (!state || state.request !== canonicalJson(request) || state.policy !== sha256Hex(canonicalJson(policy))) {
+      deny('INVALID_RECOVERY_SOURCE', 'pending recovery capability does not match the request and policy');
+    }
+    validateRequestStructure(request, policy);
+  } else validateRequest(request, policy);
+  const b2Candidate = !isReadOnlyRecoveryMode(request.mode)
+    && (isB2Delta(gitState?.changes) || isB2Delta(classified?.productive));
+  if (b2Candidate) {
+    ({ gitState, classified, migrations, functionContracts, affectedFunctions, risk, reproducibility, runtimeClosure, compiler, generatedAt }
+      = projectB2EvidenceParts({ gitState, classified, migrations, functionContracts, affectedFunctions,
+        risk, reproducibility, runtimeClosure, compiler, generatedAt }));
+    b2Release = projectB2ReleaseEvidence(b2Release, policy);
+  }
+  const b2Binding = b2Candidate ? validateB2CompiledPublic({ b2Release, policy, gitState,
+    classified, functionContracts, migrations }) : null;
+  if (b2Candidate && risk?.level !== 'HIGH') b2Reject();
+  if (!b2Candidate && b2Release !== undefined) b2Reject();
   const recoveryMode = isReadOnlyRecoveryMode(request.mode);
   if (!risk || !['STANDARD', 'HIGH'].includes(risk.level) || !Array.isArray(risk.findings)) {
     deny('INVALID_RISK_CLASSIFICATION', 'manifest risk classification is incomplete');
@@ -4385,6 +5013,9 @@ export function buildManifest({
     || compiler?.snapshot_adapter_path !== 'scripts/nelyon-production-snapshot-adapter.mjs'
     || !/^[0-9a-f]{64}$/.test(compiler?.snapshot_adapter_sha256 ?? '')) {
     deny('INVALID_COMPILER_IDENTITY', 'compiler SHA-256 is invalid');
+  }
+  if (b2Candidate || pendingB2Recovery || (request.mode === 'admin_recovery' && runtimeClosure)) {
+    b2AssertCompilerClosure(compiler, runtimeClosure);
   }
   const contracts = (recoveryMode ? [] : [...(functionContracts ?? [])]).map(stableCopy).sort((left, right) => String(left.name).localeCompare(String(right.name)));
   const functionNames = (recoveryMode ? [] : [...affectedFunctions]).sort();
@@ -4828,7 +5459,9 @@ export function buildManifest({
       resource,
       message: 'verified baseline marks this resource unreproducible',
     }));
-  const blockers = [...(reproducibility?.findings ?? []), ...baselineBlockers]
+  const blockers = [...(reproducibility?.findings ?? []), ...baselineBlockers,
+    ...(pendingB2Recovery ? [{ severity: 'BLOCKING', code: 'PRIVATE_B2_AUTHORITY_PENDING', path: null,
+      resource: 'recovery', message: 'separate protected exact-attempt authorization is required' }] : [])]
     .map(stableCopy)
     .filter((finding, index, findings) => findings.findIndex(candidate => (
       candidate.code === finding.code
@@ -4864,6 +5497,7 @@ export function buildManifest({
         source_run_id: String(request.recoverySourceRunId),
       },
     } : {}),
+    ...(pendingB2Recovery ? { recovery: { kind: 'postcheck_only', source_run_id: String(request.recoverySourceRunId) } } : {}),
     baseline: {
       state: policy.baseline.state,
       sha: gitState.baselineSha,
@@ -4874,6 +5508,7 @@ export function buildManifest({
       productive_change_count: productiveCount,
     },
     resources: {
+      ...(b2Binding ? { web_control_centers_b2_transition: b2Binding } : {}),
       functions: functionNames,
       function_contracts: contracts,
       migrations: (recoveryMode ? [] : [...migrations]).map(stableCopy).sort((left, right) => left.version.localeCompare(right.version)),
@@ -4911,6 +5546,8 @@ export function buildManifest({
       snapshot_adapter_path: compiler.snapshot_adapter_path,
       snapshot_adapter_sha256: compiler.snapshot_adapter_sha256,
     },
+    ...((b2Binding || pendingB2Recovery || (request.mode === 'admin_recovery' && runtimeClosure))
+      ? { runtime_closure: runtimeClosure } : {}),
     result,
   };
 }
@@ -4948,6 +5585,9 @@ function manifestSummary(manifest, digest) {
 }
 
 export function writeManifestBundle({ manifest, outputDirectory }) {
+  if (manifest?.resources?.web_control_centers_b2_transition || isB2Delta(manifest?.delta?.files)) {
+    manifest = projectB2Manifest(manifest);
+  }
   assertSafeBundleDirectory(outputDirectory);
   const manifestBytes = canonicalJson(manifest);
   const digest = sha256Hex(Buffer.from(manifestBytes, 'utf8'));
@@ -5030,6 +5670,7 @@ export function verifyManifestBundle({ directory, expected }) {
 
 const RECOVERY_RELEASE_FILES = ['auto-deploy-evidence.json', 'bundle', 'remote-evidence.json', 'request.json'];
 const RECOVERY_GATE_FILES = [
+  'protected-stage-proofs.json',
   'gate-proof.json',
   'migration-dry-run.json',
   'postcheck-result.json',
@@ -5107,7 +5748,453 @@ function expectedRecoverySourceSteps(source) {
   };
 }
 
-export function verifyRecoveryArtifactProvenance({ source, run, artifacts, releaseBundle, gateEvidence }) {
+const b2VerifiedSources = new WeakMap();
+const b2VerifiedSourceRuns = new WeakMap();
+const b2VerifiedSourceOutputs = new WeakMap();
+
+function b2SourceState(verifiedSource) {
+  const state = b2VerifiedSources.get(verifiedSource);
+  if (!state || b2VerifiedSourceOutputs.get(verifiedSource) !== canonicalJson(verifiedSource)) b2RecoveryReject();
+  return state;
+}
+
+export function validateProtectedB2RecoveryRequest({ request, policy, policyBytes, verifiedSource, authorityContext }) {
+  try {
+    validateRequestStructure(request, policy);
+    const state = b2SourceState(verifiedSource);
+    if (request.mode !== 'postcheck_recovery' || !Array.isArray(request.productiveResources)
+      || request.productiveResources.length !== 0 || !state.provenance.authorizationSha256
+      || !Buffer.isBuffer(policyBytes) || types.isProxy(policyBytes)
+      || sha256Hex(policyBytes) !== state.provenance.policySha256
+      || canonicalJson(JSON.parse(policyBytes.toString('utf8'))) !== canonicalJson(policy)
+      || String(request.recoverySourceRunId) !== state.publicSource.source_run_id
+      || b2HistoricalContexts.get(authorityContext) !== state) b2RecoveryReject();
+    assertAuthorityReceiptMatch(publicAuthorityReceipt(authorityContext), state.proofs[0].receipt);
+    return Object.freeze({ schemaVersion: 1, result: 'PROTECTED_B2_RECOVERY_AUTHENTICATED' });
+  } catch { b2RecoveryReject(); }
+}
+
+export function verifyPendingB2RecoveryAuthority({ request, policy, policyBytes, manifest, verifiedSource, authorityContext }) {
+  try {
+    validateProtectedB2RecoveryRequest({ request, policy, policyBytes, verifiedSource, authorityContext });
+    const expectedBlocker = { severity: 'BLOCKING', code: 'PRIVATE_B2_AUTHORITY_PENDING', path: null,
+      resource: 'recovery', message: 'separate protected exact-attempt authorization is required' };
+    if (manifest?.result !== 'DENY' || canonicalJson(manifest.blockers) !== canonicalJson([expectedBlocker])
+      || manifest.identity?.mode !== 'postcheck_recovery' || manifest.identity.approved_sha !== request.approvedSha
+      || String(manifest.identity.run_id) !== String(request.runId) || manifest.identity.run_attempt !== request.runAttempt
+      || manifest.identity.release_id !== request.releaseId || manifest.delta?.productive_change_count !== 0
+      || canonicalJson(manifest.resources) !== canonicalJson({ config_changed: false, function_contracts: [], functions: [], migrations: [] })
+      || canonicalJson(manifest.recovery) !== canonicalJson({ kind: 'postcheck_only', source_run_id: String(request.recoverySourceRunId) })) {
+      b2RecoveryReject();
+    }
+    return publicAuthorityReceipt(authorityContext);
+  } catch { b2RecoveryReject(); }
+}
+
+function assertB2SourceArtifacts(verifiedSource, { run, artifacts, source } = {}) {
+  const state = b2SourceState(verifiedSource);
+  const original = state.provenance;
+  if (run && (String(run.id) !== original.runId || run.run_attempt !== original.runAttempt
+    || run.head_sha !== original.approvedSha || run.path !== original.workflow || run.repository?.full_name !== original.repository)) b2RecoveryReject();
+  for (const kind of ['release', 'gate']) {
+    const candidate = source ? source[`${kind}_artifact`] : artifacts?.[kind];
+    if (!candidate || canonicalJson({ id: String(candidate.id), name: candidate.name, digest: candidate.digest })
+      !== canonicalJson(original.artifacts[kind])) b2RecoveryReject();
+  }
+  return state;
+}
+
+// Recovery retains a closed public projection, never an artifact object graph.
+// Optional public compiler fields support historical manifests; descriptor
+// authentication remains mandatory when resolving their private authority.
+const B2_RECOVERY_CONTRACT_SCHEMA = {
+  id: b2String, to_phase: b2String, baseline_sha: b2String, reviewed_source_sha: b2String, integration_base_sha: b2String,
+  'state?': b2String, 'release_ready?': b2Boolean, 'from_phase?': b2String, 'approved_sha_ancestry?': b2String,
+  'productive_changes?': [{ path: b2String, status: b2String, blob: b2String, sha256: b2String, byte_length: b2Integer }],
+  'functions?': [{ name: b2String, verify_jwt: b2Boolean, source_sha256: b2String, config_sha256: b2String }],
+  'function_inventory?': { before: b2Integer, after: b2Integer },
+  'managed_scope_transition?': { add: [b2String], remove: [b2String] }, 'cron_activation?': b2Boolean,
+  'finance_invariants?': { platform_fee_bps: b2Integer, purchase_enabled: b2Boolean, refunds_enabled: b2Boolean,
+    subscription_enabled: b2Boolean, require_no_movement: b2Boolean },
+  'private_authority_max_bytes?': b2Integer, 'requires_separate_baseline_promotion?': b2Boolean,
+};
+const b2StepStatus = value => { if (!['success', 'failure', 'skipped', 'cancelled'].includes(value)) b2RecoveryReject(); return value; };
+const B2_RECOVERY_REQUEST_SCHEMA = { approvedSha: b2String, mainSha: b2String, runId: b2String, runAttempt: b2Integer,
+  releaseId: b2String, repository: b2String, mode: b2String, 'actor?': b2String, 'triggeringActor?': b2String,
+  'workflowRef?': b2String, 'ref?': b2String, 'scopeConfirmation?': b2String, 'recoverySourceRunId?': b2NullableString,
+  'productiveResources?': [b2String] };
+const B2_RECOVERY_OBSERVATION_SCHEMA = { schema_version: b2Integer, result: b2String,
+  steps: Object.fromEntries(['pre_snapshot', 'pre_verification', 'migration_dry_run', 'migrations', 'functions', 'post_snapshot', 'postcheck'].map(key => [key, b2StepStatus])),
+  pre_evidence_sha256: b2NullableString, post_evidence_sha256: b2NullableString, 'postcheck_file_sha256?': b2NullableString,
+  'admin_web?': { required: b2Boolean,
+    ...Object.fromEntries(['build', 'upload', 'candidate', 'promote', 'routes', 'finalize', 'recovery',
+      'temporary_urls_prestate', 'temporary_urls_enable', 'temporary_urls_cleanup'].map(key => [`${key}?`, b2StepStatus])),
+    ...Object.fromEntries(['result_sha256', 'recovery_sha256', 'temporary_urls_prestate_sha256', 'temporary_urls_enable_sha256',
+      'temporary_urls_cleanup_sha256'].map(key => [`${key}?`, b2NullableString])) } };
+
+function projectB2RecoverySourceParts({ manifest, request, observation }) {
+  try {
+    const projected = {
+      manifest: b2Projection(manifest, {
+        'schema_version?': b2Integer, 'generated_at?': b2String,
+        identity: { approved_sha: b2String, run_id: b2String, run_attempt: b2Integer, release_id: b2String, mode: b2String,
+          'actor?': b2String, 'triggering_actor?': b2String, 'repository?': b2String, 'workflow_ref?': b2String,
+          'ref?': b2String, 'scope_confirmation?': b2String },
+        baseline: { sha: b2String, 'state?': b2String, 'origin_main_sha?': b2String },
+        compiler: { 'path?': b2String, 'sha256?': b2String, snapshot_adapter_path: b2String, snapshot_adapter_sha256: b2String },
+        runtime_closure: b2RuntimeClosure,
+        resources: { functions: [b2String], migrations: [B2_MIGRATION_SCHEMA], 'function_contracts?': [B2_CONTRACT_SCHEMA],
+          'config_changed?': b2Boolean, web_control_centers_b2_transition: { contract: B2_RECOVERY_CONTRACT_SCHEMA,
+            descriptorSha256: b2String, publicContractSha256: b2String, expectedPrivateAuthoritySha256: b2String, privateAuthorityRequired: b2Boolean } },
+        'delta?': { files: [{ file_type: b2NullableString, path: b2String, status: b2String }], productive_change_count: b2Integer },
+        'risk?': B2_RISK_SCHEMA, 'blockers?': [b2Finding], 'result?': b2String,
+      }),
+      request: b2Projection(request, B2_RECOVERY_REQUEST_SCHEMA), observation: b2Projection(observation, B2_RECOVERY_OBSERVATION_SCHEMA),
+    };
+    b2AssertCompilerClosure(projected.manifest.compiler, projected.manifest.runtime_closure);
+    return projected;
+  } catch { b2RecoveryReject(); }
+}
+
+function projectB2RecoveryChain(value, authorityContext, verifiedB2Source) {
+  try {
+    if (b2VerifiedSources.get(value) !== b2VerifiedSources.get(verifiedB2Source)
+      || !b2VerifiedSources.has(value) || b2VerifiedSourceOutputs.get(value) !== canonicalJson(value)) b2RecoveryReject();
+    const artifact = { id: b2String, name: b2String, digest: b2String };
+    const receipt = publicAuthorityReceipt(authorityContext);
+    const projected = b2Projection(value, {
+      schema_version: b2Integer, result: b2String, recovery_run_id: b2String, recovery_run_attempt: b2Integer,
+      recovery_release_id: b2String, current_sha: b2String, source_run_id: b2String, source_run_attempt: b2Integer,
+      source_release_id: b2String, source_sha: b2String, source_manifest_sha256: b2String, source_observation_sha256: b2String,
+      source_artifact_digests: { gate: b2String, release: b2String }, recovery_artifacts: { release: artifact, gate: artifact, recovery: artifact },
+      recovered_evidence_sha256: b2String, recovered_result_sha256: b2String,
+      authorityReceipt: candidate => { assertAuthorityReceiptMatch(receipt, candidate); return receipt; },
+    });
+    return projected;
+  } catch { b2RecoveryReject(); }
+}
+const b2HistoricalContexts = new WeakMap();
+function b2RecoveryReject() {
+  const error = new Error('B2 recovery authority rejected');
+  error.code = 'B2_RECOVERY_AUTHORITY_INVALID';
+  error.stack = 'Error: B2 recovery authority rejected';
+  throw Object.freeze(error);
+}
+function b2ProofTime(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+    || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) b2RecoveryReject();
+  return Date.parse(value);
+}
+function verifyB2SourceProof({ source, run, manifest, observation, gateDirectory, trustedProvenance }) {
+  try {
+    const candidateBytes = readFileSync(join(gateDirectory, 'protected-stage-proofs.json'));
+    const expectedBytes = trustedProvenance.proofBytes;
+    if (!Buffer.isBuffer(expectedBytes) || !candidateBytes.equals(expectedBytes)
+      || trustedProvenance.expectedProofSha256 !== source.protected_stage_proof_sha256
+      || sha256Hex(candidateBytes) !== trustedProvenance.expectedProofSha256) b2RecoveryReject();
+    const text = candidateBytes.toString('utf8');
+    const proofs = JSON.parse(text);
+    if (canonicalJson(proofs) !== text || canonicalJson(proofs) !== canonicalJson(trustedProvenance.proofs)
+      || !Array.isArray(proofs) || proofs.length < 2 || proofs.length > 5) b2RecoveryReject();
+    const protectedSteps = trustedProvenance.protectedSteps;
+    b2Exact(protectedSteps, ['runId', 'runAttempt', 'repository', 'workflow', 'approvedSha', 'steps']);
+    if (protectedSteps.runId !== source.run_id || protectedSteps.runAttempt !== source.run_attempt
+      || protectedSteps.repository !== source.repository || protectedSteps.workflow !== run.path
+      || protectedSteps.approvedSha !== source.source_sha || !Array.isArray(protectedSteps.steps)) b2RecoveryReject();
+    const stages = ['migrations', 'functions'];
+    let prefixEnded = false;
+    for (const [observed, stage] of [['upload', 'admin_upload'], ['promote', 'admin_promote'], ['routes', 'admin_route']]) {
+      if (observation.admin_web?.[observed] === 'success') {
+        if (prefixEnded || observation.admin_web.required !== true) b2RecoveryReject();
+        stages.push(stage);
+      } else prefixEnded = true;
+    }
+    if (observation.admin_web?.candidate === 'success' && observation.admin_web?.upload !== 'success') b2RecoveryReject();
+    const protectedNames = protectedSteps.steps.filter(step => typeof step?.name === 'string' && step.name.startsWith('B2 protected ')).map(step => step.name);
+    if (proofs.length !== stages.length || canonicalJson(protectedNames) !== canonicalJson(stages.map(stage => `B2 protected ${stage}`))) b2RecoveryReject();
+    const intervals = [];
+    for (let index = 0; index < stages.length; index++) {
+      const proof = proofs[index];
+      b2Exact(proof, ['runId', 'runAttempt', 'releaseId', 'approvedSha', 'manifestSha256', 'stage', 'verifiedAt', 'receipt']);
+      if (proof.runId !== source.run_id || proof.runAttempt !== source.run_attempt
+        || proof.releaseId !== source.release_id || proof.approvedSha !== source.source_sha
+        || proof.manifestSha256 !== source.manifest_sha256 || proof.stage !== stages[index]) b2RecoveryReject();
+      assertAuthorityReceiptMatch(proofs[0].receipt, proof.receipt);
+      const binding = manifest.resources.web_control_centers_b2_transition;
+      if (proof.receipt.descriptorSha256 !== binding.descriptorSha256
+        || proof.receipt.privateAuthoritySha256 !== binding.expectedPrivateAuthoritySha256
+        || proof.receipt.publicContractSha256 !== binding.publicContractSha256) b2RecoveryReject();
+      const matches = protectedSteps.steps.filter(step => step?.name === `B2 protected ${proof.stage}`);
+      if (matches.length !== 1) b2RecoveryReject();
+      const step = matches[0];
+      b2Exact(step, ['name', 'conclusion', 'startedAt', 'completedAt']);
+      if (step.conclusion !== 'success' || b2ProofTime(step.startedAt) > b2ProofTime(proof.verifiedAt)
+        || b2ProofTime(proof.verifiedAt) > b2ProofTime(step.completedAt)) b2RecoveryReject();
+      intervals.push({ startedAt: step.startedAt, completedAt: step.completedAt });
+    }
+    return { proofs, intervals };
+  } catch { b2RecoveryReject(); }
+}
+
+/** Source must be the in-memory output of exact run/artifact/proof verification.
+ * The provider comes from the protected caller, never an artifact or locator. */
+export async function resolveB2HistoricalAuthority({ verifiedSource, descriptorBytes, provider, historicalRuntimeClosure }) {
+  try {
+    const verified = b2SourceState(verifiedSource);
+    const historical = readTrustedB2HistoricalRuntimeClosure(historicalRuntimeClosure, verified.recoveryProvenance);
+    if (historical.sourceSha !== verified.provenance.approvedSha
+      || canonicalJson(historical.closure) !== canonicalJson(verified.manifest.runtime_closure)) b2RecoveryReject();
+    const binding = verified.manifest.resources.web_control_centers_b2_transition;
+    const bytes = await provider.getBySha256(binding.expectedPrivateAuthoritySha256);
+    const c = binding.contract;
+    const authorityContext = createReleaseAuthorityContext({ descriptorBytes,
+      expectedDescriptorSha256: binding.descriptorSha256, phase: c.to_phase,
+      transitionId: c.id, baselineSha: c.baseline_sha, reviewedSourceSha: c.reviewed_source_sha,
+      integrationBaseSha: c.integration_base_sha, requestedAt: verified.proofs[0].verifiedAt,
+      authorityJson: Buffer.from(bytes).toString('utf8'), expectedPrivateAuthoritySha256: binding.expectedPrivateAuthoritySha256 });
+    const receipt = publicAuthorityReceipt(authorityContext);
+    const { backup, approval } = authorityContext.privateAuthority;
+    for (let index = 0; index < verified.proofs.length; index++) {
+      assertAuthorityReceiptMatch(receipt, verified.proofs[index].receipt);
+      const interval = verified.intervals[index];
+      if (b2ProofTime(interval.startedAt) < b2ProofTime(approval.approvedAt)
+        || b2ProofTime(interval.startedAt) < b2ProofTime(backup.completedObservedAt)
+        || b2ProofTime(interval.completedAt) >= b2ProofTime(approval.expiresAt)
+        || b2ProofTime(interval.completedAt) >= b2ProofTime(backup.expiresAt)) b2RecoveryReject();
+    }
+    b2HistoricalContexts.set(authorityContext, verified);
+    return authorityContext;
+  } catch { b2RecoveryReject(); }
+}
+
+function verifyB2CurrentGate({ request, manifest, currentGate, authorityContext, policy, requestedAt }) {
+  assertB2CatalogSecurityCoverage(authorityContext);
+  const receipt = publicAuthorityReceipt(authorityContext);
+  b2ProofTime(requestedAt);
+  const identity = manifest?.identity;
+  if (!identity || identity.run_id !== String(request?.runId) || identity.run_attempt !== request?.runAttempt
+    || !/^[1-9][0-9]*$/.test(identity.run_id) || !Number.isSafeInteger(identity.run_attempt) || identity.run_attempt < 1
+    || !/^nelyon-[0-9]{8}-[0-9]{3}$/.test(identity.release_id) || !/^[0-9a-f]{40}$/.test(identity.approved_sha)
+    || identity.release_id !== request?.releaseId || identity.approved_sha !== request?.approvedSha
+    || currentGate?.result !== 'GATE_VERIFIED' || String(currentGate.run_id) !== identity.run_id
+    || currentGate.run_attempt !== identity.run_attempt || currentGate.release_id !== identity.release_id
+    || currentGate.approved_sha !== identity.approved_sha || currentGate.manifest_sha256 !== sha256Hex(canonicalJson(manifest))
+    || currentGate.environment?.name !== 'production' || currentGate.environment?.id !== policy.environment?.id) b2RecoveryReject();
+  assertAuthorityReceiptMatch(receipt, currentGate.authorityReceipt);
+  return receipt;
+}
+
+function verifyB2CurrentBackup(options, bindApproved) {
+  const approved = options.authorityContext.privateAuthority.backup;
+  const project = options.policy?.supabase?.project_ref;
+  if (project !== 'aewwdlvbwpczqyvkwvvj' || approved.projectRefSha256 !== sha256Hex(project)) b2RecoveryReject();
+  const observed = selectRecentCompletedBackup({ backups: [options.backup] }, options.requestedAt, options.policy.supabase.backup);
+  const age = b2ProofTime(options.requestedAt) - b2ProofTime(observed.inserted_at);
+  if (age < 0 || age >= 86_400_000) b2RecoveryReject();
+  if (bindApproved && (observed.inserted_at !== approved.insertedAt
+    || sha256Hex(canonicalJson(observed)) !== approved.evidenceSha256)) b2RecoveryReject();
+}
+
+function verifyB2CurrentOperation(options) {
+  const receipt = verifyB2CurrentGate(options);
+  verifyB2CurrentBackup(options, !['postcheck_recovery', 'admin_recovery'].includes(options.request?.mode));
+  return receipt;
+}
+
+/** Identity-only preflight; never authorizes a mutation or completed recovery. */
+export function verifyB2RecoveryPreflight({ recoveryRequest, recoveryManifest, verifiedSource, authorityContext,
+  currentGate, policy, requestedAt = new Date().toISOString() }) {
+  try {
+    const source = b2SourceState(verifiedSource);
+    if (!source || b2HistoricalContexts.get(authorityContext) !== source
+      || !b2VerifiedSourceRuns.get(verifiedSource)?.includes(String(recoveryRequest?.recoverySourceRunId))
+      || !['postcheck_recovery', 'admin_recovery'].includes(recoveryRequest?.mode)
+      || canonicalJson(recoveryManifest?.resources) !== canonicalJson({ config_changed: false,
+        function_contracts: [], functions: [], migrations: [] })) b2RecoveryReject();
+    const receipt = verifyB2CurrentGate({ request: recoveryRequest, manifest: recoveryManifest,
+      currentGate, authorityContext, policy, requestedAt });
+    assertAuthorityReceiptMatch(receipt, source.proofs[0].receipt);
+    return { authorityReceipt: receipt };
+  } catch { b2RecoveryReject(); }
+}
+
+export function verifyB2RecoveryOperation(options) {
+  try {
+    const requestedAt = options.requestedAt ?? new Date().toISOString();
+    const result = verifyB2RecoveryPreflight({ ...options, requestedAt });
+    // A historical authority binds the original observation. Recovery separately
+    // observes a fresh backup in the same project; it must not reuse its old TTL.
+    verifyB2CurrentBackup({ ...options, requestedAt }, false);
+    return result;
+  } catch { b2RecoveryReject(); }
+}
+
+export function b2HistoricalSnapshotBinding({ verifiedSource, authorityContext }) {
+  try {
+    const source = b2SourceState(verifiedSource);
+    if (!source || b2HistoricalContexts.get(authorityContext) !== source) b2RecoveryReject();
+    assertAuthorityReceiptMatch(publicAuthorityReceipt(authorityContext), source.proofs[0].receipt);
+    return { manifest: JSON.parse(canonicalJson(source.manifest)), requestedAt: source.proofs[0].verifiedAt };
+  } catch { b2RecoveryReject(); }
+}
+
+function b2ProofRoot(root, proofPath) {
+  if (typeof root !== 'string' || typeof proofPath !== 'string' || !isAbsolute(root) || !isAbsolute(proofPath)
+    || root !== resolve(root) || proofPath !== join(root, 'protected-stage-proofs.json')) b2RecoveryReject();
+  for (let current = root; ; current = dirname(current)) {
+    const stat = lstatSync(current);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || relative(current, realpathSync(current)) !== '') b2RecoveryReject();
+    if (dirname(current) === current) break;
+  }
+  return lstatSync(root);
+}
+
+function b2SameFile(a, b) {
+  return Boolean(a && b && a.dev === b.dev && a.ino === b.ino && a.birthtimeMs === b.birthtimeMs);
+}
+
+// The protected runner must own this ordinary directory and exclude other writers.
+// The lock serializes cooperating processes; no candidate path is accepted. Node
+// lacks openat/renameat directory handles, so hostile replacement of a trusted
+// directory by another privileged process is outside this runner-root contract.
+async function persistB2MutationProof({ trustedProofRoot, proofPath, request, currentGate, requestedAt, stage, receipt, mutate }) {
+  const rootStat = b2ProofRoot(trustedProofRoot, proofPath);
+  const lockPath = join(trustedProofRoot, '.protected-stage-proofs.lock');
+  const tempPath = join(trustedProofRoot, `.protected-stage-proofs.${randomUUID()}.tmp`);
+  let lockFd, tempFd, lockStat, tempStat;
+  const assertRoot = () => { if (!b2SameFile(rootStat, b2ProofRoot(trustedProofRoot, proofPath))) b2RecoveryReject(); };
+  const ordinary = stat => stat && stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1;
+  try {
+    lockFd = openSync(lockPath, 'wx', 0o600); lockStat = fstatSync(lockFd);
+    assertRoot();
+    const priorStat = lstatSync(proofPath, { throwIfNoEntry: false });
+    let priorBytes = null, proofs = [];
+    if (priorStat) {
+      if (!ordinary(priorStat) || priorStat.size > 65536) b2RecoveryReject();
+      const fd = openSync(proofPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+      try {
+        if (!b2SameFile(priorStat, fstatSync(fd))) b2RecoveryReject();
+        priorBytes = readFileSync(fd);
+      } finally { closeSync(fd); }
+      proofs = JSON.parse(priorBytes.toString('utf8'));
+      if (!Array.isArray(proofs) || canonicalJson(proofs) !== priorBytes.toString('utf8')) b2RecoveryReject();
+    }
+    const order = request.mode === 'admin_recovery' ? ['admin_upload', 'admin_promote', 'admin_route']
+      : ['migrations', 'functions', 'admin_upload', 'admin_promote', 'admin_route'];
+    if (proofs.length >= order.length || stage !== order[proofs.length]) b2RecoveryReject();
+    let previousAt = 0;
+    for (let index = 0; index < proofs.length; index++) {
+      const proof = proofs[index];
+      b2Exact(proof, ['runId', 'runAttempt', 'releaseId', 'approvedSha', 'manifestSha256', 'stage', 'verifiedAt', 'receipt']);
+      if (proof.stage !== order[index] || proof.runId !== String(request.runId) || proof.runAttempt !== request.runAttempt
+        || proof.releaseId !== request.releaseId || proof.approvedSha !== request.approvedSha
+        || proof.manifestSha256 !== currentGate.manifest_sha256 || b2ProofTime(proof.verifiedAt) < previousAt
+        || b2ProofTime(proof.verifiedAt) > b2ProofTime(requestedAt)) b2RecoveryReject();
+      previousAt = b2ProofTime(proof.verifiedAt);
+      assertAuthorityReceiptMatch(receipt, proof.receipt);
+    }
+    proofs.push({ runId: String(request.runId), runAttempt: request.runAttempt, releaseId: request.releaseId,
+      approvedSha: request.approvedSha, manifestSha256: currentGate.manifest_sha256, stage, verifiedAt: requestedAt, receipt });
+    const bytes = Buffer.from(canonicalJson(proofs));
+    tempFd = openSync(tempPath, 'wx', 0o600); tempStat = fstatSync(tempFd);
+    let written = 0;
+    while (written < bytes.length) {
+      const count = writeSync(tempFd, bytes, written, bytes.length - written);
+      if (!Number.isSafeInteger(count) || count <= 0) b2RecoveryReject();
+      written += count;
+    }
+    fsyncSync(tempFd); closeSync(tempFd); tempFd = undefined;
+    assertRoot();
+    if (!b2SameFile(tempStat, lstatSync(tempPath)) || !b2SameFile(lockStat, lstatSync(lockPath))) b2RecoveryReject();
+    const currentStat = lstatSync(proofPath, { throwIfNoEntry: false });
+    if (priorStat ? !ordinary(currentStat) || !b2SameFile(priorStat, currentStat)
+      || currentStat.size !== priorStat.size || currentStat.mtimeMs !== priorStat.mtimeMs
+      || !readFileSync(proofPath).equals(priorBytes) : currentStat !== undefined) b2RecoveryReject();
+    renameSync(tempPath, proofPath); tempStat = undefined;
+    // Atomic rename publishes only complete fsynced bytes. POSIX also needs its
+    // directory entry synced; Windows does not support opening directories here.
+    if (process.platform !== 'win32') { const fd = openSync(trustedProofRoot, 'r'); try { fsyncSync(fd); } finally { closeSync(fd); } }
+    assertRoot();
+    await mutate();
+  } finally {
+    if (tempFd !== undefined) closeSync(tempFd);
+    if (lockFd !== undefined) closeSync(lockFd);
+    if (tempStat && b2SameFile(tempStat, lstatSync(tempPath, { throwIfNoEntry: false }))) unlinkSync(tempPath);
+    if (lockStat && b2SameFile(lockStat, lstatSync(lockPath, { throwIfNoEntry: false }))) unlinkSync(lockPath);
+  }
+}
+
+/** Protected runtime primitive. The caller owns the clock and mutation callback;
+ * no candidate CLI option can reach this API. Persist the closed proof before
+ * control reaches the mutation, and never propagate callback diagnostics. */
+export async function executeB2ProtectedMutation({ manifest, request, currentGate, authorityContext,
+  policy, backup, requestedAt = new Date().toISOString(), stage, proofPath, trustedProofRoot, mutate, verifiedSource }) {
+  try {
+    const receipt = verifyB2CurrentOperation({ manifest, request, currentGate, authorityContext, policy, backup, requestedAt });
+    if (!['migrations', 'functions', 'admin_upload', 'admin_promote', 'admin_route'].includes(stage)
+      || typeof mutate !== 'function' || !isAbsolute(proofPath)
+      || !proofPath.replaceAll('\\', '/').endsWith('/protected-stage-proofs.json')) b2RecoveryReject();
+    if (['postcheck_recovery', 'admin_recovery'].includes(request.mode)) {
+      verifyB2RecoveryOperation({ recoveryRequest: request, recoveryManifest: manifest, verifiedSource,
+        authorityContext, currentGate, backup, policy, requestedAt });
+      if (request.mode === 'postcheck_recovery') b2RecoveryReject();
+    } else {
+      const binding = manifest.resources?.web_control_centers_b2_transition;
+      if (!binding || canonicalJson(binding.contract) !== canonicalJson(authorityContext.descriptor.contract)
+        || binding.descriptorSha256 !== receipt.descriptorSha256
+        || binding.expectedPrivateAuthoritySha256 !== receipt.privateAuthoritySha256) b2RecoveryReject();
+      const { approval, backup: approvedBackup } = authorityContext.privateAuthority;
+      const at = b2ProofTime(requestedAt);
+      if (at < b2ProofTime(approval.approvedAt) || at < b2ProofTime(approvedBackup.completedObservedAt)
+        || at >= b2ProofTime(approval.expiresAt) || at >= b2ProofTime(approvedBackup.expiresAt)) b2RecoveryReject();
+    }
+    await persistB2MutationProof({ trustedProofRoot, proofPath, request, currentGate, requestedAt, stage, receipt, mutate });
+    return { authorityReceipt: receipt };
+  } catch { b2RecoveryReject(); }
+}
+
+export function verifyRecoveryArtifactProvenance(options) {
+  try {
+    if (Object.hasOwn(options ?? {}, 'recoveryProvenance')) {
+      if (['source', 'run', 'artifacts', 'protectedSteps'].some(key => Object.hasOwn(options, key))) b2RecoveryReject();
+      const trusted = readTrustedB2RecoveryProvenance(options.recoveryProvenance);
+      return verifyRecoveryArtifactProvenanceInternal({
+        source: trusted.source,
+        run: {
+          id: trusted.run.id,
+          run_attempt: trusted.run.runAttempt,
+          status: trusted.run.status,
+          conclusion: trusted.run.conclusion,
+          event: trusted.run.event,
+          head_sha: trusted.run.headSha,
+          path: trusted.run.path,
+          repository: { full_name: trusted.run.repository },
+        },
+        artifacts: Object.values(trusted.artifacts).map(item => ({ ...item, expired: false })),
+        releaseBundle: options.releaseBundle,
+        gateEvidence: options.gateEvidence,
+        trustedProvenance: trusted,
+        recoveryProvenance: options.recoveryProvenance,
+      });
+    }
+    if (options?.source?.protected_stage_proof_sha256 || options?.protectedSteps) b2RecoveryReject();
+    return verifyRecoveryArtifactProvenanceInternal(options);
+  } catch (error) {
+    if (options?.recoveryProvenance || options?.source?.protected_stage_proof_sha256 || options?.protectedSteps) b2RecoveryReject();
+    throw error;
+  }
+}
+
+function assertB2ArchiveFiles(directory, expected, includesBundle = false) {
+  if (!expected || typeof expected !== 'object') b2RecoveryReject();
+  const names = readdirSync(directory).flatMap(name => name === 'bundle' && includesBundle
+    ? readdirSync(join(directory, name)).map(child => `bundle/${child}`) : [name]).sort();
+  if (canonicalJson(names) !== canonicalJson(Object.keys(expected).sort())
+    || names.some(name => sha256Hex(readFileSync(join(directory, ...name.split('/')))) !== expected[name])) b2RecoveryReject();
+}
+
+function verifyRecoveryArtifactProvenanceInternal({ source, run, artifacts, releaseBundle, gateEvidence, trustedProvenance,
+  recoveryProvenance = null }) {
   const code = 'RECOVERY_SOURCE_PROVENANCE_MISMATCH';
   if (!source || !run || String(run.id) !== source.run_id || run.run_attempt !== source.run_attempt
     || run.status !== 'completed' || run.conclusion !== 'failure' || run.event !== 'workflow_dispatch'
@@ -5133,6 +6220,10 @@ export function verifyRecoveryArtifactProvenance({ source, run, artifacts, relea
   assertSafeRecoveryDirectory(gateDirectory, RECOVERY_GATE_FILES, ['release-observation.json']);
   const bundleDirectory = join(releaseDirectory, 'bundle');
   assertSafeRecoveryDirectory(bundleDirectory, BUNDLE_FILES, BUNDLE_FILES);
+  if (trustedProvenance?.authorizationSha256) {
+    assertB2ArchiveFiles(releaseDirectory, trustedProvenance.releaseFileDigests, true);
+    assertB2ArchiveFiles(gateDirectory, trustedProvenance.gateFileDigests);
+  }
 
   const manifestBytes = readFileSync(join(bundleDirectory, 'manifest.json'), 'utf8');
   const actualManifestSha256 = sha256Hex(Buffer.from(manifestBytes, 'utf8'));
@@ -5142,10 +6233,13 @@ export function verifyRecoveryArtifactProvenance({ source, run, artifacts, relea
     || !/^[0-9a-f]{64}$/.test(claimedManifestSha256)) {
     deny(code, 'source manifest bytes do not match the approved digest');
   }
-  const manifest = readFixedJson(bundleDirectory, 'manifest.json', code);
+  let manifest = readFixedJson(bundleDirectory, 'manifest.json', code);
   if (canonicalJson(manifest) !== manifestBytes) deny(code, 'source manifest is not canonical');
-  const sourceRequest = readFixedJson(releaseDirectory, 'request.json', code);
-  const observation = readFixedJson(gateDirectory, 'release-observation.json', code);
+  let sourceRequest = readFixedJson(releaseDirectory, 'request.json', code);
+  let observation = readFixedJson(gateDirectory, 'release-observation.json', code);
+  if (manifest.resources?.web_control_centers_b2_transition) {
+    ({ manifest, request: sourceRequest, observation } = projectB2RecoverySourceParts({ manifest, request: sourceRequest, observation }));
+  }
   if (sourceRequest.repository !== source.repository
     || sourceRequest.approvedSha !== source.source_sha
     || sourceRequest.mainSha !== source.source_sha
@@ -5174,7 +6268,12 @@ export function verifyRecoveryArtifactProvenance({ source, run, artifacts, relea
     || observation.post_evidence_sha256 !== source.post_snapshot_evidence_sha256) {
     deny(code, 'source observation is not a successful mutation followed by failed postcheck');
   }
-  return {
+  if (manifest.resources?.web_control_centers_b2_transition
+    && (!trustedProvenance
+      || manifest.runtime_closure.closure_sha256 !== trustedProvenance.sourceRuntimeClosureSha256)) b2RecoveryReject();
+  const b2Proof = manifest.resources?.web_control_centers_b2_transition
+    ? verifyB2SourceProof({ source, run, manifest, observation, gateDirectory, trustedProvenance }) : null;
+  const result = {
     source_run_id: source.run_id,
     source_release_id: source.release_id,
     source_sha: source.source_sha,
@@ -5187,6 +6286,29 @@ export function verifyRecoveryArtifactProvenance({ source, run, artifacts, relea
     source_request: sourceRequest,
     source_observation: observation,
   };
+  if (b2Proof) {
+    result.authorityReceipt = b2Proof.proofs[0].receipt;
+    // Copy before branding: mutation of caller JSON or output cannot replace
+    // the manifest, source time, or receipt used for historical resolution.
+    const verifiedState = JSON.parse(canonicalJson({ manifest, ...b2Proof, publicSource: result,
+      provenance: { runId: source.run_id, runAttempt: source.run_attempt, approvedSha: source.source_sha,
+        repository: source.repository, workflow: run.path,
+        authorizationSha256: trustedProvenance.authorizationSha256,
+        policySha256: trustedProvenance.policySha256,
+        adminArtifact: trustedProvenance.adminArtifact,
+        adminFileDigests: trustedProvenance.adminFileDigests,
+        releaseFileDigests: trustedProvenance.releaseFileDigests,
+        gateFileDigests: trustedProvenance.gateFileDigests,
+        artifacts: Object.fromEntries(['release', 'gate'].map(kind => {
+          const artifact = source[`${kind}_artifact`];
+          return [kind, { id: String(artifact.id), name: artifact.name, digest: artifact.digest }];
+        })) } }));
+    verifiedState.recoveryProvenance = recoveryProvenance;
+    b2VerifiedSources.set(result, verifiedState);
+    b2VerifiedSourceRuns.set(result, [source.run_id]);
+    b2VerifiedSourceOutputs.set(result, canonicalJson(result));
+  }
+  return result;
 }
 
 function requireAdminRecoveryArtifactMetadata({ artifacts, sourceRunId, sourceRunAttempt }) {
@@ -5255,7 +6377,20 @@ function verifyAdminPreviewLifecycleEvidence(value, {
   return true;
 }
 
-function adminRecoveryTransitionAuthority({ policy, sourceManifest, expectedSourceSha, code }) {
+function adminRecoveryTransitionAuthority({ policy, sourceManifest, expectedSourceSha, code, authorityContext, verifiedB2Source }) {
+  if (sourceManifest?.resources?.web_control_centers_b2_transition) {
+    try {
+      const original = b2HistoricalSnapshotBinding({ verifiedSource: verifiedB2Source, authorityContext });
+      if (canonicalJson(original.manifest) !== canonicalJson(sourceManifest)
+        || sourceManifest.identity.approved_sha !== expectedSourceSha) b2RecoveryReject();
+      projectB2Manifest(sourceManifest);
+      const c = authorityContext.descriptor.contract;
+      validateB2FunctionContracts(sourceManifest.resources.function_contracts, c.functions);
+      const migration = c.productive_changes.at(-1);
+      return { key: 'web_control_centers_b2_transition', b2: true,
+        transition: { migrations: [{ ...migration, version: migration.path.split('/').at(-1).slice(0, 14) }], contract: c } };
+    } catch { b2RecoveryReject(); }
+  }
   const supported = [
     'superuser_control_center_transition',
     'superuser_qa_perf_c1_transition',
@@ -5281,7 +6416,12 @@ function adminRecoveryTransitionAuthority({ policy, sourceManifest, expectedSour
   return { key, transition };
 }
 
-export function verifyAdminRecoverySourceProvenance({
+export function verifyAdminRecoverySourceProvenance(options) {
+  try { return verifyAdminRecoverySourceProvenanceInternal(options); }
+  catch (error) { if (options.authorityContext || options.verifiedB2Source || options.postcheckRecoveryChain?.authorityReceipt) b2RecoveryReject(); throw error; }
+}
+
+function verifyAdminRecoverySourceProvenanceInternal({
   policy,
   recoveryRequest,
   recoveryManifest,
@@ -5291,7 +6431,11 @@ export function verifyAdminRecoverySourceProvenance({
   gateEvidence,
   adminEvidence,
   postcheckRecoveryChain = null,
+  authorityContext, verifiedB2Source,
 }) {
+  if (postcheckRecoveryChain !== null && (authorityContext || postcheckRecoveryChain?.authorityReceipt)) {
+    postcheckRecoveryChain = projectB2RecoveryChain(postcheckRecoveryChain, authorityContext, verifiedB2Source);
+  }
   const code = 'ADMIN_RECOVERY_SOURCE_MISMATCH';
   validateRequest(recoveryRequest, policy);
   const declaredRecoveryRunId = String(recoveryRequest.recoverySourceRunId ?? '');
@@ -5334,6 +6478,13 @@ export function verifyAdminRecoverySourceProvenance({
     deny(code, 'source run is not the exact failed main workflow_dispatch release');
   }
   const selectedArtifacts = requireAdminRecoveryArtifactMetadata({ artifacts, sourceRunId, sourceRunAttempt });
+  if (authorityContext || verifiedB2Source) {
+    const sourceState = assertB2SourceArtifacts(verifiedB2Source, { run, artifacts: selectedArtifacts });
+    const original = sourceState.provenance;
+    if (original.authorizationSha256 && (!original.adminArtifact
+      || canonicalJson({ id: String(selectedArtifacts.admin.id), name: selectedArtifacts.admin.name,
+        digest: selectedArtifacts.admin.digest }) !== canonicalJson(original.adminArtifact))) b2RecoveryReject();
+  }
   if (chainedRecovery && (selectedArtifacts.release.digest !== postcheckRecoveryChain.source_artifact_digests?.release
     || selectedArtifacts.gate.digest !== postcheckRecoveryChain.source_artifact_digests?.gate)) {
     deny(code, 'original release artifact digests differ from the verified postcheck recovery chain');
@@ -5348,21 +6499,37 @@ export function verifyAdminRecoverySourceProvenance({
     ['admin-web-manifest.json', 'admin-web-manifest.sha256'], code);
   const bundleDirectory = join(releaseDirectory, 'bundle');
   assertSafeRecoveryDirectory(bundleDirectory, BUNDLE_FILES, BUNDLE_FILES, code);
+  if (verifiedB2Source) {
+    const original = b2SourceState(verifiedB2Source).provenance;
+    if (original.authorizationSha256) {
+      if (!original.adminFileDigests) b2RecoveryReject();
+      assertB2ArchiveFiles(adminDirectory, original.adminFileDigests);
+      assertB2ArchiveFiles(releaseDirectory, original.releaseFileDigests, true);
+      assertB2ArchiveFiles(gateDirectory, original.gateFileDigests);
+    }
+  }
   const manifestBytes = readFileSync(join(bundleDirectory, 'manifest.json'), 'utf8');
-  const sourceManifest = readFixedJson(bundleDirectory, 'manifest.json', code);
+  let sourceManifest = readFixedJson(bundleDirectory, 'manifest.json', code);
   const sourceManifestDigest = sha256Hex(manifestBytes);
   const sourceAdminReleaseManifestDigest = sha256Hex(canonicalJson(sourceManifest).trimEnd());
   if (canonicalJson(sourceManifest) !== manifestBytes
     || readFileSync(join(bundleDirectory, 'manifest.sha256'), 'utf8').trim() !== sourceManifestDigest) {
     deny(code, 'source release manifest bytes or digest are invalid');
   }
-  const sourceRequest = readFixedJson(releaseDirectory, 'request.json', code);
-  const observation = readFixedJson(gateDirectory, 'release-observation.json', code);
+  let sourceRequest = readFixedJson(releaseDirectory, 'request.json', code);
+  let observation = readFixedJson(gateDirectory, 'release-observation.json', code);
   const postcheckPath = join(gateDirectory, 'postcheck-result.json');
   const sourcePostcheck = chainedRecovery ? null : readFixedJson(gateDirectory, 'postcheck-result.json', code);
   const sourceTransition = adminRecoveryTransitionAuthority({
-    policy, sourceManifest, expectedSourceSha, code,
+    policy, sourceManifest, expectedSourceSha, code, authorityContext, verifiedB2Source,
   });
+  if (sourceTransition.b2) {
+    ({ manifest: sourceManifest, request: sourceRequest, observation } = projectB2RecoverySourceParts({ manifest: sourceManifest, request: sourceRequest, observation }));
+    const original = b2SourceState(verifiedB2Source).publicSource;
+    if (canonicalJson(sourceManifest) !== canonicalJson(original.source_manifest)
+      || canonicalJson(sourceRequest) !== canonicalJson(original.source_request)
+      || canonicalJson(observation) !== canonicalJson(original.source_observation)) b2RecoveryReject();
+  }
   if (sourceRequest.mode !== policy.admin_recovery.source_mode
     || sourceRequest.actor !== policy.owner || sourceRequest.triggeringActor !== policy.owner
     || sourceRequest.repository !== policy.repository || sourceRequest.ref !== policy.admin_recovery.source_ref
@@ -5375,7 +6542,7 @@ export function verifyAdminRecoverySourceProvenance({
     || sourceManifest.identity?.release_id !== sourceRequest.releaseId
     || sourceManifest.identity?.scope_confirmation !== policy.scope_confirmations.release_high_risk
     || sourceManifest.risk?.level !== 'HIGH' || sourceManifest.result !== 'PLAN READY'
-    || sourceManifest.delta?.productive_change_count !== sourceTransition.transition.migrations.length
+    || sourceManifest.delta?.productive_change_count !== (sourceTransition.b2 ? 5 : sourceTransition.transition.migrations.length)
     || String(sourceManifest.identity?.run_id) !== sourceRunId
     || sourceManifest.identity?.run_attempt !== sourceRunAttempt
     || canonicalJson(sourceManifest.resources?.migrations?.map(item => ({
@@ -5384,17 +6551,18 @@ export function verifyAdminRecoverySourceProvenance({
       !== canonicalJson(sourceTransition.transition.migrations.map(item => ({
         version: item.version, path: item.path, blob: item.blob, sha256: item.sha256,
       })).sort((a, b) => a.version.localeCompare(b.version)))
-    || canonicalJson(sourceManifest.resources?.functions) !== canonicalJson([])
-    || canonicalJson(sourceManifest.resources?.function_contracts) !== canonicalJson([])
-    || sourceManifest.resources?.config_changed !== false
-    || canonicalJson(sourceManifest.resources?.[sourceTransition.key] ?? null)
+    || canonicalJson(sourceManifest.resources?.functions) !== canonicalJson(sourceTransition.b2
+      ? sourceTransition.transition.contract.functions.map(item => item.name) : [])
+    || (!sourceTransition.b2 && canonicalJson(sourceManifest.resources?.function_contracts) !== canonicalJson([]))
+    || sourceManifest.resources?.config_changed !== Boolean(sourceTransition.b2)
+    || (!sourceTransition.b2 && canonicalJson(sourceManifest.resources?.[sourceTransition.key] ?? null)
       !== canonicalJson({
         ...sourceTransition.transition,
         approved_sha: expectedSourceSha,
         baseline_descendant_verified: true,
         integration_base_descendant_verified: true,
         reviewed_bytes_verified: true,
-      })) {
+      }))) {
     deny(code, 'source request or manifest is not the exact supported Admin release');
   }
   const expectedPostcheckKeys = [
@@ -5463,6 +6631,17 @@ export function verifyAdminRecoverySourceProvenance({
       || postcheckRecoveryChain.source_release_id !== sourceRequest.releaseId) {
       deny(code, 'original release bytes differ from the verified postcheck recovery chain');
     }
+  } else if (sourceTransition.b2) {
+    try {
+      const receipt = publicAuthorityReceipt(authorityContext);
+      b2Exact(sourcePostcheck, ['schemaVersion', 'stage', 'result', 'receipt', 'checks']);
+      assertAuthorityReceiptMatch(receipt, sourcePostcheck.receipt);
+      b2Exact(sourcePostcheck.checks, ['catalog', 'securityAdvisor', 'backup', 'finance', 'manifest', 'functionInventory', 'sourceParity']);
+      if (sourcePostcheck.schemaVersion !== 1 || sourcePostcheck.stage !== 'postcheck' || sourcePostcheck.result !== 'VERIFIED'
+        || Object.values(sourcePostcheck.checks).some(value => value !== true)
+        || observation.steps?.post_snapshot !== 'success' || observation.steps?.postcheck !== 'success'
+        || observation.postcheck_file_sha256 !== sha256Hex(readFileSync(postcheckPath))) b2RecoveryReject();
+    } catch { b2RecoveryReject(); }
   } else if (observation.steps?.post_snapshot !== policy.admin_recovery.supabase_post_snapshot_status
     || observation.steps?.postcheck !== policy.admin_recovery.supabase_postcheck_status
     || !/^[0-9a-f]{64}$/.test(observation.post_evidence_sha256 ?? '')
@@ -5478,6 +6657,9 @@ export function verifyAdminRecoverySourceProvenance({
   }
   const adminManifestBytes = readFileSync(join(adminDirectory, 'admin-web-manifest.json'), 'utf8');
   const adminManifest = readFixedJson(adminDirectory, 'admin-web-manifest.json', code);
+  const adminSourceFiles = sourceTransition.b2
+    ? b2Projection(adminManifest.source?.files, [{ path: b2String, bytes: b2Integer, sha256: b2String }])
+    : adminManifest.source?.files;
   const canonicalAdminManifest = canonicalJson(adminManifest).trimEnd();
   const adminManifestDigest = sha256Hex(Buffer.from(canonicalAdminManifest, 'utf8'));
   if (adminManifestBytes !== `${canonicalAdminManifest}\n`
@@ -5532,7 +6714,7 @@ export function verifyAdminRecoverySourceProvenance({
       deny(code, 'source Cloudflare rollback was not exact and successful');
     }
   }
-  return {
+  const result = {
     schema_version: 1,
     result: 'ADMIN_RECOVERY_SOURCE_VERIFIED',
     source_run_id: declaredRecoveryRunId,
@@ -5550,7 +6732,7 @@ export function verifyAdminRecoverySourceProvenance({
     source_manifest_sha256: sourceManifestDigest,
     source_admin_manifest_sha256: adminManifestDigest,
     source_admin_source_sha256: adminManifest.source.sha256,
-    source_admin_files: adminManifest.source.files,
+    source_admin_files: adminSourceFiles,
     source_build_sha256: build?.dist_sha256 ?? null,
     source_cloudflare_prestate: sourceCloudflarePrestate,
     source_artifacts: selectedArtifacts,
@@ -5560,13 +6742,24 @@ export function verifyAdminRecoverySourceProvenance({
     source_transition_key: sourceTransition.key,
     postcheck_recovery_chain: chainedRecovery ? postcheckRecoveryChain : null,
   };
+  if (sourceTransition.b2) {
+    result.authorityReceipt = publicAuthorityReceipt(authorityContext);
+    b2VerifiedSources.set(result, b2VerifiedSources.get(verifiedB2Source));
+    b2VerifiedSourceRuns.set(result, [sourceRunId, declaredRecoveryRunId]);
+    b2VerifiedSourceOutputs.set(result, canonicalJson(result));
+  }
+  return result;
 }
 
 export function verifyAdminRecoveryCloudflarePrestate({
   verifiedSource,
   currentPrevious,
   currentRoutes,
+  authorityContext,
 }) {
+  if (verifiedSource?.authorityReceipt || authorityContext) {
+    b2HistoricalSnapshotBinding({ verifiedSource, authorityContext });
+  }
   const code = 'ADMIN_RECOVERY_CLOUDFLARE_PRESTATE_MISMATCH';
   const expected = verifiedSource?.source_cloudflare_prestate;
   const routes = normalizedRecoveryRoutes(currentRoutes, code);
@@ -5690,7 +6883,20 @@ export function verifyPostcheckRecovery({
   sourceObservation,
   currentEvidence,
   adapterSourceSha256,
+  authorityContext, verifiedSource, currentGate, requestedAt = new Date().toISOString(),
 }) {
+  if (sourceManifest?.resources?.web_control_centers_b2_transition || authorityContext) {
+    try {
+      verifyB2RecoveryOperation({ recoveryRequest, recoveryManifest, verifiedSource, authorityContext,
+        currentGate, backup: currentEvidence?.backup, policy, requestedAt });
+      const original = b2HistoricalSnapshotBinding({ verifiedSource, authorityContext });
+      if (canonicalJson(original.manifest) !== canonicalJson(sourceManifest)
+        || canonicalJson(verifiedSource.source_observation) !== canonicalJson(sourceObservation)) b2RecoveryReject();
+      return verifyProductionRecoverySnapshot({ recovery: currentEvidence, policy, request: recoveryRequest,
+        manifest: recoveryManifest, adapterSourceSha256, authorityContext, requestedAt,
+        recoveryAuthorization: { verifiedSource, currentGate } });
+    } catch { b2RecoveryReject(); }
+  }
   const code = 'RECOVERY_POSTCHECK_FAILED';
   const source = policy?.postcheck_recovery?.approved_sources?.find(item => (
     item.run_id === String(recoveryRequest?.recoverySourceRunId ?? '')
@@ -5971,7 +7177,12 @@ export function verifyPostcheckRecovery({
   };
 }
 
-export function verifyAdminRecoveryPostcheckChainProvenance({
+export function verifyAdminRecoveryPostcheckChainProvenance(options) {
+  try { return verifyAdminRecoveryPostcheckChainProvenanceInternal(options); }
+  catch (error) { if (options.authorityContext || options.verifiedB2Source) b2RecoveryReject(); throw error; }
+}
+
+function verifyAdminRecoveryPostcheckChainProvenanceInternal({
   policy,
   policySha256,
   recoveryRequest,
@@ -5982,6 +7193,7 @@ export function verifyAdminRecoveryPostcheckChainProvenance({
   gateEvidence,
   recoveryEvidence,
   adapterSourceSha256,
+  authorityContext, verifiedB2Source, chainProvenance,
 }) {
   const code = 'ADMIN_RECOVERY_POSTCHECK_CHAIN_MISMATCH';
   const recoveryRunId = String(recoveryRequest?.recoverySourceRunId ?? '');
@@ -6016,6 +7228,16 @@ export function verifyAdminRecoveryPostcheckChainProvenance({
     recovery: `nelyon-postcheck-recovery-${recoveryRunId}-${recoveryRunAttempt}`,
   };
   const selectedArtifacts = requireExactRunArtifactMetadata({ artifacts, names, code });
+  const b2State = verifiedB2Source ? b2SourceState(verifiedB2Source) : null;
+  let authenticatedChain = null;
+  if (b2State?.provenance.authorizationSha256) {
+    authenticatedChain = readTrustedB2ChainProvenance(chainProvenance, b2State.recoveryProvenance);
+    const exact = authenticatedChain.chain;
+    if (policySha256 !== b2State.provenance.policySha256 || recoveryRunId !== exact.run_id
+      || recoveryRunAttempt !== exact.run_attempt || run.head_sha !== exact.source_sha
+      || ['release', 'gate', 'recovery'].some(kind => canonicalJson(selectedArtifacts[kind])
+        !== canonicalJson(exact[`${kind}_artifact`]))) b2RecoveryReject();
+  }
   const releaseDirectory = resolve(releaseBundle?.directory ?? '');
   const gateDirectory = resolve(gateEvidence?.directory ?? '');
   const recoveryDirectory = resolve(recoveryEvidence?.directory ?? '');
@@ -6025,6 +7247,11 @@ export function verifyAdminRecoveryPostcheckChainProvenance({
   assertSafeRecoveryDirectory(recoveryDirectory, POSTCHECK_RECOVERY_FILES, POSTCHECK_RECOVERY_FILES, code);
   const bundleDirectory = join(releaseDirectory, 'bundle');
   assertSafeRecoveryDirectory(bundleDirectory, BUNDLE_FILES, BUNDLE_FILES, code);
+  if (authenticatedChain) {
+    assertB2ArchiveFiles(releaseDirectory, authenticatedChain.fileDigests.release, true);
+    assertB2ArchiveFiles(gateDirectory, authenticatedChain.fileDigests.gate);
+    assertB2ArchiveFiles(recoveryDirectory, authenticatedChain.fileDigests.recovery);
+  }
 
   const chainManifestBytes = readFileSync(join(bundleDirectory, 'manifest.json'), 'utf8');
   const chainManifest = readFixedJson(bundleDirectory, 'manifest.json', code);
@@ -6035,7 +7262,12 @@ export function verifyAdminRecoveryPostcheckChainProvenance({
     deny(code, 'postcheck recovery manifest bytes or digest are invalid');
   }
   const sourceRunId = String(chainRequest.recoverySourceRunId ?? '');
-  const source = policy?.postcheck_recovery?.approved_sources?.find(item => item.run_id === sourceRunId);
+  const source = authenticatedChain
+    ? readTrustedB2RecoveryProvenance(b2State.recoveryProvenance).source
+    : policy?.postcheck_recovery?.approved_sources?.find(item => item.run_id === sourceRunId);
+  if (authenticatedChain && (source.run_id !== sourceRunId
+    || chainManifestSha256 !== authenticatedChain.chain.manifest_sha256
+    || chainManifest.runtime_closure?.closure_sha256 !== authenticatedChain.chain.runtime_closure_sha256)) b2RecoveryReject();
   if (!source || chainRequest.actor !== policy.owner || chainRequest.triggeringActor !== policy.owner
     || chainRequest.mode !== 'postcheck_recovery'
     || chainRequest.scopeConfirmation !== policy.scope_confirmations?.postcheck_recovery
@@ -6104,8 +7336,33 @@ export function verifyAdminRecoveryPostcheckChainProvenance({
     deny(code, 'postcheck recovery verified source is not the exact original release');
   }
   let recomputedResult;
+  const b2 = Boolean(verifiedSource.source_manifest?.resources?.web_control_centers_b2_transition);
   try {
-    recomputedResult = verifyPostcheckRecovery({
+    if (b2) {
+      b2Exact(verifiedSource, ['schema_version', 'result', 'source_run_id', 'source_release_id', 'source_sha',
+        'manifest_sha256', 'source_artifact_digests', 'source_manifest', 'source_request', 'source_observation', 'authorityReceipt']);
+      projectB2RecoverySourceParts({ manifest: verifiedSource.source_manifest, request: verifiedSource.source_request,
+        observation: verifiedSource.source_observation });
+      const sourceState = assertB2SourceArtifacts(verifiedB2Source, { source });
+      if (canonicalJson(verifiedSource) !== canonicalJson({ schema_version: 1, result: 'RECOVERY_SOURCE_VERIFIED', ...sourceState.publicSource })) b2RecoveryReject();
+      const original = b2HistoricalSnapshotBinding({ verifiedSource: verifiedB2Source, authorityContext });
+      if (canonicalJson(original.manifest) !== canonicalJson(verifiedSource.source_manifest)
+        || !b2VerifiedSources.has(verifiedB2Source)) b2RecoveryReject();
+      const receipt = publicAuthorityReceipt(authorityContext);
+      assertAuthorityReceiptMatch(receipt, gateProof.authorityReceipt);
+      assertAuthorityReceiptMatch(receipt, verifiedSource.authorityReceipt);
+      // These two closed records came from the exact-attempt authenticated
+      // recovery artifact. They attest its historical verification; they do
+      // not reconstruct private observations or authorize the current mutation.
+      for (const value of [currentEvidence, storedResult]) {
+        b2Exact(value, ['schemaVersion', 'stage', 'result', 'receipt', 'checks']);
+        assertAuthorityReceiptMatch(receipt, value.receipt);
+        b2Exact(value.checks, ['catalog', 'securityAdvisor', 'backup', 'finance', 'manifest', 'functionInventory', 'sourceParity']);
+        if (value.schemaVersion !== 1 || value.stage !== 'recovery' || value.result !== 'VERIFIED'
+          || Object.values(value.checks).some(check => check !== true)) b2RecoveryReject();
+      }
+      recomputedResult = currentEvidence;
+    } else recomputedResult = verifyPostcheckRecovery({
       policy,
       recoveryRequest: chainRequest,
       recoveryManifest: chainManifest,
@@ -6115,12 +7372,13 @@ export function verifyAdminRecoveryPostcheckChainProvenance({
       adapterSourceSha256,
     });
   } catch (error) {
+    if (b2) b2RecoveryReject();
     deny(code, `postcheck recovery evidence could not be recomputed: ${error?.code ?? error?.message ?? 'invalid evidence'}`);
   }
   if (canonicalJson(storedResult) !== canonicalJson(recomputedResult)) {
     deny(code, 'stored postcheck recovery result differs from recomputed evidence');
   }
-  return {
+  const result = {
     schema_version: 1,
     result: 'ADMIN_RECOVERY_POSTCHECK_CHAIN_VERIFIED',
     recovery_run_id: recoveryRunId,
@@ -6135,9 +7393,16 @@ export function verifyAdminRecoveryPostcheckChainProvenance({
     source_observation_sha256: sha256Hex(canonicalJson(verifiedSource.source_observation)),
     source_artifact_digests: verifiedSource.source_artifact_digests,
     recovery_artifacts: selectedArtifacts,
-    recovered_evidence_sha256: recomputedResult.current_evidence_sha256,
+    recovered_evidence_sha256: b2 ? sha256Hex(canonicalJson(currentEvidence)) : recomputedResult.current_evidence_sha256,
     recovered_result_sha256: sha256Hex(canonicalJson(recomputedResult)),
   };
+  if (b2) {
+    result.authorityReceipt = publicAuthorityReceipt(authorityContext);
+    b2VerifiedSources.set(result, b2VerifiedSources.get(verifiedB2Source));
+    b2VerifiedSourceRuns.set(result, [source.run_id, recoveryRunId]);
+    b2VerifiedSourceOutputs.set(result, canonicalJson(result));
+  }
+  return result;
 }
 
 export function verifyAdminRecoveryBuildBinding({
@@ -6146,7 +7411,11 @@ export function verifyAdminRecoveryBuildBinding({
   verifiedSource,
   currentAdminManifest,
   currentBuild,
+  authorityContext,
 }) {
+  if (verifiedSource?.authorityReceipt || authorityContext) {
+    b2HistoricalSnapshotBinding({ verifiedSource, authorityContext });
+  }
   const code = 'ADMIN_RECOVERY_POSTCHECK_FAILED';
   const exactSource = currentAdminManifest?.source?.sha256 === verifiedSource?.source_admin_source_sha256;
   const sourceFiles = verifiedSource?.source_admin_files;
@@ -6229,7 +7498,18 @@ export function verifyAdminRecoveryPostcheck({
   currentAdminManifest,
   currentBuild,
   adapterSourceSha256,
+  authorityContext, currentGate, requestedAt = new Date().toISOString(),
 }) {
+  if (verifiedSource?.source_manifest?.resources?.web_control_centers_b2_transition || authorityContext) {
+    try {
+      verifyB2RecoveryOperation({ recoveryRequest, recoveryManifest, verifiedSource, authorityContext,
+        currentGate, backup: currentEvidence?.backup, policy, requestedAt });
+      verifyAdminRecoveryBuildBinding({ recoveryRequest, recoveryManifest, verifiedSource, currentAdminManifest, currentBuild, authorityContext });
+      return verifyProductionAdminRecoverySnapshot({ post: currentEvidence, policy, request: recoveryRequest,
+        manifest: recoveryManifest, adapterSourceSha256, authorityContext, requestedAt,
+        recoveryAuthorization: { verifiedSource, currentGate } });
+    } catch { b2RecoveryReject(); }
+  }
   verifyAdminRecoveryBuildBinding({
     recoveryRequest,
     recoveryManifest,
@@ -6903,13 +8183,59 @@ function parseCliArguments(argv) {
   return { command, values };
 }
 
-function printHelp() {
-  process.stdout.write('Usage: nelyon-production-release.mjs <plan|revalidate|verify-gate|verify-dry-run|verify-pre-snapshot|verify-function-contract|postcheck|verify-recovery-source|postcheck-recovery|verify-admin-recovery-postcheck-chain|verify-admin-recovery-source|postcheck-admin-recovery|verify-admin-recovery-cloudflare-prestate> [options]\n');
+function cliOutputSink(value) {
+  if (!value || typeof value !== 'object' || types.isProxy(value)) throw new Error('invalid CLI runtime options');
+  let current = value;
+  let descriptor;
+  while (current && !descriptor) {
+    descriptor = Object.getOwnPropertyDescriptor(current, 'write');
+    current = Object.getPrototypeOf(current);
+  }
+  if (!descriptor || !Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'function'
+    || types.isProxy(descriptor.value)) throw new Error('invalid CLI runtime options');
+  return Object.freeze({ write: descriptor.value.bind(value) });
 }
 
-async function runCli(argv) {
+function trustedCliRuntimeOptions(value) {
+  if (value === undefined) return Object.freeze({
+    now: () => new Date().toISOString(),
+    stdout: cliOutputSink(process.stdout),
+    stderr: cliOutputSink(process.stderr),
+  });
+  if (!value || typeof value !== 'object' || Array.isArray(value) || types.isProxy(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error('invalid CLI runtime options');
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const keys = Object.keys(descriptors);
+  if (keys.length !== 3 || !['now', 'stdout', 'stderr'].every(key => Object.hasOwn(descriptors, key))
+    || keys.some(key => !Object.hasOwn(descriptors[key], 'value') || !descriptors[key].enumerable)) {
+    throw new Error('invalid CLI runtime options');
+  }
+  const now = descriptors.now.value;
+  if (typeof now !== 'function' || types.isProxy(now)) throw new Error('invalid CLI runtime options');
+  return Object.freeze({
+    now: () => {
+      const sampled = now();
+      if (typeof sampled !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(sampled)
+        || !Number.isFinite(Date.parse(sampled)) || new Date(sampled).toISOString() !== sampled) {
+        throw new Error('invalid CLI runtime options');
+      }
+      return sampled;
+    },
+    stdout: cliOutputSink(descriptors.stdout.value),
+    stderr: cliOutputSink(descriptors.stderr.value),
+  });
+}
+
+function printHelp(stdout) {
+  stdout.write('Usage: nelyon-production-release.mjs <plan|revalidate|verify-gate|verify-dry-run|verify-pre-snapshot|verify-function-contract|postcheck|verify-recovery-source|postcheck-recovery|verify-admin-recovery-postcheck-chain|verify-admin-recovery-source|postcheck-admin-recovery|verify-admin-recovery-cloudflare-prestate> [options]\n');
+}
+
+// Protected controllers pass an already minted context and their fresh inventory
+// directly in memory. No command-line flag or evidence JSON can supply either.
+export async function runCli(argv, authorityContext, inventory, recoveryRuntime, suppliedRuntimeOptions) {
+  const runtime = trustedCliRuntimeOptions(suppliedRuntimeOptions);
   if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
-    printHelp();
+    printHelp(runtime.stdout);
     return 0;
   }
   const { command, values } = parseCliArguments(argv);
@@ -6921,6 +8247,8 @@ async function runCli(argv) {
     const policy = loadPolicy(values.policy);
     const adapterPath = join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs');
     const result = verifyAdminRecoveryPostcheckChainProvenance({
+      authorityContext, verifiedB2Source: recoveryRuntime?.verifiedSource,
+      chainProvenance: recoveryRuntime?.chainProvenance,
       policy,
       policySha256: sha256Hex(policyBytes),
       recoveryRequest: JSON.parse(readFileSync(values.request, 'utf8')),
@@ -6933,7 +8261,7 @@ async function runCli(argv) {
       adapterSourceSha256: sha256Hex(readFileSync(adapterPath)),
     });
     writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
-    process.stdout.write(`ADMIN RECOVERY POSTCHECK CHAIN VERIFIED ${result.recovery_run_id} ${result.source_run_id}\n`);
+    runtime.stdout.write(`ADMIN RECOVERY POSTCHECK CHAIN VERIFIED ${result.recovery_run_id} ${result.source_run_id}\n`);
     return 0;
   }
   if (command === 'verify-admin-recovery-source') {
@@ -6943,6 +8271,7 @@ async function runCli(argv) {
     const policy = loadPolicy(values.policy);
     const recoveryRequest = JSON.parse(readFileSync(values.request, 'utf8'));
     const result = verifyAdminRecoverySourceProvenance({
+      authorityContext, verifiedB2Source: recoveryRuntime?.verifiedSource,
       policy,
       recoveryRequest,
       recoveryManifest: JSON.parse(readFileSync(values['recovery-manifest'], 'utf8')),
@@ -6951,12 +8280,12 @@ async function runCli(argv) {
       releaseBundle: { directory: resolve(values['release-bundle']) },
       gateEvidence: { directory: resolve(values['gate-evidence']) },
       adminEvidence: { directory: resolve(values['admin-evidence']) },
-      postcheckRecoveryChain: values['postcheck-recovery-chain']
+      postcheckRecoveryChain: recoveryRuntime?.postcheckRecoveryChain ?? (values['postcheck-recovery-chain']
         ? JSON.parse(readFileSync(values['postcheck-recovery-chain'], 'utf8'))
-        : null,
+        : null),
     });
     writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
-    process.stdout.write(`ADMIN RECOVERY SOURCE VERIFIED ${result.source_run_id} ${result.source_manifest_sha256}\n`);
+    runtime.stdout.write(`ADMIN RECOVERY SOURCE VERIFIED ${result.source_run_id} ${result.source_manifest_sha256}\n`);
     return 0;
   }
   if (command === 'verify-admin-recovery-cloudflare-prestate') {
@@ -6964,12 +8293,13 @@ async function runCli(argv) {
       if (!values[required]) throw new Error(`missing --${required}`);
     }
     const result = verifyAdminRecoveryCloudflarePrestate({
-      verifiedSource: JSON.parse(readFileSync(values['verified-source'], 'utf8')),
+      verifiedSource: recoveryRuntime?.verifiedSource ?? JSON.parse(readFileSync(values['verified-source'], 'utf8')),
+      authorityContext,
       currentPrevious: JSON.parse(readFileSync(values.previous, 'utf8')),
       currentRoutes: JSON.parse(readFileSync(values.routes, 'utf8')),
     });
     writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
-    process.stdout.write(`ADMIN RECOVERY CLOUDFLARE PRESTATE VERIFIED ${result.active_version_id} ${result.routes_sha256}\n`);
+    runtime.stdout.write(`ADMIN RECOVERY CLOUDFLARE PRESTATE VERIFIED ${result.active_version_id} ${result.routes_sha256}\n`);
     return 0;
   }
   if (command === 'postcheck-admin-recovery') {
@@ -6981,10 +8311,12 @@ async function runCli(argv) {
     validateRequest(recoveryRequest, policy);
     const adapterPath = join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs');
     const result = verifyAdminRecoveryPostcheck({
+      authorityContext, currentGate: recoveryRuntime?.currentGate,
+      requestedAt: runtime.now(),
       policy,
       recoveryRequest,
       recoveryManifest: JSON.parse(readFileSync(values['recovery-manifest'], 'utf8')),
-      verifiedSource: JSON.parse(readFileSync(values['verified-source'], 'utf8')),
+      verifiedSource: recoveryRuntime?.verifiedSource ?? JSON.parse(readFileSync(values['verified-source'], 'utf8')),
       currentEvidence: JSON.parse(readFileSync(values['current-snapshot'], 'utf8')),
       currentAdminManifest: JSON.parse(readFileSync(values['admin-manifest'], 'utf8')),
       currentBuild: JSON.parse(readFileSync(values.build, 'utf8')),
@@ -6992,7 +8324,7 @@ async function runCli(argv) {
     });
     const bytes = canonicalJson(result);
     writeFileSync(resolve(values.output), bytes, { encoding: 'utf8', flag: 'wx' });
-    process.stdout.write(`ADMIN RECOVERY POSTCHECK SUCCESS ${sha256Hex(bytes)}\n`);
+    runtime.stdout.write(`ADMIN RECOVERY POSTCHECK SUCCESS ${sha256Hex(bytes)}\n`);
     return 0;
   }
   if (command === 'verify-recovery-source') {
@@ -7001,16 +8333,27 @@ async function runCli(argv) {
     }
     const policy = loadPolicy(values.policy);
     const source = policy.postcheck_recovery.approved_sources.find(item => item.run_id === values['recovery-source-run']);
-    if (!source) deny('INVALID_RECOVERY_SOURCE', 'requested recovery source is not approved by policy');
-    const result = verifyRecoveryArtifactProvenance({
-      source,
-      run: JSON.parse(readFileSync(values.run, 'utf8')),
-      artifacts: JSON.parse(readFileSync(values.artifacts, 'utf8')),
-      releaseBundle: { directory: resolve(values['release-bundle']) },
-      gateEvidence: { directory: resolve(values['gate-evidence']) },
-    });
+    let authenticatedSource = null;
+    if (!source && recoveryRuntime?.verifiedSource && recoveryRuntime?.recoveryProvenance) {
+      const state = b2SourceState(recoveryRuntime.verifiedSource);
+      if (!state.provenance.authorizationSha256 || state.provenance.policySha256 !== sha256Hex(readFileSync(values.policy))
+        || state.publicSource.source_run_id !== values['recovery-source-run']
+        || state.recoveryProvenance !== recoveryRuntime.recoveryProvenance) b2RecoveryReject();
+      b2HistoricalSnapshotBinding({ verifiedSource: recoveryRuntime.verifiedSource, authorityContext });
+      authenticatedSource = state.publicSource;
+    }
+    if (!source && !authenticatedSource) deny('INVALID_RECOVERY_SOURCE', 'requested recovery source is not approved by policy');
+    const common = { releaseBundle: { directory: resolve(values['release-bundle']) },
+      gateEvidence: { directory: resolve(values['gate-evidence']) } };
+    const result = recoveryRuntime?.recoveryProvenance
+      ? verifyRecoveryArtifactProvenance({ recoveryProvenance: recoveryRuntime.recoveryProvenance, ...common })
+      : verifyRecoveryArtifactProvenance({ source,
+        run: JSON.parse(readFileSync(values.run, 'utf8')),
+        artifacts: JSON.parse(readFileSync(values.artifacts, 'utf8')),
+        ...common });
+    if (authenticatedSource && canonicalJson(result) !== canonicalJson(authenticatedSource)) b2RecoveryReject();
     writeFileSync(resolve(values.output), canonicalJson({ schema_version: 1, result: 'RECOVERY_SOURCE_VERIFIED', ...result }), { encoding: 'utf8', flag: 'wx' });
-    process.stdout.write(`RECOVERY SOURCE VERIFIED ${result.source_run_id} ${result.manifest_sha256}\n`);
+    runtime.stdout.write(`RECOVERY SOURCE VERIFIED ${result.source_run_id} ${result.manifest_sha256}\n`);
     return 0;
   }
   if (command === 'postcheck-recovery') {
@@ -7019,13 +8362,18 @@ async function runCli(argv) {
     }
     const policy = loadPolicy(values.policy);
     const recoveryRequest = JSON.parse(readFileSync(values.request, 'utf8'));
-    validateRequest(recoveryRequest, policy);
+    if (recoveryRuntime?.verifiedSource && authorityContext) {
+      validateProtectedB2RecoveryRequest({ request: recoveryRequest, policy, policyBytes: readFileSync(values.policy),
+        verifiedSource: recoveryRuntime.verifiedSource, authorityContext });
+    } else validateRequest(recoveryRequest, policy);
     const verifiedSource = JSON.parse(readFileSync(values['verified-source'], 'utf8'));
     if (verifiedSource?.result !== 'RECOVERY_SOURCE_VERIFIED') {
       deny('RECOVERY_SOURCE_PROVENANCE_MISMATCH', 'verified source record is missing');
     }
     const adapterPath = join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs');
     const result = verifyPostcheckRecovery({
+      authorityContext, verifiedSource: recoveryRuntime?.verifiedSource, currentGate: recoveryRuntime?.currentGate,
+      requestedAt: runtime.now(),
       policy,
       recoveryRequest,
       recoveryManifest: JSON.parse(readFileSync(values['recovery-manifest'], 'utf8')),
@@ -7036,7 +8384,7 @@ async function runCli(argv) {
     });
     const bytes = canonicalJson(result);
     writeFileSync(resolve(values.output), bytes, { encoding: 'utf8', flag: 'wx' });
-    process.stdout.write(`POSTCHECK RECOVERY SUCCESS ${sha256Hex(bytes)}\n`);
+    runtime.stdout.write(`POSTCHECK RECOVERY SUCCESS ${sha256Hex(bytes)}\n`);
     return 0;
   }
   if (command === 'verify-function-contract') {
@@ -7047,7 +8395,7 @@ async function runCli(argv) {
     const currentConfig = parseFunctionConfig(readFileSync(join(process.cwd(), 'supabase', 'config.toml'), 'utf8'));
     const baselineConfig = parseFunctionConfig(execFileSync('git', [
       'show', `${manifest?.baseline?.sha}:supabase/config.toml`,
-    ], { cwd: process.cwd(), encoding: 'utf8' }));
+    ], { cwd: process.cwd(), env: gitChildEnvironment(), stdio: 'pipe', encoding: 'utf8' }));
     const graph = buildFunctionGraph(collectFunctionSources(join(process.cwd(), 'supabase', 'functions'), process.cwd()));
     const result = verifyFunctionContracts({
       manifest,
@@ -7056,7 +8404,7 @@ async function runCli(argv) {
       configAfter: currentConfig,
       functionName: values.function,
     });
-    process.stdout.write(`FUNCTION CONTRACT VERIFIED ${result.functions[0].name} ${result.functions[0].source_sha256}\n`);
+    runtime.stdout.write(`FUNCTION CONTRACT VERIFIED ${result.functions[0].name} ${result.functions[0].source_sha256}\n`);
     return 0;
   }
   if (command === 'verify-pre-snapshot') {
@@ -7075,9 +8423,16 @@ async function runCli(argv) {
       request: releaseRequest,
       manifest,
       adapterSourceSha256: sha256Hex(readFileSync(adapterPath)),
+      authorityContext,
+      requestedAt: runtime.now(),
     });
+    if (manifest.resources?.web_control_centers_b2_transition) {
+      writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
+      runtime.stdout.write('B2 PRE SNAPSHOT VERIFIED\n');
+      return 0;
+    }
     writeFileSync(resolve(values.output), canonicalJson({ schema_version: 1, ...result }), { encoding: 'utf8', flag: 'wx' });
-    process.stdout.write(`PRODUCTION BASELINE VERIFIED ${result.evidence_sha256}\n`);
+    runtime.stdout.write(`PRODUCTION BASELINE VERIFIED ${result.evidence_sha256}\n`);
     return 0;
   }
   if (command === 'verify-dry-run') {
@@ -7088,7 +8443,61 @@ async function runCli(argv) {
     const verified = verifyMigrationDryRun({ text: readFileSync(values.input, 'utf8'), manifest });
     const result = { schema_version: 1, result: 'MIGRATION_DRY_RUN_VERIFIED', ...verified };
     writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
-    process.stdout.write(`MIGRATION DRY RUN VERIFIED ${verified.pending_versions.length}\n`);
+    runtime.stdout.write(`MIGRATION DRY RUN VERIFIED ${verified.pending_versions.length}\n`);
+    return 0;
+  }
+  if (command === 'revalidate-b2-recovery' || command === 'revalidate-b2-admin-recovery') {
+    for (const required of ['policy', 'request', 'bundle', 'compiler-sha256', 'remote-evidence', 'output']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    const policyBytes = readFileSync(values.policy);
+    const policy = loadPolicy(values.policy);
+    const request = JSON.parse(readFileSync(values.request, 'utf8'));
+    if (!recoveryRuntime?.verifiedSource) b2RecoveryReject();
+    const admin = command === 'revalidate-b2-admin-recovery';
+    if (admin) {
+      validateRequest(request, policy);
+      const state = b2SourceState(recoveryRuntime.verifiedSource);
+      if (request.mode !== 'admin_recovery' || !state.provenance.authorizationSha256
+        || state.provenance.policySha256 !== sha256Hex(policyBytes)
+        || !recoveryRuntime.adminVerifiedSource
+        || b2SourceState(recoveryRuntime.adminVerifiedSource) !== state
+        || recoveryRuntime.adminVerifiedSource.source_run_id !== String(request.recoverySourceRunId)) b2RecoveryReject();
+      b2HistoricalSnapshotBinding({ verifiedSource: recoveryRuntime.adminVerifiedSource, authorityContext });
+    } else validateProtectedB2RecoveryRequest({ request, policy, policyBytes,
+      verifiedSource: recoveryRuntime.verifiedSource, authorityContext });
+    const digest = readFileSync(join(resolve(values.bundle), 'manifest.sha256'), 'utf8').trim();
+    const verified = verifyManifestBundle({ directory: resolve(values.bundle), expected: {
+      approvedSha: request.approvedSha, compilerSha256: values['compiler-sha256'],
+      environmentName: policy.environment.name, manifestDigest: digest, releaseId: request.releaseId,
+      runAttempt: request.runAttempt, runId: request.runId,
+    } });
+    let receipt;
+    if (admin) {
+      if (verified.manifest.result !== 'NO PRODUCTIVE CHANGES' || canonicalJson(verified.manifest.blockers) !== canonicalJson([])
+        || verified.manifest.delta?.productive_change_count !== 0
+        || canonicalJson(verified.manifest.resources) !== canonicalJson({ config_changed: false, function_contracts: [], functions: [], migrations: [] })
+        || verified.manifest.recovery?.source_run_id !== String(request.recoverySourceRunId)) b2RecoveryReject();
+      receipt = publicAuthorityReceipt(authorityContext);
+    } else receipt = verifyPendingB2RecoveryAuthority({ request, policy, policyBytes, manifest: verified.manifest,
+      verifiedSource: recoveryRuntime.verifiedSource, authorityContext });
+    const gitState = resolveGitState({ cwd: process.cwd(), baselineSha: policy.baseline.sha,
+      approvedSha: request.approvedSha, expectedRepository: policy.repository,
+      runGit: args => execFileSync('git', args, { cwd: process.cwd(), env: gitChildEnvironment(),
+        stdio: 'pipe', encoding: args.includes('-z') ? 'buffer' : 'utf8' }) });
+    const evidence = JSON.parse(readFileSync(values['remote-evidence'], 'utf8'));
+    if (evidence.compiler?.sha256 !== sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-release.mjs')))
+      || evidence.compiler?.snapshot_adapter_sha256 !== sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs')))
+      || canonicalJson(evidence.gitState?.changes ?? []) !== canonicalJson(gitState.changes)
+      || canonicalJson(evidence.runtimeClosure) !== canonicalJson(verified.manifest.runtime_closure)) {
+      deny('POST_APPROVAL_DRIFT', 'protected recovery source or compiler differs from the approved plan');
+    }
+    const pending = admin ? undefined : parsePendingB2RecoveryRequest(request, policy);
+    const regenerated = buildManifest({ ...evidence, request, policy, gitState, pendingB2Recovery: pending });
+    if (canonicalJson(regenerated) !== canonicalJson(verified.manifest)) deny('POST_APPROVAL_DRIFT', 'protected recovery plan changed');
+    writeFileSync(resolve(values.output), canonicalJson({ schema_version: 1, result: 'REVALIDATED',
+      manifest_sha256: digest, approved_sha: request.approvedSha, authorityReceipt: receipt }), { encoding: 'utf8', flag: 'wx' });
+    runtime.stdout.write(`REVALIDATED ${digest}\n`);
     return 0;
   }
   if (command === 'revalidate') {
@@ -7098,14 +8507,30 @@ async function runCli(argv) {
     const policy = loadPolicy(values.policy);
     const releaseRequest = JSON.parse(readFileSync(values.request, 'utf8'));
     validateRequest(releaseRequest, policy);
+    const initialDigest = readFileSync(join(resolve(values.bundle), 'manifest.sha256'), 'utf8').trim();
+    const initialBundle = verifyManifestBundle({ directory: resolve(values.bundle), expected: {
+      approvedSha: releaseRequest.approvedSha, compilerSha256: values['compiler-sha256'],
+      environmentName: policy.environment.name, manifestDigest: initialDigest, releaseId: releaseRequest.releaseId,
+      runAttempt: releaseRequest.runAttempt, runId: releaseRequest.runId,
+    } });
+    const authorityProof = verifyB2ProtectedAuthority({ manifest: initialBundle.manifest,
+      authorityContext, inventory, requestedAt: runtime.now() });
     const gitState = resolveGitState({
       cwd: process.cwd(),
       baselineSha: policy.baseline.sha,
       approvedSha: releaseRequest.approvedSha,
       expectedRepository: policy.repository,
-      runGit: args => execFileSync('git', args, { cwd: process.cwd(), encoding: args.includes('-z') ? 'buffer' : 'utf8' }),
+      runGit: args => execFileSync('git', args, { cwd: process.cwd(), env: gitChildEnvironment(),
+        stdio: 'pipe', encoding: args.includes('-z') ? 'buffer' : 'utf8' }),
     });
     const evidence = JSON.parse(readFileSync(values['remote-evidence'], 'utf8'));
+    if (isB2Delta(gitState.changes)) {
+      const localEvidence = compileLocalEvidence({ cwd: process.cwd(), policy, request: releaseRequest,
+        generatedAt: evidence.generatedAt });
+      for (const key of ['b2Release', 'functionContracts', 'affectedFunctions', 'migrations']) {
+        if (canonicalJson(localEvidence[key]) !== canonicalJson(evidence[key])) b2Reject();
+      }
+    }
     const currentCompilerSha256 = sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-release.mjs')));
     const currentAdapterSha256 = sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs')));
     if (evidence.compiler?.sha256 !== currentCompilerSha256
@@ -7132,9 +8557,10 @@ async function runCli(argv) {
     if (canonicalJson(regenerated) !== canonicalJson(verified.manifest)) {
       deny('POST_APPROVAL_DRIFT', 'regenerated manifest differs from the approved artifact');
     }
-    const result = { schema_version: 1, result: 'REVALIDATED', manifest_sha256: digest, approved_sha: releaseRequest.approvedSha };
+    const result = { schema_version: 1, result: 'REVALIDATED', manifest_sha256: digest, approved_sha: releaseRequest.approvedSha,
+      ...authorityProof };
     writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
-    process.stdout.write(`REVALIDATED ${digest}\n`);
+    runtime.stdout.write(`REVALIDATED ${digest}\n`);
     return 0;
   }
   if (command === 'postcheck') {
@@ -7155,6 +8581,8 @@ async function runCli(argv) {
       request: releaseRequest,
       manifest,
       adapterSourceSha256: sha256Hex(readFileSync(adapterPath)),
+      authorityContext,
+      requestedAt: runtime.now(),
     });
     const beforeTransactions = new Map(beforeEvidence.finance.transactions.items.map(item => [item.id, item]));
     const beforeLedger = new Set(beforeEvidence.finance.ledger_entries.items.map(item => item.id));
@@ -7195,6 +8623,11 @@ async function runCli(argv) {
         runAttempt: releaseRequest.runAttempt,
       },
     });
+    if (manifest.resources?.web_control_centers_b2_transition) {
+      writeFileSync(resolve(values.output), canonicalJson(remote), { encoding: 'utf8', flag: 'wx' });
+      runtime.stdout.write('B2 POSTCHECK VERIFIED\n');
+      return 0;
+    }
     const result = {
       schema_version: 1,
       result: 'SUCCESS',
@@ -7207,7 +8640,87 @@ async function runCli(argv) {
     };
     const bytes = canonicalJson(result);
     writeFileSync(resolve(values.output), bytes, { encoding: 'utf8', flag: 'wx' });
-    process.stdout.write(`POSTCHECK SUCCESS ${sha256Hex(bytes)}\n`);
+    runtime.stdout.write(`POSTCHECK SUCCESS ${sha256Hex(bytes)}\n`);
+    return 0;
+  }
+  if (command === 'verify-b2-recovery-gate' || command === 'verify-b2-admin-recovery-gate') {
+    for (const required of ['policy', 'policy-sha256', 'request', 'bundle', 'compiler-sha256', 'environment',
+      'branch-policies', 'approvals', 'runs', 'auto-deploy-expected', 'revalidated', 'output']) {
+      if (!values[required]) throw new Error(`missing --${required}`);
+    }
+    if (!recoveryRuntime?.verifiedSource) b2RecoveryReject();
+    const policyBytes = readFileSync(values.policy);
+    const policySha256 = verifyPolicyDigest({ policyBytes, expectedSha256: values['policy-sha256'] });
+    const policy = loadPolicy(values.policy);
+    const request = JSON.parse(readFileSync(values.request, 'utf8'));
+    const admin = command === 'verify-b2-admin-recovery-gate';
+    if (admin) {
+      validateRequest(request, policy);
+      const state = b2SourceState(recoveryRuntime.verifiedSource);
+      if (request.mode !== 'admin_recovery' || !state.provenance.authorizationSha256
+        || state.provenance.policySha256 !== sha256Hex(policyBytes)
+        || !recoveryRuntime.adminVerifiedSource
+        || b2SourceState(recoveryRuntime.adminVerifiedSource) !== state
+        || recoveryRuntime.adminVerifiedSource.source_run_id !== String(request.recoverySourceRunId)) b2RecoveryReject();
+      b2HistoricalSnapshotBinding({ verifiedSource: recoveryRuntime.adminVerifiedSource, authorityContext });
+    } else validateProtectedB2RecoveryRequest({ request, policy, policyBytes,
+      verifiedSource: recoveryRuntime.verifiedSource, authorityContext });
+    const digest = readFileSync(join(resolve(values.bundle), 'manifest.sha256'), 'utf8').trim();
+    const bundle = verifyManifestBundle({ directory: resolve(values.bundle), expected: {
+      approvedSha: request.approvedSha, compilerSha256: values['compiler-sha256'],
+      environmentName: policy.environment.name, manifestDigest: digest, releaseId: request.releaseId,
+      runAttempt: request.runAttempt, runId: request.runId,
+    } });
+    let receipt;
+    if (admin) {
+      if (bundle.manifest.result !== 'NO PRODUCTIVE CHANGES' || canonicalJson(bundle.manifest.blockers) !== canonicalJson([])
+        || bundle.manifest.delta?.productive_change_count !== 0
+        || canonicalJson(bundle.manifest.resources) !== canonicalJson({ config_changed: false, function_contracts: [], functions: [], migrations: [] })
+        || bundle.manifest.recovery?.source_run_id !== String(request.recoverySourceRunId)) b2RecoveryReject();
+      receipt = publicAuthorityReceipt(authorityContext);
+      requiredSecretsForMode('admin_recovery', recoveryRuntime.operationSecrets);
+    } else receipt = verifyPendingB2RecoveryAuthority({ request, policy, policyBytes, manifest: bundle.manifest,
+      verifiedSource: recoveryRuntime.verifiedSource, authorityContext });
+    const revalidated = JSON.parse(readFileSync(values.revalidated, 'utf8'));
+    b2Exact(revalidated, ['schema_version', 'result', 'manifest_sha256', 'approved_sha', 'authorityReceipt']);
+    if (revalidated.schema_version !== 1 || revalidated.result !== 'REVALIDATED'
+      || revalidated.manifest_sha256 !== digest || revalidated.approved_sha !== request.approvedSha) b2RecoveryReject();
+    assertAuthorityReceiptMatch(receipt, revalidated.authorityReceipt);
+    const gitState = resolveGitState({ cwd: process.cwd(), baselineSha: policy.baseline.sha,
+      approvedSha: request.approvedSha, expectedRepository: policy.repository,
+      runGit: args => execFileSync('git', args, { cwd: process.cwd(), env: gitChildEnvironment(),
+        stdio: 'pipe', encoding: args.includes('-z') ? 'buffer' : 'utf8' }) });
+    const files = gitState.changes.map(change => ({ file_type: change.fileType ?? null, path: change.path, status: change.status }))
+      .sort((left, right) => `${left.path}:${left.status}`.localeCompare(`${right.path}:${right.status}`));
+    if (canonicalJson(files) !== canonicalJson(bundle.manifest.delta?.files)
+      || bundle.manifest.compiler?.sha256 !== sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-release.mjs')))
+      || bundle.manifest.compiler?.snapshot_adapter_sha256 !== sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs')))) {
+      deny('POST_APPROVAL_DRIFT', 'protected recovery checkout differs from the verified plan');
+    }
+    const environment = JSON.parse(readFileSync(values.environment, 'utf8'));
+    verifyEnvironmentSnapshot({ environment, branchPolicies: JSON.parse(readFileSync(values['branch-policies'], 'utf8')),
+      expected: { id: policy.environment.id, name: policy.environment.name, owner: policy.owner,
+        branch: policy.environment.protected_branch, authorizationMode: policy.environment.authorization_mode ?? 'manual' } });
+    const autoDeployExpectation = verifyAutoDeployExpectation({ declaration: values['auto-deploy-expected'], policy: policy.auto_deploy });
+    const approvals = JSON.parse(readFileSync(values.approvals, 'utf8'));
+    let approvalToken = null;
+    if ((policy.environment.authorization_mode ?? 'manual') === 'automatic') {
+      verifyAutomaticAuthorizationHistory({ approvals, expectedRunId: request.runId, expectedRunAttempt: request.runAttempt });
+    } else {
+      approvalToken = buildApprovalToken({ mode: request.mode, runId: request.runId, runAttempt: request.runAttempt,
+        environmentId: environment.id, environmentName: environment.name, releaseId: request.releaseId,
+        approvedSha: request.approvedSha, manifestDigest: digest });
+      verifyApprovalHistory({ approvals, expectedToken: approvalToken, owner: policy.owner, environmentId: environment.id,
+        environmentName: environment.name, expectedRunId: request.runId, expectedRunAttempt: request.runAttempt });
+    }
+    verifyConcurrency({ runs: JSON.parse(readFileSync(values.runs, 'utf8')), currentRunId: request.runId });
+    const proof = { schema_version: 1, result: 'GATE_VERIFIED', run_id: request.runId, run_attempt: request.runAttempt,
+      environment: { id: environment.id, name: environment.name }, release_id: request.releaseId,
+      approved_sha: request.approvedSha, policy_sha256: policySha256, manifest_sha256: digest,
+      authorization_mode: policy.environment.authorization_mode ?? 'manual', auto_deploy_expectation: autoDeployExpectation,
+      approval_token_sha256: approvalToken ? sha256Hex(approvalToken) : null, authorityReceipt: receipt };
+    writeFileSync(resolve(values.output), canonicalJson(proof), { encoding: 'utf8', flag: 'wx' });
+    runtime.stdout.write(`GATE VERIFIED ${digest}\n`);
     return 0;
   }
   if (command === 'verify-gate') {
@@ -7234,6 +8747,8 @@ async function runCli(argv) {
         runId: releaseRequest.runId,
       },
     });
+    const authorityProof = verifyB2ProtectedAuthority({ manifest: verifiedBundle.manifest,
+      authorityContext, inventory, requestedAt: runtime.now() });
     if (verifiedBundle.manifest.compiler?.sha256 !== sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-release.mjs')))
       || verifiedBundle.manifest.compiler?.snapshot_adapter_sha256 !== sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs')))) {
       deny('ARTIFACT_PROVENANCE_MISMATCH', 'current release authority bytes differ from the approved artifact');
@@ -7304,9 +8819,10 @@ async function runCli(argv) {
       authorization_mode: authorizationMode,
       auto_deploy_expectation: autoDeployExpectation,
       approval_token_sha256: approvalToken ? sha256Hex(approvalToken) : null,
+      ...authorityProof,
     };
     writeFileSync(resolve(values.output), canonicalJson(proof), { encoding: 'utf8', flag: 'wx' });
-    process.stdout.write(`GATE VERIFIED ${verifiedBundle.digest}\n`);
+    runtime.stdout.write(`GATE VERIFIED ${verifiedBundle.digest}\n`);
     return 0;
   }
   if (command !== 'plan') throw new Error(`command ${command} is not implemented yet`);
@@ -7315,16 +8831,38 @@ async function runCli(argv) {
   }
   const policy = loadPolicy(values.policy);
   const releaseRequest = JSON.parse(readFileSync(values.request, 'utf8'));
-  const evidence = values['remote-evidence']
+  let evidence = values['remote-evidence']
     ? JSON.parse(readFileSync(values['remote-evidence'], 'utf8'))
     : compileLocalEvidence({ cwd: process.cwd(), policy, request: releaseRequest });
-  if (values['evidence-output']) writeFileSync(resolve(values['evidence-output']), canonicalJson(evidence), { encoding: 'utf8', flag: 'wx' });
+  if (!isReadOnlyRecoveryMode(releaseRequest.mode)
+    && (evidence.b2Release !== undefined || isB2Delta(evidence.gitState?.changes))) {
+    b2Exact(evidence, ['b2Release', 'affectedFunctions', 'functionContracts', 'migrations', 'gitState',
+      'classified', 'reproducibility', 'risk', 'runtimeClosure', 'compiler', 'generatedAt']);
+    const { b2Release, ...parts } = evidence;
+    evidence = { b2Release: projectB2ReleaseEvidence(b2Release, policy), ...projectB2EvidenceParts(parts) };
+  }
   const history = JSON.parse(readFileSync(values.history, 'utf8'));
-  validateRequest(releaseRequest, policy);
+  let pendingB2Recovery;
+  try { validateRequest(releaseRequest, policy); }
+  catch (error) {
+    if (error?.code !== 'INVALID_RECOVERY_SOURCE' || releaseRequest.mode !== 'postcheck_recovery') throw error;
+    pendingB2Recovery = parsePendingB2RecoveryRequest(releaseRequest, policy);
+  }
+  if (pendingB2Recovery || releaseRequest.mode === 'admin_recovery') {
+    const repositoryRoot = resolve(process.cwd());
+    evidence = { ...evidence, runtimeClosure: buildPrivateRuntimeClosure({ repositoryRoot, readFile: absolutePath => {
+      const member = relative(repositoryRoot, absolutePath).replaceAll('\\', '/');
+      if (!member || member.startsWith('../') || isAbsolute(member)) b2Reject();
+      return execFileSync('git', ['show', `${releaseRequest.approvedSha}:${member}`], {
+        cwd: repositoryRoot, env: gitChildEnvironment(), stdio: 'pipe',
+      });
+    } }) };
+  }
   validateReleaseHistory({ releaseId: releaseRequest.releaseId, pages: history, policy });
-  const manifest = buildManifest({ ...evidence, request: releaseRequest, policy });
+  const manifest = buildManifest({ ...evidence, request: releaseRequest, policy, pendingB2Recovery });
+  if (values['evidence-output']) writeFileSync(resolve(values['evidence-output']), canonicalJson(evidence), { encoding: 'utf8', flag: 'wx' });
   const bundle = writeManifestBundle({ manifest, outputDirectory: resolve(values.output) });
-  process.stdout.write(`${manifest.result} ${bundle.digest}\n`);
+  runtime.stdout.write(`${manifest.result} ${bundle.digest}\n`);
   return 0;
 }
 
