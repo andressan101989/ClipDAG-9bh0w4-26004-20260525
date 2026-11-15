@@ -205,12 +205,12 @@ export async function b2HistoricalCapture({ manifest: inputManifest, request: in
 }
 
 export async function b2AdminHistoricalFixture({ adminStages = [], observedAdminStages = adminStages, proofAt,
-  allowUnresolvedAuthority = false, approvedSha = 'a'.repeat(40) } = {}) {
+  allowUnresolvedAuthority = false, approvedSha = 'a'.repeat(40), reviewedSourceSha = approvedSha } = {}) {
   const at = '2026-11-08T12:00:00.000Z';
   const policy = JSON.parse(readFileSync(new URL('../../.github/nelyon-production-release-policy.json', import.meta.url)));
   const descriptor = JSON.parse(readFileSync(new URL('../../.github/nelyon-web-control-centers-b2-release-descriptor.json', import.meta.url)));
   const c = descriptor.contract;
-  c.state = 'approved'; c.release_ready = true; c.reviewed_source_sha = approvedSha; c.integration_base_sha = 'b'.repeat(40);
+  c.state = 'approved'; c.release_ready = true; c.reviewed_source_sha = reviewedSourceSha; c.integration_base_sha = 'b'.repeat(40);
   c.function_inventory = { before: 34, after: 35 };
   const contracts = c.functions.map(item => {
     const entrypoint = `supabase/functions/${item.name}/index.ts`, source_files = [{ path: entrypoint, sha256: '1'.repeat(64) }];
@@ -240,7 +240,7 @@ export async function b2AdminHistoricalFixture({ adminStages = [], observedAdmin
     transitionId: c.id, baselineSha: c.baseline_sha, reviewedSourceSha: c.reviewed_source_sha, integrationBaseSha: c.integration_base_sha,
     requestedAt: at, authorityJson, expectedPrivateAuthoritySha256: hash(authorityJson) };
   parseB2PrivateAuthority(authorityJson, hash(authorityJson), at);
-  const request = { approvedSha: c.reviewed_source_sha, mainSha: c.reviewed_source_sha, runId: '123456789', runAttempt: 1,
+  const request = { approvedSha, mainSha: approvedSha, runId: '123456789', runAttempt: 1,
     releaseId: 'nelyon-20261108-001', actor: policy.owner, triggeringActor: policy.owner, repository: policy.repository,
     workflowRef: `${policy.repository}/${policy.workflow_path}@refs/heads/${policy.default_branch}`, ref: `refs/heads/${policy.default_branch}`,
     mode: 'release', scopeConfirmation: policy.scope_confirmations.release_high_risk };

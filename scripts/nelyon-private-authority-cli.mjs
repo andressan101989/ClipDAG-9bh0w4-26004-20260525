@@ -21,6 +21,8 @@ import {
 import { readTrustedB2HistoricalDescriptorBytes } from './nelyon-b2-recovery-provenance.mjs';
 import {
   canonicalJson,
+  verifyB2IntegratedSource,
+  verifyB2HistoricalIntegratedSource,
   parseFunctionConfig,
   runCli as runReleaseCli,
   validatePolicy,
@@ -421,7 +423,7 @@ function readReviewedFile(repositoryRoot, relativePath) {
   return boundedRead(path.resolve(repositoryRoot, relativePath), 4 * 1024 * 1024);
 }
 
-function currentSourceParity({ authorityContext, descriptorBytes, manifest, repositoryRoot, functionRows, capturedAt }) {
+function currentSourceParity({ authorityContext, descriptorBytes, manifest, repositoryRoot, functionRows, capturedAt, integratedSource }) {
   const contracts = manifest.resources?.function_contracts;
   const expected = authorityContext.descriptor.contract.functions;
   if (!Array.isArray(contracts) || !Array.isArray(expected)) throw new Error('blocked');
@@ -440,7 +442,7 @@ function currentSourceParity({ authorityContext, descriptorBytes, manifest, repo
       return { name: item.name, deployedSha256 };
     }) });
   return compileB2SourceParity({ authorityContext, manifest, descriptorBytes, reviewedTree,
-    deployedFunctionInventory, capturedAt });
+    deployedFunctionInventory, capturedAt, ...(integratedSource ? { integratedSource } : {}) });
 }
 
 async function historicalGitFile({ environment, fetchImpl, sourceSha, relativePath }) {
@@ -493,6 +495,7 @@ async function historicalSourceParity({ authorityContext, recoveryRuntime, envir
       return { name: item.name, deployedSha256 };
     }) });
   return compileB2SourceParity({ authorityContext, manifest,
+    integratedSource: verifyB2HistoricalIntegratedSource(recoveryRuntime),
     descriptorBytes: readTrustedB2HistoricalDescriptorBytes(recoveryRuntime.historicalRuntimeClosure,
       recoveryRuntime.recoveryProvenance),
     reviewedTree, deployedFunctionInventory, capturedAt });
@@ -595,7 +598,7 @@ function authenticateAdminSource({ inputs, recoveryRuntime, policy, request, man
 // argv/JSON; the executable constructs them only after closure and public-bundle
 // authentication. The export exists so the offline production-graph contract
 // can exercise the same controller with fixed fake transports.
-export function createPrivateAuthorityProductionHost({ publicInputs, environment, fetchImpl, repositoryRoot, recoveryRuntime }) {
+export function createPrivateAuthorityProductionHost({ publicInputs, environment, fetchImpl, repositoryRoot, recoveryRuntime, integratedSource }) {
   return Object.freeze({
     async loadPublicInputs() {
       return publicInputs;
@@ -603,6 +606,7 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
     async dispatch({ action, inputs, authorityContext, receipt, manifest, now }) {
       if (manifest?.resources?.web_control_centers_b2_transition) {
         verifyB2DatabaseSourcePreflight({ authorityContext, manifest, descriptorBytes: publicInputs.descriptorBytes,
+          ...(integratedSource ? { integratedSource } : {}),
           migrationBytes: readReviewedFile(repositoryRoot, authorityContext.descriptor.contract.productive_changes.at(-1).path) });
       }
       if (action === 'authority-proof') return receipt;
@@ -686,7 +690,7 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
         const pre = JSON.parse(boundedRead(safeStageInput(environment, inputs.preSnapshot),
           16 * 1024 * 1024).toString('utf8'));
         const sourceParity = currentSourceParity({ authorityContext, descriptorBytes: publicInputs.descriptorBytes,
-          manifest, repositoryRoot, functionRows: rows, capturedAt: now });
+          manifest, repositoryRoot, functionRows: rows, capturedAt: now, integratedSource });
         const post = await captureProductionSnapshot({ ...common, phase: 'post', sourceParity });
         verifyProductionSnapshotPair({ ...common, pre, post });
         writeFileSync(output, `${JSON.stringify(post)}\n`, { encoding: 'utf8', flag: 'wx' });
@@ -743,13 +747,16 @@ const productionHost = Object.freeze({
         releaseBundle: { directory: path.resolve(invocation.inputs.releaseBundle) },
         gateEvidence: { directory: path.resolve(invocation.inputs.gateEvidence) }, fetchImpl: globalThis.fetch });
     }
+    const integratedSource = !recoveryAction ? verifyB2IntegratedSource({ cwd: repositoryRoot,
+      policy: jsonBytes(publicInputs.policyBytes), request, manifest, descriptorBytes: publicInputs.descriptorBytes }) : undefined;
     return createPrivateAuthorityRuntime({
+      ...(integratedSource ? { integratedSource } : {}),
       bootstrapCapability,
       environment,
       fetchImpl: globalThis.fetch,
       now: () => new Date().toISOString(),
       host: createPrivateAuthorityProductionHost({ publicInputs, environment, fetchImpl: globalThis.fetch,
-        repositoryRoot, recoveryRuntime }),
+        repositoryRoot, recoveryRuntime, integratedSource }),
       ...(recoveryRuntime ? { recoveryRuntime } : {}),
     }).execute(invocation);
   },

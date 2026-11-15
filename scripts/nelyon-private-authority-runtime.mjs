@@ -12,7 +12,7 @@ import {
   readTrustedB2RecoveryStagingFiles,
 } from './nelyon-b2-recovery-provenance.mjs';
 import { verifyPrivateRuntimeClosure } from './nelyon-private-runtime-closure.mjs';
-import { resolveB2HistoricalAuthority, validatePolicy, verifyRecoveryArtifactProvenance } from './nelyon-production-release.mjs';
+import { assertB2IntegratedSource, resolveB2HistoricalAuthority, validatePolicy, verifyRecoveryArtifactProvenance } from './nelyon-production-release.mjs';
 import {
   assertAuthorityReceiptMatch,
   createReleaseAuthorityContext,
@@ -391,7 +391,7 @@ function canonicalJson(value) {
   return `${JSON.stringify(normalize(value))}\n`;
 }
 
-function parseDescriptorBeforeFetch(descriptorBytes, config, manifest) {
+function parseDescriptorBeforeFetch(descriptorBytes, config, manifest, integratedSource, request) {
   if (sha256(descriptorBytes) !== config.descriptorSha256) fail('RELEASE_AUTHORITY_CONTEXT_INVALID');
   let descriptor;
   try {
@@ -402,11 +402,14 @@ function parseDescriptorBeforeFetch(descriptorBytes, config, manifest) {
   if (!descriptor || typeof descriptor !== 'object' || Array.isArray(descriptor)) fail('RELEASE_AUTHORITY_CONTEXT_INVALID');
   const contract = descriptor.contract;
   const binding = manifest?.resources?.web_control_centers_b2_transition;
+  if (integratedSource !== undefined || manifest?.identity?.approved_sha !== contract?.reviewed_source_sha) {
+    try { assertB2IntegratedSource(integratedSource, { manifest, descriptorBytes, request }); }
+    catch { fail('RELEASE_AUTHORITY_CONTEXT_INVALID'); }
+  }
   if (!contract || contract.to_phase !== 'web-control-centers-b2'
     || typeof contract.id !== 'string' || contract.id.length < 1
     || !scalar(contract.baseline_sha, SHA40) || !scalar(contract.reviewed_source_sha, SHA40)
     || !scalar(contract.integration_base_sha, SHA40)
-    || manifest?.identity?.approved_sha !== contract.reviewed_source_sha
     || descriptor.public_contract_sha256 !== sha256(Buffer.from(canonicalJson(contract), 'utf8'))
     || descriptor.private_authority?.sha256 !== config.authoritySha256
     || binding?.descriptorSha256 !== config.descriptorSha256
@@ -509,7 +512,7 @@ function runtimeOptions(options) {
   const data = ownData(options);
   const keys = Object.keys(data);
   if (['bootstrapCapability', 'environment', 'host'].some(key => !Object.hasOwn(data, key))
-    || keys.some(key => !['bootstrapCapability', 'environment', 'fetchImpl', 'now', 'host', 'recoveryRuntime'].includes(key))) {
+    || keys.some(key => !['bootstrapCapability', 'environment', 'fetchImpl', 'now', 'host', 'recoveryRuntime', 'integratedSource'].includes(key))) {
     fail('PRIVATE_AUTHORITY_STAGE_INVALID');
   }
   const bootstrapState = bootstraps.get(data.bootstrapCapability.value);
@@ -531,6 +534,7 @@ function runtimeOptions(options) {
     now: strictNow(now),
     host: strictHost(data.host.value),
     recoveryRuntime,
+    integratedSource: data.integratedSource?.value,
   };
 }
 
@@ -731,7 +735,7 @@ export function createPrivateAuthorityRuntime(options) {
       });
     } catch { fail('PRIVATE_AUTHORITY_STAGE_BLOCKED'); }
     const policySha256 = protectedEnvironmentValue(runtime.environment, 'NELYON_RELEASE_POLICY_SHA256', HEX64);
-    const { descriptorBytes, manifest } = publicInputs(loaded, { policySha256 });
+    const { descriptorBytes, manifest, request } = publicInputs(loaded, { policySha256 });
     if (canonicalJson(manifest.runtime_closure) !== canonicalJson(state.runtimeClosure)) fail('RELEASE_AUTHORITY_CONTEXT_INVALID');
     const recoveryAction = ACTION_STAGE[parsedInvocation.action] === 'recovery';
     const config = recoveryAction
@@ -742,7 +746,7 @@ export function createPrivateAuthorityRuntime(options) {
     const provider = recoveryAction ? null : createR2PrivateAuthorityProvider({ accountId: config.accountId,
       bucket: config.bucket, accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey,
       fetch: runtime.fetchImpl, timeoutMs: config.timeoutMs });
-    const parsedDescriptor = recoveryAction ? null : parseDescriptorBeforeFetch(descriptorBytes, config, manifest);
+    const parsedDescriptor = recoveryAction ? null : parseDescriptorBeforeFetch(descriptorBytes, config, manifest, runtime.integratedSource, request);
     let authorityBytes;
     let authorityJson;
     let verification;
