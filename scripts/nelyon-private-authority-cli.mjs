@@ -333,6 +333,23 @@ function closureEnvironment(environment) {
   return Object.freeze({ NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: descriptor.value });
 }
 
+// Node's native process.env has an exotic prototype. Adapt only that exact
+// object (or plain test inputs), after bootstrap; never weaken runtime intake.
+export function copyProductionEnvironment(environment) {
+  if (!environment || typeof environment !== 'object' || Array.isArray(environment)
+    || types.isProxy(environment)
+    || (environment !== process.env && ![Object.prototype, null].includes(Object.getPrototypeOf(environment)))
+    || Object.getOwnPropertySymbols(environment).length !== 0) throw new Error('blocked');
+  const copy = Object.create(null);
+  for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(environment))) {
+    if (!Object.hasOwn(descriptor, 'value') || !descriptor.enumerable || typeof descriptor.value !== 'string') {
+      throw new Error('blocked');
+    }
+    copy[name] = descriptor.value;
+  }
+  return Object.freeze(copy);
+}
+
 function jsonBytes(bytes) {
   const value = JSON.parse(bytes.toString('utf8'));
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('blocked');
@@ -708,29 +725,30 @@ const productionHost = Object.freeze({
       readFile: readFileSync,
       nodeVersion: process.versions.node,
     });
+    const environment = copyProductionEnvironment(process.env);
     if (invocation.action === 'stage-b2-recovery-source') {
-      return stageProtectedB2RecoverySource({ bootstrapCapability, environment: process.env,
+      return stageProtectedB2RecoverySource({ bootstrapCapability, environment,
         policyBytes: publicInputs.policyBytes, runId: invocation.inputs.recoverySourceRun, fetchImpl: globalThis.fetch });
     }
     const recoveryAction = invocation.action.includes('recovery');
     const request = jsonBytes(publicInputs.requestBytes);
     const protectedB2Runtime = recoveryAction
-      ? adminRecoveryRequiresProtectedB2Runtime({ request, environment: process.env })
+      ? adminRecoveryRequiresProtectedB2Runtime({ request, environment })
       : false;
     let recoveryRuntime = null;
     if (recoveryAction && protectedB2Runtime) {
       recoveryRuntime = await loadProtectedB2RecoveryRuntime({ bootstrapCapability,
-        environment: process.env, policyBytes: publicInputs.policyBytes,
+        environment, policyBytes: publicInputs.policyBytes,
         runId: invocation.inputs.recoverySourceRun, runAttempt: null,
         releaseBundle: { directory: path.resolve(invocation.inputs.releaseBundle) },
         gateEvidence: { directory: path.resolve(invocation.inputs.gateEvidence) }, fetchImpl: globalThis.fetch });
     }
     return createPrivateAuthorityRuntime({
       bootstrapCapability,
-      environment: process.env,
+      environment,
       fetchImpl: globalThis.fetch,
       now: () => new Date().toISOString(),
-      host: createPrivateAuthorityProductionHost({ publicInputs, environment: process.env, fetchImpl: globalThis.fetch,
+      host: createPrivateAuthorityProductionHost({ publicInputs, environment, fetchImpl: globalThis.fetch,
         repositoryRoot, recoveryRuntime }),
       ...(recoveryRuntime ? { recoveryRuntime } : {}),
     }).execute(invocation);

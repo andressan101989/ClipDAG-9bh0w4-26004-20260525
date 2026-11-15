@@ -331,3 +331,46 @@ test('malformed trusted host sinks are contained and never cause an uncaught rej
     assert.equal(code, 2);
   }
 });
+
+test('CLI converts the actual Node process environment to a detached strict runtime record', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import assert from 'node:assert/strict';
+    import * as cli from './scripts/nelyon-private-authority-cli.mjs';
+    import {readTrustedAuthorityEnvironment} from './scripts/nelyon-private-authority-runtime.mjs';
+    assert.throws(() => readTrustedAuthorityEnvironment(process.env), {code:'PRIVATE_AUTHORITY_PROVIDER_INVALID'});
+    const environment = cli.copyProductionEnvironment(process.env);
+    assert.equal(Object.getPrototypeOf(environment), null);
+    assert.equal(Object.isFrozen(environment), true);
+    assert.equal(readTrustedAuthorityEnvironment(environment).provider, 'r2');
+    process.env.NELYON_PRIVATE_AUTHORITY_PROVIDER = 'changed';
+    assert.equal(environment.NELYON_PRIVATE_AUTHORITY_PROVIDER, 'r2');
+    assert.equal(readTrustedAuthorityEnvironment(environment).provider, 'r2');
+    process.stdout.write('SYNTHETIC_ENVIRONMENT_PASS');
+  `], { cwd: process.cwd(), encoding: 'utf8', env: {
+    NELYON_PRIVATE_AUTHORITY_PROVIDER: 'r2', NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: 'a'.repeat(32),
+    NELYON_PRIVATE_AUTHORITY_R2_BUCKET: 'synthetic-bucket', NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: 'synthetic-key',
+    NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: 'synthetic-secret', NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256: 'b'.repeat(64),
+    NELYON_PRIVATE_AUTHORITY_SHA256: 'c'.repeat(64), NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: 'd'.repeat(64),
+    NELYON_RELEASE_POLICY_SHA256: 'e'.repeat(64),
+  } });
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.stdout, 'SYNTHETIC_ENVIRONMENT_PASS');
+});
+
+test('CLI environment copy rejects accessors, proxies, exotic records and non-string values without execution', () => {
+  let reads = 0;
+  const getter = Object.defineProperty({}, 'NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY', { enumerable: true, get() { reads++; return MARKER; } });
+  for (const value of [getter, new Proxy({}, { ownKeys() { reads++; return []; } }), Object.create({}), [],
+    { VALUE: {} }, { VALUE: null }, { [Symbol('hidden')]: 'value' }, Object.defineProperty({}, 'VALUE', { value: 'hidden' })]) {
+    assert.throws(() => cliModule.copyProductionEnvironment(value));
+  }
+  assert.equal(reads, 0);
+});
+
+test('CLI environment copy preserves unknown reserved keys for strict runtime rejection', async () => {
+  const { readTrustedAuthorityEnvironment } = await import('../scripts/nelyon-private-authority-runtime.mjs');
+  const environment = cliModule.copyProductionEnvironment({ NELYON_PRIVATE_AUTHORITY_UNEXPECTED: 'synthetic' });
+  assert.equal(environment.NELYON_PRIVATE_AUTHORITY_UNEXPECTED, 'synthetic');
+  assert.throws(() => readTrustedAuthorityEnvironment(environment), { code: 'PRIVATE_AUTHORITY_PROVIDER_INVALID' });
+});
