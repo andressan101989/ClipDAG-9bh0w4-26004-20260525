@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { types } from 'node:util';
 
 import { publicAuthorityReceipt } from './nelyon-release-authority-context.mjs';
+import { assertB2IntegratedSource } from './nelyon-production-release.mjs';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const SHA40 = /^[0-9a-f]{40}$/;
@@ -318,15 +319,19 @@ function compileAdvisors(authority) {
 // their exact public descriptor and migration digests. Nothing is emitted.
 export function verifyB2DatabaseSourcePreflight(input) {
   try {
-    const data = ownData(input, ['authorityContext', 'manifest', 'descriptorBytes', 'migrationBytes']);
+    if (!input || typeof input !== 'object' || types.isProxy(input)) reject();
+    const data = ownData(input, ['authorityContext', 'manifest', 'descriptorBytes', 'migrationBytes',
+      ...(Object.hasOwn(input, 'integratedSource') ? ['integratedSource'] : [])]);
     const context = data.authorityContext.value;
     publicAuthorityReceipt(context);
     assertB2CatalogSecurityCoverage(context);
     const manifest = copyJson(data.manifest.value);
     const migration = copyBytes(data.migrationBytes.value);
     const expected = context.descriptor.contract.productive_changes?.at(-1);
+    if (data.integratedSource || manifest?.identity?.approved_sha !== context.descriptor.contract.reviewed_source_sha) {
+      assertB2IntegratedSource(data.integratedSource?.value, { manifest, descriptorBytes: data.descriptorBytes.value });
+    }
     if (sha256(copyBytes(data.descriptorBytes.value)) !== context.descriptorSha256
-      || manifest?.identity?.approved_sha !== context.descriptor.contract.reviewed_source_sha
       || expected?.path !== MIGRATION_PATH || sha256(migration) !== expected.sha256
       || manifest?.resources?.migrations?.length !== 1
       || manifest.resources.migrations[0].path !== MIGRATION_PATH
@@ -365,8 +370,9 @@ export function assertB2CatalogSecurityCoverage(authorityContext) {
 
 export function compileB2SourceParity(input) {
   try {
+    if (!input || typeof input !== 'object' || types.isProxy(input)) reject();
     const data = ownData(input, ['authorityContext', 'manifest', 'descriptorBytes', 'reviewedTree',
-      'deployedFunctionInventory', 'capturedAt']);
+      'deployedFunctionInventory', 'capturedAt', ...(Object.hasOwn(input, 'integratedSource') ? ['integratedSource'] : [])]);
     const authorityContext = data.authorityContext.value;
     publicAuthorityReceipt(authorityContext);
     assertB2CatalogSecurityCoverage(authorityContext);
@@ -378,8 +384,10 @@ export function compileB2SourceParity(input) {
     const descriptorBytes = copyBytes(data.descriptorBytes.value);
     if (sha256(descriptorBytes) !== authorityContext.descriptorSha256) reject();
     const manifest = copyJson(data.manifest.value);
-    if (reviewed.approvedSha !== manifest?.identity?.approved_sha
-      || reviewed.approvedSha !== authorityContext.descriptor.contract.reviewed_source_sha) reject();
+    if (reviewed.approvedSha !== manifest?.identity?.approved_sha) reject();
+    if (data.integratedSource || reviewed.approvedSha !== authorityContext.descriptor.contract.reviewed_source_sha) {
+      assertB2IntegratedSource(data.integratedSource?.value, { manifest, descriptorBytes });
+    }
     const productive = authorityContext.descriptor.contract.productive_changes;
     const migrationContract = productive?.at(-1);
     const migration = reviewed.files.get(migrationContract?.path);

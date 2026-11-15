@@ -8,6 +8,7 @@ import { types } from 'node:util';
 import { buildPrivateRuntimeClosure } from './nelyon-private-runtime-closure.mjs';
 import {
   readTrustedB2HistoricalRuntimeClosure,
+  readTrustedB2HistoricalDescriptorBytes,
   readTrustedB2RecoveryProvenance,
   readTrustedB2ChainProvenance,
 } from './nelyon-b2-recovery-provenance.mjs';
@@ -4763,6 +4764,106 @@ function collectFunctionSources(directory, root, files = {}) {
     }
   }
   return files;
+}
+
+const b2IntegratedSources = new WeakMap();
+
+function b2IntegratedJson(value) {
+  let nodes = 0;
+  function copy(item, depth = 0) {
+    if (++nodes > 50000 || depth > 32) b2Reject();
+    if (item === null || typeof item === 'string' || typeof item === 'boolean'
+      || typeof item === 'number' && Number.isSafeInteger(item)) return item;
+    if (!item || typeof item !== 'object' || types.isProxy(item)) b2Reject();
+    const array = Array.isArray(item);
+    if (!array && ![Object.prototype, null].includes(Object.getPrototypeOf(item))) b2Reject();
+    const properties = Object.getOwnPropertyDescriptors(item);
+    const keys = Reflect.ownKeys(properties).filter(key => !array || key !== 'length');
+    if (array && (keys.length !== item.length || keys.some((key, i) => key !== String(i)))) b2Reject();
+    const result = array ? [] : Object.create(null);
+    for (const key of keys) {
+      const property = properties[key];
+      if (typeof key !== 'string' || B2_UNSAFE_KEYS.has(key) || !property.enumerable
+        || !Object.hasOwn(property, 'value')) b2Reject();
+      result[key] = copy(property.value, depth + 1);
+    }
+    return result;
+  }
+  return copy(value);
+}
+
+function retainB2IntegratedSource({ manifest, descriptorBytes, request = null }) {
+  const capability = Object.freeze(Object.create(null));
+  b2IntegratedSources.set(capability, { manifestSha256: sha256Hex(canonicalJson(manifest)),
+    descriptorSha256: sha256Hex(descriptorBytes), approvedSha: manifest.identity.approved_sha,
+    requestSha256: request === null ? null : sha256Hex(canonicalJson(request)) });
+  return capability;
+}
+
+// Candidate booleans and serialized capabilities cannot authorize an integrated
+// commit. Recompile its Git evidence before the private provider is contacted.
+export function verifyB2IntegratedSource({ cwd, policy, request, manifest, descriptorBytes }) {
+  try {
+    policy = b2IntegratedJson(policy); request = b2IntegratedJson(request); manifest = b2IntegratedJson(manifest);
+    descriptorBytes = b2Bytes(descriptorBytes, 128 * 1024);
+    const git = args => execFileSync('git', args, { cwd, env: gitChildEnvironment(), stdio: 'pipe' });
+    const head = git(['rev-parse', 'HEAD']).toString('utf8').trim();
+    if (!SHA_PATTERN.test(head) || head !== request.approvedSha || head !== request.mainSha
+      || head !== manifest.identity.approved_sha || head !== manifest.baseline.origin_main_sha
+      || manifest.identity.run_id !== String(request.runId) || manifest.identity.run_attempt !== request.runAttempt
+      || manifest.identity.release_id !== request.releaseId) b2Reject();
+    const descriptor = parseB2ReleaseDescriptor(descriptorBytes, sha256Hex(descriptorBytes));
+    const evidence = compileLocalEvidence({ cwd, policy, request, generatedAt: manifest.generated_at });
+    const rebuilt = buildManifest({ ...evidence, policy, request });
+    if (canonicalJson(rebuilt) !== canonicalJson(manifest)) b2Reject();
+    if (!evidence.b2Release || manifest.baseline.sha !== descriptor.contract.baseline_sha
+      || canonicalJson(manifest.resources.web_control_centers_b2_transition)
+        !== canonicalJson(b2PublicBinding(descriptor, sha256Hex(descriptorBytes)))
+      || canonicalJson(manifest.resources.function_contracts) !== canonicalJson(evidence.functionContracts)
+      || canonicalJson(manifest.resources.migrations) !== canonicalJson(evidence.migrations)
+      || canonicalJson(manifest.runtime_closure) !== canonicalJson(evidence.runtimeClosure)
+      || !git(['show', `${head}:${B2_DESCRIPTOR_PATH}`]).equals(Buffer.from(descriptorBytes))) b2Reject();
+    // The host subsequently reads these working-tree bytes. Check them against
+    // the committed tree, including unchanged dependencies and configuration.
+    const paths = new Set(['supabase/config.toml', ...descriptor.contract.productive_changes.map(row => row.path),
+      ...evidence.functionContracts.flatMap(row => row.source_files.map(file => file.path))]);
+    for (const file of paths) {
+      const committed = git(['show', `${head}:${file}`]);
+      if (!readFileSync(join(cwd, file)).equals(committed)) b2Reject();
+    }
+    for (const file of descriptor.contract.productive_changes) {
+      if (sha256Hex(git(['show', `${descriptor.contract.reviewed_source_sha}:${file.path}`])) !== file.sha256) b2Reject();
+    }
+    return retainB2IntegratedSource({ manifest, descriptorBytes, request });
+  } catch { b2Reject(); }
+}
+
+export function assertB2IntegratedSource(capability, { manifest, descriptorBytes, request }) {
+  try {
+    const state = b2IntegratedSources.get(capability);
+    manifest = b2IntegratedJson(manifest); descriptorBytes = b2Bytes(descriptorBytes, 128 * 1024);
+    if (request !== undefined) request = b2IntegratedJson(request);
+    if (!state || state.manifestSha256 !== sha256Hex(canonicalJson(manifest))
+      || state.descriptorSha256 !== sha256Hex(descriptorBytes)
+      || state.approvedSha !== manifest.identity.approved_sha
+      || (request !== undefined && state.requestSha256 !== sha256Hex(canonicalJson(request)))) b2Reject();
+    return true;
+  } catch { b2Reject(); }
+}
+
+export function verifyB2HistoricalIntegratedSource({ verifiedSource, historicalRuntimeClosure }) {
+  try {
+    const verified = b2SourceState(verifiedSource);
+    const historical = readTrustedB2HistoricalRuntimeClosure(historicalRuntimeClosure, verified.recoveryProvenance);
+    const descriptorBytes = readTrustedB2HistoricalDescriptorBytes(historicalRuntimeClosure, verified.recoveryProvenance);
+    const descriptor = parseB2ReleaseDescriptor(descriptorBytes, sha256Hex(descriptorBytes));
+    if (historical.sourceSha !== verified.provenance.approvedSha
+      || historical.sourceSha !== verified.manifest.identity.approved_sha
+      || canonicalJson(historical.closure) !== canonicalJson(verified.manifest.runtime_closure)
+      || canonicalJson(b2PublicBinding(descriptor, sha256Hex(descriptorBytes)))
+        !== canonicalJson(verified.manifest.resources.web_control_centers_b2_transition)) b2RecoveryReject();
+    return retainB2IntegratedSource({ manifest: verified.manifest, descriptorBytes });
+  } catch { b2RecoveryReject(); }
 }
 
 export function compileLocalEvidence({ cwd, policy, request, generatedAt = new Date().toISOString() }) {
