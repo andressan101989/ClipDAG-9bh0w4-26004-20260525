@@ -49,12 +49,15 @@ jobs:
       contents: read
       actions: read
     outputs:
+      approved_sha: ${{ steps.expose.outputs.approved_sha }}
       mode: ${{ steps.expose.outputs.mode }}
       digest: ${{ steps.expose.outputs.digest }}
       risk: ${{ steps.expose.outputs.risk }}
       productive_change_count: ${{ steps.expose.outputs.productive_change_count }}
       result: ${{ steps.expose.outputs.result }}
       blocked: ${{ steps.expose.outputs.blocked }}
+      b2_recovery_pending: ${{ steps.expose.outputs.b2_recovery_pending }}
+      admin_recovery_b2_required: ${{ steps.admin_recovery_selector.outputs.b2_required }}
       compiler_sha256: ${{ steps.expose.outputs.compiler_sha256 }}
       artifact_name: ${{ steps.expose.outputs.artifact_name }}
       recovery_release_artifact_name: ${{ steps.expose.outputs.recovery_release_artifact_name }}
@@ -157,6 +160,90 @@ jobs:
             --evidence-output release-input/remote-evidence.json \
             --output release-artifact/bundle
 
+      - name: Inspect exact Admin recovery selector metadata
+        id: admin_recovery_selector_metadata
+        if: inputs.mode == 'admin_recovery'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          API_URL: ${{ github.api_url }}
+          SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p admin-recovery-selector
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          const headers = { Accept: 'application/vnd.github+json', Authorization: `Bearer ${process.env.GH_TOKEN}`, 'X-GitHub-Api-Version': '2022-11-28' };
+          const get = async url => {
+            const response = await fetch(url, { headers });
+            if (!response.ok) throw new Error(`Admin recovery selector metadata HTTP ${response.status}`);
+            return response.json();
+          };
+          const run = await get(`${process.env.API_URL}/repos/${process.env.REPOSITORY}/actions/runs/${process.env.SOURCE_RUN_ID}`);
+          const attempt = Number(run.run_attempt);
+          if (String(run.id) !== process.env.SOURCE_RUN_ID || run.status !== 'completed'
+            || run.event !== 'workflow_dispatch' || run.head_branch !== 'main'
+            || run.path !== '.github/workflows/nelyon-production-release.yml'
+            || run.repository?.full_name !== process.env.REPOSITORY
+            || !Number.isSafeInteger(attempt) || attempt < 1) throw new Error('Admin recovery selector metadata rejected');
+          const sourceKind = run.conclusion === 'failure'
+            ? 'direct_release'
+            : run.conclusion === 'success' ? 'postcheck_recovery' : null;
+          if (!sourceKind) throw new Error('Admin recovery selector source kind rejected');
+          appendFileSync(process.env.GITHUB_OUTPUT, `source_kind=${sourceKind}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `release_artifact_name=nelyon-release-${process.env.SOURCE_RUN_ID}-${attempt}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `postcheck_recovery_artifact_name=nelyon-postcheck-recovery-${process.env.SOURCE_RUN_ID}-${attempt}\n`);
+          NODE
+
+      - name: Download exact Admin recovery selector release artifact
+        if: inputs.mode == 'admin_recovery'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ${{ steps.admin_recovery_selector_metadata.outputs.release_artifact_name }}
+          path: admin-recovery-selector/release
+          run-id: ${{ inputs.recovery_source_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download exact Admin recovery selector postcheck artifact
+        if: inputs.mode == 'admin_recovery' && steps.admin_recovery_selector_metadata.outputs.source_kind == 'postcheck_recovery'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ${{ steps.admin_recovery_selector_metadata.outputs.postcheck_recovery_artifact_name }}
+          path: admin-recovery-selector/postcheck
+          run-id: ${{ inputs.recovery_source_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Classify exact Admin recovery authority plane
+        id: admin_recovery_selector
+        if: inputs.mode == 'admin_recovery'
+        env:
+          SOURCE_KIND: ${{ steps.admin_recovery_selector_metadata.outputs.source_kind }}
+          SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { canonicalJson, classifyAdminRecoveryAuthorityPlane } from './scripts/nelyon-production-release.mjs';
+          const policy = JSON.parse(readFileSync('.github/nelyon-production-release-policy.json', 'utf8'));
+          let directSource; let postcheckSource;
+          if (process.env.SOURCE_KIND === 'direct_release') {
+            const manifestBytes = readFileSync('admin-recovery-selector/release/bundle/manifest.json', 'utf8');
+            const manifest = JSON.parse(manifestBytes);
+            const request = JSON.parse(readFileSync('admin-recovery-selector/release/request.json', 'utf8'));
+            const digest = readFileSync('admin-recovery-selector/release/bundle/manifest.sha256', 'utf8').trim();
+            if (canonicalJson(manifest) !== manifestBytes
+              || createHash('sha256').update(manifestBytes).digest('hex') !== digest
+              || String(request.runId) !== process.env.SOURCE_RUN_ID) throw new Error('Admin recovery direct selector rejected');
+            directSource = { request, manifest };
+          } else if (process.env.SOURCE_KIND === 'postcheck_recovery') {
+            postcheckSource = JSON.parse(readFileSync('admin-recovery-selector/postcheck/verified-source.json', 'utf8'));
+          } else throw new Error('Admin recovery selector kind rejected');
+          const classified = classifyAdminRecoveryAuthorityPlane({ policy, sourceKind: process.env.SOURCE_KIND,
+            declaredSourceRunId: process.env.SOURCE_RUN_ID, directSource, postcheckSource });
+          appendFileSync(process.env.GITHUB_OUTPUT, `b2_required=${classified.b2Required}\n`);
+          NODE
+
       - name: Create immutable Admin Web manifest
         run: |
           set -euo pipefail
@@ -182,6 +269,7 @@ jobs:
           const policy = JSON.parse(readFileSync('.github/nelyon-production-release-policy.json', 'utf8'));
           const request = JSON.parse(readFileSync('release-input/request.json', 'utf8'));
           const digest = readFileSync('release-artifact/bundle/manifest.sha256', 'utf8').trim();
+          appendFileSync(process.env.GITHUB_OUTPUT, `approved_sha=${manifest.identity.approved_sha}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `mode=${manifest.identity.mode}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `digest=${digest}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `risk=${manifest.risk.level}\n`);
@@ -194,7 +282,10 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT, `admin_digest=${readFileSync('admin-release-artifact/admin-web-manifest.sha256', 'utf8').trim()}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `admin_artifact_name=nelyon-admin-plan-${process.env.RUN_ID}-${process.env.RUN_ATTEMPT}\n`);
           const recoverySource = policy.postcheck_recovery.approved_sources.find(item => item.run_id === request.recoverySourceRunId);
-          if (process.env.INPUT_MODE === 'postcheck_recovery' && !recoverySource) throw new Error('approved recovery source is unavailable');
+          const pending = process.env.INPUT_MODE === 'postcheck_recovery' && !recoverySource && manifest.result === 'DENY'
+            && manifest.blockers?.length === 1 && manifest.blockers[0]?.code === 'PRIVATE_B2_AUTHORITY_PENDING';
+          if (process.env.INPUT_MODE === 'postcheck_recovery' && !recoverySource && !pending) throw new Error('approved recovery source is unavailable');
+          appendFileSync(process.env.GITHUB_OUTPUT, `b2_recovery_pending=${pending}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `recovery_release_artifact_name=${recoverySource?.release_artifact?.name ?? ''}\n`);
           appendFileSync(process.env.GITHUB_OUTPUT, `recovery_gate_artifact_name=${recoverySource?.gate_artifact?.name ?? ''}\n`);
           NODE
@@ -230,29 +321,361 @@ jobs:
           retention-days: 90
           compression-level: 0
 
+  private-authority-check:
+    name: Protected private authority proof
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      receipt: ${{ steps.expose_private_receipt.outputs.receipt }}
+    steps:
+      - name: Checkout exact approved SHA for private proof
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.plan.outputs.approved_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned Node.js for private proof
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.21.0'
+
+      - name: Download exact current-run private proof bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ${{ needs.plan.outputs.artifact_name }}
+          path: release-artifact
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify independent private runtime closure
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          // NELYON_PRIVATE_RUNTIME_BOOTSTRAP_BEGIN
+          const { createHash, timingSafeEqual } = require('node:crypto');
+          const { lstatSync, readFileSync, realpathSync } = require('node:fs');
+          const path = require('node:path');
+
+          const members = Object.freeze([
+            '.github/workflows/nelyon-production-release.yml',
+            'package-lock.json',
+            'package.json',
+            'scripts/nelyon-admin-production-release.mjs',
+            'scripts/nelyon-b2-recovery-provenance.mjs',
+            'scripts/nelyon-b2-source-parity.mjs',
+            'scripts/nelyon-private-authority-cli.mjs',
+            'scripts/nelyon-private-authority-provider.mjs',
+            'scripts/nelyon-private-authority-runtime.mjs',
+            'scripts/nelyon-private-authority.mjs',
+            'scripts/nelyon-private-runtime-closure.mjs',
+            'scripts/nelyon-production-release.mjs',
+            'scripts/nelyon-production-snapshot-adapter.mjs',
+            'scripts/nelyon-release-authority-context.mjs',
+            'shared/web-deployment/publicSupabaseBuildEnv.mjs',
+          ]);
+          const nodeVersion = '24.21.0';
+          const setupNodeAction = '949feb2413d6458794dcd2491c4babbbce0c15c1';
+          const supabaseSetupAction = '45a513f8c64c0bc8e0e3dfe572b5c95be85f6359';
+          const wranglerVersion = '4.135.0';
+          const awsVersion = '1.0.20';
+          const awsResolved = 'https://registry.npmjs.org/aws4fetch/-/aws4fetch-1.0.20.tgz';
+          const awsIntegrity = 'sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==';
+          const reject = () => { throw new Error('private runtime closure rejected'); };
+          const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+          const canonicalJson = value => {
+            if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+            if (value !== null && typeof value === 'object') {
+              return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+            }
+            return JSON.stringify(value);
+          };
+          const equalDigest = (left, right) => /^[0-9a-f]{64}$/.test(left ?? '')
+            && /^[0-9a-f]{64}$/.test(right ?? '')
+            && timingSafeEqual(Buffer.from(left, 'ascii'), Buffer.from(right, 'ascii'));
+          const root = path.resolve(process.cwd());
+          if (realpathSync(root) !== root || lstatSync(root).isSymbolicLink() || process.versions.node !== nodeVersion) reject();
+          let totalBytes = 0;
+          const files = members.map(member => {
+            const absolute = path.resolve(root, ...member.split('/'));
+            const relative = path.relative(root, absolute);
+            if (relative !== member.split('/').join(path.sep)) reject();
+            let current = root;
+            for (const segment of member.split('/')) {
+              current = path.join(current, segment);
+              if (lstatSync(current).isSymbolicLink()) reject();
+            }
+            const stat = lstatSync(absolute);
+            if (!stat.isFile() || realpathSync(absolute) !== absolute || stat.size > 8 * 1024 * 1024) reject();
+            totalBytes += stat.size;
+            if (totalBytes > 64 * 1024 * 1024) reject();
+            return { path: member, sha256: sha256(readFileSync(absolute)) };
+          });
+          const workflow = readFileSync(path.join(root, '.github/workflows/nelyon-production-release.yml'), 'utf8');
+          const actionPins = (source, expression, expected) => {
+            const values = [...source.matchAll(expression)].map(match => match[1]);
+            if (values.length < 1 || values.some(value => value !== expected)) reject();
+          };
+          actionPins(workflow, /actions\/setup-node@([0-9a-f]{40})/g, setupNodeAction);
+          actionPins(workflow, /supabase\/setup-cli@([0-9a-f]{40})/g, supabaseSetupAction);
+          const nodePins = workflow.split(/\r?\n/).flatMap(line => {
+            const match = line.match(/^\s+node-version:\s*['"]?([^'"\s]+)['"]?\s*$/);
+            return match ? [match[1]] : [];
+          });
+          if (nodePins.length < 1 || nodePins.some(value => value !== nodeVersion)) reject();
+          const wranglerNeedle = ['test "$("$NELYON_WRANGLER" ', '--version)" = ', `'${wranglerVersion}'`].join('');
+          if (!workflow.includes(wranglerNeedle)) reject();
+          const adminSource = readFileSync(path.join(root, 'scripts/nelyon-admin-production-release.mjs'), 'utf8');
+          const wranglerPins = [...adminSource.matchAll(/const\s+WRANGLER_VERSION\s*=\s*['"]([^'"]+)['"]/g)].map(match => match[1]);
+          if (wranglerPins.length !== 1 || wranglerPins[0] !== wranglerVersion) reject();
+          const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+          const packageLock = JSON.parse(readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+          const lockedRoot = packageLock.packages?.['']?.dependencies?.aws4fetch;
+          const lockedPackage = packageLock.packages?.['node_modules/aws4fetch'];
+          if (packageJson.dependencies?.aws4fetch !== awsVersion || lockedRoot !== awsVersion
+            || lockedPackage?.version !== awsVersion || lockedPackage?.resolved !== awsResolved
+            || lockedPackage?.integrity !== awsIntegrity) reject();
+          const withoutDigest = {
+            schema_version: 1,
+            identity: 'nelyon-b2-private-release-runtime-v1',
+            algorithm: 'sha256',
+            files,
+            runtime: { node: nodeVersion, setup_node_action: setupNodeAction },
+            dependencies: [{ name: 'aws4fetch', version: awsVersion, integrity: awsIntegrity, lock_path: 'node_modules/aws4fetch' }],
+            operation_tools: { wrangler: wranglerVersion, supabase_setup_action: supabaseSetupAction },
+          };
+          const closure = { ...withoutDigest, closure_sha256: sha256(Buffer.from(canonicalJson(withoutDigest))) };
+          const manifest = JSON.parse(readFileSync(path.join(root, 'release-artifact/bundle/manifest.json'), 'utf8'));
+          const protectedPin = process.env.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256;
+          if (!equalDigest(closure.closure_sha256, protectedPin)
+            || canonicalJson(manifest.runtime_closure) !== canonicalJson(closure)) reject();
+          // NELYON_PRIVATE_RUNTIME_BOOTSTRAP_END
+          NODE
+          mkdir -p "$RUNNER_TEMP/nelyon-private-authority-public"
+
+      - name: Install exact private runtime dependency without scripts
+        run: npm ci --ignore-scripts
+
+      - name: Verify installed private runtime signer
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          // NELYON_PRIVATE_RUNTIME_SIGNER_BEGIN
+          const { lstatSync, readFileSync, realpathSync } = require('node:fs');
+          const path = require('node:path');
+          const expected = {
+            version: '1.0.20',
+            resolved: 'https://registry.npmjs.org/aws4fetch/-/aws4fetch-1.0.20.tgz',
+            integrity: 'sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==',
+          };
+          const root = path.resolve(process.cwd());
+          const installedPath = path.join(root, 'node_modules/aws4fetch/package.json');
+          const installed = JSON.parse(readFileSync(installedPath, 'utf8'));
+          const lock = JSON.parse(readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+          const locked = lock.packages?.['node_modules/aws4fetch'];
+          if (lstatSync(installedPath).isSymbolicLink() || realpathSync(installedPath) !== installedPath
+            || installed.version !== expected.version || locked?.version !== expected.version
+            || locked?.resolved !== expected.resolved || locked?.integrity !== expected.integrity) {
+            throw new Error('installed private runtime signer rejected');
+          }
+          // NELYON_PRIVATE_RUNTIME_SIGNER_END
+          NODE
+
+      - name: Stage exact protected B2 recovery source
+        id: b2_pending_stage
+        if: >-
+          needs.plan.outputs.b2_recovery_pending == 'true' ||
+          needs.plan.outputs.admin_recovery_b2_required == 'true'
+        env: &pending_b2_recovery_env
+          NELYON_ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
+          NELYON_B2_RECOVERY_AUTHORIZATION_SHA256: ${{ vars.NELYON_B2_RECOVERY_AUTHORIZATION_SHA256 }}
+          NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_BUCKET: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_BUCKET }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+          NELYON_RELEASE_POLICY_SHA256: ${{ vars.NELYON_RELEASE_POLICY_SHA256 }}
+          NELYON_APPROVED_SHA: ${{ needs.plan.outputs.approved_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs stage-b2-recovery-source \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/staging-unused.json"
+
+      - name: Verify pending B2 historical recovery authority
+        id: b2_pending_historical_proof
+        if: needs.plan.outputs.b2_recovery_pending == 'true' && steps.b2_pending_stage.outcome == 'success'
+        env: *pending_b2_recovery_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs recovery-authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
+            --run "$RUNNER_TEMP/nelyon-b2-recovery-source/run.json" \
+            --artifacts "$RUNNER_TEMP/nelyon-b2-recovery-source/artifacts.json" \
+            --release-bundle "$RUNNER_TEMP/nelyon-b2-recovery-source/release" \
+            --gate-evidence "$RUNNER_TEMP/nelyon-b2-recovery-source/gate" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/proof-receipt.json"
+
+      - name: Verify B2 Admin historical recovery authority
+        id: b2_admin_historical_proof
+        if: >-
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.b2_pending_stage.outcome == 'success'
+        env: *pending_b2_recovery_env
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/nelyon-b2-recovery-source"
+          chain_args=()
+          if [ -d "$stage/chain-release" ]; then
+            chain_args=(--chain-run "$stage/chain-run.json" --chain-artifacts "$stage/chain-artifacts.json"
+              --chain-release-bundle "$stage/chain-release" --chain-gate-evidence "$stage/chain-gate"
+              --chain-recovery-evidence "$stage/chain-recovery")
+          fi
+          node scripts/nelyon-private-authority-cli.mjs admin-recovery-authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" --run "$stage/run.json" --artifacts "$stage/artifacts.json" \
+            --release-bundle "$stage/release" --gate-evidence "$stage/gate" --admin-evidence "$stage/admin" \
+            "${chain_args[@]}" --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/proof-receipt.json"
+
+      - name: Clean staged B2 recovery source after proof
+        id: b2_pending_stage_cleanup
+        if: >-
+          always() && (needs.plan.outputs.b2_recovery_pending == 'true' ||
+          needs.plan.outputs.admin_recovery_b2_required == 'true')
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          // NELYON_PRIVATE_RUNTIME_STAGE_CLEANUP_BEGIN
+          const { lstatSync, readdirSync, realpathSync, rmSync } = require('node:fs');
+          const path = require('node:path');
+          const root = path.resolve(process.env.RUNNER_TEMP);
+          if (realpathSync(root) !== root || lstatSync(root).isSymbolicLink()) throw new Error('staging cleanup rejected');
+          const stage = path.join(root, 'nelyon-b2-recovery-source');
+          if (lstatSync(stage, { throwIfNoEntry: false })) {
+            const inspect = target => {
+              const stat = lstatSync(target); const relative = path.relative(root, realpathSync(target));
+              if (stat.isSymbolicLink() || !relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error('staging cleanup rejected');
+              if (stat.isDirectory()) for (const name of readdirSync(target)) inspect(path.join(target, name));
+              else if (!stat.isFile()) throw new Error('staging cleanup rejected');
+            };
+            inspect(stage); rmSync(stage, { recursive: true, force: false, maxRetries: 0 });
+          }
+          // NELYON_PRIVATE_RUNTIME_STAGE_CLEANUP_END
+          NODE
+
+      - name: Resolve protected private authority proof
+        id: private_authority_proof
+        if: >-
+          needs.plan.outputs.b2_recovery_pending != 'true' &&
+          needs.plan.outputs.mode != 'admin_recovery'
+        env: &current_private_authority_env
+          NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_BUCKET: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_BUCKET }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY }}
+          NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256 }}
+          NELYON_PRIVATE_AUTHORITY_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_SHA256 }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+          NELYON_RELEASE_POLICY_SHA256: ${{ vars.NELYON_RELEASE_POLICY_SHA256 }}
+          NELYON_APPROVED_SHA: ${{ needs.plan.outputs.approved_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" \
+            --request release-artifact/request.json \
+            --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/proof-receipt.json"
+
+      - name: Clean private authority scratch after proof
+        id: private_authority_cleanup
+        if: always()
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          // NELYON_PRIVATE_RUNTIME_CLEANUP_BEGIN
+          const { existsSync, lstatSync, readdirSync, realpathSync, rmSync } = require('node:fs');
+          const path = require('node:path');
+          const root = path.resolve(process.env.RUNNER_TEMP);
+          if (realpathSync(root) !== root || lstatSync(root).isSymbolicLink() || !lstatSync(root).isDirectory()) throw new Error('private authority cleanup rejected');
+          const owned = path.join(root, 'nelyon-private-authority-owned');
+          if (existsSync(owned)) {
+            const ownedStat = lstatSync(owned);
+            const relative = path.relative(root, realpathSync(owned));
+            if (ownedStat.isSymbolicLink() || !ownedStat.isDirectory() || relative !== 'nelyon-private-authority-owned') throw new Error('private authority cleanup rejected');
+            const inspect = directory => {
+              for (const entry of readdirSync(directory)) {
+                const target = path.join(directory, entry);
+                const stat = lstatSync(target);
+                const nested = path.relative(owned, realpathSync(target));
+                if (stat.isSymbolicLink() || !nested || nested === '..' || nested.startsWith(`..${path.sep}`) || path.isAbsolute(nested)) throw new Error('private authority cleanup rejected');
+                if (stat.isDirectory()) inspect(target);
+                else if (!stat.isFile()) throw new Error('private authority cleanup rejected');
+              }
+            };
+            inspect(owned);
+            rmSync(owned, { recursive: true, force: false, maxRetries: 0 });
+            if (existsSync(owned)) throw new Error('private authority cleanup rejected');
+          }
+          // NELYON_PRIVATE_RUNTIME_CLEANUP_END
+          NODE
+
+      - name: Expose closed private authority receipt
+        id: expose_private_receipt
+        if: >-
+          steps.private_authority_cleanup.outcome == 'success' &&
+          (steps.private_authority_proof.outcome == 'success' ||
+           ((steps.b2_pending_historical_proof.outcome == 'success' || steps.b2_admin_historical_proof.outcome == 'success') &&
+            steps.b2_pending_stage_cleanup.outcome == 'success'))
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const receipt = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/nelyon-private-authority-public/proof-receipt.json`, 'utf8'));
+          const keys = ['schemaVersion', 'authorityId', 'descriptorSha256', 'publicContractSha256', 'privateAuthoritySha256', 'bindingSha256', 'successorCatalogSha256', 'securityAdvisorSha256', 'backupSha256', 'approvalSha256', 'verified'];
+          if (JSON.stringify(Object.keys(receipt)) !== JSON.stringify(keys) || receipt.schemaVersion !== 1 || receipt.verified !== true) throw new Error('closed private authority receipt rejected');
+          appendFileSync(process.env.GITHUB_OUTPUT, `receipt=${JSON.stringify(receipt)}\n`);
+          NODE
+
   deploy:
     name: Protected production gate
-    needs: plan
+    needs: [plan, private-authority-check]
     if: >-
-      needs.plan.outputs.mode == 'gate_proof' ||
-      (needs.plan.outputs.mode == 'admin_recovery' &&
-       needs.plan.outputs.risk == 'HIGH' &&
-       needs.plan.outputs.admin_enabled == 'true' &&
-       needs.plan.outputs.result == 'NO PRODUCTIVE CHANGES' &&
-       fromJSON(needs.plan.outputs.productive_change_count) == 0 &&
-       needs.plan.outputs.blocked == 'false') ||
-      (needs.plan.outputs.mode == 'postcheck_recovery' &&
-       needs.plan.outputs.result == 'NO PRODUCTIVE CHANGES' &&
-       fromJSON(needs.plan.outputs.productive_change_count) == 0 &&
-       needs.plan.outputs.blocked == 'false') ||
-      (needs.plan.outputs.mode == 'release' &&
-       (needs.plan.outputs.admin_enabled != 'true' || needs.plan.outputs.risk == 'HIGH') &&
-       ((needs.plan.outputs.result == 'PLAN READY' &&
-         fromJSON(needs.plan.outputs.productive_change_count) > 0) ||
-        (needs.plan.outputs.admin_enabled == 'true' &&
-         needs.plan.outputs.result == 'NO PRODUCTIVE CHANGES' &&
-         fromJSON(needs.plan.outputs.productive_change_count) == 0)) &&
-       needs.plan.outputs.blocked == 'false')
+      needs.private-authority-check.result == 'success' &&
+      (needs.plan.outputs.mode == 'gate_proof' ||
+       (needs.plan.outputs.mode == 'admin_recovery' &&
+        needs.plan.outputs.risk == 'HIGH' &&
+        needs.plan.outputs.admin_enabled == 'true' &&
+        needs.plan.outputs.result == 'NO PRODUCTIVE CHANGES' &&
+        fromJSON(needs.plan.outputs.productive_change_count) == 0 &&
+        needs.plan.outputs.blocked == 'false') ||
+       (needs.plan.outputs.mode == 'postcheck_recovery' &&
+        needs.plan.outputs.result == 'NO PRODUCTIVE CHANGES' &&
+        fromJSON(needs.plan.outputs.productive_change_count) == 0 &&
+        needs.plan.outputs.blocked == 'false') ||
+       (needs.plan.outputs.mode == 'postcheck_recovery' &&
+        needs.plan.outputs.b2_recovery_pending == 'true' &&
+        needs.private-authority-check.outputs.receipt != '' &&
+        fromJSON(needs.plan.outputs.productive_change_count) == 0) ||
+       (needs.plan.outputs.mode == 'release' &&
+        (needs.plan.outputs.admin_enabled != 'true' || needs.plan.outputs.risk == 'HIGH') &&
+        ((needs.plan.outputs.result == 'PLAN READY' &&
+          fromJSON(needs.plan.outputs.productive_change_count) > 0) ||
+         (needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.result == 'NO PRODUCTIVE CHANGES' &&
+          fromJSON(needs.plan.outputs.productive_change_count) == 0)) &&
+        needs.plan.outputs.blocked == 'false'))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: production
@@ -294,6 +717,79 @@ jobs:
           path: admin-release-artifact
           run-id: ${{ github.run_id }}
           github-token: ${{ github.token }}
+
+      - name: Verify independent private runtime closure for deploy
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/nelyon-private-authority-public"
+          node --input-type=commonjs <<'NODE'
+          const { lstatSync, readFileSync, realpathSync, writeFileSync } = require('node:fs');
+          const path = require('node:path');
+          const workflow = readFileSync('.github/workflows/nelyon-production-release.yml', 'utf8').replace(/\r\n?/g, '\n');
+          const extract = (name, target) => {
+            const lines = workflow.split('\n');
+            const begin = lines.findIndex(line => line.trim() === `// NELYON_PRIVATE_RUNTIME_${name}_BEGIN`);
+            const end = lines.findIndex((line, index) => index > begin && line.trim() === `// NELYON_PRIVATE_RUNTIME_${name}_END`);
+            if (begin < 0 || end <= begin || lines.filter(line => line.trim() === `// NELYON_PRIVATE_RUNTIME_${name}_BEGIN`).length !== 1
+              || lines.filter(line => line.trim() === `// NELYON_PRIVATE_RUNTIME_${name}_END`).length !== 1) throw new Error('private runtime source rejected');
+            const source = `${lines.slice(begin + 1, end).map(line => {
+              if (line.length === 0) return '';
+              if (!line.startsWith('          ')) throw new Error('private runtime source rejected');
+              return line.slice(10);
+            }).join('\n')}\n`;
+            writeFileSync(target, source, { encoding: 'utf8', flag: 'wx', mode: 0o400 });
+            if (lstatSync(target).isSymbolicLink() || !lstatSync(target).isFile() || realpathSync(target) !== path.resolve(target)) throw new Error('private runtime source rejected');
+          };
+          extract('BOOTSTRAP', path.join(process.env.RUNNER_TEMP, 'nelyon-private-runtime-bootstrap.cjs'));
+          extract('SIGNER', path.join(process.env.RUNNER_TEMP, 'nelyon-private-runtime-signer.cjs'));
+          extract('CLEANUP', path.join(process.env.RUNNER_TEMP, 'nelyon-private-runtime-cleanup.cjs'));
+          extract('STAGE_CLEANUP', path.join(process.env.RUNNER_TEMP, 'nelyon-private-runtime-stage-cleanup.cjs'));
+          NODE
+          node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Install exact private runtime dependency without scripts for deploy
+        run: npm ci --ignore-scripts
+
+      - name: Verify installed private runtime signer for deploy
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-signer.cjs"
+
+      - name: Stage closed protected proof receipt for comparisons
+        if: >-
+          needs.plan.outputs.mode != 'admin_recovery' ||
+          needs.plan.outputs.admin_recovery_b2_required == 'true'
+        env:
+          EXPECTED_PRIVATE_AUTHORITY_RECEIPT: ${{ needs.private-authority-check.outputs.receipt }}
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          const { writeFileSync } = require('node:fs');
+          const path = require('node:path');
+          const receipt = JSON.parse(process.env.EXPECTED_PRIVATE_AUTHORITY_RECEIPT);
+          const keys = ['schemaVersion', 'authorityId', 'descriptorSha256', 'publicContractSha256', 'privateAuthoritySha256', 'bindingSha256', 'successorCatalogSha256', 'securityAdvisorSha256', 'backupSha256', 'approvalSha256', 'verified'];
+          if (JSON.stringify(Object.keys(receipt)) !== JSON.stringify(keys) || receipt.schemaVersion !== 1 || receipt.verified !== true) throw new Error('protected proof receipt rejected');
+          writeFileSync(path.join(process.env.RUNNER_TEMP, 'nelyon-private-authority-public', 'expected-receipt.json'), `${JSON.stringify(receipt)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o400 });
+          NODE
+
+      - name: Resolve protected private authority before revalidation
+        id: b2_revalidation_authority
+        if: >-
+          needs.plan.outputs.b2_recovery_pending != 'true' &&
+          needs.plan.outputs.mode != 'admin_recovery'
+        env: *current_private_authority_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" \
+            --request release-artifact/request.json \
+            --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/revalidation-receipt.json"
+
+      - name: Clean private authority scratch after revalidation
+        id: b2_revalidation_authority_cleanup
+        if: always()
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
 
       - name: Fetch current Environment and authorization evidence
         env:
@@ -339,10 +835,73 @@ jobs:
           NODE
 
       - name: Revalidate immutable manifest after authorization
+        if: >-
+          needs.plan.outputs.b2_recovery_pending != 'true' &&
+          needs.plan.outputs.mode != 'admin_recovery' &&
+          steps.b2_revalidation_authority.outcome == 'success' &&
+          steps.b2_revalidation_authority_cleanup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/revalidation-receipt.json"
+          git fetch --no-tags origin main
+          node "$NELYON_HELPER" revalidate --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json --output gate-evidence/revalidation.json
+
+      - name: Revalidate legacy Admin recovery after authorization
+        id: admin_recovery_legacy_revalidation
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required != 'true'
         run: |
           set -euo pipefail
           git fetch --no-tags origin main
-          node "$NELYON_HELPER" revalidate --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json --output gate-evidence/revalidation.json
+          node "$NELYON_HELPER" revalidate \
+            --policy "$NELYON_POLICY" \
+            --request release-artifact/request.json \
+            --bundle release-artifact/bundle \
+            --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" \
+            --remote-evidence release-artifact/remote-evidence.json \
+            --output gate-evidence/revalidation.json
+
+      - name: Fetch current main for pending B2 recovery
+        if: needs.plan.outputs.b2_recovery_pending == 'true'
+        run: git fetch --no-tags origin main
+
+      - name: Stage B2 recovery source for revalidation
+        id: b2_pending_revalidation_stage
+        if: needs.plan.outputs.b2_recovery_pending == 'true'
+        env: *pending_b2_recovery_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs stage-b2-recovery-source \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/revalidation-stage-unused.json"
+
+      - name: Revalidate pending B2 recovery after authorization
+        id: b2_pending_revalidation
+        if: needs.plan.outputs.b2_recovery_pending == 'true' && steps.b2_pending_revalidation_stage.outcome == 'success'
+        env: *pending_b2_recovery_env
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/nelyon-b2-recovery-source"
+          node scripts/nelyon-private-authority-cli.mjs revalidate-b2-recovery \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" --run "$stage/run.json" --artifacts "$stage/artifacts.json" \
+            --release-bundle "$stage/release" --gate-evidence "$stage/gate" \
+            --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/b2-revalidation.json" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/revalidation-receipt.json"
+
+      - name: Clean B2 recovery staging after revalidation
+        id: b2_pending_revalidation_cleanup
+        if: always() && needs.plan.outputs.b2_recovery_pending == 'true'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-stage-cleanup.cjs"
+
+      - name: Compare B2 recovery revalidation receipt
+        if: >-
+          needs.plan.outputs.b2_recovery_pending == 'true' && steps.b2_pending_revalidation.outcome == 'success' &&
+          steps.b2_pending_revalidation_cleanup.outcome == 'success'
+        run: cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/revalidation-receipt.json"
 
       - name: Verify immutable Admin Web manifest
         run: |
@@ -353,30 +912,325 @@ jobs:
             --manifest admin-release-artifact/admin-web-manifest.json \
             --digest admin-release-artifact/admin-web-manifest.sha256
 
-      - name: Verify gate proof without deployment secrets
+      - name: Verify independent private runtime closure before gate proof
         if: needs.plan.outputs.mode == 'gate_proof'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority for gate proof
+        id: b2_gate_proof_authority
+        if: needs.plan.outputs.mode == 'gate_proof'
+        env: *current_private_authority_env
         run: |
           set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/gate-proof-receipt.json"
+
+      - name: Clean private authority scratch after gate proof
+        id: b2_gate_proof_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'gate_proof'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Verify gate proof without deployment secrets
+        if: >-
+          needs.plan.outputs.mode == 'gate_proof' &&
+          steps.b2_gate_proof_authority.outcome == 'success' &&
+          steps.b2_gate_proof_authority_cleanup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/gate-proof-receipt.json"
           node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
           echo "GATE PROOF SUCCESS" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Verify postcheck recovery gate without deployment commands
+      - name: Verify independent private runtime closure before postcheck recovery gate
         if: needs.plan.outputs.mode == 'postcheck_recovery'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority for postcheck recovery gate
+        id: b2_postcheck_recovery_gate_authority
+        if: needs.plan.outputs.mode == 'postcheck_recovery' && needs.plan.outputs.b2_recovery_pending != 'true'
+        env: *current_private_authority_env
         run: |
           set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/postcheck-recovery-gate-receipt.json"
+
+      - name: Clean private authority scratch after postcheck recovery gate
+        id: b2_postcheck_recovery_gate_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'postcheck_recovery'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Verify postcheck recovery gate without deployment commands
+        if: >-
+          needs.plan.outputs.mode == 'postcheck_recovery' &&
+          needs.plan.outputs.b2_recovery_pending != 'true' &&
+          steps.b2_postcheck_recovery_gate_authority.outcome == 'success' &&
+          steps.b2_postcheck_recovery_gate_authority_cleanup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/postcheck-recovery-gate-receipt.json"
           node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
 
+      - name: Stage B2 recovery source for current gate
+        id: b2_pending_gate_stage
+        if: needs.plan.outputs.b2_recovery_pending == 'true'
+        env: *pending_b2_recovery_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs stage-b2-recovery-source \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/gate-stage-unused.json"
+
+      - name: Verify pending B2 recovery gate
+        id: b2_pending_gate
+        if: >-
+          needs.plan.outputs.b2_recovery_pending == 'true' && steps.b2_pending_gate_stage.outcome == 'success' &&
+          steps.b2_pending_revalidation.outcome == 'success' && steps.b2_pending_revalidation_cleanup.outcome == 'success'
+        env: *pending_b2_recovery_env
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/nelyon-b2-recovery-source"
+          node scripts/nelyon-private-authority-cli.mjs verify-b2-recovery-gate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" --run "$stage/run.json" --artifacts "$stage/artifacts.json" \
+            --release-bundle "$stage/release" --gate-evidence "$stage/gate" \
+            --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" \
+            --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json \
+            --approvals gate-evidence/approvals.json --runs gate-evidence/runs.json --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" \
+            --revalidated "$RUNNER_TEMP/nelyon-private-authority-public/b2-revalidation.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/b2-recovery-gate.json" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/b2-recovery-gate-receipt.json"
+
+      - name: Clean B2 recovery staging after current gate
+        id: b2_pending_gate_cleanup
+        if: always() && needs.plan.outputs.b2_recovery_pending == 'true'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-stage-cleanup.cjs"
+
+      - name: Retain verified B2 recovery gate
+        if: >-
+          needs.plan.outputs.b2_recovery_pending == 'true' && steps.b2_pending_gate.outcome == 'success' &&
+          steps.b2_pending_gate_cleanup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/b2-recovery-gate-receipt.json"
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/b2-recovery-gate.json" gate-evidence/gate-proof.json
+
+      - name: Verify independent private runtime closure before release gate
+        if: needs.plan.outputs.mode == 'release'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority for release gate
+        id: b2_release_gate_authority
+        if: needs.plan.outputs.mode == 'release'
+        env:
+          NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_BUCKET: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_BUCKET }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY }}
+          NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256 }}
+          NELYON_PRIVATE_AUTHORITY_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_SHA256 }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+          NELYON_RELEASE_POLICY_SHA256: ${{ vars.NELYON_RELEASE_POLICY_SHA256 }}
+          NELYON_APPROVED_SHA: ${{ needs.plan.outputs.approved_sha }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs verify-gate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/release-gate-verification.json" \
+            --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" \
+            --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json \
+            --approvals gate-evidence/approvals.json --runs gate-evidence/runs.json \
+            --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/release-gate-stage.json"
+
+      - name: Clean private authority scratch after release gate
+        id: b2_release_gate_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'release'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
       - name: Verify release gate and required Environment secrets
-        if: needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery'
+        if: >-
+          (needs.plan.outputs.mode == 'release' &&
+           steps.b2_release_gate_authority.outcome == 'success' &&
+           steps.b2_release_gate_authority_cleanup.outcome == 'success') ||
+          (needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required != 'true')
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
-          node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
+          if [ "${{ needs.plan.outputs.mode }}" = 'release' ]; then
+            node --input-type=commonjs <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const expected = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/nelyon-private-authority-public/expected-receipt.json`, 'utf8'));
+          const verification = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/nelyon-private-authority-public/release-gate-verification.json`, 'utf8'));
+          if (JSON.stringify(verification.receipt) !== JSON.stringify(expected)) throw new Error('release gate authority receipt mismatch');
+          NODE
+            cp "$RUNNER_TEMP/nelyon-private-authority-public/release-gate-stage.json" gate-evidence/gate-proof.json
+          else
+            node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
+          fi
+
+      - name: Fetch current main for B2 Admin recovery
+        if: needs.plan.outputs.admin_recovery_b2_required == 'true'
+        run: git fetch --no-tags origin main
+
+      - name: Stage B2 Admin source for revalidation
+        id: b2_admin_revalidation_stage
+        if: needs.plan.outputs.admin_recovery_b2_required == 'true'
+        env: *pending_b2_recovery_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs stage-b2-recovery-source \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-revalidation-stage-unused.json"
+
+      - name: Revalidate B2 Admin recovery after authorization
+        id: b2_admin_revalidation
+        if: >-
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.b2_admin_revalidation_stage.outcome == 'success'
+        env: *pending_b2_recovery_env
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/nelyon-b2-recovery-source"
+          chain_args=()
+          if [ -d "$stage/chain-release" ]; then
+            chain_args=(--chain-run "$stage/chain-run.json" --chain-artifacts "$stage/chain-artifacts.json" --chain-release-bundle "$stage/chain-release" --chain-gate-evidence "$stage/chain-gate" --chain-recovery-evidence "$stage/chain-recovery")
+          fi
+          node scripts/nelyon-private-authority-cli.mjs revalidate-b2-admin-recovery \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" --run "$stage/run.json" --artifacts "$stage/artifacts.json" \
+            --release-bundle "$stage/release" --gate-evidence "$stage/gate" --admin-evidence "$stage/admin" "${chain_args[@]}" \
+            --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/b2-admin-revalidation.json" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-revalidation-receipt.json"
+
+      - name: Clean B2 Admin staging after revalidation
+        id: b2_admin_revalidation_cleanup
+        if: always() && needs.plan.outputs.admin_recovery_b2_required == 'true'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-stage-cleanup.cjs"
+
+      - name: Stage B2 Admin source for current gate
+        id: b2_admin_gate_stage
+        if: steps.b2_admin_revalidation.outcome == 'success' && steps.b2_admin_revalidation_cleanup.outcome == 'success'
+        env: *pending_b2_recovery_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs stage-b2-recovery-source \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-gate-stage-unused.json"
+
+      - name: Verify B2 Admin recovery gate
+        id: b2_admin_gate
+        if: >-
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.b2_admin_gate_stage.outcome == 'success'
+        env:
+          NELYON_B2_RECOVERY_AUTHORIZATION_SHA256: ${{ vars.NELYON_B2_RECOVERY_AUTHORIZATION_SHA256 }}
+          NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_BUCKET: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_BUCKET }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+          NELYON_RELEASE_POLICY_SHA256: ${{ vars.NELYON_RELEASE_POLICY_SHA256 }}
+          NELYON_APPROVED_SHA: ${{ needs.plan.outputs.approved_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/nelyon-b2-recovery-source"
+          chain_args=()
+          if [ -d "$stage/chain-release" ]; then
+            chain_args=(--chain-run "$stage/chain-run.json" --chain-artifacts "$stage/chain-artifacts.json" --chain-release-bundle "$stage/chain-release" --chain-gate-evidence "$stage/chain-gate" --chain-recovery-evidence "$stage/chain-recovery")
+          fi
+          node scripts/nelyon-private-authority-cli.mjs verify-b2-admin-recovery-gate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" --run "$stage/run.json" --artifacts "$stage/artifacts.json" \
+            --release-bundle "$stage/release" --gate-evidence "$stage/gate" --admin-evidence "$stage/admin" "${chain_args[@]}" \
+            --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" \
+            --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json \
+            --runs gate-evidence/runs.json --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" \
+            --revalidated "$RUNNER_TEMP/nelyon-private-authority-public/b2-admin-revalidation.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/b2-admin-gate.json" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/b2-admin-gate-receipt.json"
+
+      - name: Clean B2 Admin staging after current gate
+        id: b2_admin_gate_cleanup
+        if: always() && needs.plan.outputs.admin_recovery_b2_required == 'true'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-stage-cleanup.cjs"
+
+      - name: Retain verified B2 Admin recovery gate
+        if: steps.b2_admin_gate.outcome == 'success' && steps.b2_admin_gate_cleanup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-revalidation-receipt.json"
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/b2-admin-gate-receipt.json"
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/b2-admin-gate.json" gate-evidence/gate-proof.json
+
+      - name: Stage B2 Admin source for protected continuation
+        id: b2_admin_continuation_stage
+        if: >-
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.b2_admin_gate.outcome == 'success' && steps.b2_admin_gate_cleanup.outcome == 'success'
+        env: *pending_b2_recovery_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs stage-b2-recovery-source \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-continuation-stage-unused.json"
+
+      - name: Normalize staged B2 Admin recovery authority source
+        id: b2_admin_continuation_source
+        if: steps.b2_admin_continuation_stage.outcome == 'success'
+        env:
+          INPUT_RECOVERY_SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/nelyon-b2-recovery-source"
+          mkdir -p \
+            admin-recovery-evidence/authority-source-release \
+            admin-recovery-evidence/authority-source-gate \
+            admin-recovery-evidence/authority-source-admin
+          cp "$stage/run.json" admin-recovery-evidence/authority-source-run.json
+          cp "$stage/artifacts.json" admin-recovery-evidence/authority-source-artifacts.json
+          cp -R "$stage/release/." admin-recovery-evidence/authority-source-release/
+          cp -R "$stage/gate/." admin-recovery-evidence/authority-source-gate/
+          cp -R "$stage/admin/." admin-recovery-evidence/authority-source-admin/
+          if [ -d "$stage/chain-release" ]; then
+            mkdir -p \
+              admin-recovery-evidence/authority-chain-release \
+              admin-recovery-evidence/authority-chain-gate \
+              admin-recovery-evidence/authority-chain-recovery
+            cp "$stage/chain-run.json" admin-recovery-evidence/authority-chain-run.json
+            cp "$stage/chain-artifacts.json" admin-recovery-evidence/authority-chain-artifacts.json
+            cp -R "$stage/chain-release/." admin-recovery-evidence/authority-chain-release/
+            cp -R "$stage/chain-gate/." admin-recovery-evidence/authority-chain-gate/
+            cp -R "$stage/chain-recovery/." admin-recovery-evidence/authority-chain-recovery/
+          fi
+          printf 'source_run_id=%s\n' "$INPUT_RECOVERY_SOURCE_RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Clean B2 Admin staging after protected continuation
+        id: b2_admin_continuation_cleanup
+        if: always() && needs.plan.outputs.admin_recovery_b2_required == 'true'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-stage-cleanup.cjs"
 
       - name: Fetch exact Admin recovery source metadata
         id: admin_recovery_metadata
-        if: needs.plan.outputs.mode == 'admin_recovery'
+        if: needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -419,7 +1273,7 @@ jobs:
           NODE
 
       - name: Download exact declared Admin recovery source release artifact
-        if: needs.plan.outputs.mode == 'admin_recovery'
+        if: needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required != 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: ${{ steps.admin_recovery_metadata.outputs.release_artifact_name }}
@@ -428,7 +1282,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Download exact declared Admin recovery source gate artifact
-        if: needs.plan.outputs.mode == 'admin_recovery'
+        if: needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required != 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: ${{ steps.admin_recovery_metadata.outputs.gate_artifact_name }}
@@ -567,8 +1421,132 @@ jobs:
             --postcheck-recovery-chain admin-recovery-evidence/postcheck-recovery-chain.json \
             --output admin-recovery-evidence/verified-source.json
 
+      - name: Stage exact Admin recovery authority source
+        id: admin_recovery_legacy_authority_source
+        if: needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required != 'true'
+        env:
+          SOURCE_KIND: ${{ steps.admin_recovery_metadata.outputs.source_kind }}
+          DECLARED_SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
+          ORIGINAL_SOURCE_RUN_ID: ${{ steps.admin_recovery_chain.outputs.original_source_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p \
+            admin-recovery-evidence/authority-source-release \
+            admin-recovery-evidence/authority-source-gate \
+            admin-recovery-evidence/authority-source-admin
+          if [ "$SOURCE_KIND" = 'direct_release' ]; then
+            cp admin-recovery-evidence/source-run.json admin-recovery-evidence/authority-source-run.json
+            cp admin-recovery-evidence/source-artifacts.json admin-recovery-evidence/authority-source-artifacts.json
+            cp -R admin-recovery-evidence/declared-source-release/. admin-recovery-evidence/authority-source-release/
+            cp -R admin-recovery-evidence/declared-source-gate/. admin-recovery-evidence/authority-source-gate/
+            cp -R admin-recovery-evidence/declared-source-admin/. admin-recovery-evidence/authority-source-admin/
+            printf 'source_run_id=%s\n' "$DECLARED_SOURCE_RUN_ID" >> "$GITHUB_OUTPUT"
+          elif [ "$SOURCE_KIND" = 'postcheck_recovery' ]; then
+            cp admin-recovery-evidence/original-source-run.json admin-recovery-evidence/authority-source-run.json
+            cp admin-recovery-evidence/original-source-artifacts.json admin-recovery-evidence/authority-source-artifacts.json
+            cp -R admin-recovery-evidence/original-source-release/. admin-recovery-evidence/authority-source-release/
+            cp -R admin-recovery-evidence/original-source-gate/. admin-recovery-evidence/authority-source-gate/
+            cp -R admin-recovery-evidence/original-source-admin/. admin-recovery-evidence/authority-source-admin/
+            printf 'source_run_id=%s\n' "$ORIGINAL_SOURCE_RUN_ID" >> "$GITHUB_OUTPUT"
+          else
+            exit 1
+          fi
+
+      - name: Select exact Admin recovery authority source
+        id: admin_recovery_authority_source
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          ((needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+            steps.b2_admin_continuation_source.outcome == 'success' &&
+            steps.b2_admin_continuation_cleanup.outcome == 'success') ||
+           (needs.plan.outputs.admin_recovery_b2_required != 'true' &&
+            steps.admin_recovery_legacy_authority_source.outcome == 'success'))
+        env:
+          ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
+          B2_SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
+          LEGACY_SOURCE_RUN_ID: ${{ steps.admin_recovery_legacy_authority_source.outputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$ADMIN_RECOVERY_B2_REQUIRED" = 'true' ]; then
+            test "${{ steps.b2_admin_continuation_source.outcome }}" = 'success'
+            test "${{ steps.b2_admin_continuation_cleanup.outcome }}" = 'success'
+            printf 'source_run_id=%s\n' "$B2_SOURCE_RUN_ID" >> "$GITHUB_OUTPUT"
+          else
+            test "${{ steps.admin_recovery_legacy_authority_source.outcome }}" = 'success'
+            printf 'source_run_id=%s\n' "$LEGACY_SOURCE_RUN_ID" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify independent private runtime closure before Admin recovery source
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_recovery_authority_source.outcome == 'success'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority for Admin recovery source
+        id: b2_admin_recovery_source_authority
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_recovery_authority_source.outcome == 'success'
+        env: &admin_historical_private_authority_supabase_env
+          NELYON_ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
+          NELYON_B2_RECOVERY_AUTHORIZATION_SHA256: ${{ needs.plan.outputs.admin_recovery_b2_required == 'true' && vars.NELYON_B2_RECOVERY_AUTHORIZATION_SHA256 || '' }}
+          NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_BUCKET: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_BUCKET }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+          NELYON_RELEASE_POLICY_SHA256: ${{ vars.NELYON_RELEASE_POLICY_SHA256 }}
+          NELYON_APPROVED_SHA: ${{ needs.plan.outputs.approved_sha }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          chain_args=()
+          if [ -d admin-recovery-evidence/authority-chain-release ]; then
+            chain_args=(--chain-run admin-recovery-evidence/authority-chain-run.json
+              --chain-artifacts admin-recovery-evidence/authority-chain-artifacts.json
+              --chain-release-bundle admin-recovery-evidence/authority-chain-release
+              --chain-gate-evidence admin-recovery-evidence/authority-chain-gate
+              --chain-recovery-evidence admin-recovery-evidence/authority-chain-recovery)
+          fi
+          node scripts/nelyon-private-authority-cli.mjs verify-admin-recovery-source \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-source-authority.json" \
+            --recovery-source-run "${{ steps.admin_recovery_authority_source.outputs.source_run_id }}" \
+            --run admin-recovery-evidence/authority-source-run.json \
+            --artifacts admin-recovery-evidence/authority-source-artifacts.json \
+            --release-bundle admin-recovery-evidence/authority-source-release \
+            --gate-evidence admin-recovery-evidence/authority-source-gate \
+            --admin-evidence admin-recovery-evidence/authority-source-admin \
+            "${chain_args[@]}" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-verified-source.json"
+
+      - name: Clean private authority scratch after Admin recovery source
+        id: b2_admin_recovery_source_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_recovery_authority_source.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Stage protected Admin recovery source result
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.b2_admin_recovery_source_authority.outcome == 'success' &&
+          steps.b2_admin_recovery_source_authority_cleanup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-source-authority.json"
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-verified-source.json" admin-recovery-evidence/verified-source.json
+
       - name: Download exact approved source release artifact
-        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        if: needs.plan.outputs.mode == 'postcheck_recovery' && needs.plan.outputs.b2_recovery_pending != 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: ${{ needs.plan.outputs.recovery_release_artifact_name }}
@@ -577,7 +1555,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Download exact approved source gate artifact
-        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        if: needs.plan.outputs.mode == 'postcheck_recovery' && needs.plan.outputs.b2_recovery_pending != 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: ${{ needs.plan.outputs.recovery_gate_artifact_name }}
@@ -586,7 +1564,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Fetch exact recovery source metadata
-        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        if: needs.plan.outputs.mode == 'postcheck_recovery' && needs.plan.outputs.b2_recovery_pending != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -614,43 +1592,211 @@ jobs:
           writeFileSync('recovery-evidence/source-artifacts.json', JSON.stringify(artifacts));
           NODE
 
-      - name: Verify exact recovery source provenance
-        if: needs.plan.outputs.mode == 'postcheck_recovery'
+      - name: Prepare pending B2 public recovery evidence directory
+        if: needs.plan.outputs.b2_recovery_pending == 'true'
+        run: mkdir -p recovery-evidence
+
+      - name: Stage B2 recovery source for source verification
+        id: b2_pending_source_stage
+        if: needs.plan.outputs.b2_recovery_pending == 'true'
+        env: *pending_b2_recovery_env
         run: |
           set -euo pipefail
-          node "$NELYON_HELPER" verify-recovery-source \
-            --policy "$NELYON_POLICY" \
+          node scripts/nelyon-private-authority-cli.mjs stage-b2-recovery-source \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
             --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
-            --run recovery-evidence/source-run.json \
-            --artifacts recovery-evidence/source-artifacts.json \
-            --release-bundle recovery-evidence/source-release \
-            --gate-evidence recovery-evidence/source-gate \
-            --output recovery-evidence/verified-source.json
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/source-stage-unused.json"
 
-      - name: Capture fresh read-only postcheck recovery snapshot
+      - name: Verify independent private runtime closure before recovery source
         if: needs.plan.outputs.mode == 'postcheck_recovery'
         env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority and verify recovery source
+        id: b2_recovery_source_authority
+        if: needs.plan.outputs.mode == 'postcheck_recovery' && (needs.plan.outputs.b2_recovery_pending != 'true' || steps.b2_pending_source_stage.outcome == 'success')
+        env: &historical_private_authority_supabase_env
+          NELYON_B2_RECOVERY_AUTHORIZATION_SHA256: ${{ vars.NELYON_B2_RECOVERY_AUTHORIZATION_SHA256 }}
+          NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_BUCKET: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_BUCKET }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+          NELYON_RELEASE_POLICY_SHA256: ${{ vars.NELYON_RELEASE_POLICY_SHA256 }}
+          NELYON_APPROVED_SHA: ${{ needs.plan.outputs.approved_sha }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          node scripts/nelyon-production-snapshot-adapter.mjs capture \
-            --phase recovery \
-            --policy "$NELYON_POLICY" \
-            --request release-artifact/request.json \
-            --manifest release-artifact/bundle/manifest.json \
-            --output recovery-evidence/production-recovery.json
+          if [ "${{ needs.plan.outputs.b2_recovery_pending }}" = 'true' ]; then
+            source_root="$RUNNER_TEMP/nelyon-b2-recovery-source"
+            source_run="$source_root/run.json"; source_artifacts="$source_root/artifacts.json"
+            source_release="$source_root/release"; source_gate="$source_root/gate"
+          else
+            source_run=recovery-evidence/source-run.json; source_artifacts=recovery-evidence/source-artifacts.json
+            source_release=recovery-evidence/source-release; source_gate=recovery-evidence/source-gate
+          fi
+          node scripts/nelyon-private-authority-cli.mjs verify-recovery-source \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/recovery-source-authority.json" \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
+            --run "$source_run" --artifacts "$source_artifacts" \
+            --release-bundle "$source_release" --gate-evidence "$source_gate" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/verified-recovery-source.json"
+
+      - name: Clean private authority scratch after recovery source
+        id: b2_recovery_source_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'postcheck_recovery'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Clean B2 recovery staging after source verification
+        id: b2_pending_source_cleanup
+        if: always() && needs.plan.outputs.b2_recovery_pending == 'true'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-stage-cleanup.cjs"
+
+      - name: Verify exact recovery source provenance
+        if: >-
+          needs.plan.outputs.mode == 'postcheck_recovery' &&
+          steps.b2_recovery_source_authority.outcome == 'success' &&
+          steps.b2_recovery_source_authority_cleanup.outcome == 'success' &&
+          (needs.plan.outputs.b2_recovery_pending != 'true' || steps.b2_pending_source_cleanup.outcome == 'success')
+        run: |
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/recovery-source-authority.json"
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/verified-recovery-source.json" recovery-evidence/verified-source.json
+
+      - name: Stage closed current recovery gate
+        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        run: cp gate-evidence/gate-proof.json "$RUNNER_TEMP/nelyon-private-authority-public/recovery-current-gate.json"
+
+      - name: Stage B2 recovery source for snapshot
+        id: b2_pending_snapshot_stage
+        if: needs.plan.outputs.b2_recovery_pending == 'true'
+        env: *pending_b2_recovery_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs stage-b2-recovery-source \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/snapshot-stage-unused.json"
+
+      - name: Verify independent private runtime closure before recovery snapshot
+        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority and capture recovery snapshot
+        id: b2_recovery_snapshot_authority
+        if: needs.plan.outputs.mode == 'postcheck_recovery' && (needs.plan.outputs.b2_recovery_pending != 'true' || steps.b2_pending_snapshot_stage.outcome == 'success')
+        env: *historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.plan.outputs.b2_recovery_pending }}" = 'true' ]; then
+            source_root="$RUNNER_TEMP/nelyon-b2-recovery-source"
+            source_run="$source_root/run.json"; source_artifacts="$source_root/artifacts.json"
+            source_release="$source_root/release"; source_gate="$source_root/gate"
+          else
+            source_run=recovery-evidence/source-run.json; source_artifacts=recovery-evidence/source-artifacts.json
+            source_release=recovery-evidence/source-release; source_gate=recovery-evidence/source-gate
+          fi
+          node scripts/nelyon-private-authority-cli.mjs recovery-snapshot \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/recovery-snapshot-authority.json" \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
+            --run "$source_run" --artifacts "$source_artifacts" \
+            --release-bundle "$source_release" --gate-evidence "$source_gate" \
+            --current-gate "$RUNNER_TEMP/nelyon-private-authority-public/recovery-current-gate.json" \
+            --snapshot-output "$RUNNER_TEMP/nelyon-private-authority-public/production-recovery.json"
+
+      - name: Clean private authority scratch after recovery snapshot
+        id: b2_recovery_snapshot_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'postcheck_recovery'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Clean B2 recovery staging after snapshot
+        id: b2_pending_snapshot_cleanup
+        if: always() && needs.plan.outputs.b2_recovery_pending == 'true'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-stage-cleanup.cjs"
+
+      - name: Capture fresh read-only postcheck recovery snapshot
+        if: >-
+          needs.plan.outputs.mode == 'postcheck_recovery' &&
+          steps.b2_recovery_snapshot_authority.outcome == 'success' &&
+          steps.b2_recovery_snapshot_authority_cleanup.outcome == 'success' &&
+          (needs.plan.outputs.b2_recovery_pending != 'true' || steps.b2_pending_snapshot_cleanup.outcome == 'success')
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.plan.outputs.b2_recovery_pending }}" = 'true' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/recovery-snapshot-authority.json"
+            cp "$RUNNER_TEMP/nelyon-private-authority-public/production-recovery.json" recovery-evidence/production-recovery.json
+          else
+            cp "$RUNNER_TEMP/nelyon-private-authority-public/production-recovery.json" recovery-evidence/production-recovery.json
+          fi
+
+      - name: Stage B2 recovery source for postcheck
+        id: b2_pending_postcheck_stage
+        if: needs.plan.outputs.b2_recovery_pending == 'true'
+        env: *pending_b2_recovery_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs stage-b2-recovery-source \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/postcheck-stage-unused.json"
+
+      - name: Verify independent private runtime closure before recovery postcheck
+        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority and require recovery postcheck
+        id: b2_recovery_postcheck_authority
+        if: needs.plan.outputs.mode == 'postcheck_recovery' && (needs.plan.outputs.b2_recovery_pending != 'true' || steps.b2_pending_postcheck_stage.outcome == 'success')
+        env: *historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.plan.outputs.b2_recovery_pending }}" = 'true' ]; then
+            source_root="$RUNNER_TEMP/nelyon-b2-recovery-source"
+            source_run="$source_root/run.json"; source_artifacts="$source_root/artifacts.json"
+            source_release="$source_root/release"; source_gate="$source_root/gate"
+          else
+            source_run=recovery-evidence/source-run.json; source_artifacts=recovery-evidence/source-artifacts.json
+            source_release=recovery-evidence/source-release; source_gate=recovery-evidence/source-gate
+          fi
+          node scripts/nelyon-private-authority-cli.mjs postcheck-recovery \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/recovery-postcheck-authority.json" \
+            --recovery-source-run "${{ inputs.recovery_source_run_id }}" \
+            --run "$source_run" --artifacts "$source_artifacts" \
+            --release-bundle "$source_release" --gate-evidence "$source_gate" \
+            --current-gate "$RUNNER_TEMP/nelyon-private-authority-public/recovery-current-gate.json" \
+            --current-snapshot "$RUNNER_TEMP/nelyon-private-authority-public/production-recovery.json" \
+            --verified-source "$RUNNER_TEMP/nelyon-private-authority-public/verified-recovery-source.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/postcheck-recovery-result.json"
+
+      - name: Clean private authority scratch after recovery postcheck
+        id: b2_recovery_postcheck_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'postcheck_recovery'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Clean B2 recovery staging after postcheck
+        id: b2_pending_postcheck_cleanup
+        if: always() && needs.plan.outputs.b2_recovery_pending == 'true'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-stage-cleanup.cjs"
 
       - name: Require read-only postcheck recovery success
-        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        if: >-
+          needs.plan.outputs.mode == 'postcheck_recovery' &&
+          steps.b2_recovery_postcheck_authority.outcome == 'success' &&
+          steps.b2_recovery_postcheck_authority_cleanup.outcome == 'success' &&
+          (needs.plan.outputs.b2_recovery_pending != 'true' || steps.b2_pending_postcheck_cleanup.outcome == 'success')
         run: |
           set -euo pipefail
-          node "$NELYON_HELPER" postcheck-recovery \
-            --policy "$NELYON_POLICY" \
-            --request release-artifact/request.json \
-            --recovery-manifest release-artifact/bundle/manifest.json \
-            --verified-source recovery-evidence/verified-source.json \
-            --current-snapshot recovery-evidence/production-recovery.json \
-            --output recovery-evidence/postcheck-recovery-result.json
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/recovery-postcheck-authority.json"
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/postcheck-recovery-result.json" recovery-evidence/postcheck-recovery-result.json
           echo "POSTCHECK RECOVERY SUCCESS" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload sanitized postcheck recovery evidence
@@ -672,31 +1818,96 @@ jobs:
         with:
           version: '2.120.0'
 
-      - name: Capture immutable read-only production pre-snapshot
-        id: pre_snapshot
+      - name: Verify independent private runtime closure before pre-snapshot
         if: needs.plan.outputs.mode == 'release'
         env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority and capture pre-snapshot
+        id: b2_pre_snapshot_authority
+        if: needs.plan.outputs.mode == 'release'
+        env: &current_private_authority_supabase_env
+          NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_BUCKET: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_BUCKET }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY }}
+          NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256 }}
+          NELYON_PRIVATE_AUTHORITY_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_SHA256 }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+          NELYON_RELEASE_POLICY_SHA256: ${{ vars.NELYON_RELEASE_POLICY_SHA256 }}
+          NELYON_APPROVED_SHA: ${{ needs.plan.outputs.approved_sha }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
-          node scripts/nelyon-production-snapshot-adapter.mjs capture \
-            --phase pre \
-            --policy "$NELYON_POLICY" \
-            --request release-artifact/request.json \
+          node scripts/nelyon-private-authority-cli.mjs pre-snapshot \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/pre-snapshot-authority.json" \
+            --snapshot-output "$RUNNER_TEMP/nelyon-private-authority-public/production-pre.json"
+
+      - name: Clean private authority scratch after pre-snapshot
+        id: b2_pre_snapshot_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'release'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Capture immutable read-only production pre-snapshot
+        id: pre_snapshot
+        if: >-
+          needs.plan.outputs.mode == 'release' &&
+          steps.b2_pre_snapshot_authority.outcome == 'success' &&
+          steps.b2_pre_snapshot_authority_cleanup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const root = `${process.env.RUNNER_TEMP}/nelyon-private-authority-public`;
+          const expected = JSON.parse(readFileSync(`${root}/expected-receipt.json`, 'utf8'));
+          const verification = JSON.parse(readFileSync(`${root}/pre-snapshot-authority.json`, 'utf8'));
+          if (JSON.stringify(verification.receipt ?? verification) !== JSON.stringify(expected)) throw new Error('pre-snapshot authority receipt mismatch');
+          NODE
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/production-pre.json" gate-evidence/production-pre.json
+
+      - name: Verify independent private runtime closure before pre-snapshot verification
+        if: needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority and verify pre-snapshot
+        id: b2_verify_pre_snapshot_authority
+        if: needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success'
+        env: *current_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs verify-pre-snapshot \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/pre-snapshot-verification-authority.json" \
             --manifest release-artifact/bundle/manifest.json \
-            --output gate-evidence/production-pre.json
+            --pre-snapshot "$RUNNER_TEMP/nelyon-private-authority-public/production-pre.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/pre-snapshot-verification.json"
+
+      - name: Clean private authority scratch after pre-snapshot verification
+        id: b2_verify_pre_snapshot_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
 
       - name: Verify owner-reviewed production baseline before mutation
         id: verify_pre_snapshot
-        if: needs.plan.outputs.mode == 'release'
+        if: >-
+          needs.plan.outputs.mode == 'release' &&
+          steps.b2_verify_pre_snapshot_authority.outcome == 'success' &&
+          steps.b2_verify_pre_snapshot_authority_cleanup.outcome == 'success'
         run: |
           set -euo pipefail
-          node "$NELYON_HELPER" verify-pre-snapshot \
-            --policy "$NELYON_POLICY" \
-            --request release-artifact/request.json \
-            --manifest release-artifact/bundle/manifest.json \
-            --pre-snapshot gate-evidence/production-pre.json \
-            --output gate-evidence/pre-snapshot-verification.json
+          node --input-type=commonjs <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const root = `${process.env.RUNNER_TEMP}/nelyon-private-authority-public`;
+          const expected = JSON.parse(readFileSync(`${root}/expected-receipt.json`, 'utf8'));
+          const verification = JSON.parse(readFileSync(`${root}/pre-snapshot-verification-authority.json`, 'utf8'));
+          if (JSON.stringify(verification.receipt ?? verification) !== JSON.stringify(expected)) throw new Error('pre-snapshot verification authority receipt mismatch');
+          NODE
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/pre-snapshot-verification.json" gate-evidence/pre-snapshot-verification.json
 
       - name: Resolve canonical public Admin build environment
         id: admin_build_env
@@ -739,9 +1950,19 @@ jobs:
             --second admin-evidence/admin-web-build-second.json \
             --output admin-evidence/admin-web-build.json
 
-      - name: Capture Admin recovery read-only production post-state
-        id: admin_recovery_snapshot
-        if: needs.plan.outputs.mode == 'admin_recovery' && steps.admin_build.outcome == 'success'
+      - name: Stage closed current Admin recovery gate
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_build.outcome == 'success'
+        run: cp gate-evidence/gate-proof.json "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-current-gate.json"
+
+      - name: Capture legacy Admin recovery read-only production post-state
+        id: admin_recovery_legacy_snapshot
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required != 'true' &&
+          steps.admin_build.outcome == 'success'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
@@ -753,9 +1974,69 @@ jobs:
             --manifest release-artifact/bundle/manifest.json \
             --output admin-recovery-evidence/control-center-post-state.json
 
-      - name: Require Admin recovery source and production post-state
-        id: admin_recovery_postcheck
-        if: needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_snapshot.outcome == 'success'
+      - name: Verify independent private runtime closure before Admin recovery snapshot
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_build.outcome == 'success'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority and capture Admin recovery snapshot
+        id: b2_admin_recovery_snapshot_authority
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_build.outcome == 'success'
+        env: *admin_historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs recovery-snapshot \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-snapshot-authority.json" \
+            --recovery-source-run "${{ steps.admin_recovery_authority_source.outputs.source_run_id }}" \
+            --run admin-recovery-evidence/authority-source-run.json \
+            --artifacts admin-recovery-evidence/authority-source-artifacts.json \
+            --release-bundle admin-recovery-evidence/authority-source-release \
+            --gate-evidence admin-recovery-evidence/authority-source-gate \
+            --current-gate "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-current-gate.json" \
+            --snapshot-output "$RUNNER_TEMP/nelyon-private-authority-public/control-center-post-state.json"
+
+      - name: Clean private authority scratch after Admin recovery snapshot
+        id: b2_admin_recovery_snapshot_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_build.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Capture Admin recovery read-only production post-state
+        id: admin_recovery_snapshot
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' && steps.admin_build.outcome == 'success' &&
+          ((needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+            steps.b2_admin_recovery_snapshot_authority.outcome == 'success' &&
+            steps.b2_admin_recovery_snapshot_authority_cleanup.outcome == 'success') ||
+           (needs.plan.outputs.admin_recovery_b2_required != 'true' &&
+            steps.admin_recovery_legacy_snapshot.outcome == 'success'))
+        env:
+          ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
+        run: |
+          set -euo pipefail
+          if [ "$ADMIN_RECOVERY_B2_REQUIRED" = 'true' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-snapshot-authority.json"
+            cp "$RUNNER_TEMP/nelyon-private-authority-public/control-center-post-state.json" admin-recovery-evidence/control-center-post-state.json
+          else
+            test -f admin-recovery-evidence/control-center-post-state.json
+          fi
+
+      - name: Require legacy Admin recovery source and production post-state
+        id: admin_recovery_legacy_postcheck
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required != 'true' &&
+          steps.admin_recovery_snapshot.outcome == 'success'
         run: |
           set -euo pipefail
           node "$NELYON_HELPER" postcheck-admin-recovery \
@@ -767,6 +2048,77 @@ jobs:
             --admin-manifest admin-release-artifact/admin-web-manifest.json \
             --build admin-evidence/admin-web-build.json \
             --output admin-recovery-evidence/postcheck-admin-recovery-result.json
+
+      - name: Verify independent private runtime closure before Admin recovery postcheck
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_recovery_snapshot.outcome == 'success'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority and require Admin recovery postcheck
+        id: b2_admin_recovery_postcheck_authority
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_recovery_snapshot.outcome == 'success'
+        env: *admin_historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          chain_args=()
+          if [ -d admin-recovery-evidence/authority-chain-release ]; then
+            chain_args=(--chain-run admin-recovery-evidence/authority-chain-run.json
+              --chain-artifacts admin-recovery-evidence/authority-chain-artifacts.json
+              --chain-release-bundle admin-recovery-evidence/authority-chain-release
+              --chain-gate-evidence admin-recovery-evidence/authority-chain-gate
+              --chain-recovery-evidence admin-recovery-evidence/authority-chain-recovery)
+          fi
+          node scripts/nelyon-private-authority-cli.mjs postcheck-admin-recovery \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-postcheck-authority.json" \
+            --recovery-source-run "${{ steps.admin_recovery_authority_source.outputs.source_run_id }}" \
+            --run admin-recovery-evidence/authority-source-run.json \
+            --artifacts admin-recovery-evidence/authority-source-artifacts.json \
+            --release-bundle admin-recovery-evidence/authority-source-release \
+            --gate-evidence admin-recovery-evidence/authority-source-gate \
+            --admin-evidence admin-recovery-evidence/authority-source-admin \
+            "${chain_args[@]}" \
+            --current-gate "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-current-gate.json" \
+            --current-snapshot "$RUNNER_TEMP/nelyon-private-authority-public/control-center-post-state.json" \
+            --verified-source "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-verified-source.json" \
+            --admin-manifest admin-release-artifact/admin-web-manifest.json \
+            --build admin-evidence/admin-web-build.json \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/postcheck-admin-recovery-result.json"
+
+      - name: Clean private authority scratch after Admin recovery postcheck
+        id: b2_admin_recovery_postcheck_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_recovery_snapshot.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Require Admin recovery source and production post-state
+        id: admin_recovery_postcheck
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_snapshot.outcome == 'success' &&
+          ((needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+            steps.b2_admin_recovery_postcheck_authority.outcome == 'success' &&
+            steps.b2_admin_recovery_postcheck_authority_cleanup.outcome == 'success') ||
+           (needs.plan.outputs.admin_recovery_b2_required != 'true' &&
+            steps.admin_recovery_legacy_postcheck.outcome == 'success'))
+        env:
+          ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
+        run: |
+          set -euo pipefail
+          if [ "$ADMIN_RECOVERY_B2_REQUIRED" = 'true' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-postcheck-authority.json"
+            cp "$RUNNER_TEMP/nelyon-private-authority-public/postcheck-admin-recovery-result.json" admin-recovery-evidence/postcheck-admin-recovery-result.json
+          else
+            test -f admin-recovery-evidence/postcheck-admin-recovery-result.json
+          fi
           echo "ADMIN RECOVERY POSTCHECK SUCCESS" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Capture Cloudflare pre-state
@@ -793,9 +2145,22 @@ jobs:
             --phase pre \
             --output admin-evidence/admin-web-before-routes.json
 
-      - name: Verify Admin recovery Cloudflare pre-state
-        id: admin_recovery_cloudflare_prestate
-        if: needs.plan.outputs.mode == 'admin_recovery' && steps.admin_prestate.outcome == 'success'
+      - name: Stage closed Admin recovery Cloudflare pre-state
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_prestate.outcome == 'success'
+        run: |
+          set -euo pipefail
+          cp admin-evidence/admin-web-previous.json "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-previous.json"
+          cp admin-evidence/admin-web-before-routes.json "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-before-routes.json"
+
+      - name: Verify legacy Admin recovery Cloudflare pre-state
+        id: admin_recovery_legacy_cloudflare_prestate
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required != 'true' &&
+          steps.admin_prestate.outcome == 'success'
         run: |
           set -euo pipefail
           node "$NELYON_HELPER" verify-admin-recovery-cloudflare-prestate \
@@ -803,6 +2168,75 @@ jobs:
             --previous admin-evidence/admin-web-previous.json \
             --routes admin-evidence/admin-web-before-routes.json \
             --output admin-recovery-evidence/cloudflare-prestate-verification.json
+
+      - name: Verify independent private runtime closure before Admin recovery Cloudflare pre-state
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_prestate.outcome == 'success'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority for Admin recovery Cloudflare pre-state
+        id: b2_admin_recovery_cloudflare_prestate_authority
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_prestate.outcome == 'success'
+        env: *admin_historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          chain_args=()
+          if [ -d admin-recovery-evidence/authority-chain-release ]; then
+            chain_args=(--chain-run admin-recovery-evidence/authority-chain-run.json
+              --chain-artifacts admin-recovery-evidence/authority-chain-artifacts.json
+              --chain-release-bundle admin-recovery-evidence/authority-chain-release
+              --chain-gate-evidence admin-recovery-evidence/authority-chain-gate
+              --chain-recovery-evidence admin-recovery-evidence/authority-chain-recovery)
+          fi
+          node scripts/nelyon-private-authority-cli.mjs verify-admin-recovery-cloudflare-prestate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-cloudflare-prestate-authority.json" \
+            --recovery-source-run "${{ steps.admin_recovery_authority_source.outputs.source_run_id }}" \
+            --run admin-recovery-evidence/authority-source-run.json \
+            --artifacts admin-recovery-evidence/authority-source-artifacts.json \
+            --release-bundle admin-recovery-evidence/authority-source-release \
+            --gate-evidence admin-recovery-evidence/authority-source-gate \
+            --admin-evidence admin-recovery-evidence/authority-source-admin \
+            "${chain_args[@]}" \
+            --verified-source "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-verified-source.json" \
+            --previous "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-previous.json" \
+            --routes "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-before-routes.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/cloudflare-prestate-verification.json"
+
+      - name: Clean private authority scratch after Admin recovery Cloudflare pre-state
+        id: b2_admin_recovery_cloudflare_prestate_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'admin_recovery' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_prestate.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Verify Admin recovery Cloudflare pre-state
+        id: admin_recovery_cloudflare_prestate
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' && steps.admin_prestate.outcome == 'success' &&
+          ((needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+            steps.b2_admin_recovery_cloudflare_prestate_authority.outcome == 'success' &&
+            steps.b2_admin_recovery_cloudflare_prestate_authority_cleanup.outcome == 'success') ||
+           (needs.plan.outputs.admin_recovery_b2_required != 'true' &&
+            steps.admin_recovery_legacy_cloudflare_prestate.outcome == 'success'))
+        env:
+          ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
+        run: |
+          set -euo pipefail
+          if [ "$ADMIN_RECOVERY_B2_REQUIRED" = 'true' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-cloudflare-prestate-authority.json"
+            cp "$RUNNER_TEMP/nelyon-private-authority-public/cloudflare-prestate-verification.json" admin-recovery-evidence/cloudflare-prestate-verification.json
+          else
+            test -f admin-recovery-evidence/cloudflare-prestate-verification.json
+          fi
 
       - name: Verify exact remote migration dry-run before mutation
         id: migration_dry_run
@@ -819,13 +2253,38 @@ jobs:
           node "$NELYON_HELPER" verify-dry-run --input gate-evidence/migration-dry-run.txt --manifest release-artifact/bundle/manifest.json --output gate-evidence/migration-dry-run.json
           rm gate-evidence/migration-dry-run.txt
 
+      - name: Verify independent private runtime closure before migrations
+        if: needs.plan.outputs.mode == 'release'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority before migrations
+        id: b2_migration_authority
+        if: needs.plan.outputs.mode == 'release'
+        env: *current_private_authority_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/migration-receipt.json"
+
+      - name: Clean private authority scratch before migrations
+        id: b2_migration_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'release'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
       - name: Apply exact manifest migrations
         id: apply_migrations
-        if: needs.plan.outputs.mode == 'release'
+        if: >-
+          needs.plan.outputs.mode == 'release' &&
+          steps.b2_migration_authority.outcome == 'success' &&
+          steps.b2_migration_authority_cleanup.outcome == 'success'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/migration-receipt.json"
           node "$NELYON_HELPER" revalidate --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json --output gate-evidence/pre-migration-revalidation.json
           supabase db push --project-ref "$NELYON_PROJECT_REF" --skip-vault --yes
 
@@ -834,35 +2293,191 @@ jobs:
         if: needs.plan.outputs.mode == 'release'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_BUCKET: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_BUCKET }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY }}
+          NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256 }}
+          NELYON_PRIVATE_AUTHORITY_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_SHA256 }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+          NELYON_RELEASE_POLICY_SHA256: ${{ vars.NELYON_RELEASE_POLICY_SHA256 }}
+          NELYON_APPROVED_SHA: ${{ needs.plan.outputs.approved_sha }}
         run: |
           set -euo pipefail
-          node "$NELYON_HELPER" revalidate --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json --output gate-evidence/pre-function-revalidation.json
+          env -u NELYON_PRIVATE_AUTHORITY_PROVIDER \
+            -u NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID \
+            -u NELYON_PRIVATE_AUTHORITY_R2_BUCKET \
+            -u NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID \
+            -u NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY \
+            -u NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256 \
+            -u NELYON_PRIVATE_AUTHORITY_SHA256 \
+            -u NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 \
+            -u NELYON_RELEASE_POLICY_SHA256 \
+            -u NELYON_APPROVED_SHA \
+            -u SUPABASE_ACCESS_TOKEN \
+            node "$NELYON_HELPER" revalidate --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json --output gate-evidence/pre-function-revalidation.json
           while IFS= read -r function_name; do
             test -n "$function_name"
-            node "$NELYON_HELPER" verify-function-contract --manifest release-artifact/bundle/manifest.json --function "$function_name"
-            supabase functions deploy "$function_name" --project-ref "$NELYON_PROJECT_REF" --use-api
-          done < <(node -e "const m=require('./release-artifact/bundle/manifest.json'); for(const n of m.resources.functions) console.log(n)")
+            env -u NELYON_PRIVATE_AUTHORITY_PROVIDER \
+              -u NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID \
+              -u NELYON_PRIVATE_AUTHORITY_R2_BUCKET \
+              -u NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID \
+              -u NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY \
+              -u NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256 \
+              -u NELYON_PRIVATE_AUTHORITY_SHA256 \
+              -u NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 \
+              -u NELYON_RELEASE_POLICY_SHA256 \
+              -u NELYON_APPROVED_SHA \
+              -u SUPABASE_ACCESS_TOKEN \
+              node "$NELYON_HELPER" verify-function-contract --manifest release-artifact/bundle/manifest.json --function "$function_name"
+            env -u NELYON_PRIVATE_AUTHORITY_PROVIDER \
+              -u NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID \
+              -u NELYON_PRIVATE_AUTHORITY_R2_BUCKET \
+              -u NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID \
+              -u NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY \
+              -u NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256 \
+              -u NELYON_PRIVATE_AUTHORITY_SHA256 \
+              -u NELYON_RELEASE_POLICY_SHA256 \
+              -u NELYON_APPROVED_SHA \
+              -u SUPABASE_ACCESS_TOKEN \
+              node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+            AUTHORITY_STATUS=0
+            env -u SUPABASE_ACCESS_TOKEN node scripts/nelyon-private-authority-cli.mjs authority-proof \
+              --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+              --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/function-${function_name}-receipt.json" || AUTHORITY_STATUS=$?
+            env -u NELYON_PRIVATE_AUTHORITY_PROVIDER \
+              -u NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID \
+              -u NELYON_PRIVATE_AUTHORITY_R2_BUCKET \
+              -u NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID \
+              -u NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY \
+              -u NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256 \
+              -u NELYON_PRIVATE_AUTHORITY_SHA256 \
+              -u NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 \
+              -u NELYON_RELEASE_POLICY_SHA256 \
+              -u NELYON_APPROVED_SHA \
+              -u SUPABASE_ACCESS_TOKEN \
+              node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+            test "${AUTHORITY_STATUS}" -eq 0
+            env -u NELYON_PRIVATE_AUTHORITY_PROVIDER \
+              -u NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID \
+              -u NELYON_PRIVATE_AUTHORITY_R2_BUCKET \
+              -u NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID \
+              -u NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY \
+              -u NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256 \
+              -u NELYON_PRIVATE_AUTHORITY_SHA256 \
+              -u NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 \
+              -u NELYON_RELEASE_POLICY_SHA256 \
+              -u NELYON_APPROVED_SHA \
+              -u SUPABASE_ACCESS_TOKEN \
+              cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/function-${function_name}-receipt.json"
+            env -u NELYON_PRIVATE_AUTHORITY_PROVIDER \
+              -u NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID \
+              -u NELYON_PRIVATE_AUTHORITY_R2_BUCKET \
+              -u NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID \
+              -u NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY \
+              -u NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256 \
+              -u NELYON_PRIVATE_AUTHORITY_SHA256 \
+              -u NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 \
+              -u NELYON_RELEASE_POLICY_SHA256 \
+              -u NELYON_APPROVED_SHA \
+              supabase functions deploy "$function_name" --project-ref "$NELYON_PROJECT_REF" --use-api
+          done < <(env -u NELYON_PRIVATE_AUTHORITY_PROVIDER \
+            -u NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID \
+            -u NELYON_PRIVATE_AUTHORITY_R2_BUCKET \
+            -u NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID \
+            -u NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY \
+            -u NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256 \
+            -u NELYON_PRIVATE_AUTHORITY_SHA256 \
+            -u NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 \
+            -u NELYON_RELEASE_POLICY_SHA256 \
+            -u NELYON_APPROVED_SHA \
+            -u SUPABASE_ACCESS_TOKEN \
+            node -e "const m=require('./release-artifact/bundle/manifest.json'); for(const n of m.resources.functions) console.log(n)")
+
+      - name: Verify independent private runtime closure before post-snapshot
+        id: b2_post_snapshot_closure
+        if: always() && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority and capture post-snapshot
+        id: b2_post_snapshot_authority
+        if: always() && steps.b2_post_snapshot_closure.outcome == 'success' && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success'
+        env: *current_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs post-snapshot \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/post-snapshot-authority.json" \
+            --pre-snapshot "$RUNNER_TEMP/nelyon-private-authority-public/production-pre.json" \
+            --snapshot-output "$RUNNER_TEMP/nelyon-private-authority-public/production-post.json"
+
+      - name: Clean private authority scratch after post-snapshot
+        id: b2_post_snapshot_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
 
       - name: Capture immutable read-only production post-snapshot
         id: post_snapshot
-        if: always() && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success'
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        if: >-
+          always() && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success' &&
+          steps.b2_post_snapshot_authority.outcome == 'success' &&
+          steps.b2_post_snapshot_authority_cleanup.outcome == 'success'
         run: |
           set -euo pipefail
-          node scripts/nelyon-production-snapshot-adapter.mjs capture \
-            --phase post \
-            --policy "$NELYON_POLICY" \
-            --request release-artifact/request.json \
+          node --input-type=commonjs <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const root = `${process.env.RUNNER_TEMP}/nelyon-private-authority-public`;
+          const expected = JSON.parse(readFileSync(`${root}/expected-receipt.json`, 'utf8'));
+          const verification = JSON.parse(readFileSync(`${root}/post-snapshot-authority.json`, 'utf8'));
+          if (JSON.stringify(verification.receipt ?? verification) !== JSON.stringify(expected)) throw new Error('post-snapshot authority receipt mismatch');
+          NODE
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/production-post.json" gate-evidence/production-post.json
+
+      - name: Verify independent private runtime closure before postcheck
+        id: b2_postcheck_closure
+        if: always() && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success' && steps.post_snapshot.outcome == 'success'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority and require postcheck
+        id: b2_postcheck_authority
+        if: always() && steps.b2_postcheck_closure.outcome == 'success' && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success' && steps.post_snapshot.outcome == 'success'
+        env: *current_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs postcheck \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/postcheck-authority.json" \
             --manifest release-artifact/bundle/manifest.json \
-            --output gate-evidence/production-post.json
+            --pre-snapshot "$RUNNER_TEMP/nelyon-private-authority-public/production-pre.json" \
+            --post-snapshot "$RUNNER_TEMP/nelyon-private-authority-public/production-post.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/postcheck-result.json"
+
+      - name: Clean private authority scratch after postcheck
+        id: b2_postcheck_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success' && steps.post_snapshot.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
 
       - name: Require postcheck before release success
         id: postcheck
-        if: always() && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success' && steps.post_snapshot.outcome == 'success'
+        if: >-
+          always() && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success' && steps.post_snapshot.outcome == 'success' &&
+          steps.b2_postcheck_authority.outcome == 'success' &&
+          steps.b2_postcheck_authority_cleanup.outcome == 'success'
         run: |
           set -euo pipefail
-          node "$NELYON_HELPER" postcheck --policy "$NELYON_POLICY" --request release-artifact/request.json --manifest release-artifact/bundle/manifest.json --pre-snapshot gate-evidence/production-pre.json --post-snapshot gate-evidence/production-post.json --output gate-evidence/postcheck-result.json
+          node --input-type=commonjs <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const root = `${process.env.RUNNER_TEMP}/nelyon-private-authority-public`;
+          const expected = JSON.parse(readFileSync(`${root}/expected-receipt.json`, 'utf8'));
+          const verification = JSON.parse(readFileSync(`${root}/postcheck-authority.json`, 'utf8'));
+          if (JSON.stringify(verification.receipt ?? verification) !== JSON.stringify(expected)) throw new Error('postcheck authority receipt mismatch');
+          NODE
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/postcheck-result.json" gate-evidence/postcheck-result.json
           echo "SUPABASE POSTCHECK SUCCESS" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Capture Admin workers.dev and Version URL pre-state
@@ -879,34 +2494,208 @@ jobs:
           node scripts/nelyon-admin-production-release.mjs capture-preview-lifecycle \
             --output admin-evidence/admin-web-preview-before.json
 
-      - name: Enable exact temporary Admin workers.dev and Version URLs
-        id: admin_temp_urls_enable
+      - name: Verify independent private runtime closure before temporary Admin URLs
         if: >-
           needs.plan.outputs.admin_enabled == 'true' && steps.admin_temp_urls_prestate.outcome == 'success' &&
           ((needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success') ||
            (needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_postcheck.outcome == 'success' &&
+            needs.plan.outputs.admin_recovery_b2_required == 'true' &&
             steps.admin_recovery_cloudflare_prestate.outcome == 'success'))
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority before temporary Admin URLs
+        id: b2_admin_temp_enable_authority
+        if: >-
+          needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_temp_urls_prestate.outcome == 'success' && steps.postcheck.outcome == 'success'
+        env: *current_private_authority_env
         run: |
           set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-temp-enable-receipt.json"
+
+      - name: Clean private authority scratch before temporary Admin URLs
+        id: b2_admin_temp_enable_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_temp_urls_prestate.outcome == 'success' && steps.postcheck.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Resolve protected private authority before Admin recovery temporary URLs
+        id: b2_admin_recovery_temp_enable_authority
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_temp_urls_prestate.outcome == 'success' && steps.admin_recovery_postcheck.outcome == 'success' &&
+          steps.admin_recovery_cloudflare_prestate.outcome == 'success'
+        env: *admin_historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          chain_args=()
+          if [ -d admin-recovery-evidence/authority-chain-release ]; then
+            chain_args=(--chain-run admin-recovery-evidence/authority-chain-run.json
+              --chain-artifacts admin-recovery-evidence/authority-chain-artifacts.json
+              --chain-release-bundle admin-recovery-evidence/authority-chain-release
+              --chain-gate-evidence admin-recovery-evidence/authority-chain-gate
+              --chain-recovery-evidence admin-recovery-evidence/authority-chain-recovery)
+          fi
+          node scripts/nelyon-private-authority-cli.mjs verify-admin-recovery-cloudflare-prestate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-temp-enable-receipt.json" \
+            --recovery-source-run "${{ steps.admin_recovery_authority_source.outputs.source_run_id }}" \
+            --run admin-recovery-evidence/authority-source-run.json \
+            --artifacts admin-recovery-evidence/authority-source-artifacts.json \
+            --release-bundle admin-recovery-evidence/authority-source-release \
+            --gate-evidence admin-recovery-evidence/authority-source-gate \
+            --admin-evidence admin-recovery-evidence/authority-source-admin \
+            "${chain_args[@]}" \
+            --verified-source "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-verified-source.json" \
+            --previous "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-previous.json" \
+            --routes "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-before-routes.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Clean private authority scratch before Admin recovery temporary URLs
+        id: b2_admin_recovery_temp_enable_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_temp_urls_prestate.outcome == 'success' && steps.admin_recovery_postcheck.outcome == 'success' &&
+          steps.admin_recovery_cloudflare_prestate.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+          rm -f "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Enable exact temporary Admin workers.dev and Version URLs
+        id: admin_temp_urls_enable
+        if: >-
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_temp_urls_prestate.outcome == 'success' &&
+          ((needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success' &&
+            steps.b2_admin_temp_enable_authority.outcome == 'success' &&
+            steps.b2_admin_temp_enable_authority_cleanup.outcome == 'success') ||
+           (needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_postcheck.outcome == 'success' &&
+            steps.admin_recovery_cloudflare_prestate.outcome == 'success' &&
+            ((needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+              steps.b2_admin_recovery_temp_enable_authority.outcome == 'success' &&
+              steps.b2_admin_recovery_temp_enable_authority_cleanup.outcome == 'success') ||
+             needs.plan.outputs.admin_recovery_b2_required != 'true')))
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.plan.outputs.mode }}" = 'release' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-temp-enable-receipt.json"
+          elif [ "$ADMIN_RECOVERY_B2_REQUIRED" = 'true' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-temp-enable-receipt.json"
+          fi
           node scripts/nelyon-admin-production-release.mjs preview-lifecycle \
             --enabled true \
             --previews-enabled true \
             --output admin-evidence/admin-web-preview-enabled.json
+
+      - name: Verify independent private runtime closure before Admin upload
+        if: >-
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_temp_urls_enable.outcome == 'success' &&
+          ((needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success') ||
+           (needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_postcheck.outcome == 'success' &&
+            needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+            steps.admin_recovery_cloudflare_prestate.outcome == 'success'))
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority before Admin upload
+        id: b2_admin_upload_authority
+        if: >-
+          needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_temp_urls_enable.outcome == 'success' && steps.postcheck.outcome == 'success'
+        env: *current_private_authority_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-upload-receipt.json"
+
+      - name: Clean private authority scratch before Admin upload
+        id: b2_admin_upload_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_temp_urls_enable.outcome == 'success' && steps.postcheck.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Resolve protected private authority before Admin recovery upload
+        id: b2_admin_recovery_upload_authority
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_temp_urls_enable.outcome == 'success' && steps.admin_recovery_postcheck.outcome == 'success' &&
+          steps.admin_recovery_cloudflare_prestate.outcome == 'success'
+        env: *admin_historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          chain_args=()
+          if [ -d admin-recovery-evidence/authority-chain-release ]; then
+            chain_args=(--chain-run admin-recovery-evidence/authority-chain-run.json
+              --chain-artifacts admin-recovery-evidence/authority-chain-artifacts.json
+              --chain-release-bundle admin-recovery-evidence/authority-chain-release
+              --chain-gate-evidence admin-recovery-evidence/authority-chain-gate
+              --chain-recovery-evidence admin-recovery-evidence/authority-chain-recovery)
+          fi
+          node scripts/nelyon-private-authority-cli.mjs verify-admin-recovery-cloudflare-prestate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-upload-receipt.json" \
+            --recovery-source-run "${{ steps.admin_recovery_authority_source.outputs.source_run_id }}" \
+            --run admin-recovery-evidence/authority-source-run.json \
+            --artifacts admin-recovery-evidence/authority-source-artifacts.json \
+            --release-bundle admin-recovery-evidence/authority-source-release \
+            --gate-evidence admin-recovery-evidence/authority-source-gate \
+            --admin-evidence admin-recovery-evidence/authority-source-admin \
+            "${chain_args[@]}" \
+            --verified-source "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-verified-source.json" \
+            --previous "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-previous.json" \
+            --routes "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-before-routes.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Clean private authority scratch before Admin recovery upload
+        id: b2_admin_recovery_upload_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_temp_urls_enable.outcome == 'success' && steps.admin_recovery_postcheck.outcome == 'success' &&
+          steps.admin_recovery_cloudflare_prestate.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+          rm -f "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
 
       - name: Upload one immutable Admin version
         id: admin_upload
         if: >-
           needs.plan.outputs.admin_enabled == 'true' && steps.admin_prestate.outcome == 'success' &&
           steps.admin_temp_urls_enable.outcome == 'success' &&
-          ((needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success') ||
+          ((needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success' &&
+            steps.b2_admin_upload_authority.outcome == 'success' &&
+            steps.b2_admin_upload_authority_cleanup.outcome == 'success') ||
            (needs.plan.outputs.mode == 'admin_recovery' && steps.admin_recovery_postcheck.outcome == 'success' &&
-            steps.admin_recovery_cloudflare_prestate.outcome == 'success'))
+            steps.admin_recovery_cloudflare_prestate.outcome == 'success' &&
+            ((needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+              steps.b2_admin_recovery_upload_authority.outcome == 'success' &&
+              steps.b2_admin_recovery_upload_authority_cleanup.outcome == 'success') ||
+             needs.plan.outputs.admin_recovery_b2_required != 'true')))
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
         run: |
           set -euo pipefail
+          if [ "${{ needs.plan.outputs.mode }}" = 'release' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-upload-receipt.json"
+          elif [ "$ADMIN_RECOVERY_B2_REQUIRED" = 'true' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-upload-receipt.json"
+          fi
           VERSION_TAG="$(node -p "JSON.parse(require('fs').readFileSync('admin-release-artifact/admin-web-manifest.json','utf8')).worker.version_tag")"
           PREVIEW_ALIAS="$(node -p "JSON.parse(require('fs').readFileSync('admin-release-artifact/admin-web-manifest.json','utf8')).worker.preview_alias")"
           BUILD_DIGEST="$(node -p "JSON.parse(require('fs').readFileSync('admin-evidence/admin-web-build.json','utf8')).dist_sha256")"
@@ -953,13 +2742,93 @@ jobs:
             --build admin-evidence/admin-web-build.json \
             --output admin-evidence/admin-web-preview-http.json
 
-      - name: Promote the exact smoked Admin version
-        id: admin_promote
-        if: (needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery') && needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success'
+      - name: Verify independent private runtime closure before Admin promotion
+        if: >-
+          (needs.plan.outputs.mode == 'release' ||
+           (needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required == 'true')) &&
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success'
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority before Admin promotion
+        id: b2_admin_promote_authority
+        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success'
+        env: *current_private_authority_env
         run: |
           set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-promote-receipt.json"
+
+      - name: Clean private authority scratch before Admin promotion
+        id: b2_admin_promote_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Resolve protected private authority before Admin recovery promotion
+        id: b2_admin_recovery_promote_authority
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' && steps.admin_candidate.outcome == 'success'
+        env: *admin_historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          chain_args=()
+          if [ -d admin-recovery-evidence/authority-chain-release ]; then
+            chain_args=(--chain-run admin-recovery-evidence/authority-chain-run.json
+              --chain-artifacts admin-recovery-evidence/authority-chain-artifacts.json
+              --chain-release-bundle admin-recovery-evidence/authority-chain-release
+              --chain-gate-evidence admin-recovery-evidence/authority-chain-gate
+              --chain-recovery-evidence admin-recovery-evidence/authority-chain-recovery)
+          fi
+          node scripts/nelyon-private-authority-cli.mjs verify-admin-recovery-cloudflare-prestate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-promote-receipt.json" \
+            --recovery-source-run "${{ steps.admin_recovery_authority_source.outputs.source_run_id }}" \
+            --run admin-recovery-evidence/authority-source-run.json \
+            --artifacts admin-recovery-evidence/authority-source-artifacts.json \
+            --release-bundle admin-recovery-evidence/authority-source-release \
+            --gate-evidence admin-recovery-evidence/authority-source-gate \
+            --admin-evidence admin-recovery-evidence/authority-source-admin \
+            "${chain_args[@]}" \
+            --verified-source "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-verified-source.json" \
+            --previous "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-previous.json" \
+            --routes "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-before-routes.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Clean private authority scratch before Admin recovery promotion
+        id: b2_admin_recovery_promote_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' && steps.admin_candidate.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+          rm -f "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Promote the exact smoked Admin version
+        id: admin_promote
+        if: >-
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success' &&
+          ((needs.plan.outputs.mode == 'release' &&
+            steps.b2_admin_promote_authority.outcome == 'success' &&
+            steps.b2_admin_promote_authority_cleanup.outcome == 'success') ||
+           (needs.plan.outputs.mode == 'admin_recovery' &&
+            ((needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+              steps.b2_admin_recovery_promote_authority.outcome == 'success' &&
+              steps.b2_admin_recovery_promote_authority_cleanup.outcome == 'success') ||
+             needs.plan.outputs.admin_recovery_b2_required != 'true')))
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.plan.outputs.mode }}" = 'release' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-promote-receipt.json"
+          elif [ "$ADMIN_RECOVERY_B2_REQUIRED" = 'true' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-promote-receipt.json"
+          fi
           VERSION_ID="$(node -p "JSON.parse(require('fs').readFileSync('admin-evidence/admin-web-candidate.json','utf8')).version_id")"
           "$NELYON_WRANGLER" versions deploy \
             --config apps/admin-web/deployment/wrangler.preview.jsonc \
@@ -997,13 +2866,93 @@ jobs:
           done
           test "${SMOKE_OK}" = 'true'
 
-      - name: Apply exact Admin production routes
-        id: admin_routes
-        if: (needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery') && needs.plan.outputs.admin_enabled == 'true' && steps.admin_promoted_smoke.outcome == 'success'
+      - name: Verify independent private runtime closure before Admin routes
+        if: >-
+          (needs.plan.outputs.mode == 'release' ||
+           (needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required == 'true')) &&
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_promoted_smoke.outcome == 'success'
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority before Admin routes
+        id: b2_admin_routes_authority
+        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_promoted_smoke.outcome == 'success'
+        env: *current_private_authority_env
         run: |
           set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-routes-receipt.json"
+
+      - name: Clean private authority scratch before Admin routes
+        id: b2_admin_routes_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_promoted_smoke.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Resolve protected private authority before Admin recovery routes
+        id: b2_admin_recovery_routes_authority
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' && steps.admin_promoted_smoke.outcome == 'success'
+        env: *admin_historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          chain_args=()
+          if [ -d admin-recovery-evidence/authority-chain-release ]; then
+            chain_args=(--chain-run admin-recovery-evidence/authority-chain-run.json
+              --chain-artifacts admin-recovery-evidence/authority-chain-artifacts.json
+              --chain-release-bundle admin-recovery-evidence/authority-chain-release
+              --chain-gate-evidence admin-recovery-evidence/authority-chain-gate
+              --chain-recovery-evidence admin-recovery-evidence/authority-chain-recovery)
+          fi
+          node scripts/nelyon-private-authority-cli.mjs verify-admin-recovery-cloudflare-prestate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-routes-receipt.json" \
+            --recovery-source-run "${{ steps.admin_recovery_authority_source.outputs.source_run_id }}" \
+            --run admin-recovery-evidence/authority-source-run.json \
+            --artifacts admin-recovery-evidence/authority-source-artifacts.json \
+            --release-bundle admin-recovery-evidence/authority-source-release \
+            --gate-evidence admin-recovery-evidence/authority-source-gate \
+            --admin-evidence admin-recovery-evidence/authority-source-admin \
+            "${chain_args[@]}" \
+            --verified-source "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-verified-source.json" \
+            --previous "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-previous.json" \
+            --routes "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-before-routes.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Clean private authority scratch before Admin recovery routes
+        id: b2_admin_recovery_routes_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' && steps.admin_promoted_smoke.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+          rm -f "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Apply exact Admin production routes
+        id: admin_routes
+        if: >-
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_promoted_smoke.outcome == 'success' &&
+          ((needs.plan.outputs.mode == 'release' &&
+            steps.b2_admin_routes_authority.outcome == 'success' &&
+            steps.b2_admin_routes_authority_cleanup.outcome == 'success') ||
+           (needs.plan.outputs.mode == 'admin_recovery' &&
+            ((needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+              steps.b2_admin_recovery_routes_authority.outcome == 'success' &&
+              steps.b2_admin_recovery_routes_authority_cleanup.outcome == 'success') ||
+             needs.plan.outputs.admin_recovery_b2_required != 'true')))
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.plan.outputs.mode }}" = 'release' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-routes-receipt.json"
+          elif [ "$ADMIN_RECOVERY_B2_REQUIRED" = 'true' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-routes-receipt.json"
+          fi
           "$NELYON_WRANGLER" triggers deploy \
             --config apps/admin-web/deployment/wrangler.route.jsonc
 
@@ -1029,13 +2978,93 @@ jobs:
           done
           test "${ROUTE_ACTIVE}" = 'true'
 
-      - name: Purge exact Admin production cache prefix
-        id: admin_cache_purge
-        if: (needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery') && needs.plan.outputs.admin_enabled == 'true' && steps.admin_route_activation.outcome == 'success'
+      - name: Verify independent private runtime closure before Admin cache purge
+        if: >-
+          (needs.plan.outputs.mode == 'release' ||
+           (needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required == 'true')) &&
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_route_activation.outcome == 'success'
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority before Admin cache purge
+        id: b2_admin_cache_purge_authority
+        if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_route_activation.outcome == 'success'
+        env: *current_private_authority_env
         run: |
           set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-cache-purge-receipt.json"
+
+      - name: Clean private authority scratch before Admin cache purge
+        id: b2_admin_cache_purge_authority_cleanup
+        if: always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' && steps.admin_route_activation.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Resolve protected private authority before Admin recovery cache purge
+        id: b2_admin_recovery_cache_purge_authority
+        if: >-
+          needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' && steps.admin_route_activation.outcome == 'success'
+        env: *admin_historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          chain_args=()
+          if [ -d admin-recovery-evidence/authority-chain-release ]; then
+            chain_args=(--chain-run admin-recovery-evidence/authority-chain-run.json
+              --chain-artifacts admin-recovery-evidence/authority-chain-artifacts.json
+              --chain-release-bundle admin-recovery-evidence/authority-chain-release
+              --chain-gate-evidence admin-recovery-evidence/authority-chain-gate
+              --chain-recovery-evidence admin-recovery-evidence/authority-chain-recovery)
+          fi
+          node scripts/nelyon-private-authority-cli.mjs verify-admin-recovery-cloudflare-prestate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-cache-purge-receipt.json" \
+            --recovery-source-run "${{ steps.admin_recovery_authority_source.outputs.source_run_id }}" \
+            --run admin-recovery-evidence/authority-source-run.json \
+            --artifacts admin-recovery-evidence/authority-source-artifacts.json \
+            --release-bundle admin-recovery-evidence/authority-source-release \
+            --gate-evidence admin-recovery-evidence/authority-source-gate \
+            --admin-evidence admin-recovery-evidence/authority-source-admin \
+            "${chain_args[@]}" \
+            --verified-source "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-verified-source.json" \
+            --previous "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-previous.json" \
+            --routes "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-before-routes.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Clean private authority scratch before Admin recovery cache purge
+        id: b2_admin_recovery_cache_purge_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' && steps.admin_route_activation.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+          rm -f "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Purge exact Admin production cache prefix
+        id: admin_cache_purge
+        if: >-
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_route_activation.outcome == 'success' &&
+          ((needs.plan.outputs.mode == 'release' &&
+            steps.b2_admin_cache_purge_authority.outcome == 'success' &&
+            steps.b2_admin_cache_purge_authority_cleanup.outcome == 'success') ||
+           (needs.plan.outputs.mode == 'admin_recovery' &&
+            ((needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+              steps.b2_admin_recovery_cache_purge_authority.outcome == 'success' &&
+              steps.b2_admin_recovery_cache_purge_authority_cleanup.outcome == 'success') ||
+             needs.plan.outputs.admin_recovery_b2_required != 'true')))
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.plan.outputs.mode }}" = 'release' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-cache-purge-receipt.json"
+          elif [ "$ADMIN_RECOVERY_B2_REQUIRED" = 'true' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-cache-purge-receipt.json"
+          fi
           node scripts/nelyon-admin-production-release.mjs purge-admin-cache \
             --output admin-evidence/admin-web-cache-purge.json
 
@@ -1075,13 +3104,102 @@ jobs:
             --build admin-evidence/admin-web-build.json \
             --output admin-evidence/admin-web-release-result.json
 
-      - name: Recover previous Admin production version and routes
-        id: admin_recovery
-        if: always() && (needs.plan.outputs.mode == 'release' || needs.plan.outputs.mode == 'admin_recovery') && needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success' && steps.admin_finalize.outcome != 'success'
+      - name: Verify independent private runtime closure before Admin rollback
+        id: b2_admin_rollback_closure
+        if: >-
+          always() && (needs.plan.outputs.mode == 'release' ||
+          (needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required == 'true')) &&
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success' &&
+          steps.admin_finalize.outcome != 'success'
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority before Admin rollback
+        id: b2_admin_rollback_authority
+        if: >-
+          always() && steps.b2_admin_rollback_closure.outcome == 'success' && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_candidate.outcome == 'success' && steps.admin_finalize.outcome != 'success'
+        env: *current_private_authority_env
         run: |
           set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-rollback-version-receipt.json"
+
+      - name: Clean private authority scratch before Admin rollback
+        id: b2_admin_rollback_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_candidate.outcome == 'success' && steps.admin_finalize.outcome != 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Resolve protected private authority before Admin recovery rollback
+        id: b2_admin_recovery_rollback_authority
+        if: >-
+          always() && steps.b2_admin_rollback_closure.outcome == 'success' && needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_candidate.outcome == 'success' && steps.admin_finalize.outcome != 'success'
+        env: *admin_historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          chain_args=()
+          if [ -d admin-recovery-evidence/authority-chain-release ]; then
+            chain_args=(--chain-run admin-recovery-evidence/authority-chain-run.json
+              --chain-artifacts admin-recovery-evidence/authority-chain-artifacts.json
+              --chain-release-bundle admin-recovery-evidence/authority-chain-release
+              --chain-gate-evidence admin-recovery-evidence/authority-chain-gate
+              --chain-recovery-evidence admin-recovery-evidence/authority-chain-recovery)
+          fi
+          node scripts/nelyon-private-authority-cli.mjs verify-admin-recovery-cloudflare-prestate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-rollback-version-receipt.json" \
+            --recovery-source-run "${{ steps.admin_recovery_authority_source.outputs.source_run_id }}" \
+            --run admin-recovery-evidence/authority-source-run.json \
+            --artifacts admin-recovery-evidence/authority-source-artifacts.json \
+            --release-bundle admin-recovery-evidence/authority-source-release \
+            --gate-evidence admin-recovery-evidence/authority-source-gate \
+            --admin-evidence admin-recovery-evidence/authority-source-admin \
+            "${chain_args[@]}" \
+            --verified-source "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-verified-source.json" \
+            --previous "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-previous.json" \
+            --routes "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-before-routes.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Clean private authority scratch before Admin recovery rollback
+        id: b2_admin_recovery_rollback_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_candidate.outcome == 'success' && steps.admin_finalize.outcome != 'success'
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+          rm -f "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Recover previous Admin production version
+        id: admin_recovery_version
+        if: >-
+          always() && needs.plan.outputs.admin_enabled == 'true' && steps.admin_candidate.outcome == 'success' &&
+          steps.admin_finalize.outcome != 'success' &&
+          ((needs.plan.outputs.mode == 'release' &&
+            steps.b2_admin_rollback_authority.outcome == 'success' &&
+            steps.b2_admin_rollback_authority_cleanup.outcome == 'success') ||
+           (needs.plan.outputs.mode == 'admin_recovery' &&
+            ((needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+              steps.b2_admin_recovery_rollback_authority.outcome == 'success' &&
+              steps.b2_admin_recovery_rollback_authority_cleanup.outcome == 'success') ||
+             needs.plan.outputs.admin_recovery_b2_required != 'true')))
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.plan.outputs.mode }}" = 'release' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-rollback-version-receipt.json"
+          elif [ "$ADMIN_RECOVERY_B2_REQUIRED" = 'true' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-rollback-version-receipt.json"
+          fi
           PREVIOUS_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('admin-evidence/admin-web-previous.json','utf8')).version_id")"
           "$NELYON_WRANGLER" versions deploy \
             --config apps/admin-web/deployment/wrangler.preview.jsonc \
@@ -1090,11 +3208,211 @@ jobs:
             --percentage 100 \
             --message "Recovery for failed Nelyon release ${{ inputs.release_id }}" \
             --yes
+
+      - name: Verify independent private runtime closure before Admin rollback routes
+        id: b2_admin_rollback_routes_closure
+        if: >-
+          always() && (needs.plan.outputs.mode == 'release' ||
+          (needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required == 'true')) &&
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_recovery_version.outcome == 'success'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority before Admin rollback routes
+        id: b2_admin_rollback_routes_authority
+        if: >-
+          always() && steps.b2_admin_rollback_routes_closure.outcome == 'success' && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_recovery_version.outcome == 'success'
+        env: *current_private_authority_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-rollback-routes-receipt.json"
+
+      - name: Clean private authority scratch before Admin rollback routes
+        id: b2_admin_rollback_routes_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_recovery_version.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Resolve protected private authority before Admin recovery rollback routes
+        id: b2_admin_recovery_rollback_routes_authority
+        if: >-
+          always() && steps.b2_admin_rollback_routes_closure.outcome == 'success' && needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_recovery_version.outcome == 'success'
+        env: *admin_historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          chain_args=()
+          if [ -d admin-recovery-evidence/authority-chain-release ]; then
+            chain_args=(--chain-run admin-recovery-evidence/authority-chain-run.json
+              --chain-artifacts admin-recovery-evidence/authority-chain-artifacts.json
+              --chain-release-bundle admin-recovery-evidence/authority-chain-release
+              --chain-gate-evidence admin-recovery-evidence/authority-chain-gate
+              --chain-recovery-evidence admin-recovery-evidence/authority-chain-recovery)
+          fi
+          node scripts/nelyon-private-authority-cli.mjs verify-admin-recovery-cloudflare-prestate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-rollback-routes-receipt.json" \
+            --recovery-source-run "${{ steps.admin_recovery_authority_source.outputs.source_run_id }}" \
+            --run admin-recovery-evidence/authority-source-run.json \
+            --artifacts admin-recovery-evidence/authority-source-artifacts.json \
+            --release-bundle admin-recovery-evidence/authority-source-release \
+            --gate-evidence admin-recovery-evidence/authority-source-gate \
+            --admin-evidence admin-recovery-evidence/authority-source-admin \
+            "${chain_args[@]}" \
+            --verified-source "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-verified-source.json" \
+            --previous "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-previous.json" \
+            --routes "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-before-routes.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Clean private authority scratch before Admin recovery rollback routes
+        id: b2_admin_recovery_rollback_routes_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_recovery_version.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+          rm -f "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Restore previous Admin production routes
+        id: admin_recovery_routes
+        if: >-
+          always() && needs.plan.outputs.admin_enabled == 'true' && steps.admin_recovery_version.outcome == 'success' &&
+          ((needs.plan.outputs.mode == 'release' &&
+            steps.b2_admin_rollback_routes_authority.outcome == 'success' &&
+            steps.b2_admin_rollback_routes_authority_cleanup.outcome == 'success') ||
+           (needs.plan.outputs.mode == 'admin_recovery' &&
+            ((needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+              steps.b2_admin_recovery_rollback_routes_authority.outcome == 'success' &&
+              steps.b2_admin_recovery_rollback_routes_authority_cleanup.outcome == 'success') ||
+             needs.plan.outputs.admin_recovery_b2_required != 'true')))
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.plan.outputs.mode }}" = 'release' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-rollback-routes-receipt.json"
+          elif [ "$ADMIN_RECOVERY_B2_REQUIRED" = 'true' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-rollback-routes-receipt.json"
+          fi
           node scripts/nelyon-admin-production-release.mjs restore-routes \
             --before admin-evidence/admin-web-before-routes.json \
             --output admin-evidence/admin-web-recovered-routes.json
+
+      - name: Verify independent private runtime closure before Admin rollback cache purge
+        id: b2_admin_rollback_cache_purge_closure
+        if: >-
+          always() && (needs.plan.outputs.mode == 'release' ||
+          (needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required == 'true')) &&
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_recovery_routes.outcome == 'success'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority before Admin rollback cache purge
+        id: b2_admin_rollback_cache_purge_authority
+        if: >-
+          always() && steps.b2_admin_rollback_cache_purge_closure.outcome == 'success' && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_recovery_routes.outcome == 'success'
+        env: *current_private_authority_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-rollback-cache-purge-receipt.json"
+
+      - name: Clean private authority scratch before Admin rollback cache purge
+        id: b2_admin_rollback_cache_purge_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_recovery_routes.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Resolve protected private authority before Admin recovery rollback cache purge
+        id: b2_admin_recovery_rollback_cache_purge_authority
+        if: >-
+          always() && steps.b2_admin_rollback_cache_purge_closure.outcome == 'success' && needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_recovery_routes.outcome == 'success'
+        env: *admin_historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          chain_args=()
+          if [ -d admin-recovery-evidence/authority-chain-release ]; then
+            chain_args=(--chain-run admin-recovery-evidence/authority-chain-run.json
+              --chain-artifacts admin-recovery-evidence/authority-chain-artifacts.json
+              --chain-release-bundle admin-recovery-evidence/authority-chain-release
+              --chain-gate-evidence admin-recovery-evidence/authority-chain-gate
+              --chain-recovery-evidence admin-recovery-evidence/authority-chain-recovery)
+          fi
+          node scripts/nelyon-private-authority-cli.mjs verify-admin-recovery-cloudflare-prestate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-rollback-cache-purge-receipt.json" \
+            --recovery-source-run "${{ steps.admin_recovery_authority_source.outputs.source_run_id }}" \
+            --run admin-recovery-evidence/authority-source-run.json \
+            --artifacts admin-recovery-evidence/authority-source-artifacts.json \
+            --release-bundle admin-recovery-evidence/authority-source-release \
+            --gate-evidence admin-recovery-evidence/authority-source-gate \
+            --admin-evidence admin-recovery-evidence/authority-source-admin \
+            "${chain_args[@]}" \
+            --verified-source "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-verified-source.json" \
+            --previous "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-previous.json" \
+            --routes "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-before-routes.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Clean private authority scratch before Admin recovery rollback cache purge
+        id: b2_admin_recovery_rollback_cache_purge_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_recovery_routes.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+          rm -f "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Purge recovered Admin production cache
+        id: admin_recovery_cache_purge
+        if: >-
+          always() && needs.plan.outputs.admin_enabled == 'true' && steps.admin_recovery_routes.outcome == 'success' &&
+          ((needs.plan.outputs.mode == 'release' &&
+            steps.b2_admin_rollback_cache_purge_authority.outcome == 'success' &&
+            steps.b2_admin_rollback_cache_purge_authority_cleanup.outcome == 'success') ||
+           (needs.plan.outputs.mode == 'admin_recovery' &&
+            ((needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+              steps.b2_admin_recovery_rollback_cache_purge_authority.outcome == 'success' &&
+              steps.b2_admin_recovery_rollback_cache_purge_authority_cleanup.outcome == 'success') ||
+             needs.plan.outputs.admin_recovery_b2_required != 'true')))
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.plan.outputs.mode }}" = 'release' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-rollback-cache-purge-receipt.json"
+          elif [ "$ADMIN_RECOVERY_B2_REQUIRED" = 'true' ]; then
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-rollback-cache-purge-receipt.json"
+          fi
           node scripts/nelyon-admin-production-release.mjs purge-admin-cache \
             --output admin-evidence/admin-web-recovery-cache-purge.json
+
+      - name: Verify recovered Admin production version and routes
+        id: admin_recovery
+        if: >-
+          always() && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_recovery_cache_purge.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
           "$NELYON_WRANGLER" deployments status \
             --config apps/admin-web/deployment/wrangler.preview.jsonc --json \
             > admin-evidence/admin-web-recovered-deployment.json
@@ -1105,13 +3423,88 @@ jobs:
             --after-routes admin-evidence/admin-web-recovered-routes.json \
             --output admin-evidence/admin-web-recovery.json
 
+      - name: Verify independent private runtime closure before closing temporary Admin URLs
+        id: b2_admin_temp_urls_closure
+        if: >-
+          always() && (needs.plan.outputs.mode == 'release' ||
+          (needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required == 'true')) &&
+          needs.plan.outputs.admin_enabled == 'true' && steps.admin_temp_urls_prestate.outcome == 'success'
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority before closing temporary Admin URLs
+        id: b2_admin_temp_urls_cleanup_authority
+        if: >-
+          always() && steps.b2_admin_temp_urls_closure.outcome == 'success' && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_temp_urls_prestate.outcome == 'success'
+        env: *current_private_authority_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-temp-urls-cleanup-receipt.json"
+
+      - name: Clean private authority scratch before closing temporary Admin URLs
+        id: b2_admin_temp_urls_cleanup_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'release' && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_temp_urls_prestate.outcome == 'success'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Resolve protected private authority before Admin recovery temporary URL closure
+        id: b2_admin_recovery_temp_urls_cleanup_authority
+        if: >-
+          always() && steps.b2_admin_temp_urls_closure.outcome == 'success' && needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_temp_urls_prestate.outcome == 'success'
+        env: *admin_historical_private_authority_supabase_env
+        run: |
+          set -euo pipefail
+          chain_args=()
+          if [ -d admin-recovery-evidence/authority-chain-release ]; then
+            chain_args=(--chain-run admin-recovery-evidence/authority-chain-run.json
+              --chain-artifacts admin-recovery-evidence/authority-chain-artifacts.json
+              --chain-release-bundle admin-recovery-evidence/authority-chain-release
+              --chain-gate-evidence admin-recovery-evidence/authority-chain-gate
+              --chain-recovery-evidence admin-recovery-evidence/authority-chain-recovery)
+          fi
+          node scripts/nelyon-private-authority-cli.mjs verify-admin-recovery-cloudflare-prestate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-temp-urls-cleanup-receipt.json" \
+            --recovery-source-run "${{ steps.admin_recovery_authority_source.outputs.source_run_id }}" \
+            --run admin-recovery-evidence/authority-source-run.json \
+            --artifacts admin-recovery-evidence/authority-source-artifacts.json \
+            --release-bundle admin-recovery-evidence/authority-source-release \
+            --gate-evidence admin-recovery-evidence/authority-source-gate \
+            --admin-evidence admin-recovery-evidence/authority-source-admin \
+            "${chain_args[@]}" \
+            --verified-source "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-verified-source.json" \
+            --previous "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-previous.json" \
+            --routes "$RUNNER_TEMP/nelyon-private-authority-public/admin-web-before-routes.json" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
+      - name: Clean private authority scratch before Admin recovery temporary URL closure
+        id: b2_admin_recovery_temp_urls_cleanup_authority_cleanup
+        if: >-
+          always() && needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_enabled == 'true' &&
+          needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+          steps.admin_temp_urls_prestate.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+          rm -f "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-mutation-stage.json"
+
       - name: Close and verify temporary Admin URLs
         id: admin_temp_urls_cleanup
         if: >-
           always() && needs.plan.outputs.admin_enabled == 'true' &&
-          steps.admin_temp_urls_prestate.outcome == 'success'
+          steps.admin_temp_urls_prestate.outcome == 'success' &&
+          (steps.b2_admin_temp_urls_closure.outcome == 'success' ||
+           (needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required != 'true'))
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ADMIN_RECOVERY_B2_REQUIRED: ${{ needs.plan.outputs.admin_recovery_b2_required }}
         run: |
           set -euo pipefail
           TEMP_URLS_CLOSED=false
@@ -1126,17 +3519,52 @@ jobs:
             if [ "${attempt}" -lt 5 ]; then sleep 3; fi
           done
           test "${TEMP_URLS_CLOSED}" = 'true'
+          if [ "${{ needs.plan.outputs.mode }}" = 'release' ]; then
+            test "${{ steps.b2_admin_temp_urls_cleanup_authority.outcome }}" = 'success'
+            test "${{ steps.b2_admin_temp_urls_cleanup_authority_cleanup.outcome }}" = 'success'
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-temp-urls-cleanup-receipt.json"
+          elif [ "$ADMIN_RECOVERY_B2_REQUIRED" = 'true' ]; then
+            test "${{ needs.plan.outputs.mode }}" = 'admin_recovery'
+            test "${{ steps.b2_admin_recovery_temp_urls_cleanup_authority.outcome }}" = 'success'
+            test "${{ steps.b2_admin_recovery_temp_urls_cleanup_authority_cleanup.outcome }}" = 'success'
+            cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/admin-recovery-temp-urls-cleanup-receipt.json"
+          else
+            test "${{ needs.plan.outputs.mode }}" = 'admin_recovery'
+          fi
+
+      - name: Report integrity-blocked temporary Admin URL cleanup
+        if: >-
+          always() && needs.plan.outputs.admin_enabled == 'true' &&
+          steps.admin_temp_urls_prestate.outcome == 'success' &&
+          (needs.plan.outputs.mode == 'release' ||
+           (needs.plan.outputs.mode == 'admin_recovery' && needs.plan.outputs.admin_recovery_b2_required == 'true')) &&
+          steps.b2_admin_temp_urls_closure.outcome != 'success'
+        run: |
+          echo '::error::Temporary Admin URL cleanup not executed: runtime integrity was not verified; URL closure is unconfirmed.'
+          exit 1
+
+      - name: Clean private authority scratch before final result
+        id: b2_final_authority_cleanup
+        if: always()
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
 
       - name: Require complete protected release success
         id: release_complete
         if: >-
-          always() &&
+          always() && steps.b2_final_authority_cleanup.outcome == 'success' &&
           ((needs.plan.outputs.mode == 'release' && steps.postcheck.outcome == 'success' &&
             (needs.plan.outputs.admin_enabled != 'true' ||
-             (steps.admin_finalize.outcome == 'success' && steps.admin_temp_urls_cleanup.outcome == 'success'))) ||
+             (steps.admin_finalize.outcome == 'success' &&
+              steps.b2_admin_temp_urls_cleanup_authority.outcome == 'success' &&
+              steps.b2_admin_temp_urls_cleanup_authority_cleanup.outcome == 'success' &&
+              steps.admin_temp_urls_cleanup.outcome == 'success'))) ||
            (needs.plan.outputs.mode == 'admin_recovery' &&
             steps.admin_recovery_postcheck.outcome == 'success' &&
             steps.admin_finalize.outcome == 'success' &&
+            ((needs.plan.outputs.admin_recovery_b2_required == 'true' &&
+              steps.b2_admin_recovery_temp_urls_cleanup_authority.outcome == 'success' &&
+              steps.b2_admin_recovery_temp_urls_cleanup_authority_cleanup.outcome == 'success') ||
+             needs.plan.outputs.admin_recovery_b2_required != 'true') &&
             steps.admin_temp_urls_cleanup.outcome == 'success'))
         run: |
           set -euo pipefail

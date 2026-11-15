@@ -2,6 +2,392 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { publicAuthorityReceipt, assertAuthorityReceiptMatch } from './nelyon-release-authority-context.mjs';
+import { assertTrustedB2SourceParity, assertB2CatalogSecurityCoverage } from './nelyon-b2-source-parity.mjs';
+import { types } from 'node:util';
+// Deliberate function-only ESM edge: source provenance is minted solely by the
+// compiler's artifact verifier. Neither module invokes this edge at import time.
+import { b2HistoricalSnapshotBinding, verifyB2RecoveryOperation, verifyB2RecoveryPreflight } from './nelyon-production-release.mjs';
+
+function b2SnapshotReject() {
+  const error = new Error('B2 snapshot authority rejected');
+  error.code = 'B2_SNAPSHOT_AUTHORITY_INVALID';
+  error.stack = 'Error: B2 snapshot authority rejected';
+  throw Object.freeze(error);
+}
+const b2FreshCaptures = new WeakMap();
+function isB2Snapshot(manifest, authorityContext) {
+  return Boolean(manifest?.resources?.web_control_centers_b2_transition
+    || manifest?.recovery?.authorityReceipt || authorityContext);
+}
+function b2Guard(options, operation) {
+  if (!isB2Snapshot(options.manifest, options.authorityContext)) return operation(options);
+  try { return operation(options); } catch { b2SnapshotReject(); }
+}
+function b2Time(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+    || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) b2SnapshotReject();
+  return Date.parse(value);
+}
+function b2Data(value) {
+  if (!value || typeof value !== 'object' || types.isProxy(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) b2SnapshotReject();
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Reflect.ownKeys(descriptors).some(key => typeof key !== 'string'
+    || ['__proto__', 'constructor', 'prototype'].includes(key)
+    || !Object.hasOwn(descriptors[key], 'value') || !descriptors[key].enumerable)) b2SnapshotReject();
+  return value;
+}
+function b2Exact(value, keys) {
+  b2Data(value);
+  if (Object.keys(value).length !== keys.length || Object.keys(value).some(key => !keys.includes(key))) b2SnapshotReject();
+}
+function b2Binding({ manifest, authorityContext, requestedAt, historical = false }) {
+  try {
+    const receipt = publicAuthorityReceipt(authorityContext);
+    assertB2CatalogSecurityCoverage(authorityContext);
+    const binding = manifest?.resources?.web_control_centers_b2_transition;
+    b2Exact(binding, ['contract', 'descriptorSha256', 'publicContractSha256', 'expectedPrivateAuthoritySha256', 'privateAuthorityRequired']);
+    if (binding.privateAuthorityRequired !== true
+      || canonicalJson(binding.contract) !== canonicalJson(authorityContext.descriptor.contract)
+      || manifest?.baseline?.sha !== authorityContext.descriptor.contract.baseline_sha) b2SnapshotReject();
+    assertAuthorityReceiptMatch(receipt, { ...receipt, descriptorSha256: binding.descriptorSha256,
+      publicContractSha256: binding.publicContractSha256, privateAuthoritySha256: binding.expectedPrivateAuthoritySha256 });
+    if (!historical) {
+      const at = b2Time(requestedAt);
+      const { approval, backup } = authorityContext.privateAuthority;
+      if (at < b2Time(approval.approvedAt) || at < b2Time(backup.completedAt)
+        || at >= b2Time(approval.expiresAt) || at >= b2Time(backup.expiresAt)) b2SnapshotReject();
+    }
+    return receipt;
+  } catch { b2SnapshotReject(); }
+}
+function b2Verification(stage, receipt) {
+  return Object.freeze({ schemaVersion: 1, stage, result: 'VERIFIED', receipt,
+    checks: Object.freeze({ catalog: stage !== 'pre_snapshot', securityAdvisor: true, backup: true, finance: true,
+      manifest: true, functionInventory: true, sourceParity: stage !== 'pre_snapshot' }) });
+}
+
+// Pure private projection comparison. Capture separately verifies protected
+// source parity, full ACLs, Finance and canonical evidence before retaining it.
+export function verifyB2PrivateObservations({ authorityContext, manifest, stage, requestedAt,
+  catalog, advisors, backupEvidenceSha256, financeVerified, sourceParityVerified }) {
+  try {
+    const receipt = b2Binding({ manifest, authorityContext, requestedAt });
+    if (!['pre_snapshot', 'post_snapshot', 'postcheck', 'recovery'].includes(stage)
+      || financeVerified !== true || sourceParityVerified !== true) b2SnapshotReject();
+    const authority = authorityContext.privateAuthority;
+    const expected = authority.successorCatalog.records;
+    if (!Array.isArray(catalog) || catalog.length !== expected.length) b2SnapshotReject();
+    const seen = new Set();
+    for (const actual of catalog) {
+      b2Exact(actual, ['kind', 'value']); b2Data(actual.value);
+      const key = `${actual.kind}\0${actual.value.identity}`;
+      if (seen.has(key)) b2SnapshotReject();
+      seen.add(key);
+      const record = expected.find(item => item.kind === actual.kind && item.identity === actual.value.identity);
+      if (!record || canonicalJson(actual.value).trimEnd() !== record.expectedCanonicalJson) b2SnapshotReject();
+    }
+    const expectedAdvisors = authority.securityAdvisor.records.filter(record => record.action !== 'remove');
+    if (!Array.isArray(advisors) || advisors.length !== expectedAdvisors.length) b2SnapshotReject();
+    const identities = new Set();
+    for (const actual of advisors) {
+      b2Data(actual);
+      if (identities.has(actual.identity)) b2SnapshotReject();
+      identities.add(actual.identity);
+      const record = expectedAdvisors.find(item => item.identity === actual.identity);
+      if (!record || canonicalJson(actual).trimEnd() !== record.expectedCanonicalJson) b2SnapshotReject();
+    }
+    if (backupEvidenceSha256 !== authority.backup.evidenceSha256) b2SnapshotReject();
+    return b2Verification(stage, receipt);
+  } catch { b2SnapshotReject(); }
+}
+
+function requireB2Captured(evidence, stage, args) {
+  try {
+    const historical = args.recoveryAuthorization
+      ? b2HistoricalSnapshotBinding({ ...args.recoveryAuthorization, authorityContext: args.authorityContext }) : null;
+    const receipt = b2Binding(historical ? { ...args, ...historical } : args);
+    if (historical) verifyB2RecoveryOperation({ recoveryRequest: args.request, recoveryManifest: args.manifest,
+      ...args.recoveryAuthorization, authorityContext: args.authorityContext, policy: args.policy,
+      backup: evidence.backup, requestedAt: args.requestedAt });
+    const verification = evidence?.authority_verification;
+    b2Exact(verification, ['schemaVersion', 'stage', 'result', 'receipt', 'checks']);
+    assertAuthorityReceiptMatch(receipt, verification.receipt);
+    if (canonicalJson(verification) !== canonicalJson(b2Verification(stage, receipt))) b2SnapshotReject();
+    const { evidence_sha256, ...unsigned } = evidence;
+    if (evidence_sha256 !== sha256(canonicalJson(unsigned))
+      || canonicalJson(evidence.identity) !== canonicalJson(expectedSnapshotIdentity(args.request, args.manifest))) b2SnapshotReject();
+    validateNormalizedBackup(evidence.backup, args.requestedAt, args.policy.supabase.backup);
+    return evidence;
+  } catch { b2SnapshotReject(); }
+}
+
+function b2ValidateSourceParity(sourceParity, authorityContext, manifest, requestedAt) {
+  b2Exact(sourceParity, ['capturedAt', 'descriptorSha256', 'approvedSha', 'manifestSha256', 'migrationSha256', 'functions', 'advisors', 'databaseFunctions', 'databaseRelations']);
+  const age = b2Time(requestedAt) - b2Time(sourceParity.capturedAt);
+  const expected = authorityContext.descriptor.contract.functions ?? [];
+  if (age < 0 || age > 300_000 || !Array.isArray(sourceParity.functions)
+    || sourceParity.functions.length !== expected.length || sourceParity.descriptorSha256 !== authorityContext.descriptorSha256
+    || sourceParity.approvedSha !== manifest.identity.approved_sha
+    || sourceParity.manifestSha256 !== sha256(canonicalJson(manifest)) || !Array.isArray(sourceParity.advisors)
+    || sourceParity.migrationSha256 !== (authorityContext.descriptor.contract.productive_changes?.at(-1)?.sha256 ?? null)) b2SnapshotReject();
+  b2DatabaseSourceRows(sourceParity.databaseFunctions, authorityContext);
+  verifyB2DatabaseFunctionScope(sourceParity.databaseFunctions, authorityContext);
+  b2DatabaseRelationSourceRows(sourceParity.databaseRelations, authorityContext);
+  const seen = new Set();
+  for (const item of sourceParity.functions) {
+    b2Exact(item, ['identity', 'deployedSha256', 'sourceSha256', 'configSha256', 'verifyJwt']);
+    const contract = expected.find(row => row.name === item.identity);
+    if (seen.has(item.identity) || !contract || !/^[0-9a-f]{64}$/.test(item.deployedSha256)
+      || item.sourceSha256 !== contract.source_sha256
+      || item.configSha256 !== contract.config_sha256 || item.verifyJwt !== contract.verify_jwt) b2SnapshotReject();
+    seen.add(item.identity);
+  }
+  const expectedAdvisors = authorityContext.privateAuthority.securityAdvisor.records
+    .filter(record => record.action !== 'remove').map(record => JSON.parse(record.expectedCanonicalJson));
+  if (sourceParity.advisors.length !== expectedAdvisors.length) b2SnapshotReject();
+  const fingerprints = new Set();
+  for (const item of sourceParity.advisors) {
+    b2Exact(item, ['fingerprint', 'attestationSha256', 'negativeEvidenceSha256', 'originSha256']);
+    const expected = expectedAdvisors.find(record => record.fingerprint === item.fingerprint);
+    if (!expected || fingerprints.has(item.fingerprint) || Object.keys(item).some(key => item[key] !== expected[key])) b2SnapshotReject();
+    fingerprints.add(item.fingerprint);
+  }
+}
+
+function b2DatabaseIdentity(row) {
+  return `${row.schema}.${row.name}(${row.argument_types.join(',').replaceAll(' ', '')})`;
+}
+
+export function verifyB2DatabaseFunctionScope(rows, authorityContext) {
+  try {
+    publicAuthorityReceipt(authorityContext);
+    const source = rows.map(b2DatabaseIdentity).sort((a,b) => a.localeCompare(b));
+    const approved = authorityContext.privateAuthority.successorCatalog.records.filter(row => row.kind === 'function')
+      .map(row => row.identity).sort((a,b) => a.localeCompare(b));
+    if (canonicalJson(source) !== canonicalJson(B2_DATABASE_FUNCTION_SCOPE)
+      || canonicalJson(approved) !== canonicalJson(B2_DATABASE_FUNCTION_SCOPE)) b2SnapshotReject();
+    return true;
+  } catch { b2SnapshotReject(); }
+}
+
+// Neutral structural validation shared by fresh observations and protected source
+// claims. Authorization is the subsequent exact source/private comparison; unlike
+// the legacy public RPC validator, no schema/definer/grant policy is inferred here.
+function b2NormalizeDatabaseFunctionRow(row, raw) {
+  b2Exact(row, ['schema', 'name', 'identity_arguments', 'argument_types', 'security_definer', 'owner',
+    'search_path', 'acl', 'execute', raw ? 'definition' : 'definition_sha256']);
+  const text = value => typeof value === 'string' && value.length > 0 && !/[\x00-\x1f\x7f]/.test(value);
+  const identifier = value => typeof value === 'string' && /^[a-z_][a-z0-9_]*$/.test(value);
+  if (!identifier(row.schema) || !identifier(row.name) || !text(row.owner) || typeof row.security_definer !== 'boolean'
+    || typeof row.identity_arguments !== 'string' || /[\x00-\x1f\x7f]/.test(row.identity_arguments)
+    || !Array.isArray(row.argument_types) || row.argument_types.some(type => typeof type !== 'string'
+      || !/^[a-z_][a-z0-9_.]*(?: [a-z][a-z0-9_]*)*(?:\[\])*$/.test(type))
+    || (row.argument_types.length > 0 && !row.identity_arguments.length)
+    || (row.argument_types.length === 0 && row.identity_arguments !== '')
+    || !Array.isArray(row.search_path) || row.search_path.some(value => !text(value))
+    || new Set(row.search_path).size !== row.search_path.length || !Array.isArray(row.acl)) b2SnapshotReject();
+  b2Exact(row.execute, ['public', 'anon', 'authenticated', 'service_role']);
+  if (Object.values(row.execute).some(value => typeof value !== 'boolean')) b2SnapshotReject();
+  const grantees = new Set();
+  const acl = row.acl.map(item => {
+    b2Exact(item, ['grantee', 'privilege_type', 'is_grantable']);
+    if (!text(item.grantee) || item.privilege_type !== 'EXECUTE' || typeof item.is_grantable !== 'boolean'
+      || grantees.has(item.grantee)) b2SnapshotReject();
+    grantees.add(item.grantee);
+    return { grantee: item.grantee, privilege_type: item.privilege_type, is_grantable: item.is_grantable };
+  }).sort((a,b) => canonicalJson(a).localeCompare(canonicalJson(b)));
+  if (raw ? typeof row.definition !== 'string' || row.definition.length === 0
+    : typeof row.definition_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.definition_sha256)) b2SnapshotReject();
+  return { schema: row.schema, name: row.name, identity_arguments: row.identity_arguments, argument_types: [...row.argument_types],
+    security_definer: row.security_definer, owner: row.owner, search_path: [...row.search_path].sort(), acl,
+    execute: { public: row.execute.public, anon: row.execute.anon, authenticated: row.execute.authenticated, service_role: row.execute.service_role },
+    definition_sha256: raw ? sha256(row.definition.replace(/\r\n?/g, '\n')) : row.definition_sha256 };
+}
+
+export function normalizeB2DatabaseFunctionAttestations(rows) {
+  try {
+    if (!Array.isArray(rows) || !rows.length) b2SnapshotReject();
+    const items = rows.map(row => b2NormalizeDatabaseFunctionRow(row, true))
+      .sort((a,b) => b2DatabaseIdentity(a).localeCompare(b2DatabaseIdentity(b)));
+    if (new Set(items.map(b2DatabaseIdentity)).size !== items.length) b2SnapshotReject();
+    return { complete: true, count: items.length, items, sha256: sha256(canonicalJson(items)) };
+  } catch { b2SnapshotReject(); }
+}
+
+function b2DatabaseSourceRows(rows, authorityContext) {
+  publicAuthorityReceipt(authorityContext);
+  const records = authorityContext.privateAuthority.successorCatalog.records.filter(row => row.kind === 'function');
+  const aclRecords = authorityContext.privateAuthority.successorCatalog.records.filter(row => row.kind === 'function_acl');
+  if (!Array.isArray(rows) || rows.length !== records.length || aclRecords.length !== records.length) b2SnapshotReject();
+  const seen = new Set();
+  for (const row of rows) {
+    if (canonicalJson(b2NormalizeDatabaseFunctionRow(row, false)) !== canonicalJson(row)) b2SnapshotReject();
+    b2Exact(row, ['schema', 'name', 'identity_arguments', 'argument_types', 'security_definer', 'owner',
+      'search_path', 'acl', 'execute', 'definition_sha256']);
+    if (typeof row.schema !== 'string' || typeof row.name !== 'string' || typeof row.identity_arguments !== 'string'
+      || !Array.isArray(row.argument_types) || row.argument_types.some(value => typeof value !== 'string')
+      || !Array.isArray(row.search_path) || row.search_path.some(value => typeof value !== 'string') || !Array.isArray(row.acl)) b2SnapshotReject();
+    b2Exact(row.execute, ['public', 'anon', 'authenticated', 'service_role']);
+    if (Object.values(row.execute).some(value => typeof value !== 'boolean')) b2SnapshotReject();
+    const grantees = new Set();
+    for (const acl of row.acl) {
+      b2Exact(acl, ['grantee', 'privilege_type', 'is_grantable']);
+      if (typeof acl.grantee !== 'string' || grantees.has(acl.grantee) || acl.privilege_type !== 'EXECUTE'
+        || typeof acl.is_grantable !== 'boolean') b2SnapshotReject();
+      grantees.add(acl.grantee);
+    }
+    const identity = `${row.schema}.${row.name}(${row.argument_types.join(',').replaceAll(' ', '')})`;
+    const expected = records.find(record => record.identity === identity);
+    const aclExpected = aclRecords.find(record => record.identity === identity);
+    const acl = [...row.acl].sort((a, b) => `${a.grantee}\0${a.privilege_type}` < `${b.grantee}\0${b.privilege_type}` ? -1 : 1);
+    if (!aclExpected || canonicalJson({ identity, acl, execute: row.execute }).trimEnd() !== aclExpected.expectedCanonicalJson) b2SnapshotReject();
+    if (!expected || seen.has(identity) || canonicalJson({ identity, owner: row.owner, securityDefiner: row.security_definer,
+      searchPath: row.search_path, execute: row.execute.authenticated, definitionSha256: row.definition_sha256 }).trimEnd()
+        !== expected.expectedCanonicalJson) b2SnapshotReject();
+    seen.add(identity);
+  }
+  return rows;
+}
+
+export function verifyB2DatabaseFunctionAuthority(observations, sourceRows, authorityContext) {
+  try {
+    b2DatabaseSourceRows(sourceRows, authorityContext);
+    b2DatabaseSourceRows(observations, authorityContext);
+    const sorted = rows => [...rows].sort((a,b) => `${a.schema}.${a.name}(${a.argument_types})`.localeCompare(`${b.schema}.${b.name}(${b.argument_types})`));
+    if (canonicalJson(sorted(observations)) !== canonicalJson(sorted(sourceRows))) b2SnapshotReject();
+    return true;
+  } catch { b2SnapshotReject(); }
+}
+
+function b2DatabaseRelationSourceRows(rows, authorityContext) {
+  publicAuthorityReceipt(authorityContext);
+  const records = authorityContext.privateAuthority.successorCatalog.records.filter(row => row.kind === 'relation');
+  const aclRecords = authorityContext.privateAuthority.successorCatalog.records.filter(row => row.kind === 'relation_acl');
+  if (!Array.isArray(rows) || rows.length !== records.length || aclRecords.length !== records.length) b2SnapshotReject();
+  const seen = new Set();
+  for (const row of rows) {
+    b2Exact(row, ['identity', 'owner', 'rls', 'forceRls', 'definitionSha256', 'acl', 'access']);
+    b2Exact(row.access, ['public', 'anon', 'authenticated', 'service_role']);
+    if (Object.values(row.access).some(value => typeof value !== 'boolean') || !Array.isArray(row.acl)) b2SnapshotReject();
+    const keys = new Set();
+    for (const acl of row.acl) {
+      b2Exact(acl, ['grantee', 'privilege_type', 'is_grantable']);
+      const key = `${acl.grantee}\0${acl.privilege_type}`;
+      if (typeof acl.grantee !== 'string' || keys.has(key) || typeof acl.is_grantable !== 'boolean'
+        || !['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','MAINTAIN'].includes(acl.privilege_type)) b2SnapshotReject();
+      keys.add(key);
+    }
+    const expected = records.find(record => record.identity === row.identity);
+    const { acl, access, ...projection } = row;
+    const aclExpected = aclRecords.find(record => record.identity === row.identity);
+    const sortedAcl = [...acl].sort((a, b) => `${a.grantee}\0${a.privilege_type}` < `${b.grantee}\0${b.privilege_type}` ? -1 : 1);
+    if (!aclExpected || canonicalJson({ identity: row.identity, acl: sortedAcl, access }).trimEnd() !== aclExpected.expectedCanonicalJson) b2SnapshotReject();
+    if (!expected || seen.has(row.identity) || canonicalJson(projection).trimEnd() !== expected.expectedCanonicalJson) b2SnapshotReject();
+    if (['private.publication_schedule_policy', 'private.publication_schedules', 'private.publication_schedule_commands',
+      'private.publication_schedule_attempts', 'private.publication_schedule_materializations'].includes(row.identity)
+      && (row.owner !== 'postgres' || row.rls !== true || row.forceRls !== true || Object.values(access).some(Boolean)
+        || acl.some(item => ['public','anon','authenticated','service_role'].includes(item.grantee.toLowerCase())))) b2SnapshotReject();
+    seen.add(row.identity);
+  }
+}
+
+export function verifyB2DatabaseRelationAuthority(observations, sourceRows, authorityContext) {
+  try {
+    b2DatabaseRelationSourceRows(sourceRows, authorityContext);
+    b2DatabaseRelationSourceRows(observations, authorityContext);
+    const sorted = rows => [...rows].sort((a,b) => a.identity.localeCompare(b.identity));
+    if (canonicalJson(sorted(observations)) !== canonicalJson(sorted(sourceRows))) b2SnapshotReject();
+    return true;
+  } catch { b2SnapshotReject(); }
+}
+
+export function verifyB2PublicRelationPrestate(rows, authorityContext) {
+  try {
+    assertB2CatalogSecurityCoverage(authorityContext);
+    const names = ['public.media_asset_links', 'public.media_assets'];
+    if (!Array.isArray(rows) || rows.length !== names.length
+      || canonicalJson(rows.map(row => row.identity).sort()) !== canonicalJson(names)) b2SnapshotReject();
+    const records = authorityContext.privateAuthority.successorCatalog.records;
+    for (const row of rows) {
+      b2Exact(row, ['identity', 'owner', 'rls', 'forceRls', 'acl', 'access']);
+      const relation = records.find(item => item.kind === 'relation' && item.identity === row.identity);
+      const security = records.find(item => item.kind === 'relation_acl' && item.identity === row.identity);
+      if (!relation || !security) b2SnapshotReject();
+      const expected = JSON.parse(relation.expectedCanonicalJson);
+      if (row.owner !== expected.owner || row.rls !== expected.rls || row.forceRls !== expected.forceRls) b2SnapshotReject();
+      const acl = [...row.acl].sort((a,b) => `${a.grantee}\0${a.privilege_type}` < `${b.grantee}\0${b.privilege_type}` ? -1 : 1);
+      if (canonicalJson({ identity: row.identity, acl, access: row.access }).trimEnd() !== security.expectedCanonicalJson) b2SnapshotReject();
+    }
+    return true;
+  } catch { b2SnapshotReject(); }
+}
+
+const B2_INHERITED_FUNCTIONS = Object.freeze([
+  ['create_carousel_post', ['text', 'text', 'uuid[]']],
+  ['create_photo_post_with_media', ['text', 'text', 'uuid']],
+  ['delete_my_publication_draft_v1', ['uuid', 'bigint', 'uuid']],
+  ['publish_my_publication_draft_v1', ['uuid', 'bigint', 'uuid', 'uuid[]']],
+  ['update_my_publication_draft_v1', ['uuid', 'bigint', 'uuid', 'text', 'text', 'text', 'jsonb', 'uuid[]']],
+].map(([name, argument_types]) => Object.freeze({ schema: 'public', name, argument_types: Object.freeze(argument_types) })));
+
+export function verifyB2InheritedFunctionPrestate(rows, authorityContext) {
+  try {
+    assertB2CatalogSecurityCoverage(authorityContext);
+    const normalized = normalizeB2DatabaseFunctionAttestations(rows).items;
+    const identities = B2_INHERITED_FUNCTIONS.map(b2DatabaseIdentity).sort();
+    if (canonicalJson(normalized.map(b2DatabaseIdentity).sort()) !== canonicalJson(identities)) b2SnapshotReject();
+    const records = authorityContext.privateAuthority.successorCatalog.records;
+    for (const row of normalized) {
+      const identity = b2DatabaseIdentity(row);
+      const record = records.find(item => item.kind === 'function' && item.identity === identity);
+      const security = records.find(item => item.kind === 'function_acl' && item.identity === identity);
+      if (!record || !security) b2SnapshotReject();
+      const expected = JSON.parse(record.expectedCanonicalJson);
+      if (row.owner !== expected.owner || row.security_definer !== expected.securityDefiner
+        || canonicalJson(row.search_path) !== canonicalJson(expected.searchPath)) b2SnapshotReject();
+      const acl = [...row.acl].sort((a,b) => `${a.grantee}\0${a.privilege_type}` < `${b.grantee}\0${b.privilege_type}` ? -1 : 1);
+      if (canonicalJson({ identity, acl, execute: row.execute }).trimEnd() !== security.expectedCanonicalJson) b2SnapshotReject();
+    }
+    return true;
+  } catch { b2SnapshotReject(); }
+}
+
+function b2SourceInventory(sourceParity, functions) {
+  return sourceParity.functions.map(item => {
+    const actual = functions.items.find(row => row.slug === item.identity);
+    if (!actual || actual.ezbr_sha256 !== item.deployedSha256 || actual.verify_jwt !== item.verifyJwt) b2SnapshotReject();
+    return { kind: 'function_inventory', value: { identity: item.identity, verifyJwt: item.verifyJwt,
+      sourceSha256: item.sourceSha256, configSha256: item.configSha256 } };
+  });
+}
+
+function b2FreshAdvisors(body, authorizations) {
+  // The live response proves object/finding facts. Authorization/origin and
+  // negative-evidence digests remain authenticated private-source claims and
+  // are never fabricated from a provider count or copied to retained evidence.
+  const normalized = normalizeSecurityAdvisors(body);
+  if (!Array.isArray(body.lints) || body.lints.some(item => item.findings || item.count !== undefined)
+    || !Array.isArray(authorizations) || authorizations.length !== body.lints.length) b2SnapshotReject();
+  const fingerprints = new Set();
+  for (const proof of authorizations) {
+    b2Exact(proof, ['fingerprint', 'attestationSha256', 'negativeEvidenceSha256', 'originSha256']);
+    if (fingerprints.has(proof.fingerprint) || Object.values(proof).some(value => !/^[0-9a-f]{64}$/.test(value))) b2SnapshotReject();
+    fingerprints.add(proof.fingerprint);
+  }
+  return body.lints.map(lint => {
+    const stable = stableAdvisorValue(lint);
+    const fingerprint = sha256(canonicalJson(stable));
+    const authorization = authorizations.find(record => record.fingerprint === fingerprint);
+    const actual = normalized.items.find(item => item.fingerprint === fingerprint);
+    if (!authorization || !actual) b2SnapshotReject();
+    const identity = `${lint.metadata.schema ?? ''}.${lint.metadata.name ?? lint.metadata.table ?? ''}${lint.metadata.arguments === undefined ? '' : `(${lint.metadata.arguments})`}`;
+    return { fingerprint, identity, type: actual.resource_kind, severity: actual.level,
+      objectSha256: sha256(canonicalJson(stable.metadata)), attestationSha256: authorization.attestationSha256,
+      negativeEvidenceSha256: authorization.negativeEvidenceSha256, originSha256: authorization.originSha256 };
+  });
+}
 
 const API_ORIGIN = 'https://api.supabase.com';
 const PRODUCTION_PROJECT_REF = 'aewwdlvbwpczqyvkwvvj';
@@ -10,6 +396,119 @@ const GET_TIMEOUT_MS = 15_000;
 const SQL_TIMEOUT_MS = 60_000;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const REQUIRED_HEALTH_SERVICES = ['auth', 'db', 'pooler', 'realtime', 'rest', 'storage'];
+// Exact reviewed migration identities, including overload signatures. Unchanged
+// B1, Marketplace and Premium functions retain their own existing guards.
+export const B2_DATABASE_FUNCTION_SCOPE = Object.freeze([
+  'private.create_media_post_as_actor_v1(uuid,text,text,text,uuid[])',
+  'private.execute_publication_schedule_command_v1(text,uuid,bigint,uuid,timestampwithouttimezone,text,integer)',
+  'private.fail_publication_claim_v1(private.publication_schedules,text,boolean)',
+  'private.guard_media_asset_link_lifecycle_v1()',
+  'private.guard_publication_schedule_audit_v1()',
+  'private.lock_publication_draft_v1(uuid)',
+  'private.publication_schedule_integrity_error_v1(private.publication_schedules)',
+  'private.publication_schedule_json_v1(private.publication_schedules)',
+  'private.publication_source_fingerprint_v1(public.media_assets)',
+  'private.publication_target_fingerprint_v1(public.media_assets)',
+  'private.publish_publication_draft_as_actor_v1(uuid,uuid,bigint,uuid,uuid[])',
+  'private.require_publication_claim_v1(uuid,bigint,uuid,boolean,boolean)',
+  'private.require_publication_service_v1()',
+  'private.resolve_publication_schedule_time_v1(timestampwithouttimezone,text,integer)',
+  'public.cancel_my_publication_schedule_v1(uuid,bigint,uuid)',
+  'public.claim_publication_schedules_v1(integer)',
+  'public.confirm_publication_schedule_item_v1(uuid,bigint,uuid,integer,bigint,text,text,text)',
+  'public.create_carousel_post(text,text,uuid[])',
+  'public.create_photo_post_with_media(text,text,uuid)',
+  'public.delete_my_publication_draft_v1(uuid,bigint,uuid)',
+  'public.fail_publication_schedule_v1(uuid,bigint,uuid,text,boolean)',
+  'public.list_my_publication_schedules_v1(integer,timestampwithtimezone,uuid)',
+  'public.prepare_publication_schedule_v1(uuid,bigint,uuid)',
+  'public.publish_my_publication_draft_v1(uuid,bigint,uuid,uuid[])',
+  'public.publish_publication_schedule_v1(uuid,bigint,uuid)',
+  'public.reconcile_publication_schedules_v1(integer)',
+  'public.reschedule_my_publication_v1(uuid,bigint,uuid,timestampwithouttimezone,text,integer)',
+  'public.retry_my_publication_schedule_v1(uuid,bigint,uuid)',
+  'public.schedule_my_publication_draft_v1(uuid,bigint,uuid,timestampwithouttimezone,text,integer)',
+  'public.update_my_publication_draft_v1(uuid,bigint,uuid,text,text,text,jsonb,uuid[])',
+]);
+// Fixed catalog scope. No query text, object locator or SQL expression comes
+// from an authority envelope. Digests below cover PostgreSQL's canonical
+// definitions; function execute means the authenticated role's effective ACL.
+export const B2_CATALOG_SQL = `with
+canonical_context as materialized (select pg_catalog.set_config('search_path','',true) search_path),
+scope as (select c.oid,n.nspname,c.relname,c.relowner,c.relrowsecurity,c.relforcerowsecurity
+ from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+ cross join canonical_context
+ where n.nspname in ('private','public') and c.relkind in ('r','p')
+ and (c.relname like 'publication_schedule%' or c.relname in ('media_assets','media_asset_links'))),
+function_arguments as (
+ select p.oid function_oid,args.ordinality,
+ case when argument_type.typelem<>0 and argument_type.typlen=-1 then
+   case when element_namespace.nspname='pg_catalog' then pg_catalog.format_type(argument_type.oid,null)
+   else pg_catalog.quote_ident(element_namespace.nspname)||'.'||pg_catalog.quote_ident(element_type.typname)||'[]' end
+  when type_namespace.nspname='pg_catalog' then pg_catalog.format_type(argument_type.oid,null)
+  else pg_catalog.quote_ident(type_namespace.nspname)||'.'||pg_catalog.quote_ident(argument_type.typname) end argument_type
+ from pg_catalog.pg_proc p cross join canonical_context
+ cross join lateral pg_catalog.unnest(p.proargtypes::oid[]) with ordinality args(argument_type_oid,ordinality)
+ join pg_catalog.pg_type argument_type on argument_type.oid=args.argument_type_oid
+ join pg_catalog.pg_namespace type_namespace on type_namespace.oid=argument_type.typnamespace
+ left join pg_catalog.pg_type element_type on element_type.oid=argument_type.typelem
+ left join pg_catalog.pg_namespace element_namespace on element_namespace.oid=element_type.typnamespace
+),functions as (
+ select p.oid,p.proowner,p.prosecdef,p.proconfig,
+   n.nspname||'.'||p.proname||'('||coalesce((select pg_catalog.string_agg(
+     pg_catalog.replace(argument.argument_type,' ',''),',' order by argument.ordinality)
+     from function_arguments argument where argument.function_oid=p.oid),'')||')' identity
+ from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+ cross join canonical_context
+),
+records as (
+ select 'relation' as kind,jsonb_build_object('identity',nspname||'.'||relname,'rls',relrowsecurity,
+ 'forceRls',relforcerowsecurity,'owner',pg_catalog.pg_get_userbyid(relowner),
+ 'definitionSha256',encode(sha256(convert_to(jsonb_build_object('columns',coalesce((select jsonb_agg(jsonb_build_array(a.attname,
+ pg_catalog.format_type(a.atttypid,a.atttypmod),a.attnotnull,pg_catalog.pg_get_expr(d.adbin,d.adrelid)) order by a.attnum)::text
+ from pg_catalog.pg_attribute a left join pg_catalog.pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum
+ where a.attrelid=scope.oid and a.attnum>0 and not a.attisdropped),'[]'),
+ 'constraints',(select coalesce(jsonb_agg(jsonb_build_array(k.conname,pg_catalog.pg_get_constraintdef(k.oid)) order by k.conname),'[]'::jsonb)
+ from pg_catalog.pg_constraint k where k.conrelid=scope.oid))::text,'UTF8')),'hex')) as value from scope
+ union all select 'function',jsonb_build_object('identity',f.identity,
+ 'execute',pg_catalog.has_function_privilege('authenticated',f.oid,'EXECUTE'),'owner',pg_catalog.pg_get_userbyid(f.proowner),
+ 'securityDefiner',f.prosecdef,'searchPath',(select coalesce(jsonb_agg(v order by v),'[]'::jsonb) from pg_catalog.unnest(f.proconfig) v where v like 'search_path=%'),
+ 'definitionSha256',encode(sha256(convert_to(pg_catalog.pg_get_functiondef(f.oid),'UTF8')),'hex'))
+ from functions f where f.identity
+ = any(array[${B2_DATABASE_FUNCTION_SCOPE.map(identity => `'${identity}'`).join(',')}]::text[])
+ union all select 'policy',jsonb_build_object('identity',s.nspname||'.'||s.relname||'.'||p.polname,
+ 'relation',s.nspname||'.'||s.relname,'command',case p.polcmd when 'r' then 'SELECT' when 'a' then 'INSERT'
+ when 'w' then 'UPDATE' when 'd' then 'DELETE' else 'ALL' end,
+ 'roles',(select jsonb_agg(case when r=0 then 'public' else pg_catalog.pg_get_userbyid(r) end order by r) from unnest(p.polroles) r),
+ 'using',pg_catalog.pg_get_expr(p.polqual,p.polrelid),'check',pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid))
+ from pg_catalog.pg_policy p join scope s on s.oid=p.polrelid
+ union all select 'trigger',jsonb_build_object('identity',s.nspname||'.'||s.relname||'.'||t.tgname,
+ 'relation',s.nspname||'.'||s.relname,'functionIdentity',t.tgfoid::regprocedure::text,'enabled',t.tgenabled,
+ 'definitionSha256',encode(sha256(convert_to(pg_catalog.pg_get_triggerdef(t.oid),'UTF8')),'hex'))
+ from pg_catalog.pg_trigger t join scope s on s.oid=t.tgrelid where not t.tgisinternal
+ union all select 'index',jsonb_build_object('identity',s.nspname||'.'||c.relname,'relation',s.nspname||'.'||s.relname,
+ 'valid',i.indisvalid,'ready',i.indisready,'unique',i.indisunique,
+ 'definitionSha256',encode(sha256(convert_to(pg_catalog.pg_get_indexdef(i.indexrelid),'UTF8')),'hex'))
+ from pg_catalog.pg_index i join scope s on s.oid=i.indrelid join pg_catalog.pg_class c on c.oid=i.indexrelid
+ union all select 'cron_job',jsonb_build_object('identity',j.jobname,'schedule',j.schedule,
+ 'commandSha256',encode(sha256(convert_to(j.command,'UTF8')),'hex'),'database',j.database,'username',j.username,'active',j.active)
+ from cron.job j where j.jobname like '%publication%'
+) select kind,value from records where 'nelyon-b2-catalog-v1'='nelyon-b2-catalog-v1' order by kind,value->>'identity'`;
+
+export const B2_RELATION_ACL_SQL = `select n.nspname||'.'||c.relname as identity,
+ pg_catalog.pg_get_userbyid(c.relowner) as owner,c.relrowsecurity as rls,c.relforcerowsecurity as "forceRls",
+ coalesce((select jsonb_agg(jsonb_build_object('grantee',case when a.grantee=0 then 'PUBLIC' else r.rolname end,
+ 'privilege_type',a.privilege_type,'is_grantable',a.is_grantable) order by case when a.grantee=0 then 'PUBLIC' else r.rolname end,a.privilege_type,a.is_grantable)
+ from pg_catalog.aclexplode(coalesce(c.relacl,pg_catalog.acldefault('r',c.relowner))) a
+ left join pg_catalog.pg_roles r on r.oid=a.grantee),'[]'::jsonb) as acl,
+ jsonb_build_object('public',exists(select 1 from pg_catalog.aclexplode(coalesce(c.relacl,pg_catalog.acldefault('r',c.relowner))) a where a.grantee=0),
+ 'anon',pg_catalog.has_table_privilege('anon',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'),
+ 'authenticated',pg_catalog.has_table_privilege('authenticated',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'),
+ 'service_role',pg_catalog.has_table_privilege('service_role',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')) as access
+ from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+ where n.nspname in ('private','public') and c.relkind in ('r','p')
+ and (c.relname like 'publication_schedule%' or c.relname in ('media_assets','media_asset_links'))
+ and 'nelyon-b2-relation-acl-v1'='nelyon-b2-relation-acl-v1' order by identity`;
 const RECONCILIATION_KEYS = [
   'account_balance_ledger_mismatch',
   'completed_credit_account_mismatch',
@@ -897,15 +1396,32 @@ export const A2_RPC_IDENTITIES = [
   { schema: 'public', name: 'search_admin_creator_premium_finance_v1', argument_types: ['text', 'text', 'text', 'timestamp with time zone', 'uuid', 'integer'] },
 ];
 
-export const RPC_SECURITY_ATTESTATION_SQL = `with requested as (
+export const RPC_SECURITY_ATTESTATION_SQL = `with canonical_context as materialized (
+  select pg_catalog.set_config('search_path','',true) search_path
+),requested as (
   select item.schema,item.name,item.argument_types
   from pg_catalog.jsonb_to_recordset($1::jsonb)
     as item(schema text,name text,argument_types jsonb)
+),function_arguments as (
+  select p.oid function_oid,args.ordinality,p.proargnames[args.ordinality::integer] argument_name,
+    case when argument_type.typelem<>0 and argument_type.typlen=-1 then
+      case when element_namespace.nspname='pg_catalog' then pg_catalog.format_type(argument_type.oid,null)
+      else pg_catalog.quote_ident(element_namespace.nspname)||'.'||pg_catalog.quote_ident(element_type.typname)||'[]' end
+    when type_namespace.nspname='pg_catalog' then pg_catalog.format_type(argument_type.oid,null)
+    else pg_catalog.quote_ident(type_namespace.nspname)||'.'||pg_catalog.quote_ident(argument_type.typname) end argument_type
+  from pg_catalog.pg_proc p cross join canonical_context
+  cross join lateral pg_catalog.unnest(p.proargtypes::oid[]) with ordinality args(argument_type_oid,ordinality)
+  join pg_catalog.pg_type argument_type on argument_type.oid=args.argument_type_oid
+  join pg_catalog.pg_namespace type_namespace on type_namespace.oid=argument_type.typnamespace
+  left join pg_catalog.pg_type element_type on element_type.oid=argument_type.typelem
+  left join pg_catalog.pg_namespace element_namespace on element_namespace.oid=element_type.typnamespace
 ),functions as (
   select n.nspname schema,p.proname name,
-    pg_catalog.pg_get_function_identity_arguments(p.oid) identity_arguments,
-    coalesce((select pg_catalog.jsonb_agg(pg_catalog.format_type(arg_oid,null) order by ordinality)
-      from pg_catalog.unnest(p.proargtypes::oid[]) with ordinality args(arg_oid,ordinality)),'[]'::jsonb) argument_types,
+    coalesce((select pg_catalog.string_agg(case when coalesce(argument.argument_name,'')='' then argument.argument_type
+      else pg_catalog.quote_ident(argument.argument_name)||' '||argument.argument_type end,', ' order by argument.ordinality)
+      from function_arguments argument where argument.function_oid=p.oid),'') identity_arguments,
+    coalesce((select pg_catalog.jsonb_agg(argument.argument_type order by argument.ordinality)
+      from function_arguments argument where argument.function_oid=p.oid),'[]'::jsonb) argument_types,
     p.prosecdef security_definer,owner_role.rolname owner,
     coalesce(pg_catalog.to_jsonb(p.proconfig),'[]'::jsonb) search_path,
     coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
@@ -926,6 +1442,7 @@ export const RPC_SECURITY_ATTESTATION_SQL = `with requested as (
   from pg_catalog.pg_proc p
   join pg_catalog.pg_namespace n on n.oid=p.pronamespace
   join pg_catalog.pg_roles owner_role on owner_role.oid=p.proowner
+  cross join canonical_context
 )
 select f.schema,f.name,f.identity_arguments,f.argument_types,f.security_definer,
   f.owner,f.search_path,f.acl,f.execute,f.definition
@@ -3145,6 +3662,40 @@ export function validateWebControlCentersB1InstalledState(snapshot, transition) 
   return true;
 }
 
+export function validateB2InstalledB1State(snapshot, transition, authorityContext, phase) {
+  try {
+    publicAuthorityReceipt(authorityContext);
+    if (phase === 'pre') return validateWebControlCentersB1InstalledState(snapshot, transition);
+    if (!['post', 'recovery'].includes(phase)) b2SnapshotReject();
+    const state = normalizeWebControlCentersB1State(snapshot);
+    const baseline = transition.catalog.media_asset_links;
+    const successorConstraint = baseline.entity_type_constraint.replace("'publication_draft'::text",
+      "'publication_draft'::text, 'publication_schedule'::text");
+    if (successorConstraint === baseline.entity_type_constraint
+      || state.media_asset_links.entity_type_constraint !== successorConstraint) b2SnapshotReject();
+    const records = authorityContext.privateAuthority.successorCatalog.records;
+    for (const name of ['media_asset_links_owner_read', 'media_asset_links_public_read']) {
+      const rows = state.media_asset_links.policies.filter(row => row.name === name);
+      const identity = `public.media_asset_links.${name}`;
+      const record = records.find(item => item.kind === 'policy' && item.identity === identity);
+      if (rows.length !== 1 || !record) b2SnapshotReject();
+      const row = rows[0];
+      if (row.schema !== 'public' || row.table !== 'media_asset_links' || row.permissive !== 'PERMISSIVE'
+        || canonicalJson({ identity, relation: 'public.media_asset_links', command: row.command,
+          roles: row.roles, using: row.qual.replace(/\r\n?|\n/g, ' '),
+          check: row.with_check?.replace(/\r\n?|\n/g, ' ') ?? null }).trimEnd() !== record.expectedCanonicalJson) b2SnapshotReject();
+    }
+    // Only the three exact B2 replacements are restored for the predecessor
+    // comparison. Every unaffected relation/helper/RPC/index/trigger remains
+    // byte-for-byte governed by the installed B1 authority.
+    const comparison = { ...state, media_asset_links: { ...state.media_asset_links,
+      entity_type_constraint: baseline.entity_type_constraint,
+      policies: state.media_asset_links.policies.map(row => ['media_asset_links_owner_read', 'media_asset_links_public_read'].includes(row.name)
+        ? baseline.policies.find(expected => expected.name === row.name) : row) } };
+    return validateWebControlCentersB1InstalledState(comparison, transition);
+  } catch { b2SnapshotReject(); }
+}
+
 function validateWebControlCentersB1PreState(snapshot, transition) {
   const code = 'WEB_CONTROL_CENTERS_B1_POSTCHECK_FAILED';
   const state = normalizeWebControlCentersB1State(snapshot);
@@ -3391,7 +3942,7 @@ export function verifyAdminRecoveryInfrastructurePostState({ post, policy, trans
         sha256: sha256(canonicalJson(baselineMigrationItems)),
       },
     };
-    const reconstructedDigests = buildProductionBaselineDigests({
+    const reconstructedDigests = calculateProductionBaselineDigests({
       evidence: baselineEvidence,
       policy,
     });
@@ -3472,7 +4023,7 @@ export function verifyAdminRecoveryInfrastructurePostState({ post, policy, trans
       },
     },
   };
-  const reconstructedDigests = buildProductionBaselineDigests({ evidence: baselineEvidence, policy });
+  const reconstructedDigests = calculateProductionBaselineDigests({ evidence: baselineEvidence, policy });
   if (canonicalJson(reconstructedDigests) !== canonicalJson(policy.baseline.evidence_digests)) {
     fail(code, 'Admin recovery migrations, Edge, cron, Advisor, or Finance drifted from the reviewed baseline');
   }
@@ -4289,7 +4840,10 @@ export function validateFinanceAuthority(snapshot, policy, phase) {
   return true;
 }
 
-function validateCapturedEvidence({ evidence, phase, policy, request, manifest, adapterSourceSha256 }) {
+function validateCapturedEvidence({ evidence, phase, policy, request, manifest, adapterSourceSha256, authorityContext, recoveryAuthorization, requestedAt = new Date().toISOString() }) {
+  const b2 = isB2Snapshot(manifest, authorityContext);
+  if (b2) requireB2Captured(evidence, phase === 'pre' ? 'pre_snapshot' : phase === 'post' ? 'post_snapshot' : 'recovery',
+    { manifest, authorityContext, requestedAt, request, policy, recoveryAuthorization });
   validateManifestAdapterIdentity(manifest, adapterSourceSha256);
   const financeQueries = selectFinanceSnapshotQueries(evidence?.migrations);
   const financeTransition = activeFinanceAuthorityTransition(policy, manifest);
@@ -4342,6 +4896,7 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
     'adapter', 'backup', 'complete', 'cron_security', 'evidence_sha256', 'finance', 'functions',
     'health', 'identity', 'migrations', 'observed_at', 'phase', 'premium_state', 'project_ref',
     'requests', 'rpc_security', 'schema_version',
+    ...(b2 ? ['authority_verification'] : []),
     ...(requireFinanceAuthority ? ['finance_authority','finance_facts'] : []),
     ...(requireStoriesB1 ? ['stories_b1_state'] : []),
     ...(requireStoriesSafetyC1 ? ['stories_safety_c1_state'] : []),
@@ -4406,6 +4961,12 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
       sha256: sha256(webB1QaC3Requirement.query),
     }] : []),
   ];
+  if (b2 && phase !== 'pre') expectedQueries.push({ id: 'nelyon-b2-catalog-v1', sha256: sha256(B2_CATALOG_SQL) });
+  const b2DatabaseFunctions = b2 && phase !== 'pre' && authorityContext.privateAuthority.successorCatalog.records.some(row => row.kind === 'function');
+  if (b2DatabaseFunctions) expectedQueries.push({ id: 'nelyon-b2-rpc-security-v1', sha256: sha256(RPC_SECURITY_ATTESTATION_SQL) });
+  if (b2 && phase === 'pre') expectedQueries.push({ id: 'nelyon-b2-inherited-rpc-security-v1', sha256: sha256(RPC_SECURITY_ATTESTATION_SQL) });
+  const b2DatabaseRelations = b2 && authorityContext.privateAuthority.successorCatalog.records.some(row => row.kind === 'relation');
+  if (b2DatabaseRelations) expectedQueries.push({ id: 'nelyon-b2-relation-acl-v1', sha256: sha256(B2_RELATION_ACL_SQL) });
   if (!HASH_PATTERN.test(adapterSourceSha256 ?? '')
     || evidence.adapter.source_sha256 !== adapterSourceSha256
     || canonicalJson(evidence.adapter.queries) !== canonicalJson(expectedQueries)) {
@@ -4434,6 +4995,11 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
   if (requirePerfC1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (requireWebB1) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (requireWebB1QaC3) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
+  if (b2 && phase !== 'pre') expectedRequests.push(['POST', `${base}/database/query/read-only`, 201],
+    ['GET', `${base}/advisors/security`, 200]);
+  if (b2DatabaseFunctions) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
+  if (b2 && phase === 'pre') expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
+  if (b2DatabaseRelations) expectedRequests.push(['POST', `${base}/database/query/read-only`, 201]);
   if (!Array.isArray(evidence.requests) || evidence.requests.length !== expectedRequests.length
     || evidence.requests.some((receipt, index) => {
       try {
@@ -4555,10 +5121,9 @@ function validateCapturedEvidence({ evidence, phase, policy, request, manifest, 
         'B1 query receipt differs from the fixed authority');
     }
     if (webB1Requirement.installed) {
-      validateWebControlCentersB1InstalledState(
-        evidence.web_control_centers_b1_state,
-        policy?.web_control_centers_b1_transition,
-      );
+      if (b2) validateB2InstalledB1State(evidence.web_control_centers_b1_state,
+        policy?.web_control_centers_b1_transition, authorityContext, phase);
+      else validateWebControlCentersB1InstalledState(evidence.web_control_centers_b1_state, policy?.web_control_centers_b1_transition);
     } else {
       validateWebControlCentersB1PreState(
         evidence.web_control_centers_b1_state,
@@ -4765,7 +5330,28 @@ export function projectProductionBaselineFinance(finance, latestMigration) {
   };
 }
 
-export function buildProductionBaselineDigests({ evidence, policy, managedFunctions }) {
+export function buildProductionBaselineDigests({ evidence, policy, managedFunctions, authorityContext, requestedAt = new Date().toISOString() }) {
+  // Baseline promotion is a separate protected operation. Its caller must
+  // resolve the same private version again; a retained receipt is insufficient.
+  if (authorityContext || evidence?.authority_verification || b2FreshCaptures.has(evidence)
+    || evidence?.migrations?.items?.some(row => `${row.version}_${row.name}` === '20261108061946_web_control_centers_b2_scheduled_publishing')) {
+    try {
+      const receipt = publicAuthorityReceipt(authorityContext);
+      const captured = b2FreshCaptures.get(evidence);
+      if (!captured || !['post', 'recovery'].includes(evidence.phase)
+        || b2Time(requestedAt) < b2Time(captured.at) || b2Time(requestedAt) - b2Time(captured.at) > 300_000
+        || canonicalJson(evidence) !== captured.bytes) b2SnapshotReject();
+      assertAuthorityReceiptMatch(receipt, captured.receipt);
+      if (canonicalJson(evidence.authority_verification) !== canonicalJson(b2Verification(evidence.phase === 'post' ? 'post_snapshot' : 'recovery', receipt))) b2SnapshotReject();
+      const { evidence_sha256, ...unsigned } = evidence;
+      if (evidence_sha256 !== sha256(canonicalJson(unsigned))) b2SnapshotReject();
+      validateNormalizedBackup(evidence.backup, requestedAt, policy.supabase.backup);
+    } catch { b2SnapshotReject(); }
+  }
+  return calculateProductionBaselineDigests({ evidence, policy, managedFunctions, authorityContext });
+}
+
+function calculateProductionBaselineDigests({ evidence, policy, managedFunctions, authorityContext }) {
   validateNormalizedMigrations(evidence?.migrations);
   validateNormalizedFunctions(evidence?.functions);
   validateNormalizedAdvisors(evidence?.cron_security?.advisors);
@@ -4841,10 +5427,9 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
     migrations: evidence.migrations,
   });
   if (webB1Requirement.required) {
-    validateWebControlCentersB1InstalledState(
-      evidence.web_control_centers_b1_state,
-      policy?.web_control_centers_b1_transition,
-    );
+    if (authorityContext) validateB2InstalledB1State(evidence.web_control_centers_b1_state,
+      policy?.web_control_centers_b1_transition, authorityContext, 'post');
+    else validateWebControlCentersB1InstalledState(evidence.web_control_centers_b1_state, policy?.web_control_centers_b1_transition);
   }
   const attestedRpcIdentities = new Set((evidence.rpc_security?.items ?? []).map(rpcIdentity));
   if (storiesB1Installed) {
@@ -4923,8 +5508,11 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
   };
 }
 
-export function verifyProductionPreSnapshot({ pre, policy, request, manifest, adapterSourceSha256 }) {
-  validateCapturedEvidence({ evidence: pre, phase: 'pre', policy, request, manifest, adapterSourceSha256 });
+export function verifyProductionPreSnapshot(options) { return b2Guard(options, verifyProductionPreSnapshotInternal); }
+function verifyProductionPreSnapshotInternal({ pre, policy, request, manifest, adapterSourceSha256, authorityContext, requestedAt = new Date().toISOString() }) {
+  const b2 = isB2Snapshot(manifest, authorityContext);
+  if (b2) requireB2Captured(pre, 'pre_snapshot', { manifest, authorityContext, requestedAt, request, policy });
+  validateCapturedEvidence({ evidence: pre, phase: 'pre', policy, request, manifest, adapterSourceSha256, authorityContext, requestedAt });
   validateRpcSecurityAttestations(pre.rpc_security, advisorExceptionsForPhase(policy, manifest, 'pre', {
     request,
     migrations: pre.migrations,
@@ -5000,7 +5588,7 @@ export function verifyProductionPreSnapshot({ pre, policy, request, manifest, ad
   const baselineManagedFunctions = transition
     ? policy.supabase.managed_functions.filter(name => name !== transition.resource)
     : policy.supabase.managed_functions;
-  const digests = buildProductionBaselineDigests({
+  const digests = calculateProductionBaselineDigests({
     evidence: pre,
     policy,
     managedFunctions: baselineManagedFunctions,
@@ -5016,6 +5604,7 @@ export function verifyProductionPreSnapshot({ pre, policy, request, manifest, ad
     || observedTransitionResource.verify_jwt !== true)) {
     fail('REMOTE_BASELINE_MISMATCH', 'managed scope transition resource is not active with JWT verification');
   }
+  if (b2) return b2Verification('pre_snapshot', publicAuthorityReceipt(authorityContext));
   return {
     result: 'REMOTE_BASELINE_VERIFIED',
     evidence_sha256: pre.evidence_sha256,
@@ -5047,13 +5636,29 @@ export function verifyF5AutonomousPostReleaseFacts(pre, post) {
   return true;
 }
 
-export function verifyProductionSnapshotPair({ pre, post, policy, request, manifest, adapterSourceSha256 }) {
-  verifyProductionPreSnapshot({ pre, policy, request, manifest, adapterSourceSha256 });
-  validateCapturedEvidence({ evidence: post, phase: 'post', policy, request, manifest, adapterSourceSha256 });
-  validateRpcSecurityAttestations(post.rpc_security, advisorExceptionsForPhase(policy, manifest, 'post', {
+export function validateB2SchedulerEnrollment(before, after, contract) {
+  if (before || !after || after.slug !== 'process-scheduled-publications'
+    || contract?.name !== after.slug || contract.verify_jwt !== false || after.verify_jwt !== false
+    || after.status !== 'ACTIVE' || !Number.isSafeInteger(after.version) || after.version < 1) b2SnapshotReject();
+  return true;
+}
+
+export function verifyProductionSnapshotPair(options) { return b2Guard(options, verifyProductionSnapshotPairInternal); }
+function verifyProductionSnapshotPairInternal({ pre, post, policy, request, manifest, adapterSourceSha256, authorityContext, requestedAt = new Date().toISOString() }) {
+  const b2 = isB2Snapshot(manifest, authorityContext);
+  if (b2) {
+    requireB2Captured(pre, 'pre_snapshot', { manifest, authorityContext, requestedAt, request, policy });
+    requireB2Captured(post, 'post_snapshot', { manifest, authorityContext, requestedAt, request, policy });
+    assertAuthorityReceiptMatch(pre.authority_verification.receipt, post.authority_verification.receipt);
+  }
+  verifyProductionPreSnapshot({ pre, policy, request, manifest, adapterSourceSha256, authorityContext, requestedAt });
+  validateCapturedEvidence({ evidence: post, phase: 'post', policy, request, manifest, adapterSourceSha256, authorityContext, requestedAt });
+  const postRpcExceptions = advisorExceptionsForPhase(policy, manifest, 'post', {
     request,
     migrations: post.migrations,
-  }));
+  });
+  if (b2) validateB2RpcSecurityAttestations(post.rpc_security, postRpcExceptions, authorityContext, 'post');
+  else validateRpcSecurityAttestations(post.rpc_security, postRpcExceptions);
   const financeTransition = activeFinanceAuthorityTransition(policy, manifest);
   const storiesTransition = storiesB1Transition(policy, manifest);
   if (storiesTransition) {
@@ -5154,10 +5759,9 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
     migrations: post.migrations,
     evidence: post,
   }).required) {
-    validateWebControlCentersB1InstalledState(
-      post.web_control_centers_b1_state,
-      policy?.web_control_centers_b1_transition,
-    );
+    if (b2) validateB2InstalledB1State(post.web_control_centers_b1_state,
+      policy?.web_control_centers_b1_transition, authorityContext, 'post');
+    else validateWebControlCentersB1InstalledState(post.web_control_centers_b1_state, policy?.web_control_centers_b1_transition);
   }
   const webB1QaC3Transition = webControlCentersB1QaC3Transition(policy, manifest);
   if (webB1QaC3Transition) {
@@ -5208,12 +5812,13 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
   }
 
   if (pre.functions.count !== policy?.supabase?.expected_remote_function_count
-    || post.functions.count !== pre.functions.count) {
+    || post.functions.count !== pre.functions.count + (b2 ? 1 : 0)) {
     fail('REMOTE_POSTCHECK_FAILED', 'remote function count changed unexpectedly');
   }
   const expectedChanged = [...(manifest?.resources?.functions ?? [])].sort();
   const functionContracts = manifest?.resources?.function_contracts;
-  if (expectedChanged.some(name => !policy?.supabase?.managed_functions?.includes(name))
+  if (expectedChanged.some(name => !policy?.supabase?.managed_functions?.includes(name)
+      && !(b2 && name === 'process-scheduled-publications'))
     || new Set(expectedChanged).size !== expectedChanged.length
     || !Array.isArray(functionContracts)
     || canonicalJson(functionContracts.map(item => item?.name)) !== canonicalJson(expectedChanged)) {
@@ -5247,11 +5852,17 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
   }
   const beforeFunctions = new Map(pre.functions.items.map(item => [item.slug, item]));
   const afterFunctions = new Map(post.functions.items.map(item => [item.slug, item]));
-  if (canonicalJson([...beforeFunctions.keys()].sort()) !== canonicalJson([...afterFunctions.keys()].sort())) {
+  if (canonicalJson([...beforeFunctions.keys(), ...(b2 ? ['process-scheduled-publications'] : [])].sort()) !== canonicalJson([...afterFunctions.keys()].sort())) {
     fail('REMOTE_POSTCHECK_FAILED', 'remote function identity set changed');
   }
   const observedChanged = [];
   const functionAttestations = [];
+  if (b2) {
+    const added = afterFunctions.get('process-scheduled-publications');
+    validateB2SchedulerEnrollment(beforeFunctions.get('process-scheduled-publications'), added,
+      contractByName.get('process-scheduled-publications'));
+    observedChanged.push('process-scheduled-publications');
+  }
   for (const [name, before] of beforeFunctions) {
     const after = afterFunctions.get(name);
     if (canonicalJson(before) === canonicalJson(after)) continue;
@@ -5292,11 +5903,17 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
   const allowedRemovedFindings = storiesTransition
     ? storiesTransition?.security_advisor?.removed_findings
     : removedExceptionFingerprints;
-  validateSecurityAdvisorDelta(
-    pre.cron_security.advisors.items,
-    post.cron_security.advisors.items,
-    introducedExceptions,
-    allowedRemovedFindings,
+  if (b2) {
+    const records = authorityContext.privateAuthority.securityAdvisor.records;
+    validateSecurityAdvisorDelta(pre.cron_security.advisors.items, post.cron_security.advisors.items,
+      records.filter(record => ['add', 'replace'].includes(record.action))
+        .map(record => ({ advisor_fingerprint: JSON.parse(record.expectedCanonicalJson).fingerprint })),
+      records.filter(record => record.action === 'remove').map(record => {
+        const value = JSON.parse(record.expectedCanonicalJson);
+        return { fingerprint: value.fingerprint, level: value.severity, resource_kind: value.type };
+      }));
+  } else validateSecurityAdvisorDelta(
+    pre.cron_security.advisors.items, post.cron_security.advisors.items, introducedExceptions, allowedRemovedFindings,
   );
   const f4Transition = financeTransition?.to_phase === 'f4_general';
   const f5Transition = financeTransition?.to_phase === 'f5_autonomous';
@@ -5349,6 +5966,12 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
       fail('REMOTE_POSTCHECK_FAILED', 'a pre-existing ledger account identity changed or disappeared');
     }
   }
+  if (b2) {
+    // validateCapturedEvidence checks both complete transaction/ledger
+    // inventories and rejects every release_attributed row. Account identity,
+    // reconciliation and immutable Finance policy were compared above.
+    return b2Verification('postcheck', publicAuthorityReceipt(authorityContext));
+  }
   return {
     result: 'REMOTE_POSTCHECK_VERIFIED',
     changed_functions: observedChanged.sort(),
@@ -5359,7 +5982,10 @@ export function verifyProductionSnapshotPair({ pre, post, policy, request, manif
   };
 }
 
-export function verifyProductionRecoverySnapshot({ recovery, policy, request, manifest, adapterSourceSha256 }) {
+export function verifyProductionRecoverySnapshot(options) { return b2Guard(options, verifyProductionRecoverySnapshotInternal); }
+function verifyProductionRecoverySnapshotInternal({ recovery, policy, request, manifest, adapterSourceSha256, authorityContext, recoveryAuthorization, requestedAt = new Date().toISOString() }) {
+  const b2 = isB2Snapshot(manifest, authorityContext);
+  if (b2) requireB2Captured(recovery, 'recovery', { manifest, authorityContext, requestedAt, request, policy, recoveryAuthorization });
   validateCapturedEvidence({
     evidence: recovery,
     phase: 'recovery',
@@ -5367,12 +5993,14 @@ export function verifyProductionRecoverySnapshot({ recovery, policy, request, ma
     request,
     manifest,
     adapterSourceSha256,
+    authorityContext, recoveryAuthorization, requestedAt,
   });
   const phaseExceptions = advisorExceptionsForPhase(policy, manifest, 'recovery', {
     request,
     migrations: recovery.migrations,
   });
-  validateRpcSecurityAttestations(recovery.rpc_security, phaseExceptions);
+  if (b2) validateB2RpcSecurityAttestations(recovery.rpc_security, phaseExceptions, authorityContext, 'recovery');
+  else validateRpcSecurityAttestations(recovery.rpc_security, phaseExceptions);
   validatePremiumPostcheckState(recovery.premium_state);
   if (storiesB1StateRequirement(policy, manifest, 'recovery', {
     request,
@@ -5408,11 +6036,11 @@ export function verifyProductionRecoverySnapshot({ recovery, policy, request, ma
     request,
     migrations: recovery.migrations,
   }).required) {
-    validateWebControlCentersB1InstalledState(
-      recovery.web_control_centers_b1_state,
-      policy?.web_control_centers_b1_transition,
-    );
+    if (b2) validateB2InstalledB1State(recovery.web_control_centers_b1_state,
+      policy?.web_control_centers_b1_transition, authorityContext, 'recovery');
+    else validateWebControlCentersB1InstalledState(recovery.web_control_centers_b1_state, policy?.web_control_centers_b1_transition);
   }
+  if (b2) return b2Verification('recovery', publicAuthorityReceipt(authorityContext));
   return {
     result: 'RECOVERY_SNAPSHOT_VERIFIED',
     evidence_sha256: recovery.evidence_sha256,
@@ -5421,14 +6049,24 @@ export function verifyProductionRecoverySnapshot({ recovery, policy, request, ma
   };
 }
 
-export function verifyProductionAdminRecoverySnapshot({
+export function verifyProductionAdminRecoverySnapshot(options) { return b2Guard(options, verifyProductionAdminRecoverySnapshotInternal); }
+function verifyProductionAdminRecoverySnapshotInternal({
   post,
   policy,
   request,
   manifest,
   adapterSourceSha256,
   transitionKey,
+  authorityContext, recoveryAuthorization, requestedAt = new Date().toISOString(),
 }) {
+  if (isB2Snapshot(manifest, authorityContext)) {
+    try {
+      verifyProductionRecoverySnapshotInternal({ recovery: post, policy, request, manifest, adapterSourceSha256,
+        authorityContext, recoveryAuthorization, requestedAt });
+      if (Object.values(post.finance.reconciliation).some(value => value !== 0)) b2SnapshotReject();
+      return b2Verification('recovery', publicAuthorityReceipt(authorityContext));
+    } catch { b2SnapshotReject(); }
+  }
   const code = 'ADMIN_RECOVERY_POSTCHECK_FAILED';
   if (request?.mode !== 'admin_recovery'
     || request?.scopeConfirmation !== 'ADMIN_RECOVERY_EXACT_SOURCE'
@@ -6230,6 +6868,34 @@ function validateRpcIdentitySet(snapshot, exceptions) {
   return true;
 }
 
+export function validateB2RpcSecurityAttestations(snapshot, exceptions, authorityContext, phase) {
+  try {
+    publicAuthorityReceipt(authorityContext);
+    assertB2CatalogSecurityCoverage(authorityContext);
+    if (!['pre', 'post', 'recovery'].includes(phase)) b2SnapshotReject();
+    const replaced = new Set(['update_my_publication_draft_v1', 'delete_my_publication_draft_v1',
+      'publish_my_publication_draft_v1', 'create_photo_post_with_media', 'create_carousel_post']);
+    const expected = exceptions.map(exception => {
+      if (exception.object?.schema !== 'public' || !replaced.has(exception.object?.name)) return exception;
+      const identity = `${exception.object.schema}.${exception.object.name}(${exception.object.argument_types.join(',').replaceAll(' ', '')})`;
+      const record = authorityContext.privateAuthority.successorCatalog.records
+        .find(item => item.kind === 'function' && item.identity === identity);
+      if (!record) b2SnapshotReject();
+      const successor = JSON.parse(record.expectedCanonicalJson);
+      const before = exception.attestation;
+      const aclRecord = authorityContext.privateAuthority.successorCatalog.records
+        .find(item => item.kind === 'function_acl' && item.identity === identity);
+      const baselineAcl = [...before.acl].sort((a, b) => `${a.grantee}\0${a.privilege_type}` < `${b.grantee}\0${b.privilege_type}` ? -1 : 1);
+      if (!aclRecord || canonicalJson({ identity, acl: baselineAcl, execute: before.execute }).trimEnd() !== aclRecord.expectedCanonicalJson) b2SnapshotReject();
+      if (successor.owner !== before.owner || successor.securityDefiner !== before.security_definer
+        || successor.execute !== before.execute.authenticated
+        || canonicalJson(successor.searchPath) !== canonicalJson(before.search_path)) b2SnapshotReject();
+      return phase === 'pre' ? exception : { ...exception, attestation: { ...before, definition_sha256: successor.definitionSha256 } };
+    });
+    return validateRpcSecurityAttestations(snapshot, expected);
+  } catch { b2SnapshotReject(); }
+}
+
 export function validateRpcSecurityAttestations(snapshot, exceptions) {
   const rpcExceptions = (exceptions ?? []).filter(exception => Array.isArray(exception?.object?.argument_types));
   validateRpcSecuritySnapshot(snapshot);
@@ -6416,7 +7082,117 @@ function validateIdentity({ phase, policy, request, manifest, token, observedAt,
   };
 }
 
-export async function captureProductionSnapshot({
+export async function captureProductionSnapshot(options) {
+  const { manifest, authorityContext, phase, policy, request } = options;
+  if (!isB2Snapshot(manifest, authorityContext)) return captureLegacyProductionSnapshot(options);
+  try {
+    const requestedAt = options.requestedAt ?? new Date().toISOString();
+    const historical = options.recoveryAuthorization
+      ? b2HistoricalSnapshotBinding({ ...options.recoveryAuthorization, authorityContext }) : null;
+    const receipt = b2Binding({ manifest: historical?.manifest ?? manifest, authorityContext,
+      requestedAt: historical?.requestedAt ?? requestedAt });
+    if (historical) verifyB2RecoveryPreflight({ recoveryRequest: request, recoveryManifest: manifest,
+      ...options.recoveryAuthorization, authorityContext, policy, requestedAt });
+    if (Math.abs(b2Time(options.observedAt ?? requestedAt) - b2Time(requestedAt)) > 300_000) b2SnapshotReject();
+    const sourceParity = phase === 'pre' ? null : assertTrustedB2SourceParity(options.sourceParity);
+    // Recovery parity is compiled against the authenticated failed-release
+    // manifest. The current recovery manifest is intentionally non-productive
+    // and cannot stand in for the reviewed source tree it is recovering.
+    if (sourceParity) b2ValidateSourceParity(sourceParity, authorityContext, historical?.manifest ?? manifest, requestedAt);
+    const evidence = await captureLegacyProductionSnapshot({ ...options, observedAt: requestedAt });
+    const authority = authorityContext.privateAuthority;
+    if (authority.backup.projectRefSha256 !== sha256(PRODUCTION_PROJECT_REF)
+      || (!historical && authority.backup.evidenceSha256 !== sha256(canonicalJson(evidence.backup)))) b2SnapshotReject();
+    if (historical) verifyB2RecoveryOperation({ recoveryRequest: request, recoveryManifest: manifest,
+      ...options.recoveryAuthorization, authorityContext, policy, backup: evidence.backup, requestedAt });
+    if (phase === 'pre') {
+      const inherited = await fixedRequest({ fetchImpl: options.fetchImpl ?? globalThis.fetch, token: options.token,
+        path: `/v1/projects/${PRODUCTION_PROJECT_REF}/database/query/read-only`, method: 'POST',
+        body: { query: RPC_SECURITY_ATTESTATION_SQL, parameters: [JSON.stringify(B2_INHERITED_FUNCTIONS)] },
+        expectedStatus: 201, timeoutMs: SQL_TIMEOUT_MS, label: 'B2 inherited function baseline' });
+      verifyB2InheritedFunctionPrestate(inherited.body, authorityContext);
+      evidence.adapter.queries.push({ id: 'nelyon-b2-inherited-rpc-security-v1', sha256: sha256(RPC_SECURITY_ATTESTATION_SQL) });
+      evidence.requests.push(inherited.receipt);
+      assertReadOnlySql(B2_RELATION_ACL_SQL.replace(/'(?:''|[^'])*'/g, "''"));
+      const relations = await fixedRequest({ fetchImpl: options.fetchImpl ?? globalThis.fetch, token: options.token,
+        path: `/v1/projects/${PRODUCTION_PROJECT_REF}/database/query/read-only`, method: 'POST',
+        body: { query: B2_RELATION_ACL_SQL }, expectedStatus: 201, timeoutMs: SQL_TIMEOUT_MS, label: 'B2 public relation baseline' });
+      verifyB2PublicRelationPrestate(relations.body, authorityContext);
+      evidence.adapter.queries.push({ id: 'nelyon-b2-relation-acl-v1', sha256: sha256(B2_RELATION_ACL_SQL) });
+      evidence.requests.push(relations.receipt);
+      if (evidence.cron_security.advisors.sha256 !== authority.securityAdvisor.baselineSha256
+        || evidence.functions.count !== authorityContext.descriptor.contract.function_inventory.before) b2SnapshotReject();
+      evidence.authority_verification = b2Verification('pre_snapshot', receipt);
+    } else {
+      if (phase !== 'post' && !(phase === 'recovery' && historical)) b2SnapshotReject();
+      const inventory = b2SourceInventory(sourceParity, evidence.functions);
+      if (evidence.functions.count !== authorityContext.descriptor.contract.function_inventory.after) b2SnapshotReject();
+      // The private catalog cannot add query text. Strip SQL literals from
+      // this fixed constant before the lexical read-only check (policy command
+      // names such as INSERT are returned as data, never executed).
+      assertReadOnlySql(B2_CATALOG_SQL.replace(/'(?:''|[^'])*'/g, "''"));
+      const catalog = await fixedRequest({ fetchImpl: options.fetchImpl ?? globalThis.fetch, token: options.token,
+        path: `/v1/projects/${PRODUCTION_PROJECT_REF}/database/query/read-only`, method: 'POST',
+        body: { query: B2_CATALOG_SQL }, expectedStatus: 201, timeoutMs: SQL_TIMEOUT_MS, label: 'B2 catalog' });
+      const advisors = await fixedRequest({ fetchImpl: options.fetchImpl ?? globalThis.fetch, token: options.token,
+        path: `/v1/projects/${PRODUCTION_PROJECT_REF}/advisors/security`, expectedStatus: 200,
+        timeoutMs: GET_TIMEOUT_MS, label: 'B2 Advisor' });
+      evidence.adapter.queries.push({ id: 'nelyon-b2-catalog-v1', sha256: sha256(B2_CATALOG_SQL) });
+      evidence.requests.push(catalog.receipt, advisors.receipt);
+      const securityCatalog = [];
+      if (sourceParity.databaseFunctions.length) {
+        const identities = sourceParity.databaseFunctions.map(({ schema, name, argument_types }) => ({ schema, name, argument_types }));
+        const database = await fixedRequest({ fetchImpl: options.fetchImpl ?? globalThis.fetch, token: options.token,
+          path: `/v1/projects/${PRODUCTION_PROJECT_REF}/database/query/read-only`, method: 'POST',
+          body: { query: RPC_SECURITY_ATTESTATION_SQL, parameters: [JSON.stringify(identities)] },
+          expectedStatus: 201, timeoutMs: SQL_TIMEOUT_MS, label: 'B2 database authority' });
+        const normalized = normalizeB2DatabaseFunctionAttestations(database.body);
+        verifyB2DatabaseFunctionAuthority(normalized.items, sourceParity.databaseFunctions, authorityContext);
+        for (const row of normalized.items) securityCatalog.push({ kind: 'function_acl', value: {
+          identity: b2DatabaseIdentity(row), execute: row.execute,
+          acl: [...row.acl].sort((a, b) => `${a.grantee}\0${a.privilege_type}` < `${b.grantee}\0${b.privilege_type}` ? -1 : 1) } });
+        evidence.adapter.queries.push({ id: 'nelyon-b2-rpc-security-v1', sha256: sha256(RPC_SECURITY_ATTESTATION_SQL) });
+        evidence.requests.push(database.receipt);
+      }
+      if (sourceParity.databaseRelations.length) {
+        assertReadOnlySql(B2_RELATION_ACL_SQL.replace(/'(?:''|[^'])*'/g, "''"));
+        const relations = await fixedRequest({ fetchImpl: options.fetchImpl ?? globalThis.fetch, token: options.token,
+          path: `/v1/projects/${PRODUCTION_PROJECT_REF}/database/query/read-only`, method: 'POST',
+          body: { query: B2_RELATION_ACL_SQL }, expectedStatus: 201, timeoutMs: SQL_TIMEOUT_MS, label: 'B2 relation authority' });
+        if (!Array.isArray(relations.body)) b2SnapshotReject();
+        const observed = relations.body.map(row => {
+          b2Exact(row, ['identity', 'owner', 'rls', 'forceRls', 'acl', 'access']);
+          const definition = catalog.body.find(item => item.kind === 'relation' && item.value.identity === row.identity);
+          if (!definition) b2SnapshotReject();
+          return { ...row, definitionSha256: definition.value.definitionSha256 };
+        });
+        verifyB2DatabaseRelationAuthority(observed, sourceParity.databaseRelations, authorityContext);
+        for (const row of observed) securityCatalog.push({ kind: 'relation_acl', value: {
+          identity: row.identity, access: row.access,
+          acl: [...row.acl].sort((a, b) => `${a.grantee}\0${a.privilege_type}` < `${b.grantee}\0${b.privilege_type}` ? -1 : 1) } });
+        evidence.adapter.queries.push({ id: 'nelyon-b2-relation-acl-v1', sha256: sha256(B2_RELATION_ACL_SQL) });
+        evidence.requests.push(relations.receipt);
+      }
+      if (canonicalJson(normalizeSecurityAdvisors(advisors.body)) !== canonicalJson(evidence.cron_security.advisors)) b2SnapshotReject();
+      evidence.authority_verification = verifyB2PrivateObservations({ authorityContext,
+        manifest: historical?.manifest ?? manifest, requestedAt: historical?.requestedAt ?? requestedAt,
+        stage: phase === 'recovery' ? 'recovery' : 'post_snapshot', catalog: [...catalog.body.map(row => row.kind === 'policy'
+          ? { kind: row.kind, value: { ...row.value, using: row.value.using?.replace(/\r\n?|\n/g, ' ') ?? null,
+            check: row.value.check?.replace(/\r\n?|\n/g, ' ') ?? null } } : row), ...inventory, ...securityCatalog], advisors: b2FreshAdvisors(advisors.body, sourceParity.advisors),
+        backupEvidenceSha256: historical ? authority.backup.evidenceSha256 : sha256(canonicalJson(evidence.backup)), financeVerified: true, sourceParityVerified: true });
+    }
+    const { evidence_sha256: ignored, ...unsigned } = evidence;
+    evidence.evidence_sha256 = sha256(canonicalJson(unsigned));
+    if (phase === 'pre') verifyProductionPreSnapshot({ pre: evidence, policy, request, manifest,
+      adapterSourceSha256: options.adapterSourceSha256, authorityContext, requestedAt });
+    else validateCapturedEvidence({ evidence, phase, policy, request, manifest,
+      adapterSourceSha256: options.adapterSourceSha256, authorityContext, requestedAt, recoveryAuthorization: options.recoveryAuthorization });
+    b2FreshCaptures.set(evidence, { bytes: canonicalJson(evidence), at: requestedAt, receipt });
+    return evidence;
+  } catch { b2SnapshotReject(); }
+}
+
+async function captureLegacyProductionSnapshot({
   phase,
   policy,
   request,

@@ -2,6 +2,7 @@
 // Only loopback PostgreSQL is accepted. Reuse B1's controlled baseline and real
 // predecessor definitions without executing its proof or changing its files.
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { createServer } from 'node:net';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
@@ -290,7 +291,7 @@ try {
     const result=sql(`update private.publication_schedule_policy set public_base_url='${url}'`,true);
     assert.notEqual(result.status,0); assert.match(result.stderr,/check constraint/); checks++;
   }
-  const edited=freshSchedule(); makeDue(edited.id); const [ec]=claim(); const ei=prepare(ec);
+  const edited=freshSchedule(); makeDue(edited.id); const [ec]=claim(); prepare(ec);
   const sourceId=scalar(`select source_asset_id from private.publication_schedule_materializations where schedule_id='${edited.id}'`);
   userScalar(`select public.update_my_publication_draft_v1('${edited.draft_id}',1,'${command()}','photo','changed','Sin musica','{}',array['${sourceId}'::uuid])`);
   sql(`update private.publication_schedules set claim_expires_at=now()-interval '1 second' where id='${edited.id}'`);
@@ -351,9 +352,61 @@ try {
   const directPost=userScalar(directCall); eq(userScalar(directCall),directPost,'direct B1 receipt replay through shared insertion core');
   denied(`select public.publish_my_media_post_v1('${directCommand}','photo','changed','',array['${publicAssets[2]}'::uuid])`,'publication_receipt_conflict');
   const many=[]; for(let i=0;i<11;i++){const q=freshSchedule(); makeDue(q.id);many.push(q);}
-  const firstBatch=serviceJson("select jsonb_agg(x) from public.claim_publication_schedules_v1(999) x"); eq(firstBatch.length,10,'bounded claim batch');
-  const secondBatch=claim(); eq(secondBatch.length,1); eq(new Set([...firstBatch,...secondBatch].map(x=>x.schedule_id)).size,11);
+  const defaultBatch=serviceJson("select jsonb_agg(x) from public.claim_publication_schedules_v1() x");
+  eq(defaultBatch.length,1,'default claim starts only the job that can run immediately');
+  const waiting=many.filter(s=>s.id!==defaultBatch[0].schedule_id).map(s=>`'${s.id}'`).join(',');
+  const untouched=()=>{
+    eq(scalar(`select count(*) from private.publication_schedules where id in(${waiting}) and state='scheduled' and attempt_count=0 and claim_token is null and claim_expires_at is null`),'10','waiting jobs retain their whole attempt budget and no lease');
+    eq(scalar(`select count(*) from private.publication_schedule_attempts where schedule_id in(${waiting}) and event='claimed'`),'0','waiting creates no claim audit events');
+  };
+  untouched();
+  // Simulate slow work crossing the lease using authoritative DB state, not a
+  // longer lease or a sleep. Reconciliation must only recover the running job.
+  sql(`update private.publication_schedules set claim_expires_at=clock_timestamp()-interval '1 second' where id='${defaultBatch[0].schedule_id}'`);
+  reconcile(); untouched();
+  eq(scalar(`select state||':'||attempt_count from private.publication_schedules where id='${defaultBatch[0].schedule_id}'`),'retryable_failed:1','only the running job spends an attempt before lease recovery');
+  const expiredRevision=scalar(`select revision from private.publication_schedules where id='${defaultBatch[0].schedule_id}'`);
+  userScalar(`select public.cancel_my_publication_schedule_v1('${defaultBatch[0].schedule_id}',${expiredRevision},'${command()}')`);
+  const nullBatch=serviceJson("select jsonb_agg(x) from public.claim_publication_schedules_v1(null) x");
+  eq(nullBatch.length,1,'null request follows the conservative policy default');
+  const policyCapped=serviceJson("select jsonb_agg(x) from public.claim_publication_schedules_v1(999) x");
+  eq(policyCapped.length,1,'explicit request cannot exceed the default policy');
+  // A larger policy remains an explicit administrator opt-in. The omitted RPC
+  // argument is independently safe even under that higher cap.
+  sql('update private.publication_schedule_policy set claim_batch=10');
+  const omittedBatch=serviceJson("select jsonb_agg(x) from public.claim_publication_schedules_v1() x");
+  eq(omittedBatch.length,1,'omitted RPC argument stays conservative under an opted-in cap');
+  const explicitBatch=serviceJson("select jsonb_agg(x) from public.claim_publication_schedules_v1(999) x");
+  eq(explicitBatch.length,7,'explicit request can still claim the remaining opted-in batch');
+  eq(new Set([...defaultBatch,...nullBatch,...policyCapped,...omittedBatch,...explicitBatch].map(x=>x.schedule_id)).size,11,'later wakes progress through distinct queued jobs');
   eq(claim(),[]);
+  sql('update private.publication_schedule_policy set claim_batch=1');
+  // NULL uses the policy cap, whereas an omitted argument uses the RPC default.
+  // Keep more than ten eligible rows so this proves the cap, not queue exhaustion.
+  const nullCapFixtures=[];for(let i=0;i<12;i++){const q=freshSchedule();makeDue(q.id);nullCapFixtures.push(q);}
+  const nullCapIds=nullCapFixtures.map(s=>`'${s.id}'`).join(',');
+  const nullCapState=()=>scalar(`select jsonb_agg(to_jsonb(s) order by id) from private.publication_schedules s where id in(${nullCapIds})`);
+  const nullCapBefore=nullCapState(),nullCapPolicy=scalar('select to_jsonb(p) from private.publication_schedule_policy p');
+  try{
+    const [omitted,nullRequested,remaining]=sql(`begin;
+      update private.publication_schedule_policy set claim_batch=10;
+      set local role service_role;
+      select jsonb_agg(x) from public.claim_publication_schedules_v1() x;
+      select jsonb_agg(x) from public.claim_publication_schedules_v1(null) x;
+      reset role;
+      select count(*) from private.publication_schedules where id in(${nullCapIds}) and state='scheduled' and attempt_count=0 and claim_token is null and claim_expires_at is null;
+      rollback;`).stdout.trim().split(/\r?\n/).map(line=>JSON.parse(line));
+    eq(omitted.length,1,'omitted argument remains one with policy cap ten');
+    eq(nullRequested.length,10,'explicit NULL uses policy cap ten, not the omitted default');
+    eq(new Set([...omitted,...nullRequested].map(c=>c.schedule_id)).size,11,'NULL and omitted claims select distinct jobs');
+    eq([...omitted,...nullRequested].every(c=>nullCapFixtures.some(s=>s.id===c.schedule_id)&&c.attempt_count===1),true,'claims consume only fresh eligible fixtures');
+    eq(remaining,1,'NULL respects cap ten and leaves the extra queued job untouched');
+    eq(nullCapState(),nullCapBefore,'rollback restores every fixture field');
+    eq(scalar('select to_jsonb(p) from private.publication_schedule_policy p'),nullCapPolicy,'rollback restores policy');
+    eq(scalar(`select count(*) from private.publication_schedule_attempts where schedule_id in(${nullCapIds}) and event='claimed'`),'0','rollback restores claim audit state');
+  }finally{
+    for(const s of nullCapFixtures)userScalar(`select public.cancel_my_publication_schedule_v1('${s.id}',${s.revision},'${command()}')`);
+  }
   const cap=freshSchedule(); makeDue(cap.id); const [zeroLimit]=serviceJson("select jsonb_agg(x) from public.claim_publication_schedules_v1(0) x"); eq(zeroLimit.schedule_id,cap.id,'zero limit clamps to one');
   sql("update private.publication_schedule_policy set public_bucket=null");
   rejectService(`select public.prepare_publication_schedule_v1(${fence(zeroLimit)})`,'publication_schedule_configuration_missing');

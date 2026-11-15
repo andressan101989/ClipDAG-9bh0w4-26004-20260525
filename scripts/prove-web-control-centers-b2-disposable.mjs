@@ -2,11 +2,20 @@
 // Only loopback PostgreSQL is accepted. Reuse B1's controlled baseline and real
 // predecessor definitions without executing its proof or changing its files.
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { createServer } from 'node:net';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, basename } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { proveB2PostgresSourceParity } from '../tests/fixtures/nelyonB2PostgresSourceParityProof.mjs';
+
+import {
+  B2_CATALOG_SQL,
+  B2_DATABASE_FUNCTION_SCOPE,
+  B2_RELATION_ACL_SQL,
+  RPC_SECURITY_ATTESTATION_SQL,
+} from './nelyon-production-snapshot-adapter.mjs';
 
 const repo = resolve(import.meta.dirname, '..');
 const scratch = 'D:/CodexTemp/web-control-centers-b2/task1c';
@@ -148,6 +157,252 @@ async function race(label,aSql,bSql,{aRole='authenticated',bRole='authenticated'
     await b.close(!bError);if(postsBefore!==null)eq(Number(scalar('select count(*) from public.videos')),postsBefore+(publishes(aSql)||(!bError&&publishes(bSql))?1:0),'exact post count across '+label);console.log('RACE_PASS '+label);return [first.stdout,second.stdout];
   }finally{await a.close();await b.close();}
 }
+
+const B2_QUERY_RELATIONS = Object.freeze([
+  'private.publication_schedule_attempts',
+  'private.publication_schedule_commands',
+  'private.publication_schedule_materializations',
+  'private.publication_schedule_policy',
+  'private.publication_schedules',
+  'public.media_asset_links',
+  'public.media_assets',
+]);
+const B2_PRIVATE_QUERY_RELATIONS = Object.freeze(B2_QUERY_RELATIONS.filter(identity => identity.startsWith('private.')));
+const SYNTHETIC_CRON_JOB = Object.freeze({
+  identity: 'synthetic-publication-query-proof',
+  schedule: '* * * * *',
+  command: 'select 1',
+  database: 'b2concurrency',
+  username: 'postgres',
+  active: false,
+});
+
+function runB2PostgresQueryProof() {
+  let queryChecks = 0;
+  const q = (condition, message) => { assert.ok(condition, message); checks++; queryChecks++; };
+  const qeq = (actual, expected, message) => { assert.deepEqual(actual, expected, message); checks++; queryChecks++; };
+  const exactKeys = (value, expected, label) => {
+    q(value !== null && typeof value === 'object' && !Array.isArray(value), `${label} must be an object`);
+    qeq(Object.keys(value).sort(), [...expected].sort(), `${label} has the exact runtime keys`);
+  };
+  const stringValue = (value, label, empty = false) => q(typeof value === 'string' && (empty || value.length > 0), `${label} must be a string`);
+  const booleanValue = (value, label) => q(typeof value === 'boolean', `${label} must be boolean`);
+  const digestValue = (value, label) => q(typeof value === 'string' && /^[0-9a-f]{64}$/.test(value), `${label} must be a SHA-256`);
+  const stringArray = (value, label, empty = true) => {
+    q(Array.isArray(value) && (empty || value.length > 0), `${label} must be an array`);
+    q(value.every(item => typeof item === 'string'), `${label} entries must be strings`);
+  };
+  const aclValue = (value, label, allowedPrivileges) => {
+    q(Array.isArray(value), `${label} must be an array`);
+    const identities = [];
+    for (const [index, entry] of value.entries()) {
+      exactKeys(entry, ['grantee', 'privilege_type', 'is_grantable'], `${label}[${index}]`);
+      stringValue(entry.grantee, `${label}[${index}].grantee`);
+      q(allowedPrivileges.has(entry.privilege_type), `${label}[${index}].privilege_type is recognized`);
+      booleanValue(entry.is_grantable, `${label}[${index}].is_grantable`);
+      identities.push(`${entry.grantee}\0${entry.privilege_type}\0${entry.is_grantable}`);
+    }
+    qeq(new Set(identities).size, identities.length, `${label} contains no duplicate privilege tuple`);
+  };
+  const jsonRows = source => {
+    const output = sql(source).stdout.trim();
+    q(output.length > 0, 'wrapped query returned one JSON value');
+    const value = JSON.parse(output);
+    q(Array.isArray(value), 'wrapped query returned a JSON array');
+    return value;
+  };
+  const quote = value => `'${value.replaceAll("'", "''")}'`;
+  const relationArray = B2_QUERY_RELATIONS.map(quote).join(',');
+  const expectedCatalogIdentities = kind => JSON.parse(scalar({
+    policy: `select coalesce(jsonb_agg(identity order by identity),'[]'::jsonb) from (
+      select n.nspname||'.'||c.relname||'.'||p.polname identity
+      from pg_catalog.pg_policy p join pg_catalog.pg_class c on c.oid=p.polrelid
+      join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+      where n.nspname||'.'||c.relname=any(array[${relationArray}]::text[])) expected`,
+    trigger: `select coalesce(jsonb_agg(identity order by identity),'[]'::jsonb) from (
+      select n.nspname||'.'||c.relname||'.'||t.tgname identity
+      from pg_catalog.pg_trigger t join pg_catalog.pg_class c on c.oid=t.tgrelid
+      join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+      where not t.tgisinternal and n.nspname||'.'||c.relname=any(array[${relationArray}]::text[])) expected`,
+    index: `select coalesce(jsonb_agg(identity order by identity),'[]'::jsonb) from (
+      select n.nspname||'.'||index_class.relname identity
+      from pg_catalog.pg_index i join pg_catalog.pg_class relation_class on relation_class.oid=i.indrelid
+      join pg_catalog.pg_namespace n on n.oid=relation_class.relnamespace
+      join pg_catalog.pg_class index_class on index_class.oid=i.indexrelid
+      where n.nspname||'.'||relation_class.relname=any(array[${relationArray}]::text[])) expected`,
+  }[kind]));
+  const scopeRequest = B2_DATABASE_FUNCTION_SCOPE.map(identity => {
+    const match = /^([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\((.*)\)$/.exec(identity);
+    q(match, `function scope identity is parseable: ${identity}`);
+    const argument_types = match[3] === '' ? [] : match[3].split(',').map(type => ({
+      timestampwithouttimezone: 'timestamp without time zone',
+      timestampwithtimezone: 'timestamp with time zone',
+    })[type] ?? type);
+    return { schema: match[1], name: match[2], argument_types };
+  });
+
+  sql(`create schema cron;
+    create table cron.job(jobname text primary key,schedule text not null,command text not null,database text not null,username text not null,active boolean not null);
+    insert into cron.job(jobname,schedule,command,database,username,active)
+      values('synthetic-publication-query-proof','* * * * *','select 1',current_database(),current_user,false)`);
+  qeq(scalar("select count(*) from pg_catalog.pg_extension where extname='pg_cron'"), '0', 'synthetic cron shape is not pg_cron');
+
+  const executeB2AdapterQueries = searchPath => {
+    q(['default', 'empty'].includes(searchPath), `recognized query search path: ${searchPath}`);
+    const transaction = searchPath === 'empty' ? "begin; set local search_path='';" : 'begin;';
+    const catalogRows = jsonRows(`${transaction}
+      create function pg_temp.b2_catalog_query()
+      returns table(kind text,value jsonb) language sql as $b2_catalog_query$
+${B2_CATALOG_SQL}
+$b2_catalog_query$;
+      select coalesce(jsonb_agg(to_jsonb(row_value) order by row_value.kind,row_value.value->>'identity'),'[]'::jsonb)
+        from pg_temp.b2_catalog_query() row_value;
+      commit`);
+    const functionRows = jsonRows(`${transaction}
+      create function pg_temp.b2_rpc_security_query(jsonb)
+      returns table("schema" name,"name" name,identity_arguments text,argument_types jsonb,security_definer boolean,
+        owner name,search_path jsonb,acl jsonb,execute jsonb,definition text)
+      language sql as $b2_rpc_security_query$
+${RPC_SECURITY_ATTESTATION_SQL}
+$b2_rpc_security_query$;
+      select coalesce(jsonb_agg(to_jsonb(row_value) order by row_value.schema::text,row_value.name::text,row_value.argument_types::text),'[]'::jsonb)
+        from pg_temp.b2_rpc_security_query($b2_function_scope$${JSON.stringify(scopeRequest)}$b2_function_scope$::jsonb) row_value;
+      commit`);
+    const relationRows = jsonRows(`${transaction}
+      create function pg_temp.b2_relation_acl_query()
+      returns table(identity text,owner name,rls boolean,"forceRls" boolean,acl jsonb,access jsonb)
+      language sql as $b2_relation_acl_query$
+${B2_RELATION_ACL_SQL}
+$b2_relation_acl_query$;
+      select coalesce(jsonb_agg(to_jsonb(row_value) order by row_value.identity),'[]'::jsonb)
+        from pg_temp.b2_relation_acl_query() row_value;
+      commit`);
+    return { catalogRows, functionRows, relationRows };
+  };
+  const defaultPathRows = executeB2AdapterQueries('default');
+  const emptyPathRows = executeB2AdapterQueries('empty');
+  qeq(emptyPathRows, defaultPathRows, 'adapter query results are search-path independent');
+  const { catalogRows, functionRows, relationRows } = defaultPathRows;
+
+  const executeKeys = ['public', 'anon', 'authenticated', 'service_role'];
+  const functionAclPrivileges = new Set(['EXECUTE']);
+  const tableAclPrivileges = new Set(['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']);
+  qeq(functionRows.length, 30, 'parameterized function query returns every exact identity once');
+  const observedFunctionIdentities = [];
+  for (const [index, row] of functionRows.entries()) {
+    const label = `function[${index}]`;
+    exactKeys(row, ['schema', 'name', 'identity_arguments', 'argument_types', 'security_definer', 'owner', 'search_path', 'acl', 'execute', 'definition'], label);
+    stringValue(row.schema, `${label}.schema`); stringValue(row.name, `${label}.name`);
+    stringValue(row.identity_arguments, `${label}.identity_arguments`, true);
+    stringArray(row.argument_types, `${label}.argument_types`);
+    booleanValue(row.security_definer, `${label}.security_definer`);
+    stringValue(row.owner, `${label}.owner`); qeq(row.owner, 'postgres', `${label} owner is migration owner`);
+    stringArray(row.search_path, `${label}.search_path`, false);
+    aclValue(row.acl, `${label}.acl`, functionAclPrivileges);
+    exactKeys(row.execute, executeKeys, `${label}.execute`);
+    for (const role of executeKeys) booleanValue(row.execute[role], `${label}.execute.${role}`);
+    stringValue(row.definition, `${label}.definition`);
+    q(/^CREATE OR REPLACE FUNCTION\s/i.test(row.definition), `${label}.definition is a PostgreSQL function definition`);
+    observedFunctionIdentities.push(`${row.schema}.${row.name}(${row.argument_types.join(',').replaceAll(' ', '')})`);
+  }
+  qeq(new Set(observedFunctionIdentities).size, 30, 'function query contains no duplicate identity');
+  qeq([...observedFunctionIdentities].sort(), [...B2_DATABASE_FUNCTION_SCOPE].sort(), 'function query contains no missing or extra identity');
+
+  const catalogShapes = Object.freeze({
+    relation: ['identity', 'rls', 'forceRls', 'owner', 'definitionSha256'],
+    function: ['identity', 'execute', 'owner', 'securityDefiner', 'searchPath', 'definitionSha256'],
+    policy: ['identity', 'relation', 'command', 'roles', 'using', 'check'],
+    trigger: ['identity', 'relation', 'functionIdentity', 'enabled', 'definitionSha256'],
+    index: ['identity', 'relation', 'valid', 'ready', 'unique', 'definitionSha256'],
+    cron_job: ['identity', 'schedule', 'commandSha256', 'database', 'username', 'active'],
+  });
+  const catalogIdentities = new Map(Object.keys(catalogShapes).map(kind => [kind, []]));
+  const seenCatalogIdentities = [];
+  for (const [index, row] of catalogRows.entries()) {
+    const label = `catalog[${index}]`;
+    exactKeys(row, ['kind', 'value'], label);
+    q(Object.hasOwn(catalogShapes, row.kind), `${label}.kind is in the closed catalog kind set`);
+    exactKeys(row.value, catalogShapes[row.kind], `${label}.value`);
+    stringValue(row.value.identity, `${label}.value.identity`);
+    catalogIdentities.get(row.kind).push(row.value.identity);
+    seenCatalogIdentities.push(`${row.kind}\0${row.value.identity}`);
+    if (row.kind === 'relation') {
+      booleanValue(row.value.rls, `${label}.value.rls`); booleanValue(row.value.forceRls, `${label}.value.forceRls`);
+      stringValue(row.value.owner, `${label}.value.owner`); digestValue(row.value.definitionSha256, `${label}.value.definitionSha256`);
+    } else if (row.kind === 'function') {
+      booleanValue(row.value.execute, `${label}.value.execute`); stringValue(row.value.owner, `${label}.value.owner`);
+      booleanValue(row.value.securityDefiner, `${label}.value.securityDefiner`); stringArray(row.value.searchPath, `${label}.value.searchPath`, false);
+      digestValue(row.value.definitionSha256, `${label}.value.definitionSha256`);
+    } else if (row.kind === 'policy') {
+      stringValue(row.value.relation, `${label}.value.relation`);
+      q(['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'ALL'].includes(row.value.command), `${label}.value.command is recognized`);
+      stringArray(row.value.roles, `${label}.value.roles`, false);
+      q(row.value.using === null || typeof row.value.using === 'string', `${label}.value.using is nullable text`);
+      q(row.value.check === null || typeof row.value.check === 'string', `${label}.value.check is nullable text`);
+    } else if (row.kind === 'trigger') {
+      stringValue(row.value.relation, `${label}.value.relation`); stringValue(row.value.functionIdentity, `${label}.value.functionIdentity`);
+      q(['O', 'D', 'R', 'A'].includes(row.value.enabled), `${label}.value.enabled is a trigger mode`);
+      digestValue(row.value.definitionSha256, `${label}.value.definitionSha256`);
+    } else if (row.kind === 'index') {
+      stringValue(row.value.relation, `${label}.value.relation`);
+      booleanValue(row.value.valid, `${label}.value.valid`); booleanValue(row.value.ready, `${label}.value.ready`);
+      booleanValue(row.value.unique, `${label}.value.unique`); digestValue(row.value.definitionSha256, `${label}.value.definitionSha256`);
+    } else {
+      stringValue(row.value.schedule, `${label}.value.schedule`); digestValue(row.value.commandSha256, `${label}.value.commandSha256`);
+      stringValue(row.value.database, `${label}.value.database`); stringValue(row.value.username, `${label}.value.username`);
+      booleanValue(row.value.active, `${label}.value.active`);
+    }
+  }
+  qeq(new Set(seenCatalogIdentities).size, catalogRows.length, 'catalog query contains no duplicate kind and identity');
+  qeq([...catalogIdentities.keys()].filter(kind => catalogIdentities.get(kind).length > 0).sort(), Object.keys(catalogShapes).sort(), 'catalog query returns every closed kind');
+  qeq([...catalogIdentities.get('function')].sort(), [...B2_DATABASE_FUNCTION_SCOPE].sort(), 'catalog function identities are exact and complete');
+  qeq([...catalogIdentities.get('relation')].sort(), [...B2_QUERY_RELATIONS].sort(), 'catalog relation identities are exact and complete');
+  for (const kind of ['policy', 'trigger', 'index']) {
+    qeq([...catalogIdentities.get(kind)].sort(), expectedCatalogIdentities(kind), `catalog ${kind} identities match independent pg_catalog enumeration`);
+  }
+  qeq(catalogIdentities.get('cron_job'), [SYNTHETIC_CRON_JOB.identity], 'catalog contains only the synthetic cron identity');
+  const cronRow = catalogRows.find(row => row.kind === 'cron_job').value;
+  qeq(cronRow, {
+    identity: SYNTHETIC_CRON_JOB.identity,
+    schedule: SYNTHETIC_CRON_JOB.schedule,
+    commandSha256: createHash('sha256').update(SYNTHETIC_CRON_JOB.command).digest('hex'),
+    database: SYNTHETIC_CRON_JOB.database,
+    username: SYNTHETIC_CRON_JOB.username,
+    active: false,
+  }, 'synthetic cron row is inert and has the exact query projection');
+
+  qeq(relationRows.length, 7, 'relation ACL query returns the exact fixed relation scope');
+  const observedRelationIdentities = [];
+  const catalogRelations = new Map(catalogRows.filter(row => row.kind === 'relation').map(row => [row.value.identity, row.value]));
+  for (const [index, row] of relationRows.entries()) {
+    const label = `relation[${index}]`;
+    exactKeys(row, ['identity', 'owner', 'rls', 'forceRls', 'acl', 'access'], label);
+    stringValue(row.identity, `${label}.identity`); stringValue(row.owner, `${label}.owner`);
+    booleanValue(row.rls, `${label}.rls`); booleanValue(row.forceRls, `${label}.forceRls`);
+    aclValue(row.acl, `${label}.acl`, tableAclPrivileges);
+    exactKeys(row.access, executeKeys, `${label}.access`);
+    for (const role of executeKeys) booleanValue(row.access[role], `${label}.access.${role}`);
+    observedRelationIdentities.push(row.identity);
+    const catalogRelation = catalogRelations.get(row.identity);
+    q(catalogRelation, `${label} has a catalog definition row`);
+    qeq({ owner: row.owner, rls: row.rls, forceRls: row.forceRls },
+      { owner: catalogRelation.owner, rls: catalogRelation.rls, forceRls: catalogRelation.forceRls },
+      `${label} owner and RLS fields agree across both exact queries`);
+    if (B2_PRIVATE_QUERY_RELATIONS.includes(row.identity)) {
+      qeq(row.owner, 'postgres', `${label} private owner is postgres`);
+      qeq([row.rls, row.forceRls], [true, true], `${label} private RLS and FORCE RLS are enabled`);
+      qeq(row.access, { public: false, anon: false, authenticated: false, service_role: false }, `${label} private effective access is denied`);
+      q(row.acl.every(entry => !new Set(['PUBLIC', 'anon', 'authenticated', 'service_role']).has(entry.grantee)), `${label} private ACL has no denied-role grant`);
+    }
+  }
+  qeq(new Set(observedRelationIdentities).size, 7, 'relation ACL query contains no duplicate identity');
+  qeq([...observedRelationIdentities].sort(), [...B2_QUERY_RELATIONS].sort(), 'relation ACL query contains no missing or extra identity');
+  qeq([...observedRelationIdentities].sort(), [...catalogIdentities.get('relation')].sort(), 'catalog and ACL relation identities are identical');
+
+  console.log('B2_POSTGRES_QUERY_PROOF_PASS '+JSON.stringify({ checks: queryChecks, functions: functionRows.length,
+    catalogRows: catalogRows.length, relations: relationRows.length, syntheticCron:true, pgCronExtension:false }));
+  if (process.argv.includes('--source-parity-proof')) proveB2PostgresSourceParity(defaultPathRows);
+}
 try {
   invoke('initdb', ['-D', cluster, '-U', 'postgres', '-A', 'trust', '--no-locale', '--encoding=UTF8', '--no-sync']);
   started = true;
@@ -167,6 +422,8 @@ try {
   const b1Oids=scalar("select string_agg(p.oid::text,',') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public'");
   const b1Catalog=scalar("select md5(string_agg(concat_ws('|',p.oid,p.proowner,p.proacl,p.provolatile,p.prosecdef,p.proconfig,pg_get_function_arguments(p.oid),pg_get_function_result(p.oid)),'' order by p.oid)) from pg_proc p where p.oid in ("+b1Oids+")");
   sql(read('supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql'));
+  runB2PostgresQueryProof();
+  if (!process.argv.includes('--source-parity-proof')) {
   const service=source=>sql(`begin;set local role service_role;${source};commit;`);
   const sj=source=>JSON.parse(service(source).stdout.trim());
   const fence=c=>`'${c.schedule_id}',${c.generation},'${c.claim_token}'`;
@@ -279,7 +536,50 @@ try {
     }
   }
 
+  // Both default claimers reach an observed barrier inside their claim calls.
+  // The queue is global; these isolated synthetic fixtures do not prove owner isolation.
+  const defaultQueue=[];for(let i=0;i<3;i++){const s=newSchedule();dueNow(s);defaultQueue.push(s);}
+  const defaultIds=defaultQueue.map(s=>`'${s.id}'`).join(',');
+  const defaultPolicy=scalar('select claim_batch from private.publication_schedule_policy');
+  eq(defaultPolicy,'1','default concurrency proof starts with conservative policy');
+  sql(`create function private.proof_default_claim_barrier() returns trigger language plpgsql as $barrier$
+    begin
+      if new.event='claimed' and new.schedule_id in(${defaultIds}) then
+        perform pg_advisory_xact_lock(case current_setting('application_name') when 'default-claim-A' then 937523 else 937524 end);
+      end if;
+      return new;
+    end $barrier$;
+    create trigger proof_default_claim_barrier after insert on private.publication_schedule_attempts for each row execute function private.proof_default_claim_barrier()`);
+  const defaultController=await connect('default-claim-controller'),defaultA=await connect('default-claim-A','service_role'),defaultB=await connect('default-claim-B','service_role');
+  try{
+    ok(await defaultController.run('select pg_advisory_lock(937523);select pg_advisory_lock(937524)'));
+    const pa=defaultA.run(claims('')),pb=defaultB.run(claims(''));
+    await blocked(defaultA,defaultController);await blocked(defaultB,defaultController);
+    ok(await defaultController.run('select pg_advisory_unlock(937523);select pg_advisory_unlock(937524)'));
+    const [ra,rb]=await Promise.all([pa,pb]);
+    const a=JSON.parse(ok(ra)),b=JSON.parse(ok(rb));
+    eq(scalar(`select count(*) from private.publication_schedules where id in(${defaultIds}) and state='scheduled'`),'3','both claims overlap with uncommitted row locks');
+    await defaultA.close(true);await defaultB.close(true);
+    eq(a.length,1,'first concurrent default claimer claims exactly one');
+    eq(b.length,1,'second concurrent default claimer claims exactly one');
+    eq(new Set([...a,...b].map(c=>c.schedule_id)).size,2,'concurrent default claims are distinct jobs');
+    eq(new Set([...a,...b].map(c=>c.claim_token)).size,2,'concurrent default claims have distinct tokens');
+    eq([...a,...b].every(c=>defaultQueue.some(s=>s.id===c.schedule_id)&&c.attempt_count===1),true,'both claims spend one attempt on eligible fixtures');
+    const waiting=defaultQueue.filter(s=>![...a,...b].some(c=>c.schedule_id===s.id));
+    eq(waiting.length,1);
+    eq(scalar(`select count(*) from private.publication_schedules where id='${waiting[0].id}' and state='scheduled' and attempt_count=0 and claim_token is null and claim_expires_at is null`),'1','remaining queue retains its attempt budget and has no lease');
+    eq(scalar(`select count(*) from private.publication_schedule_attempts where schedule_id='${waiting[0].id}' and event='claimed'`),'0','remaining queue has no claim audit');
+    eq(scalar(`select count(*) from private.publication_schedule_attempts where schedule_id in(${defaultIds}) and event='claimed'`),'2','no duplicate or extra claim events');
+    console.log('RACE_PASS concurrent-default-claimers-one-each');
+  }finally{
+    await defaultController.close();await defaultA.close();await defaultB.close();
+    sql('drop trigger proof_default_claim_barrier on private.publication_schedule_attempts;drop function private.proof_default_claim_barrier()');
+    for(const s of defaultQueue)userScalar(cancel(s,Number(scalar(`select revision from private.publication_schedules where id='${s.id}'`))));
+    sql(`update private.publication_schedule_policy set claim_batch=${defaultPolicy}`);
+  }
   // 3. A retains all first-batch row locks; B must actively SKIP them.
+  // Large batches are an explicit policy opt-in, not the normal worker path.
+  sql('update private.publication_schedule_policy set claim_batch=10');
   const batch=[];for(let i=0;i<11;i++){const s=newSchedule();dueNow(s);batch.push(s);}
   const ca=await connect('claim-A','service_role'),cb=await connect('claim-B','service_role');
   try{
@@ -292,7 +592,7 @@ try {
     await ca.close(true);await cb.close(true);
     for(const c of [...a,...b])sj(fail(c,'content_blocked'));
     console.log('RACE_PASS concurrent-claimers-skip-locked');
-  }finally{await ca.close();await cb.close();}
+  }finally{await ca.close();await cb.close();sql('update private.publication_schedule_policy set claim_batch=1');}
 
   const rejectFence=c=>{
     for(const call of [prep(c),conf(c),fail(c),pub(c)])rejected(sql(`begin;set local role service_role;${call};commit;`,true),'publication_schedule_fence_invalid');
@@ -684,6 +984,7 @@ try {
   console.log('SECURITY_CATALOG_PASS real-roles forged-claims denied private-tables immutable-audits B1-parity');
 
   console.log(JSON.stringify({verdict:'B2_CONCURRENCY_DISPOSABLE_PASS',checks,postgres:scalar('show server_version'),elapsedSeconds:Math.round((Date.now()-proofStarted)/1000)}));
+  }
 } catch(error){failure=error;console.error(error);}
 finally {
   for(const session of sessions) { session.child.stdin.end('rollback;\n'); session.child.kill(); await session.done; }

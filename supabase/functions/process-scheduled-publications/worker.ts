@@ -69,7 +69,9 @@ export async function processScheduledPublicationBatch(
   const now = deps.now ?? Date.now;
   const cryptoImpl = deps.crypto ?? crypto;
   const counters = { claimed: 0, published: 0, retried: 0, terminal: 0, stale: 0 };
-  const limit = bounded(options.limit, 10, 10);
+  // Claims start attempts and leases immediately. With sequential copies, only
+  // claim the job that can start now unless an internal caller explicitly opts in.
+  const limit = bounded(options.limit, 1, 10);
   const timeout = bounded(options.providerTimeoutMs, 60_000, 60_000);
   const rpc = async (name: string, args: Record<string, unknown>) => {
     const { data, error } = await deps.db.rpc(name, args);

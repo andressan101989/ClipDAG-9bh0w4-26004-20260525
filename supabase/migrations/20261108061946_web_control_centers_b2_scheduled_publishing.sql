@@ -5,7 +5,7 @@ create table private.publication_schedule_policy (
   singleton boolean primary key default true check (singleton),
   min_lead interval not null default interval '2 minutes' check (min_lead > interval '0'),
   max_horizon interval not null default interval '365 days' check (max_horizon >= min_lead),
-  claim_batch integer not null default 10 check (claim_batch between 1 and 10),
+  claim_batch integer not null default 1 check (claim_batch between 1 and 10),
   lease interval not null default interval '2 minutes',
   max_attempts integer not null default 5 check (max_attempts between 1 and 5),
   backoff interval not null default interval '30 seconds',
@@ -841,7 +841,9 @@ begin
 end;
 $function$;
 
-create function public.claim_publication_schedules_v1(p_limit integer default 10)
+-- Start one lease by default: the sequential worker must not spend attempts on
+-- queued jobs while an earlier carousel is still copying. Larger caps opt in.
+create function public.claim_publication_schedules_v1(p_limit integer default 1)
 returns setof jsonb language plpgsql security definer set search_path='' as $function$
 declare v_schedule private.publication_schedules; v_policy private.publication_schedule_policy; v_now timestamptz:=pg_catalog.clock_timestamp();
 begin
@@ -1124,8 +1126,8 @@ grant execute on function public.claim_publication_schedules_v1(integer),public.
   public.fail_publication_schedule_v1(uuid,bigint,uuid,text,boolean),public.reconcile_publication_schedules_v1(integer) to service_role;
 
 -- SOURCE-ONLY WAKE CONTRACT (no cron registration, secret, URL, or HTTP call):
--- Once per minute, the later authorized Edge wake calls reconcile(10), then
--- claim(10); process each returned fence via prepare -> copy -> confirm -> publish.
+-- Once per minute, the later authorized Edge wake calls reconcile(1), then
+-- claim(1); process the returned fence via prepare -> copy -> confirm -> publish.
 -- Copy may start only before claim_expires_at and must abort within 60 seconds.
 -- Provider writes must be conditional/idempotent at the returned target key,
 -- source-conditioned by source_etag. Before confirm, compute full-object SHA-256

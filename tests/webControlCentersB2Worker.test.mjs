@@ -120,13 +120,134 @@ test('failed persistence is not falsely reported as retried or terminal', async 
   await assert.rejects(() => run(f.deps), { message: 'scheduled_publication_unavailable' });
 });
 
-function edgeFixture(secret = 'internal-service-secret') {
+// The SQL/provider boundaries are simulated; the real worker and endpoint run.
+// Claim consumes attempts and starts leases immediately, just as the RPC does.
+// A permissive policy cap deliberately lets an unsafe worker default reserve
+// the whole queue. The PostgreSQL proof covers the independent SQL defaults.
+function queueFixture({ slow = true } = {}) {
+  let now = Date.now(), token = 0, lostPublish = true;
+  const calls = [], provider = [], stored = new Map(), writes = new Map(), posts = new Map();
+  const jobs = [3, 1, 1].map((count, index) => ({
+    id: `queue-${index}`, state: 'scheduled', attempts: 0, next: now,
+    claim: null, expires: null,
+    items: Array.from({ length: count }, (_, position) => ({
+      ...item, position, source_key: `source-${index}-${position}`,
+      target_asset_id: `asset-${index}-${position}`, target_key: `target-${index}-${position}`,
+    })),
+  }));
+  const ok = data => ({ data, error: null });
+  const db = { async rpc(name, args) {
+    calls.push({ name, args: plain(args) });
+    if (name === 'reconcile_publication_schedules_v1') {
+      let recovered = 0;
+      for (const job of jobs) if (job.state === 'claimed' && job.expires <= now) {
+        job.state = 'retryable_failed'; job.claim = null; job.expires = null;
+        job.next = now + 30_000; recovered++;
+      }
+      return ok({ recovered, released: 0 });
+    }
+    if (name === 'claim_publication_schedules_v1') {
+      const due = jobs.filter(job => ['scheduled', 'retryable_failed'].includes(job.state) && job.next <= now)
+        .sort((a, b) => a.next - b.next || a.id.localeCompare(b.id)).slice(0, args.p_limit);
+      return ok(due.map(job => {
+        job.state = 'claimed'; job.attempts++; job.expires = now + 120_000;
+        job.claim = { schedule_id: job.id, generation: 1, claim_token: `token-${++token}`, claim_expires_at: new Date(job.expires).toISOString() };
+        return { ...job.claim, attempt_count: job.attempts, revision: job.attempts + 1 };
+      }));
+    }
+    const job = jobs.find(job => job.id === args.p_schedule_id);
+    assert.ok(job, 'every mutation targets a queued schedule');
+    assert.equal(args.p_generation, 1);
+    if (!job.claim || job.claim.claim_token !== args.p_claim_token ||
+        (job.state !== 'published' && now >= job.expires)) {
+      return { data: null, error: error('publication_schedule_fence_invalid') };
+    }
+    if (name === 'prepare_publication_schedule_v1') return ok({ ...job.claim, items: job.items.map(i => ({ ...i })) });
+    if (name === 'confirm_publication_schedule_item_v1') {
+      const current = job.items[args.p_position];
+      assert.ok(stored.has(current.target_key), 'confirmation needs a copied object');
+      assert.equal(args.p_source_sha256, HASH_ABC); assert.equal(args.p_target_sha256, HASH_ABC);
+      current.finalized = true;
+      return ok({ ...job.claim, position: current.position, target_asset_id: current.target_asset_id, finalized: true });
+    }
+    if (name === 'publish_publication_schedule_v1') {
+      assert.ok(job.items.every(i => i.finalized), 'publication requires every item to be finalized');
+      if (!posts.has(job.id)) posts.set(job.id, `post-${job.id}`);
+      job.state = 'published';
+      if (job.id === 'queue-0' && lostPublish) { lostPublish = false; throw error('response lost', { name: 'TypeError' }); }
+      return ok({ ...job.claim, state: 'published', post_id: posts.get(job.id) });
+    }
+    assert.fail(`unexpected queue RPC ${name}`);
+  } };
+  const objects = {
+    async get(bucket, key, opts) {
+      provider.push({ op: 'get', bucket, key, opts });
+      const source = bucket === item.source_bucket;
+      if (slow && source && key.startsWith('source-0-')) now += 25_000;
+      const bytes = source ? new Uint8Array([97, 98, 99]) : stored.get(key);
+      assert.ok(bytes, 'target recovery must read an existing object');
+      return { bytes, etag: source ? item.source_etag : 'b'.repeat(32), contentType: item.mime_type };
+    },
+    async putIfAbsent(bucket, key, bytes, opts) {
+      provider.push({ op: 'put', bucket, key, opts });
+      if (stored.has(key)) throw error('exists', { statusCode: 412 });
+      stored.set(key, new Uint8Array(bytes)); writes.set(key, (writes.get(key) ?? 0) + 1);
+      // The third carousel write succeeds after the lease deadline. Its bytes
+      // must be recovered on a later claim, never blindly copied a second time.
+      if (slow && key.startsWith('target-0-')) now += 20_000;
+    },
+  };
+  return { deps: { db, objects, now: () => now }, jobs, calls, provider, stored, writes, posts,
+    advance(ms) { now += ms; },
+    waiting() { return jobs.slice(1).map(job => [job.state, job.attempts, job.claim, job.expires]); },
+  };
+}
+
+// Regression: claiming several jobs before the first slow carousel completes
+// used to spend attempts/leases on jobs that never reached the provider.
+test('default worker leaves waiting jobs unclaimed when a slow carousel outlives its lease', async () => {
+  const f = queueFixture();
+  assert.deepEqual(plain(await run(f.deps)), { claimed: 1, published: 0, retried: 0, terminal: 0, stale: 1 });
+  assert.deepEqual(f.waiting(), [['scheduled', 0, null, null], ['scheduled', 0, null, null]]);
+  assert.deepEqual(f.jobs[0].items.map(i => i.finalized), [true, true, false]);
+  assert.equal(f.posts.size, 0);
+  assert.ok(f.stored.has('target-0-2'), 'late successful copy remains available for verified recovery');
+
+  // Subsequent wakes make progress on the untouched queue during backoff.
+  assert.deepEqual(plain(await run(f.deps)), success);
+  assert.deepEqual(plain(await run(f.deps)), success);
+  assert.deepEqual(f.jobs.map(job => [job.state, job.attempts]), [['retryable_failed', 1], ['published', 1], ['published', 1]]);
+  f.advance(30_000);
+  assert.deepEqual(plain(await run(f.deps)), success);
+  assert.deepEqual(f.jobs.map(job => [job.state, job.attempts]), [['published', 2], ['published', 1], ['published', 1]]);
+  assert.equal(f.posts.size, 3, 'one publication per schedule, including lost receipt response');
+  assert.equal(f.stored.size, 5, 'one deterministic target per source');
+  assert.deepEqual([...f.writes.values()], [1, 1, 1, 1, 1], 'no target is overwritten during retry');
+  assert.deepEqual(named(f, 'confirm').filter(call => call.args.p_schedule_id === 'queue-0').map(call => call.args.p_position), [0, 1, 2], 'finalized positions are not copied or confirmed again');
+  const providerCalls = f.provider.length;
+  assert.deepEqual(plain(await run(f.deps)), { ...success, claimed: 0, published: 0 });
+  assert.equal(f.provider.length, providerCalls, 'duplicate wake cannot copy or publish completed jobs');
+});
+
+test('explicit internal batch limit remains supported while later queued work stays untouched', async () => {
+  const f = queueFixture({ slow: false });
+  assert.deepEqual(plain(await run(f.deps, { limit: 2 })), { ...success, claimed: 2, published: 2 });
+  assert.deepEqual(f.jobs.map(job => [job.state, job.attempts]), [['published', 1], ['published', 1], ['scheduled', 0]]);
+  assert.equal(f.jobs[2].claim, null); assert.equal(f.jobs[2].expires, null);
+  assert.equal(f.stored.size, 4);
+  assert.deepEqual(plain(await run(f.deps)), success);
+  assert.equal(f.posts.size, 3);
+});
+
+function edgeFixture(secret = 'internal-service-secret', f = fixture({ empty: true })) {
   let handler, clients = 0;
-  const f = fixture({ empty: true });
   const modules = {
     '../_shared/mediaAuth.ts': { admin: () => { clients++; return f.deps.db; } },
     '../_shared/messagePush.ts': { timingSafeEqual: (a, b) => a === b },
-    '../_shared/r2.ts': { getObjectBytes: () => assert.fail('unexpected provider'), putObjectIfAbsent: () => assert.fail('unexpected provider') },
+    '../_shared/r2.ts': {
+      getObjectBytes: (bucket, key, maxBytes, options) => f.deps.objects.get(bucket, key, { ...options, maxBytes }),
+      putObjectIfAbsent: f.deps.objects.putIfAbsent,
+    },
     './worker.ts': worker,
   };
   load('supabase/functions/process-scheduled-publications/index.ts', modules, { Deno: { env: { get: name => name === 'SUPABASE_SERVICE_ROLE_KEY' ? secret : undefined }, serve: fn => { handler = fn; } } });
@@ -140,6 +261,15 @@ for (const body of ['{"limit":100}', '{"owner_id":"chosen"}', '[]', 'null', 'gar
 });
 test('authorized endpoint accepts only empty object, fixed batch, no CORS or sensitive output', async () => {
   const f = edgeFixture(); const response = await f.handle(new Request('https://local.test', { method: 'POST', headers: { authorization: 'Bearer internal-service-secret' }, body: '{}' })); assert.equal(response.status, 200); assert.equal(f.clients, 1); assert.equal(response.headers.get('access-control-allow-origin'), null); assert.deepEqual(await response.json(), { ...success, claimed: 0, published: 0 });
+});
+
+test('authorized endpoint processes one due job and leaves the rest without attempts or leases', async () => {
+  const queue = queueFixture({ slow: false }), edge = edgeFixture('internal-service-secret', queue);
+  const response = await edge.handle(new Request('https://local.test', { method: 'POST', headers: { authorization: 'Bearer internal-service-secret' }, body: '{}' }));
+  assert.equal(response.status, 200); assert.deepEqual(await response.json(), success);
+  assert.deepEqual(queue.waiting(), [['scheduled', 0, null, null], ['scheduled', 0, null, null]]);
+  assert.equal(queue.posts.size, 1);
+  assert.equal(queue.stored.size, 3);
 });
 
 function streamedRequest(chunks, { length, authorized = true } = {}) {

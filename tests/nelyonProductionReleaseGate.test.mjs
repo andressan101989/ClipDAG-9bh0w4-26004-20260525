@@ -1508,7 +1508,6 @@ test('F5 Git attestation and manifest reject every migration Edge config client 
   const transitionPolicy = structuredClone(policy);
   transitionPolicy.baseline.sha = transition.baseline_sha;
   const root = new URL('..', import.meta.url);
-  const rootPath = decodeURIComponent(root.pathname.replace(/^\/([A-Za-z]:)/, '$1'));
   const approvedSha = transition.reviewed_source_sha;
   const changes = [
     { status: 'M', path: 'supabase/functions/bdag-ledger/index.ts' },
@@ -1521,21 +1520,43 @@ test('F5 Git attestation and manifest reject every migration Edge config client 
     policy: transitionPolicy, approvedSha, changes, affectedFunctions: ['bdag-ledger'],
     migrations: [{ path: transition.migration_path, version: '20261026072512' }], runGit,
   };
-  const currentHead = runGit(['rev-parse', 'HEAD']).trim();
-  assert.throws(() => gate.attestFinanceAuthorityTransition({ ...input, approvedSha: currentHead }), {
-    code: 'INVALID_FINANCE_AUTHORITY_TRANSITION',
-    message: 'F5 Git productive closure differs from supplied evidence',
-  });
   const result = gate.attestFinanceAuthorityTransition(input);
+  assert.equal(result.attestation.approved_sha, approvedSha);
+  assert.equal(result.attestation.config_blob, transition.config_blob);
+  assert.equal(result.attestation.baseline_descendant_verified, true);
+  assert.equal(result.attestation.integration_base_descendant_verified, true);
   assert.equal(result.attestation.to_phase, 'f5_autonomous');
   assert.equal(result.attestation.function_source_sha256, transition.function_source_sha256);
   assert.deepEqual(result.attestation.cron_job, transition.cron_job);
   assert.equal(result.migrations[0].sha256, transition.migration_sha256);
 
-  const sources = Object.fromEntries(Object.entries(collectFunctionSources(join(rootPath, 'supabase', 'functions'), rootPath))
-    .map(([path, source]) => [path, source.replace(/\r\n/g, '\n')]));
+  const closureArgs = ['diff', '--name-status', '-z', transition.integration_base_sha, approvedSha, '--', 'supabase/'];
+  let closureIntercepts = 0;
+  const hostileClosureGit = args => {
+    const output = runGit(args);
+    if (args.length === closureArgs.length && args.every((arg, index) => arg === closureArgs[index])) {
+      closureIntercepts += 1;
+      // Test-only hostile evidence: preserve every real Git check except this exact diff output.
+      return Buffer.concat([output, Buffer.from('A\0supabase/migrations/20990101000000_synthetic_test_only.sql\0')]);
+    }
+    return output;
+  };
+  assert.throws(() => gate.attestFinanceAuthorityTransition({ ...input, runGit: hostileClosureGit }), {
+    code: 'INVALID_FINANCE_AUTHORITY_TRANSITION',
+    message: 'F5 Git productive closure differs from supplied evidence',
+  });
+  assert.equal(closureIntercepts, 1);
+
+  const b2Sha = '035ccae8d9329532444038f0787c632e2c65dd21';
+  assert.equal(runGit(['rev-parse', `${b2Sha}:supabase/config.toml`]).trim(), '58ca1a315f3ef0547e5857aef250bfe7022c3ef2');
+  assert.throws(() => gate.attestFinanceAuthorityTransition({ ...input, approvedSha: b2Sha }), {
+    code: 'INVALID_FINANCE_AUTHORITY_TRANSITION',
+    message: 'F5 committed blob/path differs: supabase/config.toml',
+  });
+
+  const sources = collectFunctionSourcesAtCommit(runGit, root, approvedSha);
   const graph = gate.buildFunctionGraph(sources);
-  const config = gate.parseFunctionConfig(readFileSync(join(rootPath, 'supabase', 'config.toml'), 'utf8'));
+  const config = gate.parseFunctionConfig(runGit(['show', `${approvedSha}:supabase/config.toml`]));
   const contracts = gate.buildFunctionContracts({
     affectedFunctions: ['bdag-ledger'], graph, configBefore: config, configAfter: config, changes,
   });
@@ -2610,7 +2631,7 @@ async function recoveryStateFixture(t, gate, policy, sourceIndex = 0) {
         return json([{ snapshot: { schema_version: 1, complete: true,
           query_id: 'nelyon-cron-snapshot-v1', count: cronItems.length, items: cronItems } }], 201);
       }
-      if (body.query.includes('pg_get_function_identity_arguments')) {
+      if (body.query.includes('pg_catalog.jsonb_to_recordset($1::jsonb)')) {
         return json(captureRecoveryExceptions
           .filter(exception => Array.isArray(exception.object.argument_types))
           .map(exception => ({
@@ -3798,6 +3819,39 @@ test('postcheck recovery request requires its exact read-only confirmation', asy
   }), policy), 'SCOPE_CONFIRMATION_MISMATCH');
 });
 
+test('unlisted numeric postcheck source is pending only and cannot become public authorization', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const candidate = request({ mode: 'postcheck_recovery', scopeConfirmation: 'POSTCHECK_RECOVERY_READ_ONLY',
+    recoverySourceRunId: '90000000001', productiveResources: [] });
+  assertDenied(() => gate.validateRequest(candidate, policy), 'INVALID_RECOVERY_SOURCE');
+  assert.equal(typeof gate.parsePendingB2RecoveryRequest, 'function');
+  const pending = gate.parsePendingB2RecoveryRequest(candidate, policy);
+  assert.equal(pending.result, 'PRIVATE_B2_AUTHORITY_PENDING');
+  const { buildPrivateRuntimeClosure } = await import('../scripts/nelyon-private-runtime-closure.mjs');
+  const runtimeClosure = buildPrivateRuntimeClosure({ repositoryRoot: process.cwd(), readFile: readFileSync });
+  const compiler = { path: 'scripts/nelyon-production-release.mjs',
+    sha256: runtimeClosure.files.find(item => item.path === 'scripts/nelyon-production-release.mjs').sha256,
+    snapshot_adapter_path: 'scripts/nelyon-production-snapshot-adapter.mjs',
+    snapshot_adapter_sha256: runtimeClosure.files.find(item => item.path === 'scripts/nelyon-production-snapshot-adapter.mjs').sha256 };
+  const manifest = gate.buildManifest(manifestInput(policy, { request: candidate, pendingB2Recovery: pending,
+    runtimeClosure, compiler }));
+  assert.equal(manifest.result, 'DENY');
+  assert.deepEqual(manifest.runtime_closure, runtimeClosure);
+  assert.ok(manifest.blockers.some(item => item.code === 'PRIVATE_B2_AUTHORITY_PENDING'));
+  const b2Change = { status: 'A', path: 'supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql', fileType: 'file' };
+  const base = manifestInput(policy, { request: candidate, pendingB2Recovery: pending, runtimeClosure, compiler });
+  const recovery = gate.buildManifest({ ...base, gitState: { ...base.gitState, changes: [b2Change] },
+    classified: { ...base.classified, all: [b2Change], productive: [b2Change] } });
+  assert.equal(recovery.result, 'DENY');
+  assert.equal(recovery.delta.productive_change_count, 0);
+  assertDenied(() => gate.buildManifest(manifestInput(policy, { request: candidate,
+    pendingB2Recovery: structuredClone(pending) })), 'INVALID_RECOVERY_SOURCE');
+  const admin = request({ mode: 'admin_recovery', scopeConfirmation: policy.scope_confirmations.admin_recovery,
+    recoverySourceRunId: '90000000001', productiveResources: [] });
+  const adminManifest = gate.buildManifest(manifestInput(policy, { request: admin, runtimeClosure, compiler }));
+  assert.deepEqual(adminManifest.runtime_closure, runtimeClosure);
+});
+
 test('policy pins the automatic main-only Environment contract', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   for (const environment of [
@@ -4154,16 +4208,58 @@ test('Supabase dry-run text is reduced to the exact manifest migration set', asy
   }), 'MIGRATION_DRY_RUN_MISMATCH');
 });
 
-test('only exact config.toml function declarations are managed', async () => {
+test('historical managed config parses exact function declarations', async () => {
   const { gate, policy } = await loadGateAndPolicy();
-  const toml = readFileSync(new URL('../supabase/config.toml', import.meta.url), 'utf8');
+  const toml = execFileSync('git', ['show', `${F2_MANAGED_SCOPE_TRANSITION.attested_source_sha}:supabase/config.toml`], {
+    cwd: new URL('..', import.meta.url), encoding: 'utf8',
+  });
   const config = gate.parseFunctionConfig(toml);
   assert.deepEqual(Object.keys(config), MANAGED_FUNCTIONS);
   assert.equal(config['agora-token'].verify_jwt, true);
   assert.equal(config['stripe-webhook'].verify_jwt, false);
   assert.equal(config['video-semantic-index'].verify_jwt, true);
   assert.deepEqual(Object.keys(config), policy.supabase.managed_functions);
-  assertDenied(() => gate.parseFunctionConfig(`${toml}\n[functions.agora-token]\nverify_jwt = true\n`), 'AMBIGUOUS_FUNCTION_CONFIG');
+  assert.throws(() => gate.parseFunctionConfig(`${toml}\n[functions.agora-token]\nverify_jwt = true\n`), {
+    code: 'AMBIGUOUS_FUNCTION_CONFIG', message: 'duplicate function section agora-token',
+  });
+});
+
+test('current B2 config declaration and direct worker change do not grant release authorization', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const descriptorBytes = readFileSync(new URL('../.github/nelyon-web-control-centers-b2-release-descriptor.json', import.meta.url));
+  const descriptor = gate.parseB2ReleaseDescriptor(descriptorBytes, gate.sha256Hex(descriptorBytes));
+  assert.equal(descriptor.contract.state, 'candidate');
+  assert.equal(descriptor.contract.release_ready, false);
+  assert.equal(descriptor.private_authority.sha256, null);
+  assert.throws(() => gate.compileB2PublicEvidence({
+    descriptorBytes, expectedDescriptorSha256: gate.sha256Hex(descriptorBytes),
+  }), { code: 'B2_DESCRIPTOR_INVALID' });
+  const configAfter = gate.parseFunctionConfig(readFileSync(new URL('../supabase/config.toml', import.meta.url), 'utf8'));
+  const configBefore = gate.parseFunctionConfig(execFileSync('git', [
+    'show', `${F2_MANAGED_SCOPE_TRANSITION.attested_source_sha}:supabase/config.toml`,
+  ], { cwd: new URL('..', import.meta.url), encoding: 'utf8' }));
+  assert.deepEqual(Object.keys(configAfter), [...MANAGED_FUNCTIONS, 'process-scheduled-publications']);
+  assert.equal(configAfter['process-scheduled-publications'].verify_jwt, false);
+  assert.equal(policy.supabase.managed_functions.includes('process-scheduled-publications'), false);
+  assert.equal(Object.hasOwn(policy, 'web_control_centers_b2_preparation'), false);
+  const input = {
+    managedFunctions: policy.supabase.managed_functions,
+    forbiddenFunctions: policy.supabase.forbidden_functions,
+    configBefore, configAfter,
+  };
+  assert.throws(() => gate.resolveAffectedFunctions({
+    ...input, changes: [{ status: 'M', path: 'supabase/config.toml' }], graph: gate.buildFunctionGraph({}),
+  }), {
+    code: 'FUNCTION_NOT_AUTHORIZED', message: 'current function config does not equal the managed allowlist',
+  });
+  const workerPath = 'supabase/functions/process-scheduled-publications/index.ts';
+  // Test-only source isolates direct-path authorization; it is not a production worker bundle.
+  assert.throws(() => gate.resolveAffectedFunctions({
+    ...input, changes: [{ status: 'M', path: workerPath }],
+    graph: gate.buildFunctionGraph({ [workerPath]: 'export const testOnly = true;\n' }),
+  }), {
+    code: 'FUNCTION_NOT_AUTHORIZED', message: 'function process-scheduled-publications is not managed by the release gate',
+  });
 });
 
 test('bdag-economy and undeclared functions are denied', async () => {
@@ -4371,7 +4467,9 @@ test('F2 release delta is one migration and only the canonical bdag-ledger Edge 
   const rootPath = repositoryRoot.pathname.startsWith('/') && /^[A-Za-z]:/.test(repositoryRoot.pathname.slice(1))
     ? decodeURIComponent(repositoryRoot.pathname.slice(1))
     : decodeURIComponent(repositoryRoot.pathname);
-  const graph = gate.buildFunctionGraph(collectFunctionSources(join(rootPath, 'supabase', 'functions'), rootPath));
+  const runGit = args => execFileSync('git', args, { cwd: repositoryRoot, stdio: ['pipe', 'pipe', 'pipe'] });
+  const approvedSha = F2_MANAGED_SCOPE_TRANSITION.attested_source_sha;
+  const graph = gate.buildFunctionGraph(collectFunctionSourcesAtCommit(runGit, repositoryRoot, approvedSha));
   const changes = [
     { status: 'A', path: 'supabase/migrations/20261024173500_creator_premium_f2_complete_monetization.sql' },
     { status: 'M', path: 'supabase/config.toml' },
@@ -4387,7 +4485,7 @@ test('F2 release delta is one migration and only the canonical bdag-ledger Edge 
     'git', ['show', 'f786f0d627f5a5dd330e503c531b05ba84c45daa:supabase/config.toml'],
     { cwd: rootPath, encoding: 'utf8' },
   ));
-  const configAfter = gate.parseFunctionConfig(readFileSync(join(rootPath, 'supabase', 'config.toml'), 'utf8'));
+  const configAfter = gate.parseFunctionConfig(runGit(['show', `${approvedSha}:supabase/config.toml`]).toString('utf8'));
   const affected = gate.resolveAffectedFunctions({
     changes,
     graph,
@@ -4402,7 +4500,16 @@ test('F2 release delta is one migration and only the canonical bdag-ledger Edge 
   assert.equal(contracts[0].name, 'bdag-ledger');
   assert.equal(contracts[0].verify_jwt, true);
   assert.equal(contracts[0].source_changed, true);
+  assert.equal(contracts[0].source_sha256, F2_MANAGED_SCOPE_TRANSITION.function_source_sha256);
   assert.equal(gate.classifyRisk({ affectedFunctions: affected, changedPaths: changes.map(item => item.path), configBefore, configAfter }).level, 'HIGH');
+  assert.throws(() => gate.resolveAffectedFunctions({
+    changes, graph, configBefore,
+    configAfter: gate.parseFunctionConfig(readFileSync(join(rootPath, 'supabase', 'config.toml'), 'utf8')),
+    managedFunctions: policy.supabase.managed_functions,
+    forbiddenFunctions: policy.supabase.forbidden_functions,
+  }), {
+    code: 'FUNCTION_NOT_AUTHORIZED', message: 'current function config does not equal the managed allowlist',
+  });
 });
 
 test('F2 managed transition attests the canonical pinned bdag-ledger bundle', async () => {
@@ -7314,7 +7421,10 @@ function workflowText() {
 function workflowJob(text, name, nextName) {
   const start = text.indexOf(`  ${name}:\n`);
   assert.notEqual(start, -1, `missing ${name} job`);
-  const end = nextName ? text.indexOf(`  ${nextName}:\n`, start + 1) : text.length;
+  const nextJob = /^  [a-z][a-z0-9-]*:\n/gm;
+  nextJob.lastIndex = start + `  ${name}:\n`.length;
+  const inferredEnd = nextJob.exec(text)?.index ?? text.length;
+  const end = nextName ? text.indexOf(`  ${nextName}:\n`, start + 1) : inferredEnd;
   return text.slice(start, end === -1 ? text.length : end);
 }
 
@@ -7345,16 +7455,17 @@ test('workflow uses exact immutable action pins Node and Supabase CLI versions',
 });
 
 test('plan has no production environment secrets or mutating commands', () => {
-  const plan = workflowJob(workflowText(), 'plan', 'deploy');
+  const plan = workflowJob(workflowText(), 'plan', 'private-authority-check');
   assert.doesNotMatch(plan, /environment:\s*production/);
   assert.doesNotMatch(plan, /secrets\./);
   assert.doesNotMatch(plan, /supabase\s+(db\s+push|migration\s+up|functions\s+deploy)/);
   assert.doesNotMatch(plan, /\b(curl|fetch)\b[^\n]*(supabase\.co|api\.supabase)/i);
 });
 
-test('deploy needs plan uses production and fixed noncancelling concurrency', () => {
+test('deploy needs plan and protected authority uses production and fixed noncancelling concurrency', () => {
   const deploy = workflowJob(workflowText(), 'deploy');
-  assert.match(deploy, /needs: plan/);
+  assert.match(deploy, /needs: \[plan, private-authority-check\]/);
+  assert.match(deploy, /needs\.private-authority-check\.result == 'success'/);
   assert.match(deploy, /environment:\s*production/);
   assert.match(deploy, /concurrency:\s*\n\s+group: nelyon-supabase-production\s*\n\s+cancel-in-progress: false/);
   assert.match(deploy, /NELYON_RELEASE_POLICY_SHA256:\s*\$\{\{ vars\.NELYON_RELEASE_POLICY_SHA256 \}\}/);
@@ -7372,14 +7483,14 @@ test('canonical workflow uses automatic Environment authorization without approv
 
 test('protected gate consumes persistent OFF declaration without screenshot artifacts', () => {
   const text = workflowText();
-  const plan = workflowJob(text, 'plan', 'deploy');
+  const plan = workflowJob(text, 'plan', 'private-authority-check');
   const deploy = workflowJob(text, 'deploy');
   assert.match(deploy, /SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED:\s*\$\{\{ vars\.SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED \}\}/);
   const gateProofStep = deploy.slice(deploy.indexOf('name: Verify gate proof'), deploy.indexOf('name: Verify release gate'));
   assert.match(gateProofStep, /--auto-deploy-expected "\$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED"/);
   const releaseGateStep = deploy.slice(deploy.indexOf('name: Verify release gate'), deploy.indexOf('name: Set up pinned Supabase CLI'));
   assert.match(releaseGateStep, /--auto-deploy-expected "\$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED"/);
-  assert.equal((deploy.match(/--auto-deploy-expected "\$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED"/g) ?? []).length, 3);
+  assert.equal((deploy.match(/--auto-deploy-expected "\$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED"/g) ?? []).length, 6);
   assert.doesNotMatch(plan, /NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64|auto-deploy-evidence\.json|base64 --decode/);
   assert.doesNotMatch(deploy, /NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64|auto-deploy-evidence\.json|base64 --decode|auto_deploy_max_age_seconds/);
 });
@@ -7394,7 +7505,7 @@ test('plan_only cannot schedule deploy and gate_proof contains no Supabase mutat
 
 test('workflow routes postcheck_recovery through exact source artifacts and no mutation', () => {
   const text = workflowText();
-  const plan = workflowJob(text, 'plan', 'deploy');
+  const plan = workflowJob(text, 'plan', 'private-authority-check');
   const deploy = workflowJob(text, 'deploy');
   assert.match(plan, /INPUT_RECOVERY_SOURCE_RUN_ID:\s*\$\{\{ inputs\.recovery_source_run_id \}\}/);
   assert.match(plan, /postcheck_recovery[\s\S]*POSTCHECK_RECOVERY_READ_ONLY/);
@@ -7405,7 +7516,7 @@ test('workflow routes postcheck_recovery through exact source artifacts and no m
   assert.match(deploy, /name: Download exact approved source release artifact[\s\S]*name: \$\{\{ needs\.plan\.outputs\.recovery_release_artifact_name \}\}[\s\S]*run-id: \$\{\{ inputs\.recovery_source_run_id \}\}[\s\S]*github-token: \$\{\{ github\.token \}\}/);
   assert.match(deploy, /name: Download exact approved source gate artifact[\s\S]*name: \$\{\{ needs\.plan\.outputs\.recovery_gate_artifact_name \}\}[\s\S]*run-id: \$\{\{ inputs\.recovery_source_run_id \}\}/);
   const verifySource = deploy.indexOf(' verify-recovery-source ');
-  const capture = deploy.indexOf('--phase recovery');
+  const capture = deploy.indexOf(' recovery-snapshot ');
   const recover = deploy.indexOf(' postcheck-recovery ');
   assert.ok(verifySource > 0 && capture > verifySource && recover > capture);
   assert.match(deploy, /name: Upload sanitized postcheck recovery evidence[\s\S]*name: nelyon-postcheck-recovery-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}[\s\S]*retention-days: 90/);
@@ -7428,7 +7539,10 @@ test('release path revalidates before secrets and before every mutation', () => 
   assert.ok(revalidate >= 0 && verifyGate > revalidate && secretReference > verifyGate);
   assert.ok(migration > secretReference && functions > migration);
   assert.match(deploy.slice(migration - 500, migration), /revalidate/);
-  assert.match(deploy.slice(functions - 700, functions), /verify-function-contract/);
+  const functionStep = deploy.slice(deploy.indexOf('name: Deploy each exact manifest function'),
+    deploy.indexOf('name: Verify independent private runtime closure before post-snapshot'));
+  assert.ok(functionStep.indexOf('verify-function-contract') < functionStep.indexOf('nelyon-private-authority-cli.mjs authority-proof'));
+  assert.ok(functionStep.indexOf('nelyon-private-authority-cli.mjs authority-proof') < functionStep.indexOf('supabase functions deploy "$function_name"'));
   assert.match(deploy.slice(functions, functions + 220), /--use-api/);
   assert.match(deploy, /supabase db push --dry-run --project-ref "\$NELYON_PROJECT_REF" --skip-vault --yes/);
   assert.match(deploy, /supabase db push --dry-run --project-ref "\$NELYON_PROJECT_REF" --skip-vault --yes --output-format json/);
@@ -7444,8 +7558,8 @@ test('fresh completed physical backup and owner-reviewed baseline are verified b
   const dryRun = deploy.indexOf('supabase db push --dry-run');
   const apply = deploy.indexOf('supabase db push --project-ref');
   assert.ok(preCapture >= 0 && preVerify > preCapture && dryRun > preVerify && apply > preVerify);
-  assert.match(deploy, /--pre-snapshot gate-evidence\/production-pre\.json/);
-  assert.match(deploy, /nelyon-production-snapshot-adapter\.mjs capture/);
+  assert.match(deploy, /--pre-snapshot "\$RUNNER_TEMP\/nelyon-private-authority-public\/production-pre\.json"/);
+  assert.match(deploy, /nelyon-private-authority-cli\.mjs pre-snapshot/);
 });
 
 test('workflow inventories every active release status and never relies on in-progress alone', () => {
@@ -7457,7 +7571,7 @@ test('workflow inventories every active release status and never relies on in-pr
 
 test('release workflow uses the reviewed snapshot adapter and retains sanitized gate evidence on failure', () => {
   const deploy = workflowJob(workflowText(), 'deploy');
-  assert.match(deploy, /nelyon-production-snapshot-adapter\.mjs/);
+  assert.match(deploy, /nelyon-private-authority-cli\.mjs (?:pre-snapshot|post-snapshot|recovery-snapshot)/);
   assert.doesNotMatch(deploy, /reviewed snapshot adapter required/);
   assert.doesNotMatch(deploy, /\{"complete":false/);
   assert.match(deploy, /name: Upload sanitized gate evidence/);

@@ -49,7 +49,7 @@ Deno.serve(async (req: Request) => {
         get: (bucket, key, options) => getObjectBytes(bucket, key, options.maxBytes, options),
         putIfAbsent: putObjectIfAbsent,
       },
-    }, { limit: 10 });
+    });
     return json(counters);
   } catch { return json({ error: 'scheduled_publication_unavailable' }, 503); }
 });
