@@ -16,6 +16,7 @@ function b2SnapshotReject() {
   throw Object.freeze(error);
 }
 const b2FreshCaptures = new WeakMap();
+const b2AdvisorCaptureBodies = new WeakMap();
 function isB2Snapshot(manifest, authorityContext) {
   return Boolean(manifest?.resources?.web_control_centers_b2_transition
     || manifest?.recovery?.authorityReceipt || authorityContext);
@@ -56,7 +57,7 @@ function b2Binding({ manifest, authorityContext, requestedAt, historical = false
     if (!historical) {
       const at = b2Time(requestedAt);
       const { approval, backup } = authorityContext.privateAuthority;
-      if (at < b2Time(approval.approvedAt) || at < b2Time(backup.completedAt)
+      if (at < b2Time(approval.approvedAt) || at < b2Time(backup.completedObservedAt)
         || at >= b2Time(approval.expiresAt) || at >= b2Time(backup.expiresAt)) b2SnapshotReject();
     }
     return receipt;
@@ -145,11 +146,12 @@ function b2ValidateSourceParity(sourceParity, authorityContext, manifest, reques
     seen.add(item.identity);
   }
   const expectedAdvisors = authorityContext.privateAuthority.securityAdvisor.records
-    .filter(record => record.action !== 'remove').map(record => JSON.parse(record.expectedCanonicalJson));
+    .filter(record => record.action !== 'remove').map(record => ({ ...JSON.parse(record.expectedCanonicalJson), action: record.action }));
   if (sourceParity.advisors.length !== expectedAdvisors.length) b2SnapshotReject();
   const fingerprints = new Set();
   for (const item of sourceParity.advisors) {
-    b2Exact(item, ['fingerprint', 'attestationSha256', 'negativeEvidenceSha256', 'originSha256']);
+    b2Exact(item, ['action', 'fingerprint', 'objectIdentity', ...(item.action === 'retain' ? ['baselineSha256']
+      : ['attestationSha256', 'negativeEvidenceSha256', 'originSha256'])]);
     const expected = expectedAdvisors.find(record => record.fingerprint === item.fingerprint);
     if (!expected || fingerprints.has(item.fingerprint) || Object.keys(item).some(key => item[key] !== expected[key])) b2SnapshotReject();
     fingerprints.add(item.fingerprint);
@@ -363,29 +365,81 @@ function b2SourceInventory(sourceParity, functions) {
   });
 }
 
-function b2FreshAdvisors(body, authorizations) {
+export function b2AdvisorObjectIdentity(lint) {
+  const metadata = lint?.metadata;
+  const identifier = value => typeof value === 'string' && /^[a-z_][a-z0-9_]*$/.test(value);
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) b2SnapshotReject();
+  if (metadata.type === 'auth') {
+    if (typeof metadata.entity !== 'string' || !/^[A-Za-z0-9_-]+$/.test(metadata.entity)
+      || ['schema', 'name', 'table', 'arguments'].some(key => Object.hasOwn(metadata, key))) b2SnapshotReject();
+    return `auth:${metadata.entity}`;
+  }
+  if (!identifier(metadata.schema) || !identifier(metadata.name ?? metadata.table)) b2SnapshotReject();
+  if (typeof metadata.arguments === 'string' && (metadata.type === undefined || metadata.type === 'function')) {
+    return `function:${metadata.schema}.${metadata.name ?? metadata.table}`;
+  }
+  if (['table', 'view', 'materialized_view'].includes(metadata.type) && !Object.hasOwn(metadata, 'arguments')) {
+    return `relation:${metadata.schema}.${metadata.name ?? metadata.table}`;
+  }
+  b2SnapshotReject();
+}
+
+function b2AdvisorFacts(lint, actual) {
+  const stable = stableAdvisorValue(lint);
+  const fingerprint = sha256(canonicalJson(stable));
+  return { fingerprint, identity: `advisor:${fingerprint}`, objectIdentity: b2AdvisorObjectIdentity(lint),
+    type: actual.resource_kind, severity: actual.level, objectSha256: sha256(canonicalJson(stable.metadata)) };
+}
+
+export function verifyB2AdvisorPrestate(body, authorityContext) {
+  try {
+    publicAuthorityReceipt(authorityContext);
+    assertB2CatalogSecurityCoverage(authorityContext);
+    const authority = authorityContext.privateAuthority.securityAdvisor;
+    const normalized = normalizeSecurityAdvisors(body);
+    if (normalized.sha256 !== authority.baselineSha256
+      || canonicalJson(normalized.items) !== canonicalJson(authority.baselineItems)) b2SnapshotReject();
+    const records = authority.records.filter(record => record.action !== 'add');
+    if (records.length !== normalized.items.length) b2SnapshotReject();
+    for (const lint of securityAdvisorFindings(body)) {
+      const fingerprint = sha256(canonicalJson(stableAdvisorValue(lint)));
+      const actual = normalized.items.find(item => item.fingerprint === fingerprint);
+      const record = records.find(item => item.identity === `advisor:${fingerprint}`);
+      if (!actual || !record) b2SnapshotReject();
+      const facts = b2AdvisorFacts(lint, actual), expected = JSON.parse(record.expectedCanonicalJson);
+      if (Object.keys(facts).some(key => facts[key] !== expected[key])) b2SnapshotReject();
+    }
+    return true;
+  } catch { b2SnapshotReject(); }
+}
+
+export function b2FreshAdvisors(body, authorizations) {
   // The live response proves object/finding facts. Authorization/origin and
   // negative-evidence digests remain authenticated private-source claims and
   // are never fabricated from a provider count or copied to retained evidence.
   const normalized = normalizeSecurityAdvisors(body);
-  if (!Array.isArray(body.lints) || body.lints.some(item => item.findings || item.count !== undefined)
-    || !Array.isArray(authorizations) || authorizations.length !== body.lints.length) b2SnapshotReject();
+  const findings = securityAdvisorFindings(body);
+  if (!Array.isArray(authorizations) || authorizations.length !== findings.length) b2SnapshotReject();
   const fingerprints = new Set();
   for (const proof of authorizations) {
-    b2Exact(proof, ['fingerprint', 'attestationSha256', 'negativeEvidenceSha256', 'originSha256']);
-    if (fingerprints.has(proof.fingerprint) || Object.values(proof).some(value => !/^[0-9a-f]{64}$/.test(value))) b2SnapshotReject();
+    if (!['retain', 'add', 'replace'].includes(proof?.action)) b2SnapshotReject();
+    const claims = proof.action === 'retain' ? ['baselineSha256'] : ['attestationSha256', 'negativeEvidenceSha256', 'originSha256'];
+    b2Exact(proof, ['action', 'fingerprint', 'objectIdentity', ...claims]);
+    if (fingerprints.has(proof.fingerprint) || [proof.fingerprint, ...claims.map(key => proof[key])]
+      .some(value => typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value))) b2SnapshotReject();
     fingerprints.add(proof.fingerprint);
   }
-  return body.lints.map(lint => {
+  return findings.map(lint => {
     const stable = stableAdvisorValue(lint);
     const fingerprint = sha256(canonicalJson(stable));
     const authorization = authorizations.find(record => record.fingerprint === fingerprint);
     const actual = normalized.items.find(item => item.fingerprint === fingerprint);
     if (!authorization || !actual) b2SnapshotReject();
-    const identity = `${lint.metadata.schema ?? ''}.${lint.metadata.name ?? lint.metadata.table ?? ''}${lint.metadata.arguments === undefined ? '' : `(${lint.metadata.arguments})`}`;
-    return { fingerprint, identity, type: actual.resource_kind, severity: actual.level,
-      objectSha256: sha256(canonicalJson(stable.metadata)), attestationSha256: authorization.attestationSha256,
-      negativeEvidenceSha256: authorization.negativeEvidenceSha256, originSha256: authorization.originSha256 };
+    const facts = b2AdvisorFacts(lint, actual);
+    if (facts.objectIdentity !== authorization.objectIdentity) b2SnapshotReject();
+    return { ...facts, ...(authorization.action === 'retain' ? { baselineSha256: authorization.baselineSha256 }
+      : { attestationSha256: authorization.attestationSha256,
+        negativeEvidenceSha256: authorization.negativeEvidenceSha256, originSha256: authorization.originSha256 }) };
   });
 }
 
@@ -6262,34 +6316,40 @@ function stableAdvisorValue(lint) {
   return stable;
 }
 
-export function normalizeSecurityAdvisors(body) {
-  const lints = body?.lints;
-  if (!Array.isArray(lints)) fail('INVALID_REMOTE_INVENTORY', 'security advisor inventory is invalid');
-  const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-  const validFields = lint => isRecord(lint) && typeof lint.name === 'string' && lint.name.length > 0
+const isAdvisorRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const validAdvisorFields = lint => isAdvisorRecord(lint) && typeof lint.name === 'string' && lint.name.length > 0
     && typeof lint.level === 'string' && lint.level.length > 0
     && (!Object.hasOwn(lint, 'facing') || (typeof lint.facing === 'string' && lint.facing.length > 0))
     && (!Object.hasOwn(lint, 'categories') || (Array.isArray(lint.categories)
       && lint.categories.every(category => typeof category === 'string' && category.length > 0)));
+
+function securityAdvisorFindings(body) {
+  const lints = body?.lints;
+  if (!Array.isArray(lints)) fail('INVALID_REMOTE_INVENTORY', 'security advisor inventory is invalid');
   const findings = lints.flatMap(lint => {
-    if (!isRecord(lint)) fail('INVALID_REMOTE_INVENTORY', 'security advisor finding is malformed');
+    if (!isAdvisorRecord(lint)) fail('INVALID_REMOTE_INVENTORY', 'security advisor finding is malformed');
     if (!Object.hasOwn(lint, 'findings') && !Object.hasOwn(lint, 'count')) return [lint];
-    if (!validFields(lint) || !Number.isInteger(lint.count) || lint.count < 0
+    if (!validAdvisorFields(lint) || !Number.isInteger(lint.count) || lint.count < 0
       || !Array.isArray(lint.findings) || lint.count !== lint.findings.length) {
       fail('INVALID_REMOTE_INVENTORY', 'security advisor group count or findings are invalid');
     }
     const { count: ignoredCount, findings: grouped, ...fields } = lint;
     return grouped.map(finding => {
-      if (!isRecord(finding) || Object.hasOwn(finding, 'findings') || Object.hasOwn(finding, 'count')) {
+      if (!isAdvisorRecord(finding) || Object.hasOwn(finding, 'findings') || Object.hasOwn(finding, 'count')) {
         fail('INVALID_REMOTE_INVENTORY', 'security advisor grouped finding is malformed');
       }
       return { ...fields, ...finding };
     });
   });
+  return findings;
+}
+
+export function normalizeSecurityAdvisors(body) {
+  const findings = securityAdvisorFindings(body);
   const identities = new Set();
   const items = findings.map(lint => {
     const metadata = lint.metadata;
-    if (!validFields(lint) || !isRecord(metadata)
+    if (!validAdvisorFields(lint) || !isAdvisorRecord(metadata)
       || (metadata.type !== 'auth' && (typeof metadata.schema !== 'string' || metadata.schema.length === 0
         || typeof (metadata.name ?? metadata.table) !== 'string' || (metadata.name ?? metadata.table).length === 0))
       || (Object.hasOwn(metadata, 'arguments') && typeof metadata.arguments !== 'string')) {
@@ -7102,10 +7162,15 @@ export async function captureProductionSnapshot(options) {
     const evidence = await captureLegacyProductionSnapshot({ ...options, observedAt: requestedAt });
     const authority = authorityContext.privateAuthority;
     if (authority.backup.projectRefSha256 !== sha256(PRODUCTION_PROJECT_REF)
-      || (!historical && authority.backup.evidenceSha256 !== sha256(canonicalJson(evidence.backup)))) b2SnapshotReject();
+      || (!historical && (authority.backup.insertedAt !== evidence.backup.inserted_at
+        || authority.backup.evidenceSha256 !== sha256(canonicalJson(evidence.backup))))) b2SnapshotReject();
     if (historical) verifyB2RecoveryOperation({ recoveryRequest: request, recoveryManifest: manifest,
       ...options.recoveryAuthorization, authorityContext, policy, backup: evidence.backup, requestedAt });
     if (phase === 'pre') {
+      const advisorBody = b2AdvisorCaptureBodies.get(evidence);
+      if (!advisorBody) b2SnapshotReject();
+      b2AdvisorCaptureBodies.delete(evidence);
+      verifyB2AdvisorPrestate(advisorBody, authorityContext);
       const inherited = await fixedRequest({ fetchImpl: options.fetchImpl ?? globalThis.fetch, token: options.token,
         path: `/v1/projects/${PRODUCTION_PROJECT_REF}/database/query/read-only`, method: 'POST',
         body: { query: RPC_SECURITY_ATTESTATION_SQL, parameters: [JSON.stringify(B2_INHERITED_FUNCTIONS)] },
@@ -7201,6 +7266,7 @@ async function captureLegacyProductionSnapshot({
   fetchImpl = globalThis.fetch,
   observedAt = new Date().toISOString(),
   adapterSourceSha256,
+  authorityContext,
 }) {
   const identity = validateIdentity({ phase, policy, request, manifest, token, observedAt, adapterSourceSha256 });
   if (typeof fetchImpl !== 'function') fail('INVALID_TRANSPORT', 'fetch implementation is unavailable');
@@ -7409,7 +7475,9 @@ async function captureLegacyProductionSnapshot({
       : {}),
     requests: calls,
   };
-  return { ...evidence, evidence_sha256: sha256(canonicalJson(evidence)) };
+  const captured = { ...evidence, evidence_sha256: sha256(canonicalJson(evidence)) };
+  if (authorityContext && phase === 'pre') b2AdvisorCaptureBodies.set(captured, advisorsBody);
+  return captured;
 }
 
 function parseCli(argv) {

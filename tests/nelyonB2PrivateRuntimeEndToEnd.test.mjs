@@ -440,7 +440,7 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
   const initialFetch = baseManagementFetch({ policy, contract, phase: () => phase, backupMode: () => backupMode,
     parity: () => compiledParity, databaseMatrix });
   const legacy = await captureProductionSnapshot({ phase: 'pre', policy, request: baseRequest(), manifest,
-    token: 'synthetic-supabase-token', fetchImpl: initialFetch, observedAt: SOURCE_AT,
+    token: 'synthetic-supabase-token', fetchImpl: initialFetch, observedAt: '2026-10-12T12:00:00.000Z',
     adapterSourceSha256: manifest.compiler.snapshot_adapter_sha256 });
   for (const exception of policy.security_advisor.exceptions) {
     const actual = legacy.rpc_security.items.find(item => item.name === exception.object.name);
@@ -482,12 +482,13 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
       integrationBaseSha: contract.integration_base_sha },
     successorCatalog: { schemaVersion: 1, records: [{ kind: 'relation', identity: `private.${privateMarker}`,
       expectedCanonicalJson: markerCanonical, expectedSha256: sha256(markerCanonical) }] },
-    securityAdvisor: { schemaVersion: 1, baselineSha256: legacy.cron_security.advisors.sha256, records: [] },
-    backup: { schemaVersion: 1, provider: 'supabase', kind: 'physical',
+    securityAdvisor: { schemaVersion: 2, baselineSha256: legacy.cron_security.advisors.sha256, baselineItems: legacy.cron_security.advisors.items, records: [] },
+    backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical',
       projectRefSha256: sha256(policy.supabase.project_ref), evidenceSha256: sha256(canonicalJson(legacy.backup)),
-      status: 'COMPLETED', completedAt: '2026-10-12T10:00:00.000Z', expiresAt: '2026-10-13T10:00:00.000Z' },
+      status: 'COMPLETED', insertedAt: legacy.backup.inserted_at, completedObservedAt: legacy.observed_at,
+      expiresAt: new Date(Date.parse(legacy.backup.inserted_at) + 86_400_000).toISOString() },
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: [contract.to_phase],
-      authorizationSha256: '5'.repeat(64), approvedAt: '2026-10-12T11:00:00.000Z',
+      authorizationSha256: '5'.repeat(64), approvedAt: legacy.observed_at,
       expiresAt: '2026-10-13T11:00:00.000Z' },
   };
   const scheduleRelations = [
@@ -992,10 +993,16 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     realAuthority.issuedFor.baselineSha = realContract.baseline_sha;
     realAuthority.securityAdvisor.baselineSha256 = ownerCapture.cron_security.advisors.sha256;
     realAuthority.backup.evidenceSha256 = sha256(canonicalJson(ownerCapture.backup));
-    realAuthority.backup.completedAt = ownerCapture.backup.inserted_at;
-    realAuthority.backup.expiresAt = new Date(Date.parse(ownerCapture.observed_at) + 300_000).toISOString();
-    realAuthority.approval.approvedAt = new Date(Date.parse(ownerCapture.observed_at) - 300_000).toISOString();
+    realAuthority.backup.insertedAt = ownerCapture.backup.inserted_at;
+    realAuthority.backup.completedObservedAt = ownerCapture.observed_at;
+    realAuthority.backup.expiresAt = new Date(Math.min(Date.parse(ownerCapture.backup.inserted_at) + 86_400_000,
+      Date.parse(ownerCapture.observed_at) + 300_000)).toISOString();
+    realAuthority.approval.approvedAt = ownerCapture.observed_at;
     realAuthority.approval.expiresAt = new Date(Date.parse(ownerCapture.observed_at) + 300_000).toISOString();
+    // Synthetic protected steps occur after the authentic baseline observation,
+    // rather than backdating approval to precede that observation.
+    const sourceProofAt = new Date(Date.parse(ownerCapture.observed_at) + 1_000).toISOString();
+    const recoveryOperationAt = new Date(Date.parse(ownerCapture.observed_at) + 2_000).toISOString();
     const realAuthorityJson = JSON.stringify(realAuthority);
     const realAuthorityBytes = Buffer.from(realAuthorityJson, 'utf8');
     const realDescriptor = structuredClone(descriptor);
@@ -1030,7 +1037,7 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     };
     const realHistorical = await b2HistoricalCapture({ manifest: realSourceManifest,
       request: releaseRequest, contextArgs: realContextArgs, policy: installedPolicy,
-      at: ownerCapture.observed_at, admin: true });
+      at: ownerCapture.observed_at, proofAt: sourceProofAt, admin: true });
     assert.deepEqual(realHistorical.authorityContext.receipt, realAuthorityContext.receipt,
       'the exact source resolves the same private authority receipt');
 
@@ -1173,7 +1180,7 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
       environment: recoveryEnvironment, fetchImpl: recoveryFetchImpl, repositoryRoot: approvedRoot,
       recoveryRuntime: loadedRecovery });
     const recoveryController = createPrivateAuthorityRuntime({ bootstrapCapability: recoveryBootstrap,
-      environment: recoveryEnvironment, fetchImpl: recoveryFetchImpl, now: () => ownerCapture.observed_at,
+      environment: recoveryEnvironment, fetchImpl: recoveryFetchImpl, now: () => recoveryOperationAt,
       host: recoveryHost, recoveryRuntime: loadedRecovery });
     const verifiedSourcePath = join(recoveryRoot, 'verified-source.json');
     await recoveryController.execute({ action: 'verify-admin-recovery-source', inputs: {
@@ -1201,7 +1208,7 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     assert.doesNotThrow(() => verifyB2RecoveryOperation({ recoveryRequest: realAdminRequest,
       recoveryManifest: realAdminManifest, verifiedSource: realHistorical.verifiedSource,
       authorityContext: realHistorical.authorityContext, currentGate: realCurrentGate,
-      backup: recoveryEvidence.backup, policy: installedPolicy, requestedAt: ownerCapture.observed_at }),
+      backup: recoveryEvidence.backup, policy: installedPolicy, requestedAt: recoveryOperationAt }),
     'the real-policy recovery chain independently authenticates before the protected controller');
     const bindingSource = structuredClone(verifiedRealSource);
     delete bindingSource.authorityReceipt;
@@ -1223,13 +1230,13 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     assert.doesNotThrow(() => verifyProductionRecoverySnapshot({ recovery: recoveryEvidence,
       policy: installedPolicy, request: realAdminRequest, manifest: realAdminManifest,
       adapterSourceSha256: realAdminManifest.compiler.snapshot_adapter_sha256,
-      authorityContext: realHistorical.authorityContext, requestedAt: ownerCapture.observed_at,
+      authorityContext: realHistorical.authorityContext, requestedAt: recoveryOperationAt,
       recoveryAuthorization: { verifiedSource: realHistorical.verifiedSource, currentGate: realCurrentGate } }),
     'the normalized real-policy recovery snapshot independently satisfies every B2 validator');
     assert.doesNotThrow(() => verifyProductionAdminRecoverySnapshot({ post: recoveryEvidence,
       policy: installedPolicy, request: realAdminRequest, manifest: realAdminManifest,
       adapterSourceSha256: realAdminManifest.compiler.snapshot_adapter_sha256,
-      authorityContext: realHistorical.authorityContext, requestedAt: ownerCapture.observed_at,
+      authorityContext: realHistorical.authorityContext, requestedAt: recoveryOperationAt,
       recoveryAuthorization: { verifiedSource: realHistorical.verifiedSource, currentGate: realCurrentGate } }),
     'the normalized real-policy snapshot independently satisfies the governed postcheck');
     const postcheckPath = join(recoveryRoot, 'postcheck-result.json');

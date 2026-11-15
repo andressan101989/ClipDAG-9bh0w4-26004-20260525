@@ -43,6 +43,10 @@ test('B2 worker: service-only claims, materialization and shared B1 publication 
   const result=spawnSync(process.execPath,['scripts/prove-web-control-centers-b2-worker-disposable.mjs'],{encoding:'utf8',windowsHide:true,timeout:600_000});
   assert.equal(result.status,0,result.stdout+'\n'+result.stderr);
   assert.match(result.stdout,/B2_WORKER_DISPOSABLE_PASS/);
+  const negatives = result.stdout.split(/\r?\n/).filter(line => line.startsWith('B2_WRAPPER_NEGATIVE_PASS ')).map(line => JSON.parse(line.slice('B2_WRAPPER_NEGATIVE_PASS '.length)));
+  assert.equal(negatives.length,20,'five wrappers must execute four independent negative modes');
+  assert.equal(new Set(negatives.map(row => row.name + ':' + row.mode)).size,20);
+  assert.ok(negatives.every(row => row.preserved === true));
   assert.match(result.stdout,/"serverStopped":true,"directoryRemoved":true/);
   t.diagnostic(result.stdout.trim());
 });

@@ -43,11 +43,43 @@ const projections = {
   function_inventory: { identity: 'synthetic-function', verifyJwt: true,
     sourceSha256: 'a'.repeat(64), configSha256: 'b'.repeat(64) },
 };
-const advisorProjection = { fingerprint: 'c'.repeat(64), identity: 'synthetic-finding',
-  type: 'function_security', severity: 'WARN', objectSha256: 'a'.repeat(64),
+const advisorProjection = { fingerprint: 'c'.repeat(64), identity: `advisor:${'c'.repeat(64)}`,
+  objectIdentity: 'function:public.synthetic_rpc', type: 'function_security', severity: 'WARN', objectSha256: 'a'.repeat(64),
   attestationSha256: 'b'.repeat(64), negativeEvidenceSha256: 'd'.repeat(64), originSha256: 'e'.repeat(64) };
 const catalogExpected = compactCanonical(projections.function);
 const advisorExpected = compactCanonical(advisorProjection);
+
+// Synthetic capacity/identity regression, not an operational finding inventory.
+function syntheticAdvisorRecord(index) {
+  const fingerprint = index.toString(16).padStart(64, '0');
+  const identity = `advisor:${fingerprint}`;
+  const expectedCanonicalJson = compactCanonical({ ...advisorProjection, fingerprint, identity });
+  return { action: 'replace', identity, expectedCanonicalJson, expectedSha256: digest(expectedCanonicalJson) };
+}
+
+for (const count of [513, 1024]) {
+  test(`B2 Advisor accepts all ${count} independently identified synthetic findings`, () => {
+    const authority = JSON.parse(b2Authority());
+    authority.securityAdvisor.records = Array.from({ length: count }, (_, i) => syntheticAdvisorRecord(i));
+    authority.securityAdvisor.baselineItems = authority.securityAdvisor.records.map(r => { const p = JSON.parse(r.expectedCanonicalJson); return { fingerprint: p.fingerprint, level: p.severity, resource_kind: p.type }; });
+    authority.securityAdvisor.baselineSha256 = digest(compactCanonical(authority.securityAdvisor.baselineItems) + '\n');
+    const text = JSON.stringify(authority);
+    assert.equal(parseB2PrivateAuthority(text, digest(text), EXPECTED_AT).authority.securityAdvisor.records.length, count);
+  });
+}
+
+test('B2 Advisor rejects over-bound inventories and identities disconnected from their fingerprint', () => {
+  const authority = JSON.parse(b2Authority());
+  authority.securityAdvisor.records = Array.from({ length: 1025 }, (_, i) => syntheticAdvisorRecord(i));
+  rejectedB2(JSON.stringify(authority));
+  const record = syntheticAdvisorRecord(1);
+  const projection = JSON.parse(record.expectedCanonicalJson);
+  projection.identity = 'advisor:' + '2'.repeat(64);
+  record.identity = projection.identity;
+  replaceProjection(record, projection);
+  authority.securityAdvisor.records = [record];
+  rejectedB2(JSON.stringify(authority));
+});
 
 function projectionRecord(kind, projection = projections[kind]) {
   const expectedCanonicalJson = compactCanonical(projection);
@@ -81,23 +113,25 @@ function b2Authority(overrides = {}) {
       }],
     },
     securityAdvisor: {
-      schemaVersion: 1,
-      baselineSha256: '5'.repeat(64),
+      schemaVersion: 2,
+      baselineSha256: digest(compactCanonical([{ fingerprint: advisorProjection.fingerprint, level: advisorProjection.severity, resource_kind: advisorProjection.type }]) + '\n'),
+      baselineItems: [{ fingerprint: advisorProjection.fingerprint, level: advisorProjection.severity, resource_kind: advisorProjection.type }],
       records: [{
-        action: 'retain',
-        identity: 'synthetic-finding',
+        action: 'replace',
+        identity: advisorProjection.identity,
         expectedCanonicalJson: advisorExpected,
         expectedSha256: digest(advisorExpected),
       }],
     },
     backup: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       provider: 'supabase',
       kind: 'physical',
       projectRefSha256: '6'.repeat(64),
       evidenceSha256: '7'.repeat(64),
       status: 'COMPLETED',
-      completedAt: '2026-11-08T10:00:00.000Z',
+      insertedAt: '2026-11-08T10:00:00.000Z',
+      completedObservedAt: '2026-11-08T10:30:00.000Z',
       expiresAt: '2026-11-09T10:00:00.000Z',
     },
     approval: {
@@ -125,6 +159,42 @@ function rejectedB2(text, expected = digest(typeof text === 'string' ? text : ''
     return true;
   });
 }
+
+test('B2 backup v2 binds insertion and observed COMPLETED state without claiming completion time', () => {
+  const text = b2Authority();
+  const backup = parseB2PrivateAuthority(text, digest(text), EXPECTED_AT).authority.backup;
+  assert.equal(backup.insertedAt, '2026-11-08T10:00:00.000Z');
+  assert.equal(backup.completedObservedAt, '2026-11-08T10:30:00.000Z');
+  assert.equal(Object.hasOwn(backup, 'completedAt'), false);
+});
+
+test('B2 backup v2 rejects ambiguous old and mixed schemas rather than reinterpreting timestamps', () => {
+  const backup = JSON.parse(b2Authority()).backup;
+  const { insertedAt } = backup;
+  rejectedB2(b2Authority({ backup: { schemaVersion: 1, provider: backup.provider, kind: backup.kind,
+    projectRefSha256: backup.projectRefSha256, evidenceSha256: backup.evidenceSha256,
+    status: backup.status, completedAt: insertedAt, expiresAt: backup.expiresAt } }));
+  rejectedB2(b2Authority({ backup: { ...JSON.parse(b2Authority()).backup, completedAt: insertedAt } }));
+  rejectedB2(b2Authority({ backup: { ...JSON.parse(b2Authority()).backup, schemaVersion: 1 } }));
+});
+
+test('B2 backup v2 enforces insertion observation approval order and a maximum 24-hour insertion window', () => {
+  const valid = JSON.parse(b2Authority());
+  for (const change of [
+    { insertedAt: '2026-11-08T10:31:00.000Z' },
+    { completedObservedAt: '2026-11-08T11:00:00.001Z' },
+    { completedObservedAt: '2026-11-08T12:00:00.001Z' },
+    { insertedAt: '2026-11-08T10:00:00Z' },
+    { completedObservedAt: '2026-11-08T10:30:00Z' },
+    { expiresAt: '2026-11-09T10:00:00.001Z' },
+    { insertedAt: '2026-11-07T10:00:00.000Z', completedObservedAt: '2026-11-08T10:30:00.000Z' },
+    { expiresAt: valid.backup.completedObservedAt },
+  ]) rejectedB2(b2Authority({ backup: { ...valid.backup, ...change } }));
+  const boundary = b2Authority({ backup: { ...valid.backup, completedObservedAt: valid.backup.insertedAt },
+    approval: { ...valid.approval, approvedAt: valid.backup.insertedAt } });
+  assert.doesNotThrow(() => parseB2PrivateAuthority(boundary, digest(boundary), '2026-11-08T10:00:00.000Z'));
+  rejectedB2(boundary, undefined, '2026-11-09T10:00:00.000Z');
+});
 
 test('B2 authority accepts one exact closed envelope and deeply freezes it', () => {
   const source = b2Authority();
@@ -177,7 +247,7 @@ test('B2 authority validates exact identities, timestamps and normalized bounded
   rejectedB2(b2Authority({ authorityId: 'x'.repeat(129) }));
   rejectedB2(b2Authority({ authorityId: 'e\u0301' }));
   rejectedB2(b2Authority({ issuedFor: { ...valid.issuedFor, baselineSha: 'A'.repeat(40) } }));
-  rejectedB2(b2Authority({ backup: { ...valid.backup, completedAt: '2026-11-08T10:00:00Z' } }));
+  rejectedB2(b2Authority({ backup: { ...valid.backup, insertedAt: '2026-11-08T10:00:00Z' } }));
   rejectedB2(b2Authority({ approval: { ...valid.approval,
     approvedAt: '2026-11-08T09:00:00.000Z' } }));
   rejectedB2(b2Authority({ securityAdvisor: { schemaVersion: 1, baselineSha256: '5'.repeat(64),
@@ -266,12 +336,14 @@ for (const actions of [['add', 'remove'], ['replace', 'retain']]) {
 test('B2 Advisor accepts sorted distinct identities and rejects ordering, duplicate and count violations', () => {
   const value = JSON.parse(b2Authority());
   const a = { ...value.securityAdvisor.records[0], action: 'add' };
-  const b = { ...a, identity: 'z-finding' };
+  const b = { ...a, identity: `advisor:${'d'.repeat(64)}` };
   replaceProjection(b, { ...advisorProjection, identity: b.identity, fingerprint: 'd'.repeat(64) });
+  value.securityAdvisor.baselineItems = [];
+  value.securityAdvisor.baselineSha256 = digest('[]\n');
   value.securityAdvisor.records = [a, b];
   let text = JSON.stringify(value);
   assert.doesNotThrow(() => parseB2PrivateAuthority(text, digest(text), EXPECTED_AT));
-  for (const records of [[b, a], [a, a], Array(257).fill(a)]) {
+  for (const records of [[b, a], [a, a], Array(1025).fill(a)]) {
     value.securityAdvisor.records = records;
     rejectedB2(JSON.stringify(value));
   }

@@ -97,6 +97,19 @@ try {
   sql(extractFunction(c1,'create or replace function private.guard_ready_media_asset_identity()'));
   sql(extractFunction(c1,'create or replace function private.guard_media_asset_link_lifecycle_v1()'));
   sql('create trigger proof_identity before update on public.media_assets for each row execute function private.guard_ready_media_asset_identity(); create trigger media_asset_links_guard_lifecycle_c1 before insert or update on public.media_asset_links for each row execute function private.guard_media_asset_link_lifecycle_v1()');
+  // Restore the historical public ACL statements omitted by the body-only B1
+  // laboratory baseline. This changes only the disposable setup, not product SQL.
+  const historicalAclSource=read('supabase/migrations/20260726105000_media_public_urls_and_safe_links.sql');
+  for(const signature of ['public.create_carousel_post(text,text,uuid[])','public.create_photo_post_with_media(text,text,uuid)']){
+    for(const prefix of ['revoke all on function ','grant execute on function ']){
+      const start=historicalAclSource.indexOf(prefix+signature);
+      assert.ok(start>=0,'historical ACL statement exists: '+signature);
+      const end=historicalAclSource.indexOf(';',start);
+      assert.ok(end>start,'historical ACL statement terminates');
+      sql(historicalAclSource.slice(start,end+1));
+    }
+    eq(scalar(`select not has_function_privilege('anon','${signature}','EXECUTE') and has_function_privilege('authenticated','${signature}','EXECUTE') and has_function_privilege('service_role','${signature}','EXECUTE') and not exists(select 1 from aclexplode((select proacl from pg_proc where oid='${signature}'::regprocedure)) where grantee=0 and privilege_type='EXECUTE')`),'t','historical wrapper ACL restored before B2');
+  }
   sql(read('supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql'));
   const service = (source, allowFailure=false) => sql(`begin; set local role service_role; ${source}; commit;`, allowFailure);
   const serviceJson = source => JSON.parse(service(source).stdout.trim());
@@ -411,6 +424,38 @@ try {
   sql("update private.publication_schedule_policy set public_bucket=null");
   rejectService(`select public.prepare_publication_schedule_v1(${fence(zeroLimit)})`,'publication_schedule_configuration_missing');
   eq(scalar(`select count(*) from private.publication_schedule_materializations where schedule_id='${cap.id}'`),'0','missing config cannot reserve targets');
+  // Valid synthetic inputs, real roles, exact rejection and full row preservation.
+  const negativeAssets = ['81000000-0000-4000-8000-000000000001','81000000-0000-4000-8000-000000000002','81000000-0000-4000-8000-000000000003','81000000-0000-4000-8000-000000000004'];
+  for (const [i,id] of negativeAssets.entries()) sql(`insert into public.media_assets(id,owner_id,provider,media_kind,purpose,visibility,bucket_name,object_key,mime_type,size_bytes,etag,status,ready_at,public_url) values('${id}','${owner}','r2','image','${i<2?'post_image':'carousel_image'}','${i===0?'private':'public'}','${i===0?'private':'public'}','negative/${id}','image/png',123,repeat('a',32),'ready',now(),${i===0?'null':"'https://media.example/negative/"+id+"'"})`);
+  const negativeDraft=createDraft(negativeAssets[0]);
+  const cases=[
+    ['create_photo_post_with_media',`select public.create_photo_post_with_media('negative','', '${negativeAssets[1]}')`,'asset_not_ready_or_owned','not_authenticated'],
+    ['create_carousel_post',`select public.create_carousel_post('negative','',array['${negativeAssets[2]}'::uuid,'${negativeAssets[3]}'::uuid])`,'asset_not_ready_or_owned','not_authenticated'],
+    ['update_my_publication_draft_v1',`select public.update_my_publication_draft_v1('${negativeDraft.id}',1,'${command()}','photo','negative','','{}',array['${negativeAssets[0]}'::uuid])`,'publication_draft_not_found','publication_auth_required'],
+    ['delete_my_publication_draft_v1',`select public.delete_my_publication_draft_v1('${negativeDraft.id}',1,'${command()}')`,'publication_draft_not_found','publication_auth_required'],
+    ['publish_my_publication_draft_v1',`select public.publish_my_publication_draft_v1('${negativeDraft.id}',1,'${command()}',array['${negativeAssets[1]}'::uuid])`,'publication_draft_not_found','publication_auth_required'],
+  ];
+  const negativeState=()=>['public.media_assets','public.media_asset_links','public.videos','private.publication_drafts','private.publication_draft_commands','private.publication_receipts','private.publication_schedules'].map(table=>scalar(`select coalesce(jsonb_agg(to_jsonb(t) order by to_jsonb(t)::text),'[]') from ${table} t`));
+  for(const [name,call,crossError,noAuthError] of cases){
+    // Owner success rolled back rules out malformed-input false positives.
+    const validBefore=negativeState();
+    const positive=sql(`begin; set local role authenticated; set local request.jwt.claim.sub='${owner}'; ${call}; rollback;`,true);
+    assert.equal(positive.status,0,name+' positive control: '+positive.stderr);checks++;
+    eq(negativeState(),validBefore,name+' positive control rollback restores all observed rows');
+    for(const [mode,role,actor,forged,error] of [
+      ['anon-forged-owner','anon',owner,'service_role','permission denied'],
+      ['authenticated-no-sub','authenticated','','authenticated',noAuthError],
+      ['cross-owner','authenticated',otherOwner,'authenticated',crossError],
+      ['cross-owner-forged-service','authenticated',otherOwner,'service_role',crossError],
+    ]){
+      const before=negativeState();
+      const result=sql(`begin; set session authorization ${role}; set local request.jwt.claim.sub='${actor}'; set local request.jwt.claim.role='${forged}'; set local request.jwt.claims='{"sub":"${actor}","role":"${forged}"}'; ${call}; commit;`,true);
+      assert.notEqual(result.status,0,name+' '+mode+' must reject');
+      assert.match(result.stderr,new RegExp(error),name+' '+mode+' intended boundary');checks++;
+      eq(negativeState(),before,name+' '+mode+' preserves media, links, posts, drafts, commands, receipts and schedules');
+      console.log('B2_WRAPPER_NEGATIVE_PASS '+JSON.stringify({name,mode,preserved:true}));
+    }
+  }
   console.log(JSON.stringify({verdict:'B2_WORKER_DISPOSABLE_PASS',checks,postgres:scalar('show server_version')}));
 } catch (error) { failure = error; console.error(error); }
 finally {

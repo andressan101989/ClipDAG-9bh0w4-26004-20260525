@@ -15,7 +15,7 @@ const MARKER = 'SYNTHETIC_COMPILER_PRIVATE_MARKER';
 const AT = '2026-11-08T12:00:00.000Z';
 const candidateBytes = readFileSync(new URL('.github/nelyon-web-control-centers-b2-release-descriptor.json', root));
 const hash = gate.sha256Hex;
-function fixture(at = AT, backupLifetimeHours = 22) {
+function fixture(at = AT, backupLifetimeHours = 22, approvalLifetimeHours = 23) {
   const descriptor = JSON.parse(candidateBytes);
   const c = descriptor.contract;
   const policy = JSON.parse(readFileSync(new URL('.github/nelyon-production-release-policy.json', root)));
@@ -48,9 +48,9 @@ function fixture(at = AT, backupLifetimeHours = 22) {
     publicContractSha256: descriptor.public_contract_sha256, phase: c.to_phase,
     issuedFor: { baselineSha: c.baseline_sha, reviewedSourceSha: c.reviewed_source_sha, integrationBaseSha: c.integration_base_sha },
     successorCatalog: { schemaVersion: 1, records: [{ kind: 'relation', identity: 'private.synthetic', expectedCanonicalJson, expectedSha256: hash(expectedCanonicalJson) }] },
-    securityAdvisor: { schemaVersion: 1, baselineSha256: '2'.repeat(64), records: [] },
-    backup: { schemaVersion: 1, provider: 'supabase', kind: 'physical', projectRefSha256: '3'.repeat(64), evidenceSha256: '4'.repeat(64), status: 'COMPLETED', completedAt: new Date(Date.parse(at) - 7200000).toISOString(), expiresAt: new Date(Date.parse(at) + backupLifetimeHours * 3600000).toISOString() },
-    approval: { schemaVersion: 1, decision: 'APPROVED', scope: [c.to_phase], authorizationSha256: '5'.repeat(64), approvedAt: new Date(Date.parse(at) - 3600000).toISOString(), expiresAt: new Date(Date.parse(at) + 82800000).toISOString() } };
+    securityAdvisor: { schemaVersion: 2, baselineSha256: hash('[]\n'), baselineItems: [], records: [] },
+    backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical', projectRefSha256: '3'.repeat(64), evidenceSha256: '4'.repeat(64), status: 'COMPLETED', insertedAt: new Date(Date.parse(at) - 7200000).toISOString(), completedObservedAt: new Date(Date.parse(at) - 5400000).toISOString(), expiresAt: new Date(Date.parse(at) + backupLifetimeHours * 3600000).toISOString() },
+    approval: { schemaVersion: 1, decision: 'APPROVED', scope: [c.to_phase], authorizationSha256: '5'.repeat(64), approvedAt: new Date(Date.parse(at) - 3600000).toISOString(), expiresAt: new Date(Date.parse(at) + approvalLifetimeHours * 3600000).toISOString() } };
   authority.successorCatalog.records.push(...b2SyntheticRelationAclRecords(authority.successorCatalog.records));
   const authorityJson = JSON.stringify(authority);
   descriptor.private_authority.sha256 = hash(authorityJson);
@@ -144,7 +144,7 @@ test('B2 protected proof requires minted context exact binding and fresh pre inv
   const args = { manifest, authorityContext: f.context(), inventory: f.inventory, requestedAt: AT };
   const proof = gate.verifyB2ProtectedAuthority(args);
   assert.deepEqual(proof, { authorityReceipt: f.context().receipt });
-  assert.doesNotMatch(JSON.stringify(proof), new RegExp(`${MARKER}|private.synthetic|completedAt|capturedAt`));
+  assert.doesNotMatch(JSON.stringify(proof), new RegExp(`${MARKER}|private.synthetic|completedAt|insertedAt|completedObservedAt|capturedAt`));
   for (const mutate of [
     a => { a.authorityContext = undefined; },
     a => { a.authorityContext = structuredClone(a.authorityContext); },
@@ -387,10 +387,13 @@ test('B2 minted context must be valid at trusted operation time, including exclu
   assert.deepEqual(gate.verifyB2ProtectedAuthority({ manifest, authorityContext: context,
     inventory: f.inventory, requestedAt: AT }), { authorityReceipt: context.receipt });
   const longBackup = fixture(AT, 48);
-  const approvalExpiry = '2026-11-09T11:00:00.000Z';
+  assert.throws(() => longBackup.context(), { code: 'RELEASE_AUTHORITY_CONTEXT_INVALID' },
+    'an independent authority cannot extend the insertion-based 24-hour limit');
+  const shortApproval = fixture(AT, 22, 1);
+  const approvalExpiry = '2026-11-08T13:00:00.000Z';
   assert.throws(() => gate.verifyB2ProtectedAuthority({
-    manifest: gate.buildManifest(longBackup.manifestInput(compile(longBackup.input))),
-    authorityContext: longBackup.context(), inventory: { ...longBackup.inventory, capturedAt: approvalExpiry },
+    manifest: gate.buildManifest(shortApproval.manifestInput(compile(shortApproval.input))),
+    authorityContext: shortApproval.context(), inventory: { ...shortApproval.inventory, capturedAt: approvalExpiry },
     requestedAt: approvalExpiry,
   }), { code: 'B2_AUTHORITY_REQUIRED' });
 });

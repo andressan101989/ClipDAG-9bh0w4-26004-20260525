@@ -170,11 +170,17 @@ const CATALOG_PROJECTIONS = Object.freeze({
     sourceSha256: projectionDigest, configSha256: projectionDigest },
 });
 const ADVISOR_PROJECTION = Object.freeze({
-  fingerprint: projectionDigest, identity: projectionText, type: projectionText,
+  fingerprint: projectionDigest, identity: projectionText, objectIdentity: value => {
+    if (!matchesString(value, /^(?:(?:function|relation):[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*|auth:[A-Za-z0-9_-]+)$/)) reject();
+  }, type: projectionText,
   severity: oneOf(['INFO', 'WARN', 'ERROR']), objectSha256: projectionDigest,
   attestationSha256: projectionDigest, negativeEvidenceSha256: projectionDigest,
   originSha256: projectionDigest,
 });
+const ADVISOR_RETAIN_PROJECTION = Object.freeze(Object.fromEntries([
+  ...Object.entries(ADVISOR_PROJECTION).filter(([key]) => !['attestationSha256', 'negativeEvidenceSha256', 'originSha256'].includes(key)),
+  ['baselineSha256', projectionDigest],
+]));
 
 function validateExpectedJson(text, expectedSha256, schema, identity) {
   boundedText(text, 2, 65_536);
@@ -204,8 +210,23 @@ function validateCatalogRecords(records) {
   }
 }
 
-function validateAdvisorRecords(records) {
-  if (!Array.isArray(records) || records.length > 256) reject();
+function validateAdvisorRecords(records, baselineItems, baselineSha256) {
+  if (!Array.isArray(records) || records.length > 1024) reject();
+  if (!Array.isArray(baselineItems) || baselineItems.length > 1024) reject();
+  const baseline = new Map();
+  let lastFingerprint = null;
+  for (const item of baselineItems) {
+    exactKeys(item, ['fingerprint', 'level', 'resource_kind']);
+    projectionDigest(item.fingerprint);
+    oneOf(['INFO', 'WARN', 'ERROR'])(item.level);
+    projectionText(item.resource_kind);
+    if (lastFingerprint !== null && item.fingerprint <= lastFingerprint) reject();
+    baseline.set(item.fingerprint, item);
+    lastFingerprint = item.fingerprint;
+  }
+  const baselineBytes = `${JSON.stringify(normalizeCanonical(baselineItems))}\n`;
+  if (createHash('sha256').update(baselineBytes, 'utf8').digest('hex') !== baselineSha256) reject();
+  const covered = new Set();
   let previous = null;
   const identities = new Set();
   for (const record of records) {
@@ -214,12 +235,23 @@ function validateAdvisorRecords(records) {
     if (!ADVISOR_ACTIONS.has(record.action)) reject();
     boundedText(record.identity, 1, 512);
     validateExpectedJson(record.expectedCanonicalJson, record.expectedSha256,
-      ADVISOR_PROJECTION, record.identity);
+      record.action === 'retain' ? ADVISOR_RETAIN_PROJECTION : ADVISOR_PROJECTION, record.identity);
+    const projection = JSON.parse(record.expectedCanonicalJson);
+    if (record.identity !== `advisor:${projection.fingerprint}`) reject();
+    const predecessor = baseline.get(projection.fingerprint);
+    if (record.action === 'add') {
+      if (predecessor) reject();
+    } else {
+      if (!predecessor || predecessor.level !== projection.severity || predecessor.resource_kind !== projection.type) reject();
+      covered.add(projection.fingerprint);
+    }
+    if (record.action === 'retain' && projection.baselineSha256 !== baselineSha256) reject();
     const identity = `${record.action}\u0000${record.identity}`;
     if (identities.has(record.identity) || (previous !== null && identity <= previous)) reject();
     identities.add(record.identity);
     previous = identity;
   }
+  if (covered.size !== baseline.size) reject();
 }
 
 /**
@@ -250,21 +282,28 @@ export function parseB2PrivateAuthority(authorityJson, expectedSha256, requested
     if (authority.successorCatalog.schemaVersion !== 1) reject();
     validateCatalogRecords(authority.successorCatalog.records);
 
-    exactKeys(authority.securityAdvisor, ['schemaVersion', 'baselineSha256', 'records']);
-    if (authority.securityAdvisor.schemaVersion !== 1
+    exactKeys(authority.securityAdvisor, ['schemaVersion', 'baselineSha256', 'baselineItems', 'records']);
+    if (authority.securityAdvisor.schemaVersion !== 2
       || !matchesString(authority.securityAdvisor.baselineSha256, HEX_64)) reject();
-    validateAdvisorRecords(authority.securityAdvisor.records);
+    validateAdvisorRecords(authority.securityAdvisor.records, authority.securityAdvisor.baselineItems,
+      authority.securityAdvisor.baselineSha256);
 
     exactKeys(authority.backup, [
       'schemaVersion', 'provider', 'kind', 'projectRefSha256', 'evidenceSha256',
-      'status', 'completedAt', 'expiresAt',
+      'status', 'insertedAt', 'completedObservedAt', 'expiresAt',
     ]);
-    if (authority.backup.schemaVersion !== 1 || authority.backup.provider !== 'supabase'
+    if (authority.backup.schemaVersion !== 2 || authority.backup.provider !== 'supabase'
       || authority.backup.kind !== 'physical' || authority.backup.status !== 'COMPLETED'
       || !matchesString(authority.backup.projectRefSha256, HEX_64)
       || !matchesString(authority.backup.evidenceSha256, HEX_64)) reject();
-    const backupCompleted = timestamp(authority.backup.completedAt);
+    // The independently approved authority attests when an authenticated read
+    // observed COMPLETED. Supabase's inserted_at is not a completion timestamp.
+    // Both facts are bound by the authority digest; neither is API-signed here.
+    const backupInserted = timestamp(authority.backup.insertedAt);
+    const backupObserved = timestamp(authority.backup.completedObservedAt);
     const backupExpires = timestamp(authority.backup.expiresAt);
+    if (backupInserted > backupObserved || backupExpires <= backupObserved
+      || backupExpires - backupInserted > 86_400_000) reject();
 
     exactKeys(authority.approval, [
       'schemaVersion', 'decision', 'scope', 'authorizationSha256', 'approvedAt', 'expiresAt',
@@ -275,7 +314,7 @@ export function parseB2PrivateAuthority(authorityJson, expectedSha256, requested
       || !matchesString(authority.approval.authorizationSha256, HEX_64)) reject();
     const approvedAt = timestamp(authority.approval.approvedAt);
     const approvalExpires = timestamp(authority.approval.expiresAt);
-    if (backupCompleted > approvedAt || approvedAt > requestedMillis
+    if (backupObserved > approvedAt || approvedAt > requestedMillis
       || requestedMillis >= backupExpires || requestedMillis >= approvalExpires) reject();
 
     const sha256 = createHash('sha256').update(authorityJson, 'utf8').digest('hex');

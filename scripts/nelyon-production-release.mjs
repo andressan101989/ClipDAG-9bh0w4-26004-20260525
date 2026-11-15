@@ -2870,7 +2870,7 @@ export function verifyB2ProtectedAuthority({ manifest, authorityContext, invento
     // Only after WeakSet authentication may the non-enumerable private plane be
     // inspected. These values are compared in memory and never projected.
     const { backup, approval } = authorityContext.privateAuthority;
-    if (operationTime < Date.parse(backup.completedAt) || operationTime < Date.parse(approval.approvedAt)
+    if (operationTime < Date.parse(backup.completedObservedAt) || operationTime < Date.parse(approval.approvedAt)
       || operationTime >= Date.parse(backup.expiresAt) || operationTime >= Date.parse(approval.expiresAt)) b2AuthorityReject();
     const descriptor = parseB2ReleaseDescriptor(canonicalJson(authorityContext.descriptor), sha256Hex(canonicalJson(authorityContext.descriptor)));
     if (descriptor.contract.state !== 'approved'
@@ -5958,7 +5958,7 @@ export async function resolveB2HistoricalAuthority({ verifiedSource, descriptorB
       assertAuthorityReceiptMatch(receipt, verified.proofs[index].receipt);
       const interval = verified.intervals[index];
       if (b2ProofTime(interval.startedAt) < b2ProofTime(approval.approvedAt)
-        || b2ProofTime(interval.startedAt) < b2ProofTime(backup.completedAt)
+        || b2ProofTime(interval.startedAt) < b2ProofTime(backup.completedObservedAt)
         || b2ProofTime(interval.completedAt) >= b2ProofTime(approval.expiresAt)
         || b2ProofTime(interval.completedAt) >= b2ProofTime(backup.expiresAt)) b2RecoveryReject();
     }
@@ -5984,9 +5984,20 @@ function verifyB2CurrentGate({ request, manifest, currentGate, authorityContext,
   return receipt;
 }
 
+function verifyB2CurrentBackup(options, bindApproved) {
+  const approved = options.authorityContext.privateAuthority.backup;
+  const project = options.policy?.supabase?.project_ref;
+  if (project !== 'aewwdlvbwpczqyvkwvvj' || approved.projectRefSha256 !== sha256Hex(project)) b2RecoveryReject();
+  const observed = selectRecentCompletedBackup({ backups: [options.backup] }, options.requestedAt, options.policy.supabase.backup);
+  const age = b2ProofTime(options.requestedAt) - b2ProofTime(observed.inserted_at);
+  if (age < 0 || age >= 86_400_000) b2RecoveryReject();
+  if (bindApproved && (observed.inserted_at !== approved.insertedAt
+    || sha256Hex(canonicalJson(observed)) !== approved.evidenceSha256)) b2RecoveryReject();
+}
+
 function verifyB2CurrentOperation(options) {
   const receipt = verifyB2CurrentGate(options);
-  selectRecentCompletedBackup({ backups: [options.backup] }, options.requestedAt, options.policy.supabase.backup);
+  verifyB2CurrentBackup(options, !['postcheck_recovery', 'admin_recovery'].includes(options.request?.mode));
   return receipt;
 }
 
@@ -6011,7 +6022,9 @@ export function verifyB2RecoveryOperation(options) {
   try {
     const requestedAt = options.requestedAt ?? new Date().toISOString();
     const result = verifyB2RecoveryPreflight({ ...options, requestedAt });
-    selectRecentCompletedBackup({ backups: [options.backup] }, requestedAt, options.policy.supabase.backup);
+    // A historical authority binds the original observation. Recovery separately
+    // observes a fresh backup in the same project; it must not reuse its old TTL.
+    verifyB2CurrentBackup({ ...options, requestedAt }, false);
     return result;
   } catch { b2RecoveryReject(); }
 }
@@ -6132,7 +6145,7 @@ export async function executeB2ProtectedMutation({ manifest, request, currentGat
         || binding.expectedPrivateAuthoritySha256 !== receipt.privateAuthoritySha256) b2RecoveryReject();
       const { approval, backup: approvedBackup } = authorityContext.privateAuthority;
       const at = b2ProofTime(requestedAt);
-      if (at < b2ProofTime(approval.approvedAt) || at < b2ProofTime(approvedBackup.completedAt)
+      if (at < b2ProofTime(approval.approvedAt) || at < b2ProofTime(approvedBackup.completedObservedAt)
         || at >= b2ProofTime(approval.expiresAt) || at >= b2ProofTime(approvedBackup.expiresAt)) b2RecoveryReject();
     }
     await persistB2MutationProof({ trustedProofRoot, proofPath, request, currentGate, requestedAt, stage, receipt, mutate });

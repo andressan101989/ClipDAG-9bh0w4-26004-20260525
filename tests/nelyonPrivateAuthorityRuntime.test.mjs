@@ -59,11 +59,11 @@ function authorityFixture() {
       kind: 'relation', identity: relation.identity,
       expectedCanonicalJson: relationBytes, expectedSha256: hash(relationBytes),
     }] },
-    securityAdvisor: { schemaVersion: 1, baselineSha256: '5'.repeat(64), records: [] },
+    securityAdvisor: { schemaVersion: 2, baselineSha256: hash('[]\n'), baselineItems: [], records: [] },
     backup: {
-      schemaVersion: 1, provider: 'supabase', kind: 'physical',
+      schemaVersion: 2, provider: 'supabase', kind: 'physical',
       projectRefSha256: '6'.repeat(64), evidenceSha256: '7'.repeat(64), status: 'COMPLETED',
-      completedAt: '2026-11-08T10:00:00.000Z', expiresAt: '2026-11-09T10:00:00.000Z',
+      insertedAt: '2026-11-08T10:00:00.000Z', completedObservedAt: '2026-11-08T10:30:00.000Z', expiresAt: '2026-11-09T10:00:00.000Z',
     },
     approval: {
       schemaVersion: 1, decision: 'APPROVED', scope: [contract.to_phase],

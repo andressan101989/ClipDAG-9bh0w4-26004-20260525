@@ -41,9 +41,9 @@ function fixture() {
       reviewedSourceSha: '3'.repeat(40), integrationBaseSha: '4'.repeat(40) },
     successorCatalog: { schemaVersion: 1, records: [{ kind: 'relation', identity: 'private.synthetic',
       expectedCanonicalJson, expectedSha256: hash(expectedCanonicalJson) }] },
-    securityAdvisor: { schemaVersion: 1, baselineSha256: '5'.repeat(64), records: [] },
-    backup: { schemaVersion: 1, provider: 'supabase', kind: 'physical', projectRefSha256: '6'.repeat(64),
-      evidenceSha256: '7'.repeat(64), status: 'COMPLETED', completedAt: '2026-11-08T10:00:00.000Z',
+    securityAdvisor: { schemaVersion: 2, baselineSha256: hash('[]\n'), baselineItems: [], records: [] },
+    backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical', projectRefSha256: '6'.repeat(64),
+      evidenceSha256: '7'.repeat(64), status: 'COMPLETED', insertedAt: '2026-11-08T10:00:00.000Z', completedObservedAt: '2026-11-08T10:30:00.000Z',
       expiresAt: '2026-11-09T10:00:00.000Z' },
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: ['web-control-centers-b2'],
       authorizationSha256: '8'.repeat(64), approvedAt: '2026-11-08T11:00:00.000Z',
@@ -131,10 +131,10 @@ test('returns exactly the sanitized binding and four section digests', () => {
     successorCatalog: '{"records":[{"expectedCanonicalJson":' + JSON.stringify(a.successorCatalog.records[0].expectedCanonicalJson)
       + ',"expectedSha256":"' + a.successorCatalog.records[0].expectedSha256
       + '","identity":"private.synthetic","kind":"relation"}],"schemaVersion":1}\n',
-    securityAdvisor: '{"baselineSha256":"' + '5'.repeat(64) + '","records":[],"schemaVersion":1}\n',
-    backup: '{"completedAt":"2026-11-08T10:00:00.000Z","evidenceSha256":"' + '7'.repeat(64)
-      + '","expiresAt":"2026-11-09T10:00:00.000Z","kind":"physical","projectRefSha256":"'
-      + '6'.repeat(64) + '","provider":"supabase","schemaVersion":1,"status":"COMPLETED"}\n',
+    securityAdvisor: '{"baselineItems":[],"baselineSha256":"' + hash('[]\n') + '","records":[],"schemaVersion":2}\n',
+    backup: '{"completedObservedAt":"2026-11-08T10:30:00.000Z","evidenceSha256":"' + '7'.repeat(64)
+      + '","expiresAt":"2026-11-09T10:00:00.000Z","insertedAt":"2026-11-08T10:00:00.000Z","kind":"physical","projectRefSha256":"'
+      + '6'.repeat(64) + '","provider":"supabase","schemaVersion":2,"status":"COMPLETED"}\n',
     approval: '{"approvedAt":"2026-11-08T11:00:00.000Z","authorizationSha256":"' + '8'.repeat(64)
       + '","decision":"APPROVED","expiresAt":"2026-11-09T11:00:00.000Z",'
       + '"schemaVersion":1,"scope":["web-control-centers-b2"]}\n',

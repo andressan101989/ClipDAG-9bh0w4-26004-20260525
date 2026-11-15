@@ -1952,9 +1952,9 @@ test('Web Control Centers B1 baseline accepts canonical PostgreSQL type spelling
   }).sort((a,b) => a.identity.localeCompare(b.identity));
   const authority = { schemaVersion: 1, authorityId: 'synthetic-baseline-authority', publicContractSha256: sha256(canonicalJson(contract)),
     phase: contract.to_phase, issuedFor: { baselineSha: contract.baseline_sha, reviewedSourceSha: contract.reviewed_source_sha, integrationBaseSha: contract.integration_base_sha },
-    successorCatalog: { schemaVersion: 1, records }, securityAdvisor: { schemaVersion: 1, baselineSha256: '1'.repeat(64), records: [] },
-    backup: { schemaVersion: 1, provider: 'supabase', kind: 'physical', projectRefSha256: '2'.repeat(64), evidenceSha256: '3'.repeat(64), status: 'COMPLETED',
-      completedAt: '2026-11-08T10:00:00.000Z', expiresAt: '2026-11-09T10:00:00.000Z' },
+    successorCatalog: { schemaVersion: 1, records }, securityAdvisor: { schemaVersion: 2, baselineSha256: sha256('[]\n'), baselineItems: [], records: [] },
+    backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical', projectRefSha256: '2'.repeat(64), evidenceSha256: '3'.repeat(64), status: 'COMPLETED',
+      insertedAt: '2026-11-08T10:00:00.000Z', completedObservedAt: '2026-11-08T10:30:00.000Z', expiresAt: '2026-11-09T10:00:00.000Z' },
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: [contract.to_phase], authorizationSha256: '4'.repeat(64),
       approvedAt: '2026-11-08T11:00:00.000Z', expiresAt: '2026-11-09T11:00:00.000Z' } };
   const authorityJson = JSON.stringify(authority);
@@ -3937,7 +3937,7 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
   const args = { phase: 'pre', policy: p, request: request(), manifest: m, token: 'synthetic',
     fetchImpl: successfulFetchWithFunctionVersion([], 35), observedAt: at,
     adapterSourceSha256: m.compiler.snapshot_adapter_sha256 };
-  const legacy = await adapter.captureProductionSnapshot(args);
+  const legacy = await adapter.captureProductionSnapshot({ ...args, observedAt: '2026-10-12T12:00:00.000Z' });
   for (const exception of p.security_advisor.exceptions) {
     const actual = legacy.rpc_security.items.find(item => item.name === exception.object.name);
     if (actual) {
@@ -3963,11 +3963,12 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
   const authority = { schemaVersion: 1, authorityId: 'synthetic-b2', publicContractSha256: sha256(canonicalJson(c)), phase: c.to_phase,
     issuedFor: { baselineSha: c.baseline_sha, reviewedSourceSha: c.reviewed_source_sha, integrationBaseSha: c.integration_base_sha },
     successorCatalog: { schemaVersion: 1, records: [{ kind: 'relation', identity: 'private.PRIVATE_B2_CAPTURE_MARKER', expectedCanonicalJson, expectedSha256: sha256(expectedCanonicalJson) }] },
-    securityAdvisor: { schemaVersion: 1, baselineSha256: legacy.cron_security.advisors.sha256, records: [] },
-    backup: { schemaVersion: 1, provider: 'supabase', kind: 'physical', projectRefSha256: sha256(p.supabase.project_ref), evidenceSha256: sha256(canonicalJson(legacy.backup)),
-      status: 'COMPLETED', completedAt: '2026-10-12T10:00:00.000Z', expiresAt: '2026-10-13T10:00:00.000Z' },
+    securityAdvisor: { schemaVersion: 2, baselineSha256: legacy.cron_security.advisors.sha256, baselineItems: legacy.cron_security.advisors.items, records: [] },
+    backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical', projectRefSha256: sha256(p.supabase.project_ref), evidenceSha256: sha256(canonicalJson(legacy.backup)),
+      status: 'COMPLETED', insertedAt: legacy.backup.inserted_at, completedObservedAt: legacy.observed_at,
+      expiresAt: new Date(Date.parse(legacy.backup.inserted_at) + 86_400_000).toISOString() },
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: [c.to_phase], authorizationSha256: '5'.repeat(64),
-      approvedAt: '2026-10-12T11:00:00.000Z', expiresAt: '2026-10-13T11:00:00.000Z' } };
+      approvedAt: legacy.observed_at, expiresAt: '2026-10-13T11:00:00.000Z' } };
   const scheduleRelations = [
     'public.media_asset_links',
     'public.media_assets',
@@ -4017,12 +4018,66 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
     return successfulFetchWithFunctionVersion([], 35)(url, options);
   };
   const pre = await adapter.captureProductionSnapshot({ ...args, authorityContext, requestedAt: at, fetchImpl: preFetch });
+  const inconsistentAuthority = structuredClone(authority);
+  inconsistentAuthority.backup.insertedAt = new Date(Date.parse(legacy.backup.inserted_at) + 1_000).toISOString();
+  assert.equal(inconsistentAuthority.backup.evidenceSha256, sha256(canonicalJson(legacy.backup)));
+  const inconsistentJson = JSON.stringify(inconsistentAuthority);
+  const inconsistentDescriptor = { ...d, private_authority: { ...d.private_authority, sha256: sha256(inconsistentJson) } };
+  const inconsistentDescriptorBytes = JSON.stringify(inconsistentDescriptor);
+  const inconsistentContext = createReleaseAuthorityContext({ ...contextArgs,
+    descriptorBytes: inconsistentDescriptorBytes, expectedDescriptorSha256: sha256(inconsistentDescriptorBytes),
+    authorityJson: inconsistentJson, expectedPrivateAuthoritySha256: sha256(inconsistentJson) });
+  const inconsistentManifest = structuredClone(m);
+  Object.assign(inconsistentManifest.resources.web_control_centers_b2_transition, {
+    descriptorSha256: inconsistentContext.descriptorSha256, expectedPrivateAuthoritySha256: inconsistentContext.privateAuthoritySha256,
+  });
+  await assert.rejects(adapter.captureProductionSnapshot({ ...args, manifest: inconsistentManifest,
+    authorityContext: inconsistentContext, requestedAt: at, fetchImpl: preFetch }),
+  { code: 'B2_SNAPSHOT_AUTHORITY_INVALID' }, 'a repinned insertedAt cannot contradict the unchanged observed backup digest');
   assert.doesNotMatch(JSON.stringify(pre), /PRIVATE_B2_CAPTURE_MARKER|expectedCanonicalJson/);
   const result = adapter.verifyProductionPreSnapshot({ ...args, pre: JSON.parse(JSON.stringify(pre)),
     authorityContext: createReleaseAuthorityContext(contextArgs), requestedAt: at });
   assert.equal(result.stage, 'pre_snapshot'); assert.equal(result.result, 'VERIFIED');
   assert.equal(result.checks.catalog, false, 'pre cannot claim successor catalog verification');
   assert.equal(result.checks.sourceParity, false, 'pre cannot claim deployed successor source parity');
+  // A self-consistent new authority baseline is not a replacement for the
+  // independently reviewed legacy baseline. Observe it freshly, then reject
+  // before mutation when legacy reconciliation still commits the old state.
+  const unreviewedBody = { lints: [{ name: 'synthetic_auth_warning', level: 'WARN', facing: 'EXTERNAL',
+    categories: ['SECURITY'], metadata: { type: 'auth', entity: 'synthetic' } }] };
+  const unreviewedNormalized = adapter.normalizeSecurityAdvisors(unreviewedBody);
+  const unreviewedAuthority = structuredClone(authority);
+  const unreviewedProjection = adapter.b2FreshAdvisors(unreviewedBody, [{ action: 'retain',
+    fingerprint: unreviewedNormalized.items[0].fingerprint, objectIdentity: 'auth:synthetic',
+    baselineSha256: unreviewedNormalized.sha256 }])[0];
+  const unreviewedCanonical = canonicalJson(unreviewedProjection).trimEnd();
+  unreviewedAuthority.securityAdvisor = { schemaVersion: 2, baselineSha256: unreviewedNormalized.sha256,
+    baselineItems: unreviewedNormalized.items, records: [{ action: 'retain', identity: unreviewedProjection.identity,
+      expectedCanonicalJson: unreviewedCanonical, expectedSha256: sha256(unreviewedCanonical) }] };
+  const unreviewedJson = JSON.stringify(unreviewedAuthority);
+  const unreviewedDescriptorBytes = JSON.stringify({ ...d, private_authority: { ...d.private_authority, sha256: sha256(unreviewedJson) } });
+  const unreviewedContext = createReleaseAuthorityContext({ ...contextArgs, descriptorBytes: unreviewedDescriptorBytes,
+    expectedDescriptorSha256: sha256(unreviewedDescriptorBytes), authorityJson: unreviewedJson,
+    expectedPrivateAuthoritySha256: sha256(unreviewedJson) });
+  const unreviewedManifest = structuredClone(m);
+  Object.assign(unreviewedManifest.resources.web_control_centers_b2_transition, {
+    descriptorSha256: unreviewedContext.descriptorSha256, expectedPrivateAuthoritySha256: unreviewedContext.privateAuthoritySha256 });
+  assert.equal(adapter.verifyB2AdvisorPrestate(unreviewedBody, unreviewedContext), true,
+    'the independent rejection is not an authority/body mismatch');
+  const unreviewedLegacy = structuredClone(legacy);
+  unreviewedLegacy.cron_security.advisors = unreviewedNormalized;
+  const changedDigests = adapter.buildProductionBaselineDigests({ evidence: unreviewedLegacy, policy: p });
+  assert.notDeepEqual(changedDigests, p.baseline.evidence_digests,
+    'legacy reconciliation independently pins a different Advisor baseline');
+  let reachedPreRelationCheck = false;
+  await assert.rejects(adapter.captureProductionSnapshot({ ...args, authorityContext: unreviewedContext,
+    manifest: unreviewedManifest, requestedAt: at, fetchImpl: (url, options) => {
+      const query = options?.body ? JSON.parse(options.body).query : '';
+      if (query?.includes('nelyon-b2-relation-acl-v1')) reachedPreRelationCheck = true;
+      return new URL(url).pathname.endsWith('/advisors/security') ? jsonResponse(unreviewedBody) : preFetch(url, options);
+    } }), { code: 'B2_SNAPSHOT_AUTHORITY_INVALID' },
+  'fresh capture invokes pre verification and cannot override legacy baseline reconciliation');
+  assert.equal(reachedPreRelationCheck, true, 'failure occurs after complete private Advisor pre-state validation');
   assert.equal(result.checks.functionInventory, true, 'pre inventory was freshly compared against its baseline');
   const changed = structuredClone(pre); changed.authority_verification.receipt.backupSha256 = '0'.repeat(64); resignEvidence(changed);
   assert.throws(() => adapter.verifyProductionPreSnapshot({ ...args, pre: changed, authorityContext, requestedAt: at }), { code: 'B2_SNAPSHOT_AUTHORITY_INVALID' });

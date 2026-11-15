@@ -67,9 +67,9 @@ function fixture(overrides = {}) {
   const advisor = {
     attestationSha256: '1'.repeat(64),
     fingerprint: '2'.repeat(64),
-    identity: 'public.synthetic_relation',
+    identity: `advisor:${'2'.repeat(64)}`,
     negativeEvidenceSha256: '3'.repeat(64),
-    objectSha256: '0'.repeat(64),
+    objectIdentity: 'function:public.synthetic_rpc', objectSha256: '0'.repeat(64),
     originSha256: '4'.repeat(64),
     severity: 'WARN',
     type: 'rls_disabled',
@@ -97,13 +97,13 @@ function fixture(overrides = {}) {
         const a = `${left.kind}\0${left.identity}`, b = `${right.kind}\0${right.identity}`;
         return a < b ? -1 : a > b ? 1 : 0;
       }) },
-    securityAdvisor: { schemaVersion: 1, baselineSha256: '5'.repeat(64), records: [{
-      action: 'retain', identity: advisor.identity, expectedCanonicalJson: advisorJson,
+    securityAdvisor: { schemaVersion: 2, baselineSha256: hash(compactCanonical([{ fingerprint: advisor.fingerprint, level: advisor.severity, resource_kind: advisor.type }]) + '\n'), baselineItems: [{ fingerprint: advisor.fingerprint, level: advisor.severity, resource_kind: advisor.type }], records: [{
+      action: 'replace', identity: advisor.identity, expectedCanonicalJson: advisorJson,
       expectedSha256: hash(advisorJson),
     }] },
-    backup: { schemaVersion: 1, provider: 'supabase', kind: 'physical',
+    backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical',
       projectRefSha256: '6'.repeat(64), evidenceSha256: '7'.repeat(64), status: 'COMPLETED',
-      completedAt: '2026-11-10T10:00:00.000Z', expiresAt: '2026-11-11T10:00:00.000Z' },
+      insertedAt: '2026-11-10T10:00:00.000Z', completedObservedAt: '2026-11-10T10:30:00.000Z', expiresAt: '2026-11-11T10:00:00.000Z' },
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: ['web-control-centers-b2'],
       authorizationSha256: '8'.repeat(64), approvedAt: '2026-11-10T11:00:00.000Z',
       expiresAt: '2026-11-11T11:00:00.000Z' },
@@ -159,7 +159,7 @@ test('trusted compiler derives the complete source authority from exact reviewed
   assert.deepEqual(result.functions, [{ identity: 'process-scheduled-publications',
     deployedSha256: '9'.repeat(64), sourceSha256: f.authorityContext.descriptor.contract.functions[0].source_sha256,
     configSha256: f.authorityContext.descriptor.contract.functions[0].config_sha256, verifyJwt: false }]);
-  assert.deepEqual(result.advisors, [{ fingerprint: f.advisor.fingerprint,
+  assert.deepEqual(result.advisors, [{ action: 'replace', objectIdentity: f.advisor.objectIdentity, fingerprint: f.advisor.fingerprint,
     attestationSha256: f.advisor.attestationSha256,
     negativeEvidenceSha256: f.advisor.negativeEvidenceSha256,
     originSha256: f.advisor.originSha256 }]);
@@ -294,4 +294,55 @@ test('every current B2 protected host entry rejects missing ACL before fetch or 
     { code: 'B2_SOURCE_PARITY_AUTHORITY_INVALID' });
   }
   assert.equal(fetches, 0);
+});
+
+test('Advisor v2 retain is blocked for touched objects even across overloads, but replacement is explicit', () => {
+  for (const kind of ['function', 'relation']) {
+    for (const action of ['retain', 'replace']) {
+      const f = fixture({ mutateAuthority(authority) {
+        const target = authority.successorCatalog.records.find(row => row.kind === kind);
+        const record = authority.securityAdvisor.records[0];
+        const value = JSON.parse(record.expectedCanonicalJson);
+        value.objectIdentity = `${kind}:${target.identity.split('(')[0]}`;
+        if (action === 'retain') {
+          delete value.attestationSha256; delete value.negativeEvidenceSha256; delete value.originSha256;
+          value.baselineSha256 = authority.securityAdvisor.baselineSha256;
+        }
+        record.action = action; record.expectedCanonicalJson = compactCanonical(value);
+        record.expectedSha256 = hash(record.expectedCanonicalJson);
+      } });
+      const preflight = () => sourceParityModule.verifyB2DatabaseSourcePreflight({ authorityContext: f.authorityContext,
+        manifest: f.manifest, descriptorBytes: f.descriptorBytes, migrationBytes });
+      for (const check of [preflight, () => compileFixture(f)]) {
+        if (action === 'retain') assert.throws(check, { code: 'B2_SOURCE_PARITY_AUTHORITY_INVALID' });
+        else assert.doesNotThrow(check);
+      }
+    }
+  }
+});
+
+test('Advisor v2 omission cannot hide a touched function from source preflight', () => {
+  const f = fixture({ mutateAuthority(authority) {
+    const target = authority.successorCatalog.records.find(row => row.kind === 'function');
+    const record = authority.securityAdvisor.records[0], value = JSON.parse(record.expectedCanonicalJson);
+    value.objectIdentity = `function:${target.identity.split('(')[0]}`;
+    delete value.attestationSha256; delete value.negativeEvidenceSha256; delete value.originSha256;
+    value.baselineSha256 = authority.securityAdvisor.baselineSha256;
+    record.action = 'retain'; record.expectedCanonicalJson = compactCanonical(value); record.expectedSha256 = hash(record.expectedCanonicalJson);
+    authority.successorCatalog.records = authority.successorCatalog.records.filter(row => row.identity !== target.identity);
+  } });
+  assert.throws(() => sourceParityModule.verifyB2DatabaseSourcePreflight({ authorityContext: f.authorityContext,
+    manifest: f.manifest, descriptorBytes: f.descriptorBytes, migrationBytes }), { code: 'B2_SOURCE_PARITY_AUTHORITY_INVALID' });
+});
+
+test('Advisor v2 cannot retain the fixed changed link relation by omitting it from catalog', () => {
+  const f = fixture({ mutateAuthority(authority) {
+    const record = authority.securityAdvisor.records[0], value = JSON.parse(record.expectedCanonicalJson);
+    value.objectIdentity = 'relation:public.media_asset_links';
+    delete value.attestationSha256; delete value.negativeEvidenceSha256; delete value.originSha256;
+    value.baselineSha256 = authority.securityAdvisor.baselineSha256;
+    record.action = 'retain'; record.expectedCanonicalJson = compactCanonical(value); record.expectedSha256 = hash(record.expectedCanonicalJson);
+  } });
+  assert.throws(() => sourceParityModule.verifyB2DatabaseSourcePreflight({ authorityContext: f.authorityContext,
+    manifest: f.manifest, descriptorBytes: f.descriptorBytes, migrationBytes }), { code: 'B2_SOURCE_PARITY_AUTHORITY_INVALID' });
 });

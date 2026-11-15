@@ -224,9 +224,9 @@ export async function b2AdminHistoricalFixture({ adminStages = [], observedAdmin
     publicContractSha256: descriptor.public_contract_sha256, phase: c.to_phase,
     issuedFor: { baselineSha: c.baseline_sha, reviewedSourceSha: c.reviewed_source_sha, integrationBaseSha: c.integration_base_sha },
     successorCatalog: { schemaVersion: 1, records: [{ kind: 'relation', identity: value.identity, expectedCanonicalJson: canonical, expectedSha256: hash(canonical) }] },
-    securityAdvisor: { schemaVersion: 1, baselineSha256: '4'.repeat(64), records: [] },
-    backup: { schemaVersion: 1, provider: 'supabase', kind: 'physical', projectRefSha256: '5'.repeat(64), evidenceSha256: '6'.repeat(64), status: 'COMPLETED',
-      completedAt: '2026-11-08T10:00:00.000Z', expiresAt: '2026-11-09T10:00:00.000Z' },
+    securityAdvisor: { schemaVersion: 2, baselineSha256: hash('[]\n'), baselineItems: [], records: [] },
+    backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical', projectRefSha256: hash(policy.supabase.project_ref), evidenceSha256: '6'.repeat(64), status: 'COMPLETED',
+      insertedAt: '2026-11-08T10:00:00.000Z', completedObservedAt: '2026-11-08T10:30:00.000Z', expiresAt: '2026-11-09T10:00:00.000Z' },
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: [c.to_phase], authorizationSha256: '7'.repeat(64),
       approvedAt: '2026-11-08T11:00:00.000Z', expiresAt: '2026-11-09T11:00:00.000Z' } };
   const relationAcl = release.canonicalJson({ identity: value.identity,

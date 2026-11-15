@@ -17,7 +17,7 @@ const AT = '2026-11-08T12:00:00.000Z';
 const MARKER = 'SYNTHETIC_B2_PRIVATE_MARKER';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const canonical = value => release.canonicalJson(value).trimEnd();
-function fixture() {
+function fixture({ backupInsertedAt = '2026-11-08T10:00:00.000Z' } = {}) {
   const contract = { id: 'synthetic-b2', to_phase: 'web-control-centers-b2', baseline_sha: 'a'.repeat(40),
     reviewed_source_sha: 'b'.repeat(40), integration_base_sha: 'c'.repeat(40), function_inventory: { before: 1, after: 2 } };
   const records = [
@@ -32,14 +32,15 @@ function fixture() {
     ['function_inventory', { identity: MARKER, verifyJwt: true, sourceSha256: '6'.repeat(64), configSha256: '7'.repeat(64) }],
   ].map(([kind, value]) => ({ kind, identity: value.identity, expectedCanonicalJson: canonical(value), expectedSha256: hash(canonical(value)) }))
     .sort((a, b) => a.kind.localeCompare(b.kind));
-  const advisor = { fingerprint: '8'.repeat(64), identity: MARKER, type: 'security', severity: 'WARN', objectSha256: '9'.repeat(64),
+  const advisor = { fingerprint: '8'.repeat(64), identity: `advisor:${'8'.repeat(64)}`, type: 'security', severity: 'WARN', objectIdentity: 'function:public.synthetic_rpc', objectSha256: '9'.repeat(64),
     attestationSha256: 'a'.repeat(64), negativeEvidenceSha256: 'b'.repeat(64), originSha256: 'c'.repeat(64) };
   const authority = { schemaVersion: 1, authorityId: 'synthetic-b2-authority', publicContractSha256: hash(release.canonicalJson(contract)),
     phase: contract.to_phase, issuedFor: { baselineSha: contract.baseline_sha, reviewedSourceSha: contract.reviewed_source_sha, integrationBaseSha: contract.integration_base_sha },
-    successorCatalog: { schemaVersion: 1, records }, securityAdvisor: { schemaVersion: 1, baselineSha256: 'd'.repeat(64),
-      records: [{ action: 'retain', identity: MARKER, expectedCanonicalJson: canonical(advisor), expectedSha256: hash(canonical(advisor)) }] },
-    backup: { schemaVersion: 1, provider: 'supabase', kind: 'physical', projectRefSha256: hash('aewwdlvbwpczqyvkwvvj'), evidenceSha256: 'e'.repeat(64),
-      status: 'COMPLETED', completedAt: '2026-11-08T10:00:00.000Z', expiresAt: '2026-11-09T10:00:00.000Z' },
+    successorCatalog: { schemaVersion: 1, records }, securityAdvisor: { schemaVersion: 2, baselineSha256: hash(canonical([{ fingerprint: advisor.fingerprint, level: advisor.severity, resource_kind: advisor.type }]) + '\n'), baselineItems: [{ fingerprint: advisor.fingerprint, level: advisor.severity, resource_kind: advisor.type }],
+      records: [{ action: 'replace', identity: advisor.identity, expectedCanonicalJson: canonical(advisor), expectedSha256: hash(canonical(advisor)) }] },
+    backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical', projectRefSha256: hash('aewwdlvbwpczqyvkwvvj'),
+      evidenceSha256: hash(release.canonicalJson({ id: MARKER, inserted_at: '2026-11-08T10:00:00.000Z', is_physical_backup: true, status: 'COMPLETED' })),
+      status: 'COMPLETED', insertedAt: backupInsertedAt, completedObservedAt: '2026-11-08T10:30:00.000Z', expiresAt: '2026-11-09T10:00:00.000Z' },
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: [contract.to_phase], authorizationSha256: 'f'.repeat(64),
       approvedAt: '2026-11-08T11:00:00.000Z', expiresAt: '2026-11-09T11:00:00.000Z' } };
   const authorityJson = JSON.stringify(authority);
@@ -80,7 +81,7 @@ test('B2 snapshot rejects missing, copied, or manifest-mismatched contexts befor
     const a = { phase: 'post', policy: { supabase: { project_ref: 'aewwdlvbwpczqyvkwvvj' } },
       request: f.request, manifest: structuredClone(f.manifest), authorityContext: f.context, token: 'synthetic', observedAt: AT, requestedAt: AT,
       sourceParity: { capturedAt: AT, descriptorSha256: f.context.descriptorSha256, approvedSha: f.request.approvedSha,
-        manifestSha256: hash(release.canonicalJson(f.manifest)), functions: [], advisors: [{ fingerprint: f.advisor.fingerprint,
+        manifestSha256: hash(release.canonicalJson(f.manifest)), functions: [], advisors: [{ action: 'replace', objectIdentity: f.advisor.objectIdentity, fingerprint: f.advisor.fingerprint,
           attestationSha256: f.advisor.attestationSha256, negativeEvidenceSha256: f.advisor.negativeEvidenceSha256, originSha256: f.advisor.originSha256 }] },
       adapterSourceSha256: '6'.repeat(64), fetchImpl: async () => { calls++; throw new Error(MARKER); } };
     mutate(a); await assert.rejects(adapter.captureProductionSnapshot(a), { code: 'B2_SNAPSHOT_AUTHORITY_INVALID' }); assert.equal(calls, 0);
@@ -96,7 +97,7 @@ test('B2 exact v1 projection compares all catalog kinds and emits only the close
   const result = adapter.verifyB2PrivateObservations(args);
   assert.deepEqual(Object.keys(result), ['schemaVersion', 'stage', 'result', 'receipt', 'checks']);
   assert.deepEqual(result.checks, { catalog: true, securityAdvisor: true, backup: true, finance: true, manifest: true, functionInventory: true, sourceParity: true });
-  assert.doesNotMatch(JSON.stringify(result), new RegExp(`${MARKER}|expectedCanonicalJson|completedAt`));
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(`${MARKER}|expectedCanonicalJson|completedAt|insertedAt|completedObservedAt`));
   for (const mutate of [a => a.catalog.pop(), a => a.catalog.push(a.catalog[0]), a => a.catalog[0].value.identity = 'wrong',
     a => a.catalog[0].value.extra = MARKER, a => a.advisors[0].negativeEvidenceSha256 = '0'.repeat(64),
     a => a.backupEvidenceSha256 = '0'.repeat(64), a => a.sourceParityVerified = false, a => a.financeVerified = false,
@@ -218,8 +219,9 @@ function operationFixture(f, at = AT) {
   const currentGate = { result: 'GATE_VERIFIED', run_id: request.runId, run_attempt: request.runAttempt,
     release_id: request.releaseId, approved_sha: request.approvedSha, manifest_sha256: hash(release.canonicalJson(manifest)),
     environment: { name: 'production', id: 1 }, authorityReceipt: f.context.receipt };
-  const backup = { id: MARKER, status: 'COMPLETED', is_physical_backup: true, inserted_at: at };
-  const policy = { environment: { name: 'production', id: 1 }, supabase: { backup: { required_status: 'COMPLETED', require_physical: true, max_age_seconds: 3600 } } };
+  const backup = { id: MARKER, status: 'COMPLETED', is_physical_backup: true, inserted_at: f.authority.backup.insertedAt };
+  const policy = { environment: { name: 'production', id: 1 }, supabase: { project_ref: 'aewwdlvbwpczqyvkwvvj',
+    backup: { required_status: 'COMPLETED', require_physical: true, max_age_seconds: 86400 } } };
   return { recoveryRequest: request, recoveryManifest: manifest, currentGate, backup, policy, requestedAt: at };
 }
 
@@ -241,9 +243,13 @@ test('B2 historical recovery separately requires current gate identity and fresh
   assert.deepEqual(release.verifyB2RecoveryOperation(args), { authorityReceipt: authorityContext.receipt });
   for (const mutate of [a => a.currentGate.run_id = '123', a => a.currentGate.run_attempt++,
     a => a.currentGate.manifest_sha256 = '0'.repeat(64), a => a.currentGate.authorityReceipt.approvalSha256 = '0'.repeat(64),
-    a => a.backup.inserted_at = AT, a => delete a.backup, a => a.authorityContext = structuredClone(authorityContext),
+    a => a.backup.inserted_at = AT,
+    a => a.backup.inserted_at = '2026-11-10T12:00:00.001Z',
+    a => a.backup.inserted_at = '2026-11-09T12:00:00.000Z',
+    a => a.policy.supabase.project_ref = 'another-project',
+    a => delete a.backup, a => a.authorityContext = structuredClone(authorityContext),
     a => a.verifiedSource = structuredClone(verifiedSource)]) {
-    const a = { ...args, currentGate: structuredClone(args.currentGate), backup: { ...args.backup } }; mutate(a);
+    const a = { ...args, policy: structuredClone(args.policy), currentGate: structuredClone(args.currentGate), backup: { ...args.backup } }; mutate(a);
     assert.throws(() => release.verifyB2RecoveryOperation(a), { code: 'B2_RECOVERY_AUTHORITY_INVALID' });
   }
   const trustedProofRoot = mkdtempSync(join(tmpdir(), 'b2-admin-proof-'));
@@ -273,6 +279,43 @@ test('B2 mutation wrapper writes closed proof before invoking mutation and rejec
   await release.executeB2ProtectedMutation(args); assert.equal(mutations, 1);
   await assert.rejects(release.executeB2ProtectedMutation({ ...args, requestedAt: '2026-11-10T12:00:00.000Z' }), { code: 'B2_RECOVERY_AUTHORITY_INVALID' });
   assert.equal(mutations, 1);
+});
+
+test('B2 current mutation binds the normalized backup identity and project before any proof or mutation', async () => {
+  const f = fixture(), op = operationFixture(f);
+  const trustedProofRoot = mkdtempSync(join(tmpdir(), 'b2-backup-binding-'));
+  const currentGate = { ...op.currentGate, run_id: f.request.runId, release_id: f.request.releaseId,
+    manifest_sha256: hash(release.canonicalJson(f.manifest)) };
+  let mutations = 0;
+  for (const change of [a => { a.backup.id = 'another-backup'; },
+    a => { a.backup.inserted_at = '2026-11-08T10:01:00.000Z'; },
+    a => { a.backup.status = 'PENDING'; }, a => { a.backup.is_physical_backup = false; },
+    a => { a.policy.supabase.project_ref = 'another-project'; }]) {
+    const args = { manifest: f.manifest, request: f.request, currentGate, authorityContext: f.context,
+      policy: structuredClone(op.policy), backup: { ...op.backup }, requestedAt: AT, stage: 'migrations',
+      proofPath: join(trustedProofRoot, 'protected-stage-proofs.json'), trustedProofRoot,
+      mutate: async () => { mutations++; } };
+    change(args);
+    await assert.rejects(release.executeB2ProtectedMutation(args), { code: 'B2_RECOVERY_AUTHORITY_INVALID' });
+    assert.equal(fs.existsSync(args.proofPath), false);
+    assert.equal(mutations, 0);
+  }
+});
+
+test('B2 current mutation rejects a repinned insertion timestamp inconsistent with the approved backup digest', async () => {
+  const f = fixture({ backupInsertedAt: '2026-11-08T10:01:00.000Z' }), op = operationFixture(f);
+  op.backup.inserted_at = '2026-11-08T10:00:00.000Z';
+  assert.equal(hash(release.canonicalJson(op.backup)), f.authority.backup.evidenceSha256,
+    'the observed backup still matches the independently pinned evidence digest');
+  const trustedProofRoot = mkdtempSync(join(tmpdir(), 'b2-backup-insertion-binding-'));
+  let mutations = 0;
+  const proofPath = join(trustedProofRoot, 'protected-stage-proofs.json');
+  await assert.rejects(release.executeB2ProtectedMutation({ manifest: f.manifest, request: f.request,
+    currentGate: { ...op.currentGate, run_id: f.request.runId, release_id: f.request.releaseId,
+      manifest_sha256: hash(release.canonicalJson(f.manifest)) }, authorityContext: f.context,
+    policy: op.policy, backup: op.backup, requestedAt: AT, stage: 'migrations', trustedProofRoot, proofPath,
+    mutate: async () => { mutations++; } }), { code: 'B2_RECOVERY_AUTHORITY_INVALID' });
+  assert.equal(mutations, 0); assert.equal(fs.existsSync(proofPath), false);
 });
 
 test('B2 proof writer requires trusted containment and ordered atomic persistence', async () => {

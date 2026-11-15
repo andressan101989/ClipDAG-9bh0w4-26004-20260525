@@ -301,14 +301,15 @@ function compileAdvisors(authority) {
   return authority.securityAdvisor.records.filter(record => record.action !== 'remove').map(record => {
     let value;
     try { value = JSON.parse(record.expectedCanonicalJson); } catch { reject(); }
-    ownData(value, ['attestationSha256', 'fingerprint', 'identity', 'negativeEvidenceSha256',
-      'objectSha256', 'originSha256', 'severity', 'type']);
+    const claimKeys = record.action === 'retain' ? ['baselineSha256']
+      : ['attestationSha256', 'negativeEvidenceSha256', 'originSha256'];
+    ownData(value, ['fingerprint', 'identity', 'objectIdentity', 'objectSha256', 'severity', 'type', ...claimKeys]);
     if (compactCanonical(value) !== record.expectedCanonicalJson
       || record.expectedSha256 !== sha256(record.expectedCanonicalJson)
-      || ![value.attestationSha256, value.fingerprint, value.negativeEvidenceSha256, value.originSha256]
+      || ![value.fingerprint, ...claimKeys.map(key => value[key])]
         .every(item => typeof item === 'string' && HEX64.test(item))) reject();
-    return { fingerprint: value.fingerprint, attestationSha256: value.attestationSha256,
-      negativeEvidenceSha256: value.negativeEvidenceSha256, originSha256: value.originSha256 };
+    return { action: record.action, fingerprint: value.fingerprint, objectIdentity: value.objectIdentity,
+      ...Object.fromEntries(claimKeys.map(key => [key, value[key]])) };
   }).sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
 }
 
@@ -346,6 +347,18 @@ export function assertB2CatalogSecurityCoverage(authorityContext) {
       if (new Set(identities).size !== identities.length || new Set(companions).size !== companions.length
         || canonicalJson(identities) !== canonicalJson(companions)) reject();
     }
+    // The exact reviewed B2 catalog contains every changed function and the
+    // five new relations plus the altered link relation. media_assets is the
+    // sole unchanged relation in this fixed, source-pinned migration scope.
+    const changedObjects = new Set(records.flatMap(row => row.kind === 'function'
+      ? [`function:${row.identity.split('(')[0]}`]
+      : row.kind === 'relation' && row.identity !== 'public.media_assets' ? [`relation:${row.identity}`] : []));
+    // Fixed changed relations cannot disappear from the Advisor guard through
+    // a candidate catalog omission; source compilation separately checks SQL.
+    for (const identity of [...PRIVATE_RELATIONS, 'public.media_asset_links']) changedObjects.add(`relation:${identity}`);
+    for (const record of authorityContext.privateAuthority.securityAdvisor.records) {
+      if (record.action === 'retain' && changedObjects.has(JSON.parse(record.expectedCanonicalJson).objectIdentity)) reject();
+    }
     return true;
   } catch { reject(); }
 }
@@ -356,6 +369,7 @@ export function compileB2SourceParity(input) {
       'deployedFunctionInventory', 'capturedAt']);
     const authorityContext = data.authorityContext.value;
     publicAuthorityReceipt(authorityContext);
+    assertB2CatalogSecurityCoverage(authorityContext);
     const reviewed = reviewedTrees.get(data.reviewedTree.value);
     const deployed = deployedInventories.get(data.deployedFunctionInventory.value);
     if (!reviewed || !deployed) reject();
