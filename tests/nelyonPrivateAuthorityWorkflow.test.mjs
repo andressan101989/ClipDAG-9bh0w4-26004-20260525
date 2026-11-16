@@ -332,7 +332,7 @@ test('provider configuration is step-scoped only to closed private runtime invoc
         assert.match(owningStep, /nelyon-private-authority-cli\.mjs authority-proof[\s\S]*env -u NELYON_PRIVATE_AUTHORITY_PROVIDER[\s\S]*supabase functions deploy/);
         assert.match(owningStep, new RegExp(`-u ${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
       } else {
-        assert.match(owningStep, /- name: (?:Resolve protected private authority|Stage exact protected B2 recovery source|Verify B2 Admin recovery gate)/);
+        assert.match(owningStep, /- name: (?:Resolve protected private authority|Revalidate protected release|Stage exact protected B2 recovery source|Verify B2 Admin recovery gate)/);
         assert.match(owningStep, /nelyon-private-authority-cli\.mjs/);
         assert.doesNotMatch(owningStep, /npm ci|build:deployment|supabase\s+(?:db\s+push|functions\s+deploy)|versions (?:upload|deploy)|triggers deploy/);
       }
@@ -648,7 +648,8 @@ test('function-loop wrapper strips provider authority from every non-runtime chi
     const prefix = names.map(name => `-u ${name}`).join('[\\s\\S]*');
     assert.match(functions, new RegExp(`env ${prefix}[\\s\\S]*?${command}`));
   };
-  scrubbed('node "\\$NELYON_HELPER" revalidate');
+  assert.doesNotMatch(functions, /node "\$NELYON_HELPER" revalidate/,
+    'the function loop must consume the authenticated pre-function stage, never invoke a context-free B2 revalidation');
   scrubbed('node "\\$NELYON_HELPER" verify-function-contract');
   scrubbed('node "\\$RUNNER_TEMP/nelyon-private-runtime-bootstrap\\.cjs"',
     authorityNames.filter(name => name !== 'NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256'));
@@ -733,6 +734,48 @@ const ALWAYS_CLOSURE_BOUNDARIES = [
     'Resolve protected private authority before closing temporary Admin URLs',
     'Resolve protected private authority before Admin recovery temporary URL closure'],
 ];
+
+test('protected release revalidation stages require fresh action outputs and do not enable gate_proof credentials', () => {
+  const deploy=workflowJob(workflowText(),'deploy');
+  for(const name of ['Revalidate protected release manifest after authorization',
+    'Resolve protected private authority before migrations','Revalidate protected release before functions']) {
+    const body=step(deploy,name);
+    assert.match(body,/nelyon-private-authority-cli\.mjs revalidate/);
+    assert.match(body,/--stage-output/);
+    assert.match(body,/--verification-output/);
+    assert.equal(admitted(body,{mode:'gate_proof',priorFailed:false}),false,
+      `${name} must not expand gate_proof secret access`);
+    assert.equal(admitted(body,{mode:'release',priorFailed:false}),true);
+  }
+  for(const name of ['Clean private authority scratch after protected release revalidation',
+    'Clean private authority scratch before migrations','Clean private authority scratch after protected function revalidation']) {
+    assert.equal(admitted(step(deploy,name),{mode:'release',priorFailed:true}),true,
+      `${name} must run even after a failed private stage`);
+  }
+});
+
+test('failed authority, cleanup or receipt acceptance cannot admit a release mutation', () => {
+  const deploy=workflowJob(workflowText(),'deploy');
+  for(const [name,dependencies]of [
+    ['Accept protected release revalidation',['b2_release_revalidation','b2_release_revalidation_cleanup']],
+    ['Apply exact manifest migrations',['b2_migration_authority','b2_migration_authority_cleanup']],
+    ['Accept protected release pre-function revalidation',['b2_function_revalidation','b2_function_revalidation_cleanup']],
+    ['Deploy each exact manifest function',['apply_migrations','b2_function_revalidation','b2_function_revalidation_cleanup','b2_function_revalidation_receipt']],
+  ]) {
+    const consumer=step(deploy,name);
+    assert.equal(admitted(consumer,{mode:'release',priorFailed:false}),true,name);
+    for(const id of dependencies)for(const outcome of ['failure','skipped','cancelled'])
+      assert.equal(admitted(consumer,{mode:'release',priorFailed:false,outcomes:{[id]:outcome}}),false,`${name}: ${id} ${outcome}`);
+  }
+  const migrations=step(deploy,'Apply exact manifest migrations');
+  assert.ok(migrations.indexOf('cmp ')>=0 && migrations.indexOf('cmp ')<migrations.indexOf('supabase db push'));
+  assert.doesNotMatch(migrations,/node "\$NELYON_HELPER" revalidate/);
+  for(const name of ['Accept protected release revalidation','Accept protected release pre-function revalidation']) {
+    const consumer=step(deploy,name);
+    assert.ok(consumer.indexOf('cmp ')>=0 && consumer.indexOf('cmp ')<consumer.indexOf('cp '));
+    assert.doesNotMatch(consumer,/env:|SUPABASE_ACCESS_TOKEN|R2_SECRET_ACCESS_KEY/);
+  }
+});
 
 for (const [bootstrapName, ...consumerNames] of ALWAYS_CLOSURE_BOUNDARIES) {
   test(`${bootstrapName}: rejected code never receives private authority environment`, () => {
