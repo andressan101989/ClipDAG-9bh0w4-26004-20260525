@@ -10,6 +10,7 @@ import {
   bootstrapPrivateAuthorityRuntime,
   createPrivateAuthorityRuntime,
   loadProtectedB2RecoveryRuntime,
+  readPrivateAuthorityDiagnostic,
   stageProtectedB2RecoverySource,
 } from './nelyon-private-authority-runtime.mjs';
 import {
@@ -226,7 +227,7 @@ function trustedHost(value) {
 
 function sanitizedCode(error) {
   try {
-    if (!(error instanceof Error) || types.isProxy(error)) return 'PRIVATE_AUTHORITY_STAGE_BLOCKED';
+    if (types.isProxy(error) || !(error instanceof Error)) return 'PRIVATE_AUTHORITY_STAGE_BLOCKED';
     const descriptors = Object.getOwnPropertyDescriptors(error);
     const code = descriptors.code;
     const message = descriptors.message;
@@ -244,10 +245,11 @@ function sanitizedCode(error) {
   }
 }
 
-function writeStatus(host, code) {
+function writeStatus(host, code, diagnostic) {
   const stdout = code === null
     ? '{"schemaVersion":1,"result":"VERIFIED","releaseReady":false}\n'
-    : `{"schemaVersion":1,"result":"BLOCKED","releaseReady":false,"code":"${code}"}\n`;
+    : `${JSON.stringify({ schemaVersion: 1, result: 'BLOCKED', releaseReady: false, code,
+      ...(diagnostic ? { diagnostic } : {}) })}\n`;
   try {
     host.stdout.write(stdout);
     if (code !== null) host.stderr.write(`DENY ${code}\n`);
@@ -781,7 +783,7 @@ export async function runPrivateAuthorityCli(argv, suppliedHost = productionHost
     return 0;
   } catch (error) {
     const code = sanitizedCode(error);
-    writeStatus(host, code);
+    writeStatus(host, code, readPrivateAuthorityDiagnostic(error));
     return 2;
   }
 }

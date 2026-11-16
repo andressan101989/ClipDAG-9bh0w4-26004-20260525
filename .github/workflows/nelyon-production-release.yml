@@ -1,5 +1,5 @@
 name: Nelyon controlled production release
-run-name: Nelyon production release | ${{ inputs.mode }} | ${{ inputs.release_id }}
+run-name: ${{ toJSON(inputs.preflight_only) == 'true' && 'Nelyon read-only B2 diagnostic' || 'Nelyon production release' }} | ${{ inputs.mode }} | ${{ inputs.release_id }}
 
 on:
   workflow_dispatch:
@@ -26,6 +26,11 @@ on:
           - release
           - admin_recovery
           - postcheck_recovery
+      preflight_only:
+        description: Read-only B2 snapshot diagnostic; never deploy
+        required: false
+        type: boolean
+        default: false
       recovery_source_run_id:
         description: Exact source run ID, only for an explicit recovery mode
         required: false
@@ -159,6 +164,30 @@ jobs:
             --history release-input/history.json \
             --evidence-output release-input/remote-evidence.json \
             --output release-artifact/bundle
+
+      - name: Validate read-only diagnostic selection
+        id: validate_preflight_selection
+        env:
+          PREFLIGHT_ONLY: ${{ toJSON(inputs.preflight_only) }}
+          WORKFLOW_REF_NAME: ${{ github.ref }}
+        run: |
+          node --input-type=commonjs <<'NODE'
+          const fs = require('node:fs');
+          const selected = JSON.parse(process.env.PREFLIGHT_ONLY);
+          if (typeof selected !== 'boolean') throw new Error('Diagnostic selector rejected');
+          if (selected) {
+            const request = JSON.parse(fs.readFileSync('release-input/request.json', 'utf8'));
+            const manifest = JSON.parse(fs.readFileSync('release-artifact/bundle/manifest.json', 'utf8'));
+            if (process.env.WORKFLOW_REF_NAME !== 'refs/heads/main' || request.mode !== 'release'
+              || request.recoverySourceRunId != null || manifest.identity?.mode !== 'release'
+              || !manifest.resources?.web_control_centers_b2_transition || manifest.result !== 'PLAN READY'
+              || manifest.risk?.level !== 'HIGH' || !Number.isSafeInteger(manifest.delta?.productive_change_count)
+              || manifest.delta.productive_change_count <= 0
+              || !Array.isArray(manifest.blockers) || manifest.blockers.length !== 0) {
+              throw new Error('Diagnostic selection rejected');
+            }
+          }
+          NODE
 
       - name: Inspect exact Admin recovery selector metadata
         id: admin_recovery_selector_metadata
@@ -652,6 +681,7 @@ jobs:
     name: Protected production gate
     needs: [plan, private-authority-check]
     if: >-
+      toJSON(inputs.preflight_only) == 'false' && (
       needs.private-authority-check.result == 'success' &&
       (needs.plan.outputs.mode == 'gate_proof' ||
        (needs.plan.outputs.mode == 'admin_recovery' &&
@@ -675,7 +705,7 @@ jobs:
          (needs.plan.outputs.admin_enabled == 'true' &&
           needs.plan.outputs.result == 'NO PRODUCTIVE CHANGES' &&
           fromJSON(needs.plan.outputs.productive_change_count) == 0)) &&
-        needs.plan.outputs.blocked == 'false'))
+        needs.plan.outputs.blocked == 'false')))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: production
@@ -718,7 +748,8 @@ jobs:
           run-id: ${{ github.run_id }}
           github-token: ${{ github.token }}
 
-      - name: Verify independent private runtime closure for deploy
+      - &b2_diagnostic_step_5
+        name: Verify independent private runtime closure for deploy
         env:
           NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
         run: |
@@ -749,13 +780,16 @@ jobs:
           NODE
           node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
 
-      - name: Install exact private runtime dependency without scripts for deploy
+      - &b2_diagnostic_step_6
+        name: Install exact private runtime dependency without scripts for deploy
         run: npm ci --ignore-scripts
 
-      - name: Verify installed private runtime signer for deploy
+      - &b2_diagnostic_step_7
+        name: Verify installed private runtime signer for deploy
         run: node "$RUNNER_TEMP/nelyon-private-runtime-signer.cjs"
 
-      - name: Stage closed protected proof receipt for comparisons
+      - &b2_diagnostic_step_8
+        name: Stage closed protected proof receipt for comparisons
         if: >-
           needs.plan.outputs.mode != 'admin_recovery' ||
           needs.plan.outputs.admin_recovery_b2_required == 'true'
@@ -792,11 +826,13 @@ jobs:
         if: always() && needs.plan.outputs.mode != 'release'
         run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
 
-      - name: Fetch current main before protected release revalidation
+      - &b2_diagnostic_step_9
+        name: Fetch current main before protected release revalidation
         if: needs.plan.outputs.mode == 'release'
         run: git fetch --no-tags origin main
 
-      - name: Revalidate protected release manifest after authorization
+      - &b2_diagnostic_step_10
+        name: Revalidate protected release manifest after authorization
         id: b2_release_revalidation
         if: needs.plan.outputs.mode == 'release'
         env: &current_private_release_env
@@ -819,12 +855,14 @@ jobs:
             --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/release-revalidation-stage.json" \
             --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/release-revalidation-receipt.json"
 
-      - name: Clean private authority scratch after protected release revalidation
+      - &b2_diagnostic_step_11
+        name: Clean private authority scratch after protected release revalidation
         id: b2_release_revalidation_cleanup
         if: always() && needs.plan.outputs.mode == 'release'
         run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
 
-      - name: Fetch current Environment and authorization evidence
+      - &b2_diagnostic_step_12
+        name: Fetch current Environment and authorization evidence
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -880,7 +918,8 @@ jobs:
           git fetch --no-tags origin main
           node "$NELYON_HELPER" revalidate --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json --output gate-evidence/revalidation.json
 
-      - name: Accept protected release revalidation
+      - &b2_diagnostic_step_13
+        name: Accept protected release revalidation
         id: b2_release_revalidation_receipt
         if: >-
           needs.plan.outputs.mode == 'release' &&
@@ -948,7 +987,8 @@ jobs:
           steps.b2_pending_revalidation_cleanup.outcome == 'success'
         run: cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/revalidation-receipt.json"
 
-      - name: Verify immutable Admin Web manifest
+      - &b2_diagnostic_step_14
+        name: Verify immutable Admin Web manifest
         run: |
           set -euo pipefail
           node scripts/nelyon-admin-production-release.mjs verify-plan \
@@ -1066,13 +1106,15 @@ jobs:
           cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/b2-recovery-gate-receipt.json"
           cp "$RUNNER_TEMP/nelyon-private-authority-public/b2-recovery-gate.json" gate-evidence/gate-proof.json
 
-      - name: Verify independent private runtime closure before release gate
+      - &b2_diagnostic_step_15
+        name: Verify independent private runtime closure before release gate
         if: needs.plan.outputs.mode == 'release'
         env:
           NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
         run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
 
-      - name: Resolve protected private authority for release gate
+      - &b2_diagnostic_step_16
+        name: Resolve protected private authority for release gate
         id: b2_release_gate_authority
         if: needs.plan.outputs.mode == 'release'
         env:
@@ -1098,12 +1140,15 @@ jobs:
             --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" \
             --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/release-gate-stage.json"
 
-      - name: Clean private authority scratch after release gate
+      - &b2_diagnostic_step_17
+        name: Clean private authority scratch after release gate
         id: b2_release_gate_authority_cleanup
         if: always() && needs.plan.outputs.mode == 'release'
         run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
 
-      - name: Verify release gate and required Environment secrets
+      - &b2_diagnostic_step_18
+        name: Verify release gate and required Environment secrets
+        id: b2_release_gate_acceptance
         if: >-
           (needs.plan.outputs.mode == 'release' &&
            steps.b2_release_gate_authority.outcome == 'success' &&
@@ -1863,15 +1908,20 @@ jobs:
         with:
           version: '2.120.0'
 
-      - name: Verify independent private runtime closure before pre-snapshot
+      - &b2_diagnostic_step_19
+        name: Verify independent private runtime closure before pre-snapshot
         if: needs.plan.outputs.mode == 'release'
         env:
           NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
         run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
 
-      - name: Resolve protected private authority and capture pre-snapshot
+      - &b2_diagnostic_step_20
+        name: Resolve protected private authority and capture pre-snapshot
         id: b2_pre_snapshot_authority
-        if: needs.plan.outputs.mode == 'release'
+        if: >-
+          needs.plan.outputs.mode == 'release' &&
+          steps.b2_release_gate_acceptance.outcome == 'success' &&
+          steps.b2_release_revalidation_receipt.outcome == 'success'
         env: &current_private_authority_supabase_env
           NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
           NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
@@ -1891,7 +1941,8 @@ jobs:
             --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/pre-snapshot-authority.json" \
             --snapshot-output "$RUNNER_TEMP/nelyon-private-authority-public/production-pre.json"
 
-      - name: Clean private authority scratch after pre-snapshot
+      - &b2_diagnostic_step_21
+        name: Clean private authority scratch after pre-snapshot
         id: b2_pre_snapshot_authority_cleanup
         if: always() && needs.plan.outputs.mode == 'release'
         run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
@@ -1913,13 +1964,15 @@ jobs:
           NODE
           cp "$RUNNER_TEMP/nelyon-private-authority-public/production-pre.json" gate-evidence/production-pre.json
 
-      - name: Verify independent private runtime closure before pre-snapshot verification
+      - &b2_diagnostic_step_22
+        name: Verify independent private runtime closure before pre-snapshot verification
         if: needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success'
         env:
           NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
         run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
 
-      - name: Resolve protected private authority and verify pre-snapshot
+      - &b2_diagnostic_step_23
+        name: Resolve protected private authority and verify pre-snapshot
         id: b2_verify_pre_snapshot_authority
         if: needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success'
         env: *current_private_authority_supabase_env
@@ -1932,7 +1985,8 @@ jobs:
             --pre-snapshot "$RUNNER_TEMP/nelyon-private-authority-public/production-pre.json" \
             --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/pre-snapshot-verification.json"
 
-      - name: Clean private authority scratch after pre-snapshot verification
+      - &b2_diagnostic_step_24
+        name: Clean private authority scratch after pre-snapshot verification
         id: b2_verify_pre_snapshot_authority_cleanup
         if: always() && needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success'
         run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
@@ -3622,7 +3676,8 @@ jobs:
           echo '::error::Temporary Admin URL cleanup not executed: runtime integrity was not verified; URL closure is unconfirmed.'
           exit 1
 
-      - name: Clean private authority scratch before final result
+      - &b2_diagnostic_step_25
+        name: Clean private authority scratch before final result
         id: b2_final_authority_cleanup
         if: always()
         run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
@@ -3823,3 +3878,140 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
           compression-level: 0
+
+  snapshot-diagnostic:
+    name: Protected read-only B2 snapshot diagnostic
+    needs: [plan, private-authority-check]
+    if: >-
+      toJSON(inputs.preflight_only) == 'true' && github.ref == 'refs/heads/main' &&
+      needs.private-authority-check.result == 'success' &&
+      needs.plan.outputs.mode == 'release' && needs.plan.outputs.risk == 'HIGH' &&
+      needs.plan.outputs.result == 'PLAN READY' && needs.plan.outputs.blocked == 'false' &&
+      fromJSON(needs.plan.outputs.productive_change_count) > 0
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: nelyon-supabase-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+    env:
+      NELYON_RELEASE_POLICY_SHA256: ${{ vars.NELYON_RELEASE_POLICY_SHA256 }}
+      SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED: ${{ vars.SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED }}
+    steps:
+      - name: Checkout exact authorized SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.approved_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned Node.js for authorized gate
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.21.0'
+
+      - name: Download only this run attempt artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ${{ needs.plan.outputs.artifact_name }}
+          path: release-artifact
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download exact Admin Web plan artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ${{ needs.plan.outputs.admin_artifact_name }}
+          path: admin-release-artifact
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+
+      - *b2_diagnostic_step_5
+      - *b2_diagnostic_step_6
+      - *b2_diagnostic_step_7
+      - *b2_diagnostic_step_8
+      - *b2_diagnostic_step_9
+      - *b2_diagnostic_step_10
+      - *b2_diagnostic_step_11
+      - *b2_diagnostic_step_12
+      - *b2_diagnostic_step_13
+      - *b2_diagnostic_step_14
+      - *b2_diagnostic_step_15
+      - *b2_diagnostic_step_16
+      - *b2_diagnostic_step_17
+      - *b2_diagnostic_step_18
+      - *b2_diagnostic_step_19
+      - *b2_diagnostic_step_20
+      - *b2_diagnostic_step_21
+      - name: Accept read-only diagnostic snapshot receipt
+        id: pre_snapshot
+        if: >-
+          steps.b2_pre_snapshot_authority.outcome == 'success' &&
+          steps.b2_pre_snapshot_authority_cleanup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const root = process.env.RUNNER_TEMP + '/nelyon-private-authority-public';
+          const expected = JSON.parse(readFileSync(root + '/expected-receipt.json', 'utf8'));
+          const verification = JSON.parse(readFileSync(root + '/pre-snapshot-authority.json', 'utf8'));
+          if (JSON.stringify(verification.receipt ?? verification) !== JSON.stringify(expected)) throw new Error('Diagnostic receipt rejected');
+          NODE
+      - *b2_diagnostic_step_22
+      - *b2_diagnostic_step_23
+      - *b2_diagnostic_step_24
+      - name: Accept read-only diagnostic baseline receipt
+        id: verify_pre_snapshot
+        if: >-
+          steps.b2_verify_pre_snapshot_authority.outcome == 'success' &&
+          steps.b2_verify_pre_snapshot_authority_cleanup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const root = process.env.RUNNER_TEMP + '/nelyon-private-authority-public';
+          const expected = JSON.parse(readFileSync(root + '/expected-receipt.json', 'utf8'));
+          const verification = JSON.parse(readFileSync(root + '/pre-snapshot-verification-authority.json', 'utf8'));
+          if (JSON.stringify(verification.receipt ?? verification) !== JSON.stringify(expected)) throw new Error('Diagnostic receipt rejected');
+          NODE
+      - *b2_diagnostic_step_25
+      - name: Remove all ephemeral diagnostic outputs
+        id: diagnostic_output_cleanup
+        if: always()
+        run: |
+          node --input-type=commonjs <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const root = path.resolve(process.env.RUNNER_TEMP);
+          if (fs.realpathSync(root) !== root || fs.lstatSync(root).isSymbolicLink()) throw new Error('Diagnostic cleanup rejected');
+          const target = path.join(root, 'nelyon-private-authority-public');
+          const inspect = p => {
+            const stat = fs.lstatSync(p);
+            const relative = path.relative(root, fs.realpathSync(p));
+            if (stat.isSymbolicLink() || !relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Diagnostic cleanup rejected');
+            if (stat.isDirectory()) for (const name of fs.readdirSync(p)) inspect(path.join(p, name));
+            else if (!stat.isFile()) throw new Error('Diagnostic cleanup rejected');
+          };
+          if (fs.lstatSync(target, { throwIfNoEntry: false })) {
+            inspect(target); fs.rmSync(target, { recursive: true, force: false });
+            if (fs.existsSync(target)) throw new Error('Diagnostic cleanup rejected');
+          }
+          NODE
+      - name: Require terminal read-only diagnostic success
+        id: diagnostic_terminal
+        if: always()
+        env:
+          DIAGNOSTIC_RESULTS: ${{ steps.b2_release_revalidation.outcome }}|${{ steps.b2_release_revalidation_cleanup.outcome }}|${{ steps.b2_release_revalidation_receipt.outcome }}|${{ steps.b2_release_gate_authority.outcome }}|${{ steps.b2_release_gate_authority_cleanup.outcome }}|${{ steps.b2_release_gate_acceptance.outcome }}|${{ steps.b2_pre_snapshot_authority.outcome }}|${{ steps.b2_pre_snapshot_authority_cleanup.outcome }}|${{ steps.pre_snapshot.outcome }}|${{ steps.b2_verify_pre_snapshot_authority.outcome }}|${{ steps.b2_verify_pre_snapshot_authority_cleanup.outcome }}|${{ steps.verify_pre_snapshot.outcome }}|${{ steps.b2_final_authority_cleanup.outcome }}|${{ steps.diagnostic_output_cleanup.outcome }}
+        run: |
+          node --input-type=commonjs <<'NODE'
+          const results = (process.env.DIAGNOSTIC_RESULTS ?? '').split('|');
+          if (results.length !== 14 || results.some(result => result !== 'success')) {
+            process.stderr.write('READ_ONLY_DIAGNOSTIC_BLOCKED\n');
+            process.exit(2);
+          }
+          process.stdout.write(JSON.stringify({ schemaVersion: 1, result: 'READ_ONLY_DIAGNOSTIC_VERIFIED', releaseReady: false }) + '\n');
+          NODE

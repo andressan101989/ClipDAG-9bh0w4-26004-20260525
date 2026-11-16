@@ -3920,7 +3920,7 @@ test('adapter uses only fixed documented read-only endpoints and produces saniti
   assert.doesNotMatch(serialized, /authorization/i);
 });
 
-test('B2 pre capture preserves runner-local baseline checks and deserialized receipt verification', async () => {
+test('B2 pre capture preserves runner-local baseline checks and deserialized receipt verification', async t => {
   const adapter = await loadAdapter(); const at = '2026-10-12T12:00:01.000Z';
   const databaseMatrix = b2DatabaseFunctionMatrix();
   const p = markManagedScopeTransitionPromoted(structuredClone(policy));
@@ -4018,6 +4018,145 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
     return successfulFetchWithFunctionVersion([], 35)(url, options);
   };
   const pre = await adapter.captureProductionSnapshot({ ...args, authorityContext, requestedAt: at, fetchImpl: preFetch });
+  for (const variant of ['metadata', 'native subclass']) await t.test(`native Response ${variant} preserves successful capture`, async () => {
+    class SnapshotResponse extends Response {}
+    const fetchImpl = async (url, options) => {
+      const response = await preFetch(url, options);
+      if (variant === 'metadata') {
+        Object.defineProperty(response, 'syntheticMetadata', { value: 'DIAGNOSTIC_METADATA_SECRET_SENTINEL' });
+        return response;
+      }
+      return new SnapshotResponse(await response.arrayBuffer(), { status: response.status, headers: response.headers });
+    };
+    const actual = await adapter.captureProductionSnapshot({ ...args, authorityContext, requestedAt: at, fetchImpl });
+    assert.deepEqual(actual, pre);
+    assert.doesNotMatch(JSON.stringify(actual), /DIAGNOSTIC_METADATA_SECRET_SENTINEL/);
+  });
+  for (const key of ['status', 'headers', 'redirected', 'arrayBuffer']) await t.test(`native Response equivalent own data ${key} preserves successful capture`, async () => {
+    const fetchImpl = async (url, options) => {
+      const response = await preFetch(url, options);
+      const value = key === 'arrayBuffer' ? Response.prototype.arrayBuffer : response[key];
+      Object.defineProperty(response, key, { value });
+      return response;
+    };
+    const actual = await adapter.captureProductionSnapshot({ ...args, authorityContext, requestedAt: at, fetchImpl });
+    assert.deepEqual(actual, pre);
+  });
+  await t.test('native Response overridden getters are never used for successful capture', async () => {
+    let reads = 0;
+    const fetchImpl = async (url, options) => {
+      const response = await preFetch(url, options);
+      for (const key of ['status', 'headers', 'redirected', 'arrayBuffer']) Object.defineProperty(response, key, {
+        get() { reads++; throw new Error('DIAGNOSTIC_SECRET_SENTINEL'); },
+      });
+      return response;
+    };
+    const actual = await adapter.captureProductionSnapshot({ ...args, authorityContext, requestedAt: at, fetchImpl });
+    assert.deepEqual(actual, pre);
+    assert.equal(reads, 0);
+    assert.doesNotMatch(JSON.stringify(actual), /DIAGNOSTIC_SECRET_SENTINEL/);
+  });
+  // Diagnostics are synthetic failure observations, never production evidence.
+  assert.equal(typeof adapter.readSnapshotDiagnostic, 'function');
+  const captureFailure = async (fetchImpl, expected, overrides = {}) => {
+    await assert.rejects(adapter.captureProductionSnapshot({ ...args, authorityContext, requestedAt: at,
+      fetchImpl, ...overrides }), error => {
+      assert.equal(error.code, 'B2_SNAPSHOT_AUTHORITY_INVALID');
+      assert.equal(error.stack, 'Error: B2 snapshot authority rejected');
+      assert.deepEqual(adapter.readSnapshotDiagnostic(error), expected);
+      assert.doesNotMatch(JSON.stringify(error), /DIAGNOSTIC_SECRET_SENTINEL/);
+      return true;
+    });
+  };
+  for (const status of [401, 403, 429, 500, 503]) {
+    await captureFailure(async () => new Response('DIAGNOSTIC_SECRET_SENTINEL', { status }),
+      { phase: 'TRANSPORT', category: [401, 403].includes(status) ? 'ACCESS_DENIED' : 'UNAVAILABLE' });
+  }
+  for (const response of [new Response('DIAGNOSTIC_SECRET_SENTINEL'),
+    new Response('DIAGNOSTIC_SECRET_SENTINEL', { headers: { 'content-type': 'application/json' } }),
+    new Response('{}', { headers: { 'content-type': 'application/json', 'content-length': '999999999' } })]) {
+    await captureFailure(async () => response, { phase: 'RESPONSE_VALIDATION', category: 'INVALID' });
+  }
+  const bindingMismatch = structuredClone(m);
+  bindingMismatch.resources.web_control_centers_b2_transition.descriptorSha256 = '0'.repeat(64);
+  await captureFailure(async () => { assert.fail('binding mismatch must precede transport'); },
+    { phase: 'AUTHORITY_BINDING', category: 'MISMATCH' }, { manifest: bindingMismatch });
+  await captureFailure(async (url, options) => options?.body?.includes('nelyon-b2-relation-acl-v1')
+    ? jsonResponse([], 201) : preFetch(url, options), { phase: 'PRESTATE_VALIDATION', category: 'INVALID' });
+  let inspected = 0;
+  const hostile = Object.defineProperties(new Error('DIAGNOSTIC_SECRET_SENTINEL'), {
+    code: { get() { inspected++; throw new Error('DIAGNOSTIC_SECRET_SENTINEL'); } },
+    name: { get() { inspected++; throw new Error('DIAGNOSTIC_SECRET_SENTINEL'); } },
+    diagnostic: { get() { inspected++; throw new Error('DIAGNOSTIC_SECRET_SENTINEL'); } },
+  });
+  for (const error of [hostile, Object.assign(new Error('DIAGNOSTIC_SECRET_SENTINEL'), {
+    name: 'AbortError', code: 'REMOTE_TIMEOUT', diagnostic: { phase: 'TRANSPORT', category: 'TIMEOUT' } }),
+  new Proxy({}, { get() { inspected++; throw new Error('DIAGNOSTIC_SECRET_SENTINEL'); } })]) {
+    await captureFailure(async () => { throw error; }, undefined);
+    assert.equal(adapter.readSnapshotDiagnostic(error), undefined);
+  }
+  for (const response of [{ status: 403, headers: new Headers() },
+    new Proxy(new Response(null, { status: 403 }), { get(_target, key) {
+      if (key === 'then') return undefined; // Promise resolution, not response inspection.
+      inspected++; throw new Error('DIAGNOSTIC_SECRET_SENTINEL');
+    } })]) {
+    await captureFailure(async () => response, undefined);
+  }
+  // Native data, not an overridden status getter, determines the diagnostic.
+  await captureFailure(async () => Object.defineProperty(new Response(null, { status: 200 }), 'status', {
+    get() { inspected++; return 403; },
+  }), { phase: 'RESPONSE_VALIDATION', category: 'INVALID' });
+  assert.equal(inspected, 0, 'untrusted getters and proxy traps must remain uninvoked');
+  const originalSetTimeout = globalThis.setTimeout;
+  try {
+    globalThis.setTimeout = (callback, delay) => originalSetTimeout(callback, Math.min(delay, 1));
+    await captureFailure(async (_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(hostile), { once: true });
+    }), { phase: 'TRANSPORT', category: 'TIMEOUT' });
+  } finally { globalThis.setTimeout = originalSetTimeout; }
+  assert.equal(inspected, 0);
+  const { bootstrapPrivateAuthorityRuntime, createPrivateAuthorityRuntime } = await import('../scripts/nelyon-private-authority-runtime.mjs');
+  const { runPrivateAuthorityCli } = await import('../scripts/nelyon-private-authority-cli.mjs');
+  const { mkdtempSync, existsSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const root = mkdtempSync(join(tmpdir(), 'snapshot-diagnostics-'));
+  const verificationOutput = join(root, 'verification.json');
+  const snapshotOutput = join(root, 'snapshot.json');
+  const policyBytes = Buffer.from(canonicalJson(p));
+  const manifestBytes = Buffer.from(canonicalJson(m));
+  const authorityBytes = Buffer.from(authorityJson);
+  const syntheticRequest = { ...request(), actor: p.owner, triggeringActor: p.owner, repository: p.repository,
+    workflowRef: `${p.repository}/${p.workflow_path}@refs/heads/${p.default_branch}`, ref: `refs/heads/${p.default_branch}`,
+    mainSha: request().approvedSha };
+  const environment = { NELYON_PRIVATE_AUTHORITY_PROVIDER: 'r2', NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: 'a'.repeat(32),
+    NELYON_PRIVATE_AUTHORITY_R2_BUCKET: 'synthetic-bucket', NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: 'synthetic-key',
+    NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: 'DIAGNOSTIC_SECRET_SENTINEL',
+    NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256: sha256(descriptorBytes), NELYON_PRIVATE_AUTHORITY_SHA256: sha256(authorityBytes),
+    NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: runtimeClosure.closure_sha256,
+    NELYON_RELEASE_POLICY_SHA256: sha256(policyBytes), RUNNER_TEMP: root };
+  const bootstrapCapability = await bootstrapPrivateAuthorityRuntime({ environment, manifestClosure: runtimeClosure,
+    repositoryRoot: fileURLToPath(new URL('../', import.meta.url)), readFile: readFileSync, nodeVersion: '24.21.0' });
+  const productionAdapter = await import(adapterUrl.href);
+  const runtime = createPrivateAuthorityRuntime({ bootstrapCapability, environment, now: () => at,
+    fetchImpl: async incoming => new Response(incoming.method === 'HEAD' ? null : authorityBytes,
+      { headers: { 'content-length': String(authorityBytes.length), 'content-encoding': 'identity' } }),
+    host: { async loadPublicInputs() { return { descriptorBytes: Buffer.from(descriptorBytes), manifestBytes,
+      manifestDigestBytes: Buffer.from(`${sha256(manifestBytes)}\n`), policyBytes,
+      requestBytes: Buffer.from(canonicalJson(syntheticRequest)) }; },
+    async dispatch(value) { return productionAdapter.captureProductionSnapshot({ ...args, authorityContext: value.authorityContext,
+      requestedAt: at, fetchImpl: async () => new Response('DIAGNOSTIC_SECRET_SENTINEL', { status: 403 }) }); } } });
+  let stdout = ''; let stderr = '';
+  const exit = await runPrivateAuthorityCli(['pre-snapshot', '--policy', 'policy.json', '--request', 'request.json',
+    '--bundle', 'bundle', '--snapshot-output', snapshotOutput, '--verification-output', verificationOutput],
+  { execute: runtime.execute, stdout: { write(value) { stdout += value; } }, stderr: { write(value) { stderr += value; } } });
+  assert.equal(exit, 2);
+  assert.deepEqual(JSON.parse(stdout), { schemaVersion: 1, result: 'BLOCKED', releaseReady: false,
+    code: 'PRIVATE_AUTHORITY_STAGE_BLOCKED', diagnostic: { phase: 'TRANSPORT', category: 'ACCESS_DENIED' } });
+  assert.equal(stderr, 'DENY PRIVATE_AUTHORITY_STAGE_BLOCKED\n');
+  assert.equal(existsSync(verificationOutput), false);
+  assert.equal(existsSync(snapshotOutput), false);
+  assert.doesNotMatch(stdout + stderr, /DIAGNOSTIC_SECRET_SENTINEL|https:|PRIVATE_B2_CAPTURE_MARKER/);
   const inconsistentAuthority = structuredClone(authority);
   inconsistentAuthority.backup.insertedAt = new Date(Date.parse(legacy.backup.inserted_at) + 1_000).toISOString();
   assert.equal(inconsistentAuthority.backup.evidenceSha256, sha256(canonicalJson(legacy.backup)));

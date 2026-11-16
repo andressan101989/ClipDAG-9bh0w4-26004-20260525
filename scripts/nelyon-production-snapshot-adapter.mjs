@@ -9,10 +9,19 @@ import { types } from 'node:util';
 // compiler's artifact verifier. Neither module invokes this edge at import time.
 import { b2HistoricalSnapshotBinding, verifyB2RecoveryOperation, verifyB2RecoveryPreflight } from './nelyon-production-release.mjs';
 
-function b2SnapshotReject() {
+// Only this module can mint a diagnostic. Readers never inspect thrown values.
+const snapshotErrors = new WeakSet();
+const snapshotDiagnostics = new WeakMap();
+export function readSnapshotDiagnostic(error) { return snapshotDiagnostics.get(error); }
+
+function b2SnapshotReject(source, phase, category) {
   const error = new Error('B2 snapshot authority rejected');
   error.code = 'B2_SNAPSHOT_AUTHORITY_INVALID';
   error.stack = 'Error: B2 snapshot authority rejected';
+  if (arguments.length === 0 || snapshotErrors.has(source)) snapshotErrors.add(error);
+  const diagnostic = readSnapshotDiagnostic(source)
+    ?? (snapshotErrors.has(source) && phase ? Object.freeze({ phase, category }) : undefined);
+  if (diagnostic) snapshotDiagnostics.set(error, diagnostic);
   throw Object.freeze(error);
 }
 const b2FreshCaptures = new WeakMap();
@@ -23,7 +32,7 @@ function isB2Snapshot(manifest, authorityContext) {
 }
 function b2Guard(options, operation) {
   if (!isB2Snapshot(options.manifest, options.authorityContext)) return operation(options);
-  try { return operation(options); } catch { b2SnapshotReject(); }
+  try { return operation(options); } catch (error) { b2SnapshotReject(error); }
 }
 function b2Time(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
@@ -52,6 +61,9 @@ function b2Binding({ manifest, authorityContext, requestedAt, historical = false
     if (binding.privateAuthorityRequired !== true
       || canonicalJson(binding.contract) !== canonicalJson(authorityContext.descriptor.contract)
       || manifest?.baseline?.sha !== authorityContext.descriptor.contract.baseline_sha) b2SnapshotReject();
+    if (receipt.descriptorSha256 !== binding.descriptorSha256
+      || receipt.publicContractSha256 !== binding.publicContractSha256
+      || receipt.privateAuthoritySha256 !== binding.expectedPrivateAuthoritySha256) b2SnapshotReject();
     assertAuthorityReceiptMatch(receipt, { ...receipt, descriptorSha256: binding.descriptorSha256,
       publicContractSha256: binding.publicContractSha256, privateAuthoritySha256: binding.expectedPrivateAuthoritySha256 });
     if (!historical) {
@@ -61,7 +73,7 @@ function b2Binding({ manifest, authorityContext, requestedAt, historical = false
         || at >= b2Time(approval.expiresAt) || at >= b2Time(backup.expiresAt)) b2SnapshotReject();
     }
     return receipt;
-  } catch { b2SnapshotReject(); }
+  } catch (error) { b2SnapshotReject(error, 'AUTHORITY_BINDING', 'MISMATCH'); }
 }
 function b2Verification(stage, receipt) {
   return Object.freeze({ schemaVersion: 1, stage, result: 'VERIFIED', receipt,
@@ -101,7 +113,7 @@ export function verifyB2PrivateObservations({ authorityContext, manifest, stage,
     }
     if (backupEvidenceSha256 !== authority.backup.evidenceSha256) b2SnapshotReject();
     return b2Verification(stage, receipt);
-  } catch { b2SnapshotReject(); }
+  } catch (error) { b2SnapshotReject(error); }
 }
 
 function requireB2Captured(evidence, stage, args) {
@@ -121,7 +133,7 @@ function requireB2Captured(evidence, stage, args) {
       || canonicalJson(evidence.identity) !== canonicalJson(expectedSnapshotIdentity(args.request, args.manifest))) b2SnapshotReject();
     validateNormalizedBackup(evidence.backup, args.requestedAt, args.policy.supabase.backup);
     return evidence;
-  } catch { b2SnapshotReject(); }
+  } catch (error) { b2SnapshotReject(error); }
 }
 
 function b2ValidateSourceParity(sourceParity, authorityContext, manifest, requestedAt) {
@@ -171,7 +183,7 @@ export function verifyB2DatabaseFunctionScope(rows, authorityContext) {
     if (canonicalJson(source) !== canonicalJson(B2_DATABASE_FUNCTION_SCOPE)
       || canonicalJson(approved) !== canonicalJson(B2_DATABASE_FUNCTION_SCOPE)) b2SnapshotReject();
     return true;
-  } catch { b2SnapshotReject(); }
+  } catch (error) { b2SnapshotReject(error); }
 }
 
 // Neutral structural validation shared by fresh observations and protected source
@@ -215,7 +227,7 @@ export function normalizeB2DatabaseFunctionAttestations(rows) {
       .sort((a,b) => b2DatabaseIdentity(a).localeCompare(b2DatabaseIdentity(b)));
     if (new Set(items.map(b2DatabaseIdentity)).size !== items.length) b2SnapshotReject();
     return { complete: true, count: items.length, items, sha256: sha256(canonicalJson(items)) };
-  } catch { b2SnapshotReject(); }
+  } catch (error) { b2SnapshotReject(error); }
 }
 
 function b2DatabaseSourceRows(rows, authorityContext) {
@@ -260,7 +272,7 @@ export function verifyB2DatabaseFunctionAuthority(observations, sourceRows, auth
     const sorted = rows => [...rows].sort((a,b) => `${a.schema}.${a.name}(${a.argument_types})`.localeCompare(`${b.schema}.${b.name}(${b.argument_types})`));
     if (canonicalJson(sorted(observations)) !== canonicalJson(sorted(sourceRows))) b2SnapshotReject();
     return true;
-  } catch { b2SnapshotReject(); }
+  } catch (error) { b2SnapshotReject(error); }
 }
 
 function b2DatabaseRelationSourceRows(rows, authorityContext) {
@@ -302,7 +314,7 @@ export function verifyB2DatabaseRelationAuthority(observations, sourceRows, auth
     const sorted = rows => [...rows].sort((a,b) => a.identity.localeCompare(b.identity));
     if (canonicalJson(sorted(observations)) !== canonicalJson(sorted(sourceRows))) b2SnapshotReject();
     return true;
-  } catch { b2SnapshotReject(); }
+  } catch (error) { b2SnapshotReject(error); }
 }
 
 export function verifyB2PublicRelationPrestate(rows, authorityContext) {
@@ -323,7 +335,7 @@ export function verifyB2PublicRelationPrestate(rows, authorityContext) {
       if (canonicalJson({ identity: row.identity, acl, access: row.access }).trimEnd() !== security.expectedCanonicalJson) b2SnapshotReject();
     }
     return true;
-  } catch { b2SnapshotReject(); }
+  } catch (error) { b2SnapshotReject(error, 'PRESTATE_VALIDATION', 'INVALID'); }
 }
 
 const B2_INHERITED_FUNCTIONS = Object.freeze([
@@ -353,7 +365,7 @@ export function verifyB2InheritedFunctionPrestate(rows, authorityContext) {
       if (canonicalJson({ identity, acl, execute: row.execute }).trimEnd() !== security.expectedCanonicalJson) b2SnapshotReject();
     }
     return true;
-  } catch { b2SnapshotReject(); }
+  } catch (error) { b2SnapshotReject(error, 'PRESTATE_VALIDATION', 'INVALID'); }
 }
 
 function b2SourceInventory(sourceParity, functions) {
@@ -410,7 +422,7 @@ export function verifyB2AdvisorPrestate(body, authorityContext) {
       if (Object.keys(facts).some(key => facts[key] !== expected[key])) b2SnapshotReject();
     }
     return true;
-  } catch { b2SnapshotReject(); }
+  } catch (error) { b2SnapshotReject(error, 'PRESTATE_VALIDATION', 'INVALID'); }
 }
 
 export function b2FreshAdvisors(body, authorizations) {
@@ -2622,9 +2634,11 @@ select pg_catalog.jsonb_build_object(
   'function',(select pg_catalog.to_jsonb(row) from target_function row)
 ) snapshot;`;
 
-function fail(code, message) {
+function fail(code, message, phase, category) {
   const error = new Error(`${code}: ${message}`);
   error.code = code;
+  snapshotErrors.add(error);
+  if (phase) snapshotDiagnostics.set(error, Object.freeze({ phase, category }));
   throw error;
 }
 
@@ -3747,7 +3761,7 @@ export function validateB2InstalledB1State(snapshot, transition, authorityContex
       policies: state.media_asset_links.policies.map(row => ['media_asset_links_owner_read', 'media_asset_links_public_read'].includes(row.name)
         ? baseline.policies.find(expected => expected.name === row.name) : row) } };
     return validateWebControlCentersB1InstalledState(comparison, transition);
-  } catch { b2SnapshotReject(); }
+  } catch (error) { b2SnapshotReject(error); }
 }
 
 function validateWebControlCentersB1PreState(snapshot, transition) {
@@ -5400,7 +5414,7 @@ export function buildProductionBaselineDigests({ evidence, policy, managedFuncti
       const { evidence_sha256, ...unsigned } = evidence;
       if (evidence_sha256 !== sha256(canonicalJson(unsigned))) b2SnapshotReject();
       validateNormalizedBackup(evidence.backup, requestedAt, policy.supabase.backup);
-    } catch { b2SnapshotReject(); }
+    } catch (error) { b2SnapshotReject(error); }
   }
   return calculateProductionBaselineDigests({ evidence, policy, managedFunctions, authorityContext });
 }
@@ -6119,7 +6133,7 @@ function verifyProductionAdminRecoverySnapshotInternal({
         authorityContext, recoveryAuthorization, requestedAt });
       if (Object.values(post.finance.reconciliation).some(value => value !== 0)) b2SnapshotReject();
       return b2Verification('recovery', publicAuthorityReceipt(authorityContext));
-    } catch { b2SnapshotReject(); }
+    } catch (error) { b2SnapshotReject(error); }
   }
   const code = 'ADMIN_RECOVERY_POSTCHECK_FAILED';
   if (request?.mode !== 'admin_recovery'
@@ -6159,19 +6173,37 @@ function verifyProductionAdminRecoverySnapshotInternal({
   };
 }
 
+// Capture the native operations, not transport-supplied accessors or methods.
+const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, 'status').get;
+const responseHeaders = Object.getOwnPropertyDescriptor(Response.prototype, 'headers').get;
+const responseRedirected = Object.getOwnPropertyDescriptor(Response.prototype, 'redirected').get;
+const responseArrayBuffer = Response.prototype.arrayBuffer;
+const headerGet = Headers.prototype.get;
+function nativeResponse(response) {
+  if (types.isProxy(response)) {
+    fail('REMOTE_READ_FAILED', 'remote response is unavailable');
+  }
+  return response;
+}
 async function readJson(response, { expectedStatus, label }) {
-  if (response.status !== expectedStatus) fail('REMOTE_READ_FAILED', `${label} HTTP ${response.status}`);
-  const contentType = response.headers.get('content-type') ?? '';
-  if (!/^application\/json(?:;|$)/i.test(contentType)) fail('REMOTE_READ_FAILED', `${label} returned a non-JSON response`);
-  const declared = Number(response.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) fail('REMOTE_RESPONSE_TOO_LARGE', `${label} response exceeds the limit`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > MAX_RESPONSE_BYTES) fail('REMOTE_RESPONSE_TOO_LARGE', `${label} response exceeds the limit`);
+  const status = responseStatus.call(response);
+  if (status !== expectedStatus) {
+    if (status === 401 || status === 403) fail('REMOTE_READ_FAILED', `${label} HTTP ${status}`, 'TRANSPORT', 'ACCESS_DENIED');
+    if (status === 429 || (status >= 500 && status <= 599)) fail('REMOTE_READ_FAILED', `${label} HTTP ${status}`, 'TRANSPORT', 'UNAVAILABLE');
+    fail('REMOTE_READ_FAILED', `${label} HTTP ${status}`, 'RESPONSE_VALIDATION', 'INVALID');
+  }
+  const headers = responseHeaders.call(response);
+  const contentType = headerGet.call(headers, 'content-type') ?? '';
+  if (!/^application\/json(?:;|$)/i.test(contentType)) fail('REMOTE_READ_FAILED', `${label} returned a non-JSON response`, 'RESPONSE_VALIDATION', 'INVALID');
+  const declared = Number(headerGet.call(headers, 'content-length'));
+  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) fail('REMOTE_RESPONSE_TOO_LARGE', `${label} response exceeds the limit`, 'RESPONSE_VALIDATION', 'INVALID');
+  const bytes = new Uint8Array(await responseArrayBuffer.call(response));
+  if (bytes.byteLength > MAX_RESPONSE_BYTES) fail('REMOTE_RESPONSE_TOO_LARGE', `${label} response exceeds the limit`, 'RESPONSE_VALIDATION', 'INVALID');
   let body;
   try {
     body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
   } catch {
-    fail('REMOTE_READ_FAILED', `${label} returned malformed JSON`);
+    fail('REMOTE_READ_FAILED', `${label} returned malformed JSON`, 'RESPONSE_VALIDATION', 'INVALID');
   }
   return { body, responseSha256: sha256(bytes) };
 }
@@ -6184,7 +6216,7 @@ async function fixedRequest({ fetchImpl, token, path, method = 'GET', body, expe
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchImpl(url, {
+    const response = nativeResponse(await fetchImpl(url, {
       method,
       redirect: 'error',
       signal: controller.signal,
@@ -6194,16 +6226,17 @@ async function fixedRequest({ fetchImpl, token, path, method = 'GET', body, expe
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-    if (response.redirected) fail('UNSAFE_REMOTE_REDIRECT', `${label} redirected unexpectedly`);
+    }));
+    if (responseRedirected.call(response)) fail('UNSAFE_REMOTE_REDIRECT', `${label} redirected unexpectedly`, 'RESPONSE_VALIDATION', 'INVALID');
     const parsed = await readJson(response, { expectedStatus, label });
     return {
       body: parsed.body,
-      receipt: { method, path: `${url.pathname}${url.search}`, status: response.status, response_sha256: parsed.responseSha256 },
+      receipt: { method, path: `${url.pathname}${url.search}`, status: responseStatus.call(response), response_sha256: parsed.responseSha256 },
     };
   } catch (error) {
-    if (error?.code) throw error;
-    fail(error?.name === 'AbortError' ? 'REMOTE_TIMEOUT' : 'REMOTE_READ_FAILED', `${label} request failed`);
+    if (controller.signal.aborted) fail('REMOTE_TIMEOUT', `${label} request failed`, 'TRANSPORT', 'TIMEOUT');
+    if (snapshotErrors.has(error)) throw error;
+    fail('REMOTE_READ_FAILED', `${label} request failed`);
   } finally {
     clearTimeout(timeout);
   }
@@ -6953,7 +6986,7 @@ export function validateB2RpcSecurityAttestations(snapshot, exceptions, authorit
       return phase === 'pre' ? exception : { ...exception, attestation: { ...before, definition_sha256: successor.definitionSha256 } };
     });
     return validateRpcSecurityAttestations(snapshot, expected);
-  } catch { b2SnapshotReject(); }
+  } catch (error) { b2SnapshotReject(error); }
 }
 
 export function validateRpcSecurityAttestations(snapshot, exceptions) {
@@ -7254,7 +7287,7 @@ export async function captureProductionSnapshot(options) {
       adapterSourceSha256: options.adapterSourceSha256, authorityContext, requestedAt, recoveryAuthorization: options.recoveryAuthorization });
     b2FreshCaptures.set(evidence, { bytes: canonicalJson(evidence), at: requestedAt, receipt });
     return evidence;
-  } catch { b2SnapshotReject(); }
+  } catch (error) { b2SnapshotReject(error); }
 }
 
 async function captureLegacyProductionSnapshot({

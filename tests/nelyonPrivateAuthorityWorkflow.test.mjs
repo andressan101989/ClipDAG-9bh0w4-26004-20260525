@@ -11,7 +11,8 @@ import {
 } from '../scripts/nelyon-production-release.mjs';
 
 const workflowUrl = new URL('../.github/workflows/nelyon-production-release.yml', import.meta.url);
-const workflowText = () => readFileSync(workflowUrl, 'utf8').replace(/\r\n?/g, '\n');
+const workflowText = () => readFileSync(workflowUrl, 'utf8').replace(/\r\n?/g, '\n')
+    .replace(/^      - &b2_diagnostic_step_[0-9]+\n        name:/gm, '      - name:');
 const policy = JSON.parse(readFileSync(new URL('../.github/nelyon-production-release-policy.json', import.meta.url), 'utf8'));
 
 function workflowJob(text, name) {
