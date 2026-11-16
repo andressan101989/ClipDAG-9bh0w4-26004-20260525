@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import YAML from 'yaml';
 import { integratedFixture } from './fixtures/nelyonB2IntegratedFixture.mjs';
 import * as release from '../scripts/nelyon-production-release.mjs';
 import { createPrivateAuthorityProductionHost, runPrivateAuthorityCli } from '../scripts/nelyon-private-authority-cli.mjs';
@@ -28,11 +29,15 @@ for (const mode of ['gate_proof', 'release']) test(`${mode}: protected execution
   const names=JSON.parse(f.descriptorBytes).contract.functions.map(f=>f.name).filter(n=>n!=='process-scheduled-publications');
   while(names.length<34)names.push('synthetic-unrelated-'+names.length);
   assert.equal(names.length,34);
-  let rows=names.map(name=>({name})),inventoryCalls=0;
+  let rows=names.map(name=>({name})),inventoryCalls=0, diagnosticCapture=false, healthCalls=0;
   const fetchImpl=async(input,init)=>{
     if(input instanceof Request && new URL(input.url).hostname==='a'.repeat(32)+'.r2.cloudflarestorage.com'){
       assert.ok(['HEAD','GET'].includes(input.method));
       return new Response(input.method==='HEAD'?null:f.authorityBytes,{status:200,headers:{'content-length':String(f.authorityBytes.length),'content-encoding':'identity'}});
+    }
+    if (diagnosticCapture && input instanceof URL && input.pathname === '/v1/projects/aewwdlvbwpczqyvkwvvj/health') {
+      assert.equal(input.origin, 'https://api.supabase.com'); assert.equal(init.method, 'GET'); healthCalls++;
+      return new Response(JSON.stringify({ message: 'SYNTHETIC_PRIVATE_MARKER' }), { status: 403, headers: { 'content-type': 'application/json' } });
     }
     assert.equal(input,'https://api.supabase.com/v1/projects/aewwdlvbwpczqyvkwvvj/functions');assert.equal(init.method,'GET');
     assert.equal(init.headers.authorization,'Bearer SYNTHETIC_TOKEN_MARKER');inventoryCalls++;
@@ -60,7 +65,26 @@ for (const mode of ['gate_proof', 'release']) test(`${mode}: protected execution
     await controller.execute(gate);
     assert.equal(JSON.parse(fs.readFileSync(gate.inputs.stageOutput)).result,'GATE_VERIFIED');
     assert.deepEqual(JSON.parse(fs.readFileSync(gate.verificationOutput)),expected);
-    const workflow=fs.readFileSync(path.join(ROOT,'.github/workflows/nelyon-production-release.yml'),'utf8').replaceAll('\r\n','\n');
+    const workflow=fs.readFileSync(path.join(ROOT,'.github/workflows/nelyon-production-release.yml'),'utf8').replaceAll('\r\n','\n').replace(/^      - &b2_diagnostic_step_[0-9]+\n        name:/gm, '      - name:');
+    if (mode === 'release') await t.test('diagnostic YAML capture follows real revalidation and gate and fails closed at fake health read', async () => {
+      const resolved = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/nelyon-production-release.yml'), 'utf8'), { maxAliasCount: 1000 });
+      const capture = resolved.jobs['snapshot-diagnostic'].steps.find(s => s.id === 'b2_pre_snapshot_authority');
+      assert.ok(capture); assert.match(capture.run, /nelyon-private-authority-cli\.mjs pre-snapshot/);
+      const command = capture.run.slice(capture.run.indexOf('node scripts/nelyon-private-authority-cli.mjs ') + 'node scripts/nelyon-private-authority-cli.mjs '.length).replace(/\\\n\s*/g, ' ');
+      const snapshotOutput = path.join(runner, 'diagnostic-snapshot.json'), verificationOutput = path.join(runner, 'diagnostic-proof.json');
+      const replacements = { '$NELYON_POLICY': policy, 'release-artifact/request.json': request, 'release-artifact/bundle': bundle };
+      const argv = [...command.matchAll(/"([^"]*)"|'([^']*)'|([^\s]+)/g)].map(m => replacements[m[1] ?? m[2] ?? m[3]] ?? (m[1] ?? m[2] ?? m[3]));
+      argv[argv.indexOf('--snapshot-output') + 1] = snapshotOutput;
+      argv[argv.indexOf('--verification-output') + 1] = verificationOutput;
+      const output = [], sink = { write: value => { output.push(String(value)); return true; } };
+      diagnosticCapture = true;
+      try { assert.notEqual(await runPrivateAuthorityCli(argv, { execute: parsed => controller.execute(parsed), stdout: sink, stderr: sink }), 0); }
+      finally { diagnosticCapture = false; }
+      assert.equal(healthCalls, 1, 'real adapter reached the read-only health request after authenticated gate');
+      assert.equal(fs.existsSync(snapshotOutput), false); assert.equal(fs.existsSync(verificationOutput), false);
+      assert.doesNotMatch(output.join(''), /SYNTHETIC_(PRIVATE|TOKEN)_MARKER/);
+      t.diagnostic('Negative capture boundary only; this does not claim a successful complete snapshot end-to-end.');
+    });
     if(mode==='release')for(const route of [
       ['initial','Revalidate protected release manifest after authorization','Resolve protected private authority before revalidation'],
       ['migration','Resolve protected private authority before migrations'],

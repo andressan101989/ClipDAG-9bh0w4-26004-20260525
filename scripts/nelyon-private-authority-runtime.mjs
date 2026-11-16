@@ -5,6 +5,7 @@ import path from 'node:path';
 import { types } from 'node:util';
 
 import { createR2PrivateAuthorityProvider } from './nelyon-private-authority-provider.mjs';
+import { readSnapshotDiagnostic } from './nelyon-production-snapshot-adapter.mjs';
 import {
   createB2RecoveryProvenanceLoader,
   loadB2RecoveryAuthorization,
@@ -126,6 +127,8 @@ const ERROR_CODES = new Set([
   'PRIVATE_AUTHORITY_CLEANUP_FAILED',
 ]);
 const errors = new WeakSet();
+const diagnostics = new WeakMap();
+export function readPrivateAuthorityDiagnostic(error) { return diagnostics.get(error); }
 const bootstraps = new WeakMap();
 const recoveryRuntimes = new WeakMap();
 const textDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false });
@@ -504,7 +507,9 @@ function publishVerification(target, verification) {
     if (created) {
       try { unlinkSync(target); } catch { fail('PRIVATE_AUTHORITY_CLEANUP_FAILED'); }
     }
-    fail('PRIVATE_AUTHORITY_OUTPUT_INVALID');
+    const error = closedError('PRIVATE_AUTHORITY_OUTPUT_INVALID');
+    diagnostics.set(error, Object.freeze({ phase: 'OUTPUT_WRITE', category: 'UNAVAILABLE' }));
+    throw error;
   }
 }
 
@@ -788,7 +793,12 @@ export function createPrivateAuthorityRuntime(options) {
           now: authorizationAt,
           recoveryRuntime: runtime.recoveryRuntime,
         });
-      } catch { fail('PRIVATE_AUTHORITY_STAGE_BLOCKED'); }
+      } catch (source) {
+        const error = closedError('PRIVATE_AUTHORITY_STAGE_BLOCKED');
+        const diagnostic = readSnapshotDiagnostic(source);
+        if (diagnostic) diagnostics.set(error, diagnostic);
+        throw error;
+      }
       const completionAt = runtime.now();
       try {
         if (recoveryAction) {

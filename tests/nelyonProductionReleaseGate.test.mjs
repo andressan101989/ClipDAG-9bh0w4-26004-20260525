@@ -7415,7 +7415,8 @@ test('snapshot count growth is reported separately from integrity verdict', asyn
 
 function workflowText() {
   assert.ok(existsSync(workflowUrl), 'production release workflow must exist');
-  return readFileSync(workflowUrl, 'utf8').replace(/\r\n?/g, '\n');
+  return readFileSync(workflowUrl, 'utf8').replace(/\r\n?/g, '\n')
+    .replace(/^      - &b2_diagnostic_step_[0-9]+\n        name:/gm, '      - name:');
 }
 
 function workflowJob(text, name, nextName) {
