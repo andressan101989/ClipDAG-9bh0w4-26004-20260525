@@ -23,6 +23,8 @@ const CLOSURE_MEMBERS = Object.freeze([
   'package-lock.json',
   'package.json',
   'scripts/nelyon-admin-production-release.mjs',
+  'scripts/nelyon-b2-explicit-connection.mjs',
+  'scripts/nelyon-b2-hermetic-workspace.mjs',
   'scripts/nelyon-b2-recovery-provenance.mjs',
   'scripts/nelyon-b2-source-parity.mjs',
   'scripts/nelyon-private-authority-cli.mjs',

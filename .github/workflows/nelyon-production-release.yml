@@ -398,6 +398,8 @@ jobs:
             'package-lock.json',
             'package.json',
             'scripts/nelyon-admin-production-release.mjs',
+            'scripts/nelyon-b2-explicit-connection.mjs',
+            'scripts/nelyon-b2-hermetic-workspace.mjs',
             'scripts/nelyon-b2-recovery-provenance.mjs',
             'scripts/nelyon-b2-source-parity.mjs',
             'scripts/nelyon-private-authority-cli.mjs',
@@ -831,11 +833,11 @@ jobs:
         if: needs.plan.outputs.mode == 'release'
         run: git fetch --no-tags origin main
 
-      - &b2_diagnostic_step_10
-        name: Revalidate protected release manifest after authorization
-        id: b2_release_revalidation
+      - &b2_diagnostic_step_26
+        name: Preflight protected release manifest without Supabase access
+        id: b2_release_preflight
         if: needs.plan.outputs.mode == 'release'
-        env: &current_private_release_env
+        env: &current_private_preflight_env
           NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
           NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
           NELYON_PRIVATE_AUTHORITY_R2_BUCKET: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_BUCKET }}
@@ -846,18 +848,17 @@ jobs:
           NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
           NELYON_RELEASE_POLICY_SHA256: ${{ vars.NELYON_RELEASE_POLICY_SHA256 }}
           NELYON_APPROVED_SHA: ${{ needs.plan.outputs.approved_sha }}
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
-          node scripts/nelyon-private-authority-cli.mjs revalidate \
+          node scripts/nelyon-private-authority-cli.mjs preflight-release \
             --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
             --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json \
-            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/release-revalidation-stage.json" \
-            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/release-revalidation-receipt.json"
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/release-preflight-stage.json" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/release-preflight-receipt.json"
 
-      - &b2_diagnostic_step_11
-        name: Clean private authority scratch after protected release revalidation
-        id: b2_release_revalidation_cleanup
+      - &b2_diagnostic_step_27
+        name: Clean private authority scratch after protected release preflight
+        id: b2_release_preflight_cleanup
         if: always() && needs.plan.outputs.mode == 'release'
         run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
 
@@ -918,17 +919,17 @@ jobs:
           git fetch --no-tags origin main
           node "$NELYON_HELPER" revalidate --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json --output gate-evidence/revalidation.json
 
-      - &b2_diagnostic_step_13
-        name: Accept protected release revalidation
-        id: b2_release_revalidation_receipt
+      - &b2_diagnostic_step_28
+        name: Accept protected release preflight
+        id: b2_release_preflight_receipt
         if: >-
           needs.plan.outputs.mode == 'release' &&
-          steps.b2_release_revalidation.outcome == 'success' &&
-          steps.b2_release_revalidation_cleanup.outcome == 'success'
+          steps.b2_release_preflight.outcome == 'success' &&
+          steps.b2_release_preflight_cleanup.outcome == 'success'
         run: |
           set -euo pipefail
-          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/release-revalidation-receipt.json"
-          cp "$RUNNER_TEMP/nelyon-private-authority-public/release-revalidation-stage.json" gate-evidence/revalidation.json
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/release-preflight-receipt.json"
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/release-preflight-stage.json" gate-evidence/release-preflight.json
 
       - name: Revalidate legacy Admin recovery after authorization
         id: admin_recovery_legacy_revalidation
@@ -1113,10 +1114,91 @@ jobs:
           NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
         run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
 
+      - &b2_diagnostic_step_29
+        name: Authorize protected read-only inventory refresh
+        id: b2_release_refresh_authorization
+        if: needs.plan.outputs.mode == 'release' && steps.b2_release_preflight_receipt.outcome == 'success'
+        env: *current_private_preflight_env
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authorize-refresh \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/release-refresh-authorization-verification.json" \
+            --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" \
+            --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json \
+            --approvals gate-evidence/approvals.json --runs gate-evidence/runs.json \
+            --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/release-refresh-authorization-stage.json"
+
+      - &b2_diagnostic_step_30
+        name: Clean private authority scratch after read-only refresh authorization
+        id: b2_release_refresh_authorization_cleanup
+        if: always() && needs.plan.outputs.mode == 'release'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - &b2_diagnostic_step_31
+        name: Accept protected read-only refresh authorization
+        id: b2_release_refresh_authorization_receipt
+        if: >-
+          needs.plan.outputs.mode == 'release' &&
+          steps.b2_release_refresh_authorization.outcome == 'success' &&
+          steps.b2_release_refresh_authorization_cleanup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/release-refresh-authorization-verification.json"
+          node --input-type=commonjs <<'NODE'
+          const fs = require('node:fs');
+          const permission = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/nelyon-private-authority-public/release-refresh-authorization-stage.json', 'utf8'));
+          if (permission.result !== 'READ_ONLY_REFRESH_AUTHORIZED' || permission.supabase_access !== 'read_only_inventory') throw new Error('read-only refresh authorization missing');
+          NODE
+
+      - &b2_diagnostic_step_10
+        name: Revalidate protected release manifest after authorization
+        id: b2_release_revalidation
+        if: needs.plan.outputs.mode == 'release' && steps.b2_release_refresh_authorization_receipt.outcome == 'success'
+        env: &current_private_release_env
+          NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_BUCKET: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_BUCKET }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY }}
+          NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256 }}
+          NELYON_PRIVATE_AUTHORITY_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_SHA256 }}
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+          NELYON_RELEASE_POLICY_SHA256: ${{ vars.NELYON_RELEASE_POLICY_SHA256 }}
+          NELYON_APPROVED_SHA: ${{ needs.plan.outputs.approved_sha }}
+          NELYON_SUPABASE_CLI_SHA256: ${{ vars.NELYON_SUPABASE_CLI_SHA256 }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs revalidate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/release-revalidation-stage.json" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/release-revalidation-receipt.json"
+
+      - &b2_diagnostic_step_11
+        name: Clean private authority scratch after protected release revalidation
+        id: b2_release_revalidation_cleanup
+        if: always() && needs.plan.outputs.mode == 'release'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - &b2_diagnostic_step_13
+        name: Accept protected release revalidation
+        id: b2_release_revalidation_receipt
+        if: >-
+          needs.plan.outputs.mode == 'release' &&
+          steps.b2_release_revalidation.outcome == 'success' &&
+          steps.b2_release_revalidation_cleanup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/release-revalidation-receipt.json"
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/release-revalidation-stage.json" gate-evidence/revalidation.json
+
       - &b2_diagnostic_step_16
         name: Resolve protected private authority for release gate
         id: b2_release_gate_authority
-        if: needs.plan.outputs.mode == 'release'
+        if: needs.plan.outputs.mode == 'release' && steps.b2_release_revalidation_receipt.outcome == 'success'
         env:
           NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
           NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
@@ -2337,20 +2419,42 @@ jobs:
             test -f admin-recovery-evidence/cloudflare-prestate-verification.json
           fi
 
-      - name: Verify exact remote migration dry-run before mutation
-        id: migration_dry_run
+      - name: Verify independent private runtime closure before migration dry-run
         if: needs.plan.outputs.mode == 'release'
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          NO_COLOR: '1'
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
+
+      - name: Resolve protected private authority for migration dry-run
+        id: b2_migration_dry_run
+        if: needs.plan.outputs.mode == 'release' && steps.pre_snapshot.outcome == 'success'
+        env: *current_private_release_env
         run: |
           set -euo pipefail
-          supabase db push --help >/dev/null
-          supabase functions deploy --help >/dev/null
-          supabase db push --dry-run --project-ref "$NELYON_PROJECT_REF" --skip-vault --yes --output-format json > gate-evidence/migration-dry-run.txt
-          test -f gate-evidence/gate-proof.json
-          node "$NELYON_HELPER" verify-dry-run --input gate-evidence/migration-dry-run.txt --manifest release-artifact/bundle/manifest.json --output gate-evidence/migration-dry-run.json
-          rm gate-evidence/migration-dry-run.txt
+          NELYON_MIGRATION_BINARY="$(node --input-type=module -e 'import {resolveInstalledLinuxCliBinary} from "./scripts/nelyon-b2-hermetic-workspace.mjs"; process.stdout.write(resolveInstalledLinuxCliBinary({shimPath:process.argv[1],binarySha256:process.env.NELYON_SUPABASE_CLI_SHA256}));' "$(command -v supabase)")
+          node scripts/nelyon-private-authority-cli.mjs dryrun-migrations \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --current-gate "$RUNNER_TEMP/nelyon-private-authority-public/release-gate-stage.json" \
+            --pre-snapshot "$RUNNER_TEMP/nelyon-private-authority-public/production-pre.json" \
+            --binary-path "$NELYON_MIGRATION_BINARY" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/migration-dry-run.json" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/migration-dry-run-receipt.json"
+
+      - name: Clean private authority scratch after migration dry-run
+        id: b2_migration_dry_run_cleanup
+        if: always() && needs.plan.outputs.mode == 'release'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Verify exact remote migration dry-run before mutation
+        id: migration_dry_run
+        if: >-
+          needs.plan.outputs.mode == 'release' &&
+          steps.b2_migration_dry_run.outcome == 'success' &&
+          steps.b2_migration_dry_run_cleanup.outcome == 'success'
+        run: |
+          set -euo pipefail
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/migration-dry-run-receipt.json"
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/migration-dry-run.json" gate-evidence/migration-dry-run.json
 
       - name: Verify independent private runtime closure before migrations
         if: needs.plan.outputs.mode == 'release'
@@ -2375,23 +2479,52 @@ jobs:
         if: always() && needs.plan.outputs.mode == 'release'
         run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
 
-      - name: Apply exact manifest migrations
+      - name: B2 protected migrations
         id: apply_migrations
         if: >-
           needs.plan.outputs.mode == 'release' &&
+          steps.migration_dry_run.outcome == 'success' &&
           steps.b2_migration_authority.outcome == 'success' &&
           steps.b2_migration_authority_cleanup.outcome == 'success'
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        env: *current_private_release_env
         run: |
           set -euo pipefail
           cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/migration-receipt.json"
           cp "$RUNNER_TEMP/nelyon-private-authority-public/migration-revalidation-stage.json" gate-evidence/pre-migration-revalidation.json
-          supabase db push --project-ref "$NELYON_PROJECT_REF" --skip-vault --yes
+          NELYON_MIGRATION_BINARY="$(node --input-type=module -e 'import {resolveInstalledLinuxCliBinary} from "./scripts/nelyon-b2-hermetic-workspace.mjs"; process.stdout.write(resolveInstalledLinuxCliBinary({shimPath:process.argv[1],binarySha256:process.env.NELYON_SUPABASE_CLI_SHA256}));' "$(command -v supabase)")
+          node scripts/nelyon-private-authority-cli.mjs apply-migrations \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --current-gate "$RUNNER_TEMP/nelyon-private-authority-public/release-gate-stage.json" \
+            --pre-snapshot "$RUNNER_TEMP/nelyon-private-authority-public/production-pre.json" \
+            --binary-path "$NELYON_MIGRATION_BINARY" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/migration-apply.json" \
+            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/migration-apply-receipt.json"
+          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/migration-apply-receipt.json"
+
+      - name: Clean private authority scratch after protected migrations
+        id: apply_migrations_cleanup
+        if: always() && needs.plan.outputs.mode == 'release'
+        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
+
+      - name: Retain public migration attempt proof even after failure
+        if: always() && needs.plan.outputs.mode == 'release'
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFileSync, mkdirSync } from 'node:fs';
+          import { resolve, join } from 'node:path';
+          import { retainB2MigrationAttemptProof } from './scripts/nelyon-production-release.mjs';
+          const root=join(process.env.RUNNER_TEMP,'nelyon-private-authority-public');
+          const read=path=>JSON.parse(readFileSync(path,'utf8'));
+          mkdirSync('gate-evidence',{recursive:true});
+          retainB2MigrationAttemptProof({trustedProofRoot:root,destinationDirectory:resolve('gate-evidence'),
+            manifest:read('release-artifact/bundle/manifest.json'),request:read('release-artifact/request.json'),
+            expectedReceipt:read(join(root,'expected-receipt.json'))});
+          NODE
 
       - name: Verify independent private runtime closure before function revalidation
         id: b2_function_revalidation_closure
-        if: needs.plan.outputs.mode == 'release' && steps.apply_migrations.outcome == 'success'
+        if: needs.plan.outputs.mode == 'release' && steps.apply_migrations.outcome == 'success' && steps.apply_migrations_cleanup.outcome == 'success'
         env:
           NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
         run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
@@ -2400,7 +2533,7 @@ jobs:
         id: b2_function_revalidation
         if: >-
           needs.plan.outputs.mode == 'release' &&
-          steps.apply_migrations.outcome == 'success' &&
+          steps.apply_migrations.outcome == 'success' && steps.apply_migrations_cleanup.outcome == 'success' &&
           steps.b2_function_revalidation_closure.outcome == 'success'
         env: *current_private_release_env
         run: |
@@ -2420,7 +2553,7 @@ jobs:
         id: b2_function_revalidation_receipt
         if: >-
           needs.plan.outputs.mode == 'release' &&
-          steps.apply_migrations.outcome == 'success' &&
+          steps.apply_migrations.outcome == 'success' && steps.apply_migrations_cleanup.outcome == 'success' &&
           steps.b2_function_revalidation.outcome == 'success' &&
           steps.b2_function_revalidation_cleanup.outcome == 'success'
         run: |
@@ -2432,7 +2565,7 @@ jobs:
         id: deploy_functions
         if: >-
           needs.plan.outputs.mode == 'release' &&
-          steps.apply_migrations.outcome == 'success' &&
+          steps.apply_migrations.outcome == 'success' && steps.apply_migrations_cleanup.outcome == 'success' &&
           steps.b2_function_revalidation.outcome == 'success' &&
           steps.b2_function_revalidation_cleanup.outcome == 'success' &&
           steps.b2_function_revalidation_receipt.outcome == 'success'
@@ -3834,6 +3967,7 @@ jobs:
             gate-evidence/gate-proof.json
             gate-evidence/pre-snapshot-verification.json
             gate-evidence/migration-dry-run.json
+            gate-evidence/protected-stage-proofs.json
             gate-evidence/pre-migration-revalidation.json
             gate-evidence/pre-function-revalidation.json
             gate-evidence/postcheck-result.json
@@ -3935,12 +4069,18 @@ jobs:
       - *b2_diagnostic_step_7
       - *b2_diagnostic_step_8
       - *b2_diagnostic_step_9
-      - *b2_diagnostic_step_10
-      - *b2_diagnostic_step_11
+      - *b2_diagnostic_step_26
+      - *b2_diagnostic_step_27
       - *b2_diagnostic_step_12
-      - *b2_diagnostic_step_13
+      - *b2_diagnostic_step_28
       - *b2_diagnostic_step_14
       - *b2_diagnostic_step_15
+      - *b2_diagnostic_step_29
+      - *b2_diagnostic_step_30
+      - *b2_diagnostic_step_31
+      - *b2_diagnostic_step_10
+      - *b2_diagnostic_step_11
+      - *b2_diagnostic_step_13
       - *b2_diagnostic_step_16
       - *b2_diagnostic_step_17
       - *b2_diagnostic_step_18
@@ -4005,11 +4145,11 @@ jobs:
         id: diagnostic_terminal
         if: always()
         env:
-          DIAGNOSTIC_RESULTS: ${{ steps.b2_release_revalidation.outcome }}|${{ steps.b2_release_revalidation_cleanup.outcome }}|${{ steps.b2_release_revalidation_receipt.outcome }}|${{ steps.b2_release_gate_authority.outcome }}|${{ steps.b2_release_gate_authority_cleanup.outcome }}|${{ steps.b2_release_gate_acceptance.outcome }}|${{ steps.b2_pre_snapshot_authority.outcome }}|${{ steps.b2_pre_snapshot_authority_cleanup.outcome }}|${{ steps.pre_snapshot.outcome }}|${{ steps.b2_verify_pre_snapshot_authority.outcome }}|${{ steps.b2_verify_pre_snapshot_authority_cleanup.outcome }}|${{ steps.verify_pre_snapshot.outcome }}|${{ steps.b2_final_authority_cleanup.outcome }}|${{ steps.diagnostic_output_cleanup.outcome }}
+          DIAGNOSTIC_RESULTS: ${{ steps.b2_release_preflight.outcome }}|${{ steps.b2_release_preflight_cleanup.outcome }}|${{ steps.b2_release_preflight_receipt.outcome }}|${{ steps.b2_release_refresh_authorization.outcome }}|${{ steps.b2_release_refresh_authorization_cleanup.outcome }}|${{ steps.b2_release_refresh_authorization_receipt.outcome }}|${{ steps.b2_release_revalidation.outcome }}|${{ steps.b2_release_revalidation_cleanup.outcome }}|${{ steps.b2_release_revalidation_receipt.outcome }}|${{ steps.b2_release_gate_authority.outcome }}|${{ steps.b2_release_gate_authority_cleanup.outcome }}|${{ steps.b2_release_gate_acceptance.outcome }}|${{ steps.b2_pre_snapshot_authority.outcome }}|${{ steps.b2_pre_snapshot_authority_cleanup.outcome }}|${{ steps.pre_snapshot.outcome }}|${{ steps.b2_verify_pre_snapshot_authority.outcome }}|${{ steps.b2_verify_pre_snapshot_authority_cleanup.outcome }}|${{ steps.verify_pre_snapshot.outcome }}|${{ steps.b2_final_authority_cleanup.outcome }}|${{ steps.diagnostic_output_cleanup.outcome }}
         run: |
           node --input-type=commonjs <<'NODE'
           const results = (process.env.DIAGNOSTIC_RESULTS ?? '').split('|');
-          if (results.length !== 14 || results.some(result => result !== 'success')) {
+          if (results.length !== 20 || results.some(result => result !== 'success')) {
             process.stderr.write('READ_ONLY_DIAGNOSTIC_BLOCKED\n');
             process.exit(2);
           }

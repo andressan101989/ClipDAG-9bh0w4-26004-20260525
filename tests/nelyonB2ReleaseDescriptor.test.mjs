@@ -17,7 +17,10 @@ const names = ['ai-handoff', 'cleanup-stale-media-uploads', 'content-safety-scan
   'create-media-upload', 'finalize-media-upload', 'get-media-url',
   'process-scheduled-publications', 'video-semantic-index'];
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const bytes = () => readFileSync(descriptorPath);
+// Frozen public candidate from 15197130; repository descriptor is now approved.
+// Parser candidate-state tests must not silently change when the live reference renews.
+const candidateFixture = new URL('./fixtures/nelyonB2CandidateDescriptor.json', import.meta.url);
+const bytes = () => readFileSync(candidateFixture);
 function parse(value = bytes(), digest = hash(value)) {
   assert.equal(typeof gate.parseB2ReleaseDescriptor, 'function', 'strict B2 descriptor parser is implemented');
   return gate.parseB2ReleaseDescriptor(value, digest);
@@ -224,3 +227,10 @@ test('actual repository import graph yields the exact public eight-function clos
   const input = sourceInput(); input.affectedFunctions = actual;
   assert.equal(gate.validateB2ReleaseDescriptorSources(input).contract.state, 'candidate');
 });
+
+ test('current approved repository descriptor remains public data, not private execution authority',()=>{
+  const current=readFileSync(descriptorPath);const value=parse(current,hash(current));
+  assert.equal(value.contract.state,'approved');assert.equal(value.contract.release_ready,true);
+  assert.match(value.private_authority.sha256,/^[a-f0-9]{64}$/);
+  assert.throws(()=>gate.compileB2PublicEvidence({descriptorBytes:current,expectedDescriptorSha256:hash(current)}),{code:'B2_DESCRIPTOR_INVALID'});
+ });

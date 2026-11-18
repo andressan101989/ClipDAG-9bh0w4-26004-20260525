@@ -13,7 +13,8 @@ import { createReleaseAuthorityContext } from '../scripts/nelyon-release-authori
 const root = new URL('../', import.meta.url);
 const MARKER = 'SYNTHETIC_COMPILER_PRIVATE_MARKER';
 const AT = '2026-11-08T12:00:00.000Z';
-const candidateBytes = readFileSync(new URL('.github/nelyon-web-control-centers-b2-release-descriptor.json', root));
+// Candidate negative tests use the immutable historical public fixture, not live approved metadata.
+const candidateBytes = readFileSync(new URL('./fixtures/nelyonB2CandidateDescriptor.json', import.meta.url));
 const hash = gate.sha256Hex;
 function fixture(at = AT, backupLifetimeHours = 22, approvalLifetimeHours = 23) {
   const descriptor = JSON.parse(candidateBytes);

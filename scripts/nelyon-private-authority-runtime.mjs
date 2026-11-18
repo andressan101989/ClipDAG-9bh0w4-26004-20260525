@@ -45,7 +45,11 @@ const RECOVERY_REQUIRED_ENV = Object.freeze(REQUIRED_ENV.filter(name => ![
 ].includes(name)));
 const ACTION_STAGE = Object.freeze({
   'authority-proof': 'authority_proof',
+  'dryrun-migrations': 'migrations',
+  'apply-migrations': 'migrations',
   revalidate: 'authority_proof',
+  'preflight-release': 'authority_proof',
+  'authorize-refresh': 'authority_proof',
   'verify-gate': 'authority_proof',
   'pre-snapshot': 'pre_snapshot',
   'verify-pre-snapshot': 'pre_snapshot',
@@ -80,7 +84,12 @@ const CHAIN_REAUTH_ACTIONS = new Set(['admin-recovery-authority-proof', 'revalid
   'verify-admin-recovery-cloudflare-prestate']);
 const ACTION_INPUT_KEYS = Object.freeze({
   'authority-proof': COMMON_INPUT_KEYS,
+  'dryrun-migrations': [...COMMON_INPUT_KEYS,'currentGate','preSnapshot','binaryPath','stageOutput'],
+  'apply-migrations': [...COMMON_INPUT_KEYS,'currentGate','preSnapshot','binaryPath','stageOutput'],
   revalidate: [...COMMON_INPUT_KEYS, 'compilerSha256', 'remoteEvidence', 'stageOutput'],
+  'preflight-release': [...COMMON_INPUT_KEYS, 'compilerSha256', 'remoteEvidence', 'stageOutput'],
+  'authorize-refresh': [...COMMON_INPUT_KEYS, 'policySha256', 'compilerSha256', 'environmentEvidence',
+    'branchPolicies', 'approvals', 'runs', 'autoDeployExpected', 'stageOutput'],
   'verify-gate': [...COMMON_INPUT_KEYS, 'policySha256', 'compilerSha256', 'environmentEvidence',
     'branchPolicies', 'approvals', 'runs', 'autoDeployExpected', 'stageOutput'],
   'pre-snapshot': [...COMMON_INPUT_KEYS, 'snapshotOutput'],

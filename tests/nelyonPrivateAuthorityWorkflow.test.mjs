@@ -333,7 +333,7 @@ test('provider configuration is step-scoped only to closed private runtime invoc
         assert.match(owningStep, /nelyon-private-authority-cli\.mjs authority-proof[\s\S]*env -u NELYON_PRIVATE_AUTHORITY_PROVIDER[\s\S]*supabase functions deploy/);
         assert.match(owningStep, new RegExp(`-u ${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
       } else {
-        assert.match(owningStep, /- name: (?:Resolve protected private authority|Revalidate protected release|Stage exact protected B2 recovery source|Verify B2 Admin recovery gate)/);
+        assert.match(owningStep, /- name: (?:Resolve protected private authority|Revalidate protected release|Preflight protected release|Stage exact protected B2 recovery source|Verify B2 Admin recovery gate)/);
         assert.match(owningStep, /nelyon-private-authority-cli\.mjs/);
         assert.doesNotMatch(owningStep, /npm ci|build:deployment|supabase\s+(?:db\s+push|functions\s+deploy)|versions (?:upload|deploy)|triggers deploy/);
       }
@@ -391,9 +391,9 @@ test('deploy installs the closure-pinned runtime before any provider-bearing sta
 test('every release mutation has fresh proof and successful cleanup before the fixed operation', () => {
   const deploy = workflowJob(workflowText(), 'deploy');
   const migrationProof = deploy.indexOf('- name: Resolve protected private authority before migrations');
-  const migration = deploy.indexOf('- name: Apply exact manifest migrations');
+  const migration = deploy.indexOf('- name: B2 protected migrations');
   assert.ok(migrationProof > 0 && migration > migrationProof);
-  assert.match(step(deploy, 'Apply exact manifest migrations'), /steps\.b2_migration_authority\.outcome == 'success'/);
+  assert.match(step(deploy, 'B2 protected migrations'), /steps\.b2_migration_authority\.outcome == 'success'/);
 
   const functions = step(deploy, 'Deploy each exact manifest function');
   const loop = functions.indexOf('while IFS= read -r function_name');
@@ -759,17 +759,17 @@ test('failed authority, cleanup or receipt acceptance cannot admit a release mut
   const deploy=workflowJob(workflowText(),'deploy');
   for(const [name,dependencies]of [
     ['Accept protected release revalidation',['b2_release_revalidation','b2_release_revalidation_cleanup']],
-    ['Apply exact manifest migrations',['b2_migration_authority','b2_migration_authority_cleanup']],
+    ['B2 protected migrations',['migration_dry_run','b2_migration_authority','b2_migration_authority_cleanup']],
     ['Accept protected release pre-function revalidation',['b2_function_revalidation','b2_function_revalidation_cleanup']],
-    ['Deploy each exact manifest function',['apply_migrations','b2_function_revalidation','b2_function_revalidation_cleanup','b2_function_revalidation_receipt']],
+    ['Deploy each exact manifest function',['apply_migrations','apply_migrations_cleanup','b2_function_revalidation','b2_function_revalidation_cleanup','b2_function_revalidation_receipt']],
   ]) {
     const consumer=step(deploy,name);
     assert.equal(admitted(consumer,{mode:'release',priorFailed:false}),true,name);
     for(const id of dependencies)for(const outcome of ['failure','skipped','cancelled'])
       assert.equal(admitted(consumer,{mode:'release',priorFailed:false,outcomes:{[id]:outcome}}),false,`${name}: ${id} ${outcome}`);
   }
-  const migrations=step(deploy,'Apply exact manifest migrations');
-  assert.ok(migrations.indexOf('cmp ')>=0 && migrations.indexOf('cmp ')<migrations.indexOf('supabase db push'));
+  const migrations=step(deploy,'B2 protected migrations');
+  assert.ok(migrations.indexOf('cmp ')>=0 && migrations.indexOf('cmp ')<migrations.indexOf('cli.mjs apply-migrations'));
   assert.doesNotMatch(migrations,/node "\$NELYON_HELPER" revalidate/);
   for(const name of ['Accept protected release revalidation','Accept protected release pre-function revalidation']) {
     const consumer=step(deploy,name);
@@ -834,4 +834,61 @@ test('integrity-blocked safety cleanup reports that URLs were not closed without
   assert.equal(admitted(report, { mode: 'admin_recovery', b2: 'false',
     outcomes: { b2_admin_temp_urls_closure: 'skipped' } }), false);
   assert.match(report, /cleanup not executed: runtime integrity was not verified; URL closure is unconfirmed/);
+});
+
+
+test('read-only refresh authorization precedes PAT and cannot replace the full deployment gate', () => {
+  const deploy = workflowJob(workflowText(), 'deploy');
+  const preflight = step(deploy, 'Preflight protected release manifest without Supabase access');
+  const authorize = step(deploy, 'Authorize protected read-only inventory refresh');
+  const accept = step(deploy, 'Accept protected read-only refresh authorization');
+  const refresh = step(deploy, 'Revalidate protected release manifest after authorization');
+  const fullGate = step(deploy, 'Resolve protected private authority for release gate');
+  assert.doesNotMatch(preflight + authorize + accept, /SUPABASE_ACCESS_TOKEN/);
+  assert.match(preflight, /cli\.mjs preflight-release/);
+  assert.match(authorize, /cli\.mjs authorize-refresh/);
+  assert.match(authorize, /steps\.b2_release_preflight_receipt\.outcome == 'success'/);
+  assert.match(accept, /steps\.b2_release_refresh_authorization\.outcome == 'success'/);
+  assert.match(accept, /steps\.b2_release_refresh_authorization_cleanup\.outcome == 'success'/);
+  assert.match(accept, /cmp[^\n]*expected-receipt\.json[^\n]*release-refresh-authorization-verification\.json/);
+  assert.match(accept, /permission\.result !== 'READ_ONLY_REFRESH_AUTHORIZED'/);
+  assert.match(accept, /permission\.supabase_access !== 'read_only_inventory'/);
+  assert.doesNotMatch(accept, /gate-proof\.json|GATE_VERIFIED/);
+  assert.match(refresh, /steps\.b2_release_refresh_authorization_receipt\.outcome == 'success'/);
+  assert.match(refresh, /cli\.mjs revalidate/);
+  assert.match(refresh, /SUPABASE_ACCESS_TOKEN/);
+  assert.match(fullGate, /steps\.b2_release_revalidation_receipt\.outcome == 'success'/);
+  assert.match(fullGate, /cli\.mjs verify-gate/);
+});
+
+
+test('both migration phases use protected controller with independent binary pin and no linked CLI fallback', () => {
+  const deploy=workflowJob(workflowText(),'deploy');
+  assert.doesNotMatch(deploy,/supabase db push/);
+  for(const action of ['dryrun-migrations','apply-migrations']) {
+    const offset=deploy.indexOf('cli.mjs '+action+' ');assert.ok(offset>=0);
+    const block=deploy.slice(deploy.lastIndexOf('      - name:',offset),deploy.indexOf('      - name:',offset));
+    assert.match(block,/--current-gate/);assert.match(block,/--pre-snapshot/);assert.match(block,/--binary-path/);
+    assert.match(block,/current_private_release_env/);
+  }
+  assert.match(deploy,/NELYON_SUPABASE_CLI_SHA256: \$\{\{ vars\.NELYON_SUPABASE_CLI_SHA256 \}\}/);
+  assert.match(deploy,/name: B2 protected migrations/);
+  assert.match(deploy,/steps\.migration_dry_run\.outcome == 'success'/);
+  assert.match(deploy,/steps\.apply_migrations_cleanup\.outcome == 'success'/);
+});
+
+
+test('migration attempt proof retention runs on failure without credentials or a success requirement',()=>{
+ const deploy=workflowJob(workflowText(),'deploy'),retain=step(deploy,'Retain public migration attempt proof even after failure');
+ assert.match(retain,/if: always\(\) && needs\.plan\.outputs\.mode == 'release'/);
+ assert.doesNotMatch(retain,/outcome == 'success'|SUPABASE_ACCESS_TOKEN|env:|PRIVATE_AUTHORITY_R2/);
+ assert.match(retain,/retainB2MigrationAttemptProof/);
+ assert.match(deploy.slice(deploy.indexOf('name: Upload sanitized gate evidence')),/gate-evidence\/protected-stage-proofs\.json/);
+});
+
+test('migration stages resolve independently pinned Linux ELF instead of passing npm shim',()=>{
+ const workflow=workflowText();
+ assert.equal(workflow.split('process.stdout.write(resolveInstalledLinuxCliBinary').length-1,2);
+ assert.equal((workflow.match(/--binary-path "\$NELYON_MIGRATION_BINARY"/g)??[]).length,2);
+ assert.doesNotMatch(workflow,/--binary-path "\$\(command -v supabase\)"/);
 });

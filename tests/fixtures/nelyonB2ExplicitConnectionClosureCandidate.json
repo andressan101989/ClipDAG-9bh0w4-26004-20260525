@@ -1,0 +1,107 @@
+{
+  "fixture_only": true,
+  "deployment_authorized": false,
+  "description": "Extended17-member LOCAL dirty-worktree closure; not a protected pin, release descriptor or production authority.",
+  "current_local_closure": {
+    "schema_version": 1,
+    "identity": "nelyon-b2-private-release-runtime-v1",
+    "algorithm": "sha256",
+    "files": [
+      {
+        "path": ".github/workflows/nelyon-production-release.yml",
+        "sha256": "9544d60058a0848524ebdf34eca8eb0989a4da98bca7e177d56b88b29f7d1bac"
+      },
+      {
+        "path": "package-lock.json",
+        "sha256": "f4ccaac2695d90169324ab69e0f83e9a0d86d117ee1416bc0b1e738d96503ab6"
+      },
+      {
+        "path": "package.json",
+        "sha256": "da1036dc4417dc38db6bde373dff1d280e2f2159245f4bac1b7031ecff51a141"
+      },
+      {
+        "path": "scripts/nelyon-admin-production-release.mjs",
+        "sha256": "0f5e9931004e38d3862539b7c6c201a24dcb6cf730a0bd62c47690c8f4e88b70"
+      },
+      {
+        "path": "scripts/nelyon-b2-explicit-connection.mjs",
+        "sha256": "cbd46b0134369df95cb7011968ca2f3942c60a1d344aa9431ce82c4853325e4a"
+      },
+      {
+        "path": "scripts/nelyon-b2-hermetic-workspace.mjs",
+        "sha256": "edade583786bd949f2faeff27b5a1da860cf6425409b7961b99401ac3476b0d9"
+      },
+      {
+        "path": "scripts/nelyon-b2-recovery-provenance.mjs",
+        "sha256": "b7bf1cc743fc5ab9d0ce08ff5bf54d6e2e29ebbb11190b1d8041e90486b14fa2"
+      },
+      {
+        "path": "scripts/nelyon-b2-source-parity.mjs",
+        "sha256": "148f7631cc4e98b1b86d56bb56c162dedd6927fc1e0ce7eda25131b32308f3f4"
+      },
+      {
+        "path": "scripts/nelyon-private-authority-cli.mjs",
+        "sha256": "32083dfbbf3bd38c4acec8097834aaf4c86c6e2c631406c9d1e00ee3f05c8c77"
+      },
+      {
+        "path": "scripts/nelyon-private-authority-provider.mjs",
+        "sha256": "bb26c45255155e2cfb679e73d0efce75f2620c3702aebedb5fd8e86d39889600"
+      },
+      {
+        "path": "scripts/nelyon-private-authority-runtime.mjs",
+        "sha256": "49af362d57d764470e3cd27c04642910015abd1d7f74294728d5110a42efaa78"
+      },
+      {
+        "path": "scripts/nelyon-private-authority.mjs",
+        "sha256": "706e31dfcfeb7f6ce2feafe39bbe6e51ff723e4afb6460a430523b713a13cf93"
+      },
+      {
+        "path": "scripts/nelyon-private-runtime-closure.mjs",
+        "sha256": "8a189bd300e9da3fe644d97b2f6dde2c978ceb83f7849013ee669865fea8b7c8"
+      },
+      {
+        "path": "scripts/nelyon-production-release.mjs",
+        "sha256": "5acb3609dc7d1bbfd0f85c88bbd1219dc35265d100cfceb61e973600b39bd969"
+      },
+      {
+        "path": "scripts/nelyon-production-snapshot-adapter.mjs",
+        "sha256": "f0eb25c8b4a2e886182c0cccf7b0e2556ab43dfa3d53edf9eb02e8ba17b33f7b"
+      },
+      {
+        "path": "scripts/nelyon-release-authority-context.mjs",
+        "sha256": "fac398ba183c9051ad863e9fb1cb9218a54d6cd0593af93c51b44b6f6b683980"
+      },
+      {
+        "path": "shared/web-deployment/publicSupabaseBuildEnv.mjs",
+        "sha256": "6ad1c25eb20ae84a0f7ea65e2fa47ddca4d099545784627294d637a6d4552b15"
+      }
+    ],
+    "runtime": {
+      "node": "24.21.0",
+      "setup_node_action": "949feb2413d6458794dcd2491c4babbbce0c15c1"
+    },
+    "dependencies": [
+      {
+        "name": "aws4fetch",
+        "version": "1.0.20",
+        "integrity": "sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==",
+        "lock_path": "node_modules/aws4fetch"
+      }
+    ],
+    "operation_tools": {
+      "wrangler": "4.135.0",
+      "supabase_setup_action": "45a513f8c64c0bc8e0e3dfe572b5c95be85f6359"
+    },
+    "closure_sha256": "007261b72851519df8247ed0516eca1cc1f937fe1f503c136cfe80741d1591b5"
+  },
+  "proposed_members": [
+    {
+      "path": "scripts/nelyon-b2-explicit-connection.mjs",
+      "sha256": "cbd46b0134369df95cb7011968ca2f3942c60a1d344aa9431ce82c4853325e4a"
+    },
+    {
+      "path": "scripts/nelyon-b2-hermetic-workspace.mjs",
+      "sha256": "edade583786bd949f2faeff27b5a1da860cf6425409b7961b99401ac3476b0d9"
+    }
+  ]
+}
