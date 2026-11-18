@@ -772,3 +772,88 @@ test('B2 exact relation source authority rejects PUBLIC and role ACL drift', () 
     }
   }
 });
+test('explicit migration connection runs inside existing protected mutation gate',async()=>{
+ const connection=await import('../scripts/nelyon-b2-explicit-connection.mjs');
+ assert.equal(typeof connection.runB2ProtectedMigration,'function');
+ const {createHermeticMigrationWorkspace}=await import('../scripts/nelyon-b2-hermetic-workspace.mjs');
+ const f=fixture(), op=operationFixture(f);f.request.mode='release';f.manifest.resources.migrations=[];
+ op.currentGate={...op.currentGate,run_id:f.request.runId,release_id:f.request.releaseId,manifest_sha256:hash(release.canonicalJson(f.manifest))};
+ const root=mkdtempSync(join(process.cwd(),'.b2-protected-adapter-'));
+ try{
+  const bytes=Buffer.from('fake executable never executed');const executable=join(root,'fake');writeFileSync(executable,bytes);
+  const config=Buffer.from('[functions.example]\nverify_jwt = true\n');
+  const workspace=createHermeticMigrationWorkspace({parent:root,binaryPath:executable,binarySha256:hash(bytes),files:[{path:'supabase/config.toml',bytes:config,sha256:hash(config)}]});
+  const repositoryRoot=bindExplicitConnectionSource(root,workspace,f,op);
+  const proofPath=join(root,'protected-stage-proofs.json');let calls=0;
+  const operation={repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath,trustedProofRoot:root};
+  const parameters={phase:'apply',projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture-token',workspace,
+   verifyContext:async()=>({cliVersion:'2.120.0',effectiveConfigVerified:true}),
+   request:async()=>{assert.ok(fs.existsSync(proofPath));calls++;return {role:'cli_login_postgres',password:'fixture-password'};},
+   execute:async()=>{calls++;return {exitCode:0,stdout:JSON.stringify({dryRun:true,message:'ok',migrations:[],roles:[],seeds:[],upToDate:true})};}};
+  await assert.rejects(()=>connection.runB2ProtectedMigration({operation,now:()=>'2026-11-10T12:00:00.000Z',connection:parameters}));assert.equal(calls,0);
+  assert.deepEqual(await connection.runB2ProtectedMigration({operation,now:()=>AT,connection:parameters}),{complete:true});assert.equal(calls,4);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+test('post-mint protected authorization uses fresh clock rather than caller boolean',async()=>{
+ const connection=await import('../scripts/nelyon-b2-explicit-connection.mjs');
+ const {createHermeticMigrationWorkspace}=await import('../scripts/nelyon-b2-hermetic-workspace.mjs');
+ const f=fixture(),op=operationFixture(f);f.request.mode='release';f.manifest.resources.migrations=[];
+ op.currentGate={...op.currentGate,run_id:f.request.runId,release_id:f.request.releaseId,manifest_sha256:hash(release.canonicalJson(f.manifest))};
+ const root=mkdtempSync(join(process.cwd(),'.b2-postmint-'));try{
+ const binary=Buffer.from('fake');writeFileSync(join(root,'fake'),binary);const config=Buffer.from('');
+ const workspace=createHermeticMigrationWorkspace({parent:root,binaryPath:join(root,'fake'),binarySha256:hash(binary),files:[{path:'supabase/config.toml',bytes:config,sha256:hash(config)}]});
+ const repositoryRoot=bindExplicitConnectionSource(root,workspace,f,op);let time=AT,executes=0,mints=0;
+ await assert.rejects(()=>connection.runB2ProtectedMigration({operation:{repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath:join(root,'protected-stage-proofs.json'),trustedProofRoot:root},now:()=>time,connection:{phase:'apply',workspace,projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture',verifyContext:async()=>({cliVersion:'2.120.0',effectiveConfigVerified:true}),request:async()=>{mints++;time='2026-11-10T12:00:00.000Z';return {role:'cli_login_postgres',password:'fixture'};},execute:async()=>{executes++;return {exitCode:0};}}}));
+ assert.equal(mints,1);assert.equal(executes,0);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+test('protected apply rejects an extra pending migration from exact dry-run',async()=>{
+ const connection=await import('../scripts/nelyon-b2-explicit-connection.mjs');const {createHermeticMigrationWorkspace}=await import('../scripts/nelyon-b2-hermetic-workspace.mjs');
+ const f=fixture(),op=operationFixture(f);f.request.mode='release';f.manifest.resources.migrations=[];op.currentGate={...op.currentGate,run_id:f.request.runId,release_id:f.request.releaseId,manifest_sha256:hash(release.canonicalJson(f.manifest))};
+ const root=mkdtempSync(join(process.cwd(),'.b2-extra-migration-'));try{
+ const binary=Buffer.from('fake');writeFileSync(join(root,'fake'),binary);const config=Buffer.from('');const extra=Buffer.from('select 1;');
+ const workspace=createHermeticMigrationWorkspace({parent:root,binaryPath:join(root,'fake'),binarySha256:hash(binary),files:[{path:'supabase/config.toml',bytes:config,sha256:hash(config)},{path:'supabase/migrations/20260102000000_extra.sql',bytes:extra,sha256:hash(extra)}]});
+ const repositoryRoot=bindExplicitConnectionSource(root,workspace,f,op);let applies=0,dryRuns=0;
+ await assert.rejects(()=>connection.runB2ProtectedMigration({operation:{repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath:join(root,'protected-stage-proofs.json'),trustedProofRoot:root},now:()=>AT,connection:{phase:'apply',workspace,projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture',request:async()=>({role:'cli_login_postgres',password:'fixture'}),execute:async spec=>{if(spec.args.includes('--dry-run'))dryRuns++;else applies++;return {exitCode:0,stdout:JSON.stringify({dryRun:true,message:'pending',migrations:['20260102000000_extra.sql'],roles:[],seeds:[],upToDate:false})};}}}));
+ assert.equal(dryRuns,1);assert.equal(applies,0);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+function bindExplicitConnectionSource(root,workspace,f,op,excluded=[]) {
+ const repositoryRoot=join(root,'approved-source');mkdirSync(repositoryRoot);
+ fs.cpSync(join(workspace.cwd,'supabase'),join(repositoryRoot,'supabase'),{recursive:true});
+ for(const relative of excluded)fs.rmSync(join(repositoryRoot,relative),{force:true});
+ const environment={GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_TERMINAL_PROMPT:'0'};
+ for(const key of ['PATH','Path','SystemRoot','SYSTEMROOT','TEMP','TMP'])if(process.env[key])environment[key]=process.env[key];
+ const git=args=>{const result=spawnSync('git',['-c','core.autocrlf=false','-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','user.name=Fixture','-c','user.email=fixture@example.invalid',...args],{cwd:repositoryRoot,env:environment,shell:false,windowsHide:true,encoding:'utf8'});assert.equal(result.status,0,'synthetic git command must succeed');return result.stdout.trim();};
+ git(['init','--quiet']);git(['add','supabase']);git(['commit','--quiet','-m','synthetic approved source']);
+ const sha=git(['rev-parse','HEAD']);f.request.approvedSha=sha;f.manifest.identity.approved_sha=sha;
+ op.currentGate.approved_sha=sha;op.currentGate.manifest_sha256=hash(release.canonicalJson(f.manifest));
+ return repositoryRoot;
+}
+test('unapproved extra workspace migration is rejected before any role mint',async()=>{
+ const connection=await import('../scripts/nelyon-b2-explicit-connection.mjs');const {createHermeticMigrationWorkspace}=await import('../scripts/nelyon-b2-hermetic-workspace.mjs');
+ const f=fixture(),op=operationFixture(f);f.request.mode='release';f.manifest.resources.migrations=[];op.currentGate={...op.currentGate,run_id:f.request.runId,release_id:f.request.releaseId,manifest_sha256:hash(release.canonicalJson(f.manifest))};
+ const root=mkdtempSync(join(process.cwd(),'.b2-unapproved-extra-'));try{
+ const binary=Buffer.from('fake');writeFileSync(join(root,'fake'),binary);const config=Buffer.from('');const extra=Buffer.from('select 1;');const extraPath='supabase/migrations/20260102000000_extra.sql';
+ const workspace=createHermeticMigrationWorkspace({parent:root,binaryPath:join(root,'fake'),binarySha256:hash(binary),files:[{path:'supabase/config.toml',bytes:config,sha256:hash(config)},{path:extraPath,bytes:extra,sha256:hash(extra)}]});
+ const repositoryRoot=bindExplicitConnectionSource(root,workspace,f,op,[extraPath]);let requests=0,executes=0;
+ await assert.rejects(()=>connection.runB2ProtectedMigration({operation:{repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath:join(root,'protected-stage-proofs.json'),trustedProofRoot:root},now:()=>AT,connection:{phase:'apply',workspace,projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture',request:async()=>{requests++;return {role:'cli_login_postgres',password:'fixture'};},execute:async()=>{executes++;return {exitCode:0,stdout:''};}}}));
+ assert.equal(requests,0);assert.equal(executes,0);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+test('protected standalone dry-run requires full gate and cannot advance migration proof',async()=>{
+ const connection=await import('../scripts/nelyon-b2-explicit-connection.mjs');assert.equal(typeof connection.runB2ProtectedDryRun,'function');
+ const {createHermeticMigrationWorkspace}=await import('../scripts/nelyon-b2-hermetic-workspace.mjs');
+ const f=fixture(),op=operationFixture(f);f.request.mode='release';f.manifest.resources.migrations=[];op.currentGate={...op.currentGate,run_id:f.request.runId,release_id:f.request.releaseId,manifest_sha256:hash(release.canonicalJson(f.manifest))};
+ const root=mkdtempSync(join(process.cwd(),'.b2-protected-dryrun-'));try{
+ const binary=Buffer.from('fake');writeFileSync(join(root,'fake'),binary);const config=Buffer.from('');
+ const workspace=createHermeticMigrationWorkspace({parent:root,binaryPath:join(root,'fake'),binarySha256:hash(binary),files:[{path:'supabase/config.toml',bytes:config,sha256:hash(config)}]});
+ const repositoryRoot=bindExplicitConnectionSource(root,workspace,f,op);let requests=0,executes=0;
+ const operation={repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath:join(root,'protected-stage-proofs.json'),trustedProofRoot:root};
+ const parameters={phase:'dry-run',workspace,projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture',request:async()=>{requests++;return {role:'cli_login_postgres',password:'fixture'};},execute:async spec=>{executes++;assert.ok(spec.args.includes('--dry-run'));return {exitCode:0,stdout:JSON.stringify({dryRun:true,message:'ok',migrations:[],roles:[],seeds:[],upToDate:true})};}};
+ await assert.rejects(()=>connection.runB2ProtectedDryRun({operation:{...operation,currentGate:{...op.currentGate,result:'READ_ONLY_REFRESH_AUTHORIZED'}},connection:parameters,now:()=>AT}));assert.equal(requests,0);
+ assert.deepEqual(await connection.runB2ProtectedDryRun({operation,connection:parameters,now:()=>AT}),{complete:true,pending_versions:[]});
+ assert.equal(requests,1);assert.equal(executes,1);assert.equal(fs.existsSync(operation.proofPath),false);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});

@@ -125,7 +125,7 @@ test('aliases preserve full protected prefix and prohibit mutations and raw arti
 test('failed closure gate capture or cleanup never produces diagnostic success or admits deploy', () => {
   const d = diagnostic(), terminal = step(d, 'diagnostic_terminal');
   assert.equal(terminal.if, 'always()', 'terminal must fail explicitly, not silently skip');
-  const dependencies = ['b2_release_revalidation', 'b2_release_revalidation_cleanup', 'b2_release_revalidation_receipt', 'b2_release_gate_authority', 'b2_release_gate_authority_cleanup', 'b2_release_gate_acceptance', 'b2_pre_snapshot_authority', 'b2_pre_snapshot_authority_cleanup', 'pre_snapshot', 'b2_verify_pre_snapshot_authority', 'b2_verify_pre_snapshot_authority_cleanup', 'verify_pre_snapshot', 'b2_final_authority_cleanup', 'diagnostic_output_cleanup'];
+  const dependencies = ['b2_release_preflight', 'b2_release_preflight_cleanup', 'b2_release_preflight_receipt', 'b2_release_refresh_authorization', 'b2_release_refresh_authorization_cleanup', 'b2_release_refresh_authorization_receipt', 'b2_release_revalidation', 'b2_release_revalidation_cleanup', 'b2_release_revalidation_receipt', 'b2_release_gate_authority', 'b2_release_gate_authority_cleanup', 'b2_release_gate_acceptance', 'b2_pre_snapshot_authority', 'b2_pre_snapshot_authority_cleanup', 'pre_snapshot', 'b2_verify_pre_snapshot_authority', 'b2_verify_pre_snapshot_authority_cleanup', 'verify_pre_snapshot', 'b2_final_authority_cleanup', 'diagnostic_output_cleanup'];
   const sourceIds = [...terminal.env.DIAGNOSTIC_RESULTS.matchAll(/steps\.([a-z0-9_]+)\.outcome/g)].map(m => m[1]);
   assert.deepEqual(sourceIds, dependencies);
   const run = outcomes => spawnSync(process.execPath, ['--input-type=commonjs', '-e', nodeBody(terminal.run)], {
@@ -169,4 +169,17 @@ test('every diagnostic action is explicit and tampered pins fail the actual prot
     const readFile = p => path.resolve(p) === path.join(root, '.github/workflows/nelyon-production-release.yml') ? Buffer.from(altered) : fs.readFileSync(p);
     assert.throws(() => verifyPrivateRuntimeClosure({ ...base, readFile }), { code: 'PRIVATE_RUNTIME_CLOSURE_INVALID' });
   }
+});
+
+test('diagnostic shares offline preflight and refresh permit before PAT without migration commands',()=>{
+ const d=diagnostic(),ids=d.steps.map(s=>s.id);
+ const order=['b2_release_preflight','b2_release_preflight_cleanup','b2_release_preflight_receipt','b2_release_refresh_authorization','b2_release_refresh_authorization_cleanup','b2_release_refresh_authorization_receipt','b2_release_revalidation'];
+ for(let i=0;i<order.length;i++){assert.ok(ids.includes(order[i]),order[i]);if(i)assert.ok(ids.indexOf(order[i-1])<ids.indexOf(order[i]));}
+ for(const id of order.slice(0,-1))assert.doesNotMatch(JSON.stringify(step(d,id)),/SUPABASE_ACCESS_TOKEN/);
+ assert.equal(step(d,'b2_release_revalidation').env.SUPABASE_ACCESS_TOKEN,'${{ secrets.SUPABASE_ACCESS_TOKEN }}');
+ for(const outcome of ['failure','skipped','cancelled']){
+  assert.equal(admitted(step(d,'b2_release_refresh_authorization').if,{outcomes:{b2_release_preflight_receipt:outcome}}),false);
+  assert.equal(admitted(step(d,'b2_release_revalidation').if,{outcomes:{b2_release_refresh_authorization_receipt:outcome}}),false);
+ }
+ assert.doesNotMatch(d.steps.map(s=>s.run??'').join('\n'),/dryrun-migrations|apply-migrations|resolveInstalledLinuxCliBinary|\/cli\/login-role/);
 });

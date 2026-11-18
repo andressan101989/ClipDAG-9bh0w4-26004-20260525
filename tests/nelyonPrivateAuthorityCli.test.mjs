@@ -21,6 +21,10 @@ const COMMON = [
 ];
 const ACTIONS = [
   'authority-proof',
+  'preflight-release',
+  'authorize-refresh',
+  'dryrun-migrations',
+  'apply-migrations',
   'stage-b2-recovery-source',
   'revalidate',
   'verify-gate',
@@ -61,7 +65,13 @@ test('step-scoped authority-plane brand keeps legacy Admin recovery outside the 
   }), /blocked/);
 });
 const EXTRA = {
+  'dryrun-migrations': ['--current-gate','gate.json','--pre-snapshot','pre.json','--binary-path','supabase','--stage-output','stage.json'],
+  'apply-migrations': ['--current-gate','gate.json','--pre-snapshot','pre.json','--binary-path','supabase','--stage-output','stage.json'],
   'authority-proof': [],
+  'preflight-release': ['--compiler-sha256', 'a'.repeat(64), '--remote-evidence', 'remote.json', '--stage-output', 'stage.json'],
+  'authorize-refresh': ['--policy-sha256', 'b'.repeat(64), '--compiler-sha256', 'a'.repeat(64),
+    '--environment', 'environment.json', '--branch-policies', 'branches.json', '--approvals', 'approvals.json',
+    '--runs', 'runs.json', '--auto-deploy-expected', 'OFF', '--stage-output', 'stage.json'],
   'stage-b2-recovery-source': ['--recovery-source-run', '123'],
   revalidate: ['--compiler-sha256', 'a'.repeat(64), '--remote-evidence', 'remote.json', '--stage-output', 'stage.json'],
   'verify-gate': ['--policy-sha256', 'b'.repeat(64), '--compiler-sha256', 'a'.repeat(64),

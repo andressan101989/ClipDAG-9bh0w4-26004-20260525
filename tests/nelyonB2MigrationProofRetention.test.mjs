@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import * as release from '../scripts/nelyon-production-release.mjs';
+const receipt={schemaVersion:1,authorityId:'web-control-centers-b2-release-authority-v1',verified:true,...Object.fromEntries(['descriptorSha256','publicContractSha256','privateAuthoritySha256','bindingSha256','successorCatalogSha256','securityAdvisorSha256','backupSha256','approvalSha256'].map(k=>[k,'a'.repeat(64)]))};
+function fixture(t){
+ const parent=fs.realpathSync(os.tmpdir()),root=fs.mkdtempSync(path.join(parent,'b2-proof-retain-')),source=path.join(root,'source'),destinationDirectory=path.join(root,'gate');fs.mkdirSync(source);fs.mkdirSync(destinationDirectory);
+ t.after(()=>{assert.equal(path.dirname(fs.realpathSync(root)),parent);fs.rmSync(root,{recursive:true,force:false});});
+ const request={runId:'123456789',runAttempt:1,releaseId:'nelyon-20261118-001',approvedSha:'b'.repeat(40)};
+ const manifest={identity:{run_id:request.runId,run_attempt:1,release_id:request.releaseId,approved_sha:request.approvedSha},resources:{web_control_centers_b2_transition:{descriptorSha256:receipt.descriptorSha256,expectedPrivateAuthoritySha256:receipt.privateAuthoritySha256,publicContractSha256:receipt.publicContractSha256}}};
+ const proof={runId:request.runId,runAttempt:1,releaseId:request.releaseId,approvedSha:request.approvedSha,manifestSha256:release.sha256Hex(release.canonicalJson(manifest)),stage:'migrations',verifiedAt:'2026-11-18T12:00:00.000Z',receipt};
+ const options={trustedProofRoot:source,destinationDirectory,manifest,request,expectedReceipt:receipt};return {options,proof,source:path.join(source,'protected-stage-proofs.json'),destination:path.join(destinationDirectory,'protected-stage-proofs.json')};
+}
+test('absent migration attempt proof is not invented',t=>{const f=fixture(t);assert.equal(release.retainB2MigrationAttemptProof(f.options),false);assert.equal(fs.existsSync(f.destination),false);});
+test('public attempt proof survives a failed operation without claiming successful deployment',t=>{const f=fixture(t);fs.writeFileSync(f.source,release.canonicalJson([f.proof]));assert.equal(release.retainB2MigrationAttemptProof(f.options),true);assert.deepEqual(JSON.parse(fs.readFileSync(f.destination)),[f.proof]);assert.equal(release.retainB2MigrationAttemptProof(f.options),true);assert.equal(JSON.stringify(JSON.parse(fs.readFileSync(f.destination))).includes('complete'),false);});
+test('unknown fields, secret marker, wrong identity and mismatched receipt never leave staging',t=>{for(const variant of [{extra:'PRIVATE_SECRET_MARKER'},{runId:'999'},{stage:'functions'},{receipt:{...receipt,extra:'PRIVATE_SECRET_MARKER'}},{receipt:{...receipt,approvalSha256:'0'.repeat(64)}}]){const f=fixture(t);fs.writeFileSync(f.source,release.canonicalJson([{...f.proof,...variant}]));assert.throws(()=>release.retainB2MigrationAttemptProof(f.options));assert.equal(fs.existsSync(f.destination),false);}});

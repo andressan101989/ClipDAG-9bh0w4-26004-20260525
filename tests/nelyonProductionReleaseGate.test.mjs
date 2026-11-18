@@ -4228,9 +4228,10 @@ test('current B2 config declaration and direct worker change do not grant releas
   const { gate, policy } = await loadGateAndPolicy();
   const descriptorBytes = readFileSync(new URL('../.github/nelyon-web-control-centers-b2-release-descriptor.json', import.meta.url));
   const descriptor = gate.parseB2ReleaseDescriptor(descriptorBytes, gate.sha256Hex(descriptorBytes));
-  assert.equal(descriptor.contract.state, 'candidate');
-  assert.equal(descriptor.contract.release_ready, false);
-  assert.equal(descriptor.private_authority.sha256, null);
+  assert.equal(descriptor.contract.state, 'approved');
+  assert.equal(descriptor.contract.release_ready, true);
+  assert.match(descriptor.private_authority.sha256, /^[a-f0-9]{64}$/);
+  // Approved public references alone never substitute for protected private authority.
   assert.throws(() => gate.compileB2PublicEvidence({
     descriptorBytes, expectedDescriptorSha256: gate.sha256Hex(descriptorBytes),
   }), { code: 'B2_DESCRIPTOR_INVALID' });
@@ -7491,7 +7492,7 @@ test('protected gate consumes persistent OFF declaration without screenshot arti
   assert.match(gateProofStep, /--auto-deploy-expected "\$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED"/);
   const releaseGateStep = deploy.slice(deploy.indexOf('name: Verify release gate'), deploy.indexOf('name: Set up pinned Supabase CLI'));
   assert.match(releaseGateStep, /--auto-deploy-expected "\$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED"/);
-  assert.equal((deploy.match(/--auto-deploy-expected "\$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED"/g) ?? []).length, 6);
+  assert.equal((deploy.match(/--auto-deploy-expected "\$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED"/g) ?? []).length, 7);
   assert.doesNotMatch(plan, /NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64|auto-deploy-evidence\.json|base64 --decode/);
   assert.doesNotMatch(deploy, /NELYON_AUTO_DEPLOY_OFF_EVIDENCE_B64|auto-deploy-evidence\.json|base64 --decode|auto_deploy_max_age_seconds/);
 });
@@ -7523,7 +7524,7 @@ test('workflow routes postcheck_recovery through exact source artifacts and no m
   assert.match(deploy, /name: Upload sanitized postcheck recovery evidence[\s\S]*name: nelyon-postcheck-recovery-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}[\s\S]*retention-days: 90/);
   const recoveryRegion = deploy.slice(deploy.indexOf('name: Download exact approved source release artifact'), deploy.indexOf('name: Upload sanitized postcheck recovery evidence'));
   assert.doesNotMatch(recoveryRegion, /supabase\s+(?:db\s+push|migration|functions\s+deploy)|--phase\s+(?:pre|post)\b/);
-  for (const mutation of ['Set up pinned Supabase CLI', 'Verify exact remote migration dry-run', 'Apply exact manifest migrations', 'Deploy each exact manifest function', 'Require postcheck before release success']) {
+  for (const mutation of ['Set up pinned Supabase CLI', 'Verify exact remote migration dry-run', 'B2 protected migrations', 'Deploy each exact manifest function', 'Require postcheck before release success']) {
     const index = deploy.indexOf(`name: ${mutation}`);
     assert.ok(index > 0);
     assert.match(deploy.slice(index, index + 260), /if:.*mode == 'release'/s);
@@ -7535,19 +7536,34 @@ test('release path revalidates before secrets and before every mutation', () => 
   const revalidate = deploy.indexOf(' revalidate ');
   const verifyGate = deploy.indexOf(' verify-gate ');
   const secretReference = deploy.indexOf('secrets.SUPABASE_ACCESS_TOKEN');
-  const migration = deploy.indexOf('supabase db push --project-ref');
+  const migration = deploy.indexOf('cli.mjs apply-migrations ');
   const functions = deploy.indexOf('supabase functions deploy "$function_name"');
-  assert.ok(revalidate >= 0 && verifyGate > revalidate && secretReference > verifyGate);
+  const preflight = deploy.indexOf(' preflight-release ');
+  const authorizeRefresh = deploy.indexOf(' authorize-refresh ');
+  const fullGate = deploy.indexOf('name: Resolve protected private authority for release gate');
+  assert.ok(preflight >= 0 && authorizeRefresh > preflight && secretReference > authorizeRefresh);
+  assert.ok(fullGate > secretReference && migration > fullGate);
+  const authorization = deploy.slice(deploy.indexOf('name: Authorize protected read-only inventory refresh'), secretReference);
+  assert.match(authorization, /READ_ONLY_REFRESH_AUTHORIZED/);
+  assert.match(authorization, /read_only_inventory/);
+  assert.match(authorization, /steps\.b2_release_preflight_receipt\.outcome == 'success'/);
+  assert.match(authorization, /steps\.b2_release_refresh_authorization_receipt\.outcome == 'success'/);
+  assert.doesNotMatch(authorization, /cp[^\n]*gate-proof\.json/);
+  assert.ok(revalidate >= 0 && verifyGate > revalidate);
   assert.ok(migration > secretReference && functions > migration);
-  assert.match(deploy.slice(migration - 500, migration), /revalidate/);
+  const migrationGate = deploy.slice(deploy.indexOf('name: Resolve protected private authority before migrations'), migration);
+  assert.match(migrationGate, /cli\.mjs revalidate/);
+  assert.match(migrationGate, /steps\.b2_migration_authority\.outcome == 'success'/);
+  assert.match(migrationGate, /steps\.b2_migration_authority_cleanup\.outcome == 'success'/);
+  assert.match(migrationGate, /cmp[^\n]*migration-receipt\.json/);
   const functionStep = deploy.slice(deploy.indexOf('name: Deploy each exact manifest function'),
     deploy.indexOf('name: Verify independent private runtime closure before post-snapshot'));
   assert.ok(functionStep.indexOf('verify-function-contract') < functionStep.indexOf('nelyon-private-authority-cli.mjs authority-proof'));
   assert.ok(functionStep.indexOf('nelyon-private-authority-cli.mjs authority-proof') < functionStep.indexOf('supabase functions deploy "$function_name"'));
   assert.match(deploy.slice(functions, functions + 220), /--use-api/);
-  assert.match(deploy, /supabase db push --dry-run --project-ref "\$NELYON_PROJECT_REF" --skip-vault --yes/);
-  assert.match(deploy, /supabase db push --dry-run --project-ref "\$NELYON_PROJECT_REF" --skip-vault --yes --output-format json/);
-  assert.match(deploy, /supabase db push --project-ref "\$NELYON_PROJECT_REF" --skip-vault --yes/);
+  assert.match(deploy, /cli\.mjs dryrun-migrations/);
+  assert.doesNotMatch(deploy, /supabase db push/);
+  assert.match(deploy, /cli\.mjs apply-migrations/);
   assert.doesNotMatch(deploy, /SUPABASE_DB_PASSWORD|SUPABASE_READ_ONLY_ACCESS_TOKEN/);
   assert.match(deploy, /SUPABASE_ACCESS_TOKEN:\s*\$\{\{ secrets\.SUPABASE_ACCESS_TOKEN \}\}/);
 });
@@ -7556,8 +7572,8 @@ test('fresh completed physical backup and owner-reviewed baseline are verified b
   const deploy = workflowJob(workflowText(), 'deploy');
   const preCapture = deploy.indexOf('production-pre.json');
   const preVerify = deploy.indexOf(' verify-pre-snapshot ');
-  const dryRun = deploy.indexOf('supabase db push --dry-run');
-  const apply = deploy.indexOf('supabase db push --project-ref');
+  const dryRun = deploy.indexOf('cli.mjs dryrun-migrations ');
+  const apply = deploy.indexOf('cli.mjs apply-migrations ');
   assert.ok(preCapture >= 0 && preVerify > preCapture && dryRun > preVerify && apply > preVerify);
   assert.match(deploy, /--pre-snapshot "\$RUNNER_TEMP\/nelyon-private-authority-public\/production-pre\.json"/);
   assert.match(deploy, /nelyon-private-authority-cli\.mjs pre-snapshot/);

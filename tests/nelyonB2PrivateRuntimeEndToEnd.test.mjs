@@ -32,6 +32,7 @@ import {
 import { buildPrivateRuntimeClosure } from '../scripts/nelyon-private-runtime-closure.mjs';
 import {
   canonicalJson,
+  retainB2MigrationAttemptProof,
   parseB2ReleaseDescriptor,
   parseFunctionConfig,
   verifyAdminRecoveryBuildBinding,
@@ -89,8 +90,9 @@ const removeOwnedRealPolicyAdminTempDirectory = directory => {
   }
 };
 
+let migrationApprovedSha = 'a'.repeat(40);
 const baseRequest = () => ({
-  approvedSha: 'a'.repeat(40),
+  approvedSha: migrationApprovedSha,
   releaseId: 'nelyon-20261012-001',
   runId: '123456789',
   runAttempt: 1,
@@ -98,7 +100,7 @@ const baseRequest = () => ({
 
 const baseManifest = () => ({
   identity: {
-    approved_sha: 'a'.repeat(40),
+    approved_sha: migrationApprovedSha,
     release_id: 'nelyon-20261012-001',
     run_id: '123456789',
     run_attempt: 1,
@@ -370,6 +372,20 @@ test('private owner capture requires both independently supplied pins and emits 
 
 test('Task 7 production graph closes current and exact-attempt recovery authority end to end', async t => {
   assert.equal(typeof privateCli.createPrivateAuthorityProductionHost, 'function');
+  const root = mkdtempSync(join(tmpdir(), 'nelyon-b2-runtime-e2e-'));
+  const approvedRoot = join(root, 'approved-tree');
+  mkdirSync(approvedRoot);
+  const fixtureDescriptor = JSON.parse(readFileSync(new URL('../.github/nelyon-web-control-centers-b2-release-descriptor.json',import.meta.url)));
+  const fixturePaths = ['supabase/config.toml',fixtureDescriptor.contract.productive_changes.at(-1).path,
+    ...fixtureDescriptor.contract.functions.map(item=>'supabase/functions/'+item.name+'/index.ts')];
+  for(const relativePath of fixturePaths) {
+    const target=join(approvedRoot,relativePath);mkdirSync(dirname(target),{recursive:true});writeFileSync(target,gitBytes(relativePath));
+  }
+  const fixtureGit=args=>execFileSync('git',['-c','core.autocrlf=false','-c','core.hooksPath=NUL',...args],{cwd:approvedRoot,stdio:'pipe',
+    env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',
+      GIT_AUTHOR_NAME:'Synthetic',GIT_AUTHOR_EMAIL:'synthetic@example.invalid',GIT_COMMITTER_NAME:'Synthetic',GIT_COMMITTER_EMAIL:'synthetic@example.invalid'}}).toString().trim();
+  fixtureGit(['init','--quiet']);fixtureGit(['add','.']);fixtureGit(['commit','--quiet','-m','synthetic approved migration source']);
+  migrationApprovedSha=fixtureGit(['rev-parse','HEAD']);
   const installedPolicy = JSON.parse(readFileSync(new URL('../.github/nelyon-production-release-policy.json', import.meta.url)));
   const policy = structuredClone(installedPolicy);
   policy.baseline.sha = 'f'.repeat(40);
@@ -542,8 +558,6 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
   manifest.resources.migrations = [{ ...Object.fromEntries(Object.entries(contract.productive_changes.at(-1))
     .filter(([key]) => key !== 'status')), version: '20261108061946' }];
 
-  const root = mkdtempSync(join(tmpdir(), 'nelyon-b2-runtime-e2e-'));
-  const approvedRoot = join(root, 'approved-tree');
   for (const relativePath of ['supabase/config.toml', migrationPath,
     ...functionContracts.flatMap(item => item.source_files.map(file => file.path))]) {
     const target = join(approvedRoot, ...relativePath.split('/'));
@@ -651,6 +665,71 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     'pre-snapshot through production controller');
   const pre = JSON.parse(readFileSync(prePath));
   assert.deepEqual(pre.authority_verification.receipt, expectedReceipt);
+  await t.test('protected migration CLI invokes fixed adapters only after source, snapshot, gate and independent binary pin',async()=>{
+    const binaryPath=join(root,process.platform==='win32'?'fixture-supabase.exe':'fixture-supabase');
+    writeFileSync(binaryPath,'synthetic binary bytes never executed');
+    const pin=sha256(readFileSync(binaryPath));let mints=0,executions=0,time=SOURCE_AT,expireAfterMint=false,failApply=false;
+    const migrationRoot=join(root,'nelyon-private-authority-public');mkdirSync(migrationRoot,{recursive:true});
+    const migrationEnvironment={...environment,NELYON_SUPABASE_CLI_SHA256:pin};
+    const gatePath=join(root,'migration-current-gate.json');
+    const gate={result:'GATE_VERIFIED',run_id:releaseRequest.runId,run_attempt:releaseRequest.runAttempt,
+      release_id:releaseRequest.releaseId,approved_sha:releaseRequest.approvedSha,
+      manifest_sha256:sha256(canonicalJson(manifest)),environment:policy.environment,authorityReceipt:expectedReceipt};
+    writeFileSync(gatePath,canonicalJson(gate));
+    const migrationFetch=async(input,options)=>{
+      if(String(input)==='https://api.supabase.com/v1/projects/aewwdlvbwpczqyvkwvvj/cli/login-role') {
+        assert.equal(options.method,'POST');assert.equal(options.redirect,'error');mints++;
+        if(expireAfterMint)time='2030-01-01T00:00:00.000Z';
+        return new Response(JSON.stringify({role:'cli_login_fixture',password:'SYNTHETIC_DB_PASSWORD'}),{status:201});
+      }
+      return currentFetch(input,options);
+    };
+    const execMock=(file,args,options,callback)=>{
+      executions++;assert.equal(options.shell,false);assert.equal(options.env.PGPASSWORD,'SYNTHETIC_DB_PASSWORD');
+      assert.equal(options.env.SUPABASE_ACCESS_TOKEN,undefined);assert.equal(args.includes('--project-ref'),false);
+      assert.equal(args.some(value=>value.includes('SYNTHETIC_DB_PASSWORD')),false);
+      if(failApply&&!args.includes('--dry-run')){callback(new Error('synthetic timeout'));return;}
+      callback(null,args.includes('--dry-run')?JSON.stringify({dryRun:true,message:'pending',migrations:manifest.resources.migrations.map(x=>x.path.split('/').at(-1)),roles:[],seeds:[],upToDate:false}):'applied');
+    };
+    const make=env=>createPrivateAuthorityRuntime({bootstrapCapability,environment:env,fetchImpl:migrationFetch,now:()=>time,
+      host:privateCli.createPrivateAuthorityProductionHost({publicInputs:currentPublicInputs,environment:env,fetchImpl:migrationFetch,
+        repositoryRoot:approvedRoot,migrationExecFileImpl:execMock,clock:()=>time})});
+    const invoke=async(action,label,env=migrationEnvironment,override={})=>{
+      const stageRoot=join(env.RUNNER_TEMP,'nelyon-private-authority-public');
+      const output=join(stageRoot,label+'.json'),verification=join(stageRoot,label+'-receipt.json');const chunks=[];
+      const code=await privateCli.runPrivateAuthorityCli([action,'--policy',paths.policy,'--request',paths.request,'--bundle',paths.bundle,
+        '--current-gate',override.gatePath??gatePath,'--pre-snapshot',override.prePath??prePath,'--binary-path',binaryPath,'--stage-output',output,'--verification-output',verification],
+        {execute:invocation=>make(env).execute(invocation),stdout:{write:x=>chunks.push(x)},stderr:{write:x=>chunks.push(x)}});
+      assert.doesNotMatch(chunks.join(''),/SYNTHETIC_DB_PASSWORD|synthetic-supabase-token/);return {code,output,verification};
+    };
+    assert.notEqual((await invoke('dryrun-migrations','missing-binary-pin',environment)).code,0);assert.equal(mints,0);assert.equal(executions,0);
+    assert.notEqual((await invoke('dryrun-migrations','wrong-binary-pin',{...migrationEnvironment,NELYON_SUPABASE_CLI_SHA256:'0'.repeat(64)})).code,0);assert.equal(mints,0);
+    writeFileSync(gatePath,canonicalJson({...gate,result:'READ_ONLY_REFRESH_AUTHORIZED'}));
+    assert.notEqual((await invoke('dryrun-migrations','readonly-not-full-gate')).code,0);assert.equal(mints,0);assert.equal(executions,0);
+    writeFileSync(gatePath,canonicalJson(gate));
+    expireAfterMint=true;assert.notEqual((await invoke('dryrun-migrations','expired-during-mint')).code,0);
+    assert.equal(mints,1);assert.equal(executions,0);time=SOURCE_AT;expireAfterMint=false;mints=0;
+    const dry=await invoke('dryrun-migrations','protected-dryrun');assert.equal(dry.code,0);
+    assert.equal(JSON.parse(readFileSync(dry.output)).complete,true);assert.equal(existsSync(join(migrationRoot,'protected-stage-proofs.json')),false);
+    const applied=await invoke('apply-migrations','protected-apply');assert.equal(applied.code,0);
+    assert.equal(JSON.parse(readFileSync(applied.output)).result,'MIGRATIONS_EXECUTED');
+    assert.equal(JSON.parse(readFileSync(join(migrationRoot,'protected-stage-proofs.json')))[0].stage,'migrations');
+    assert.equal(mints,3);assert.equal(executions,3);
+    assert.notEqual((await invoke('apply-migrations','duplicate-apply')).code,0);assert.equal(mints,3);assert.equal(executions,3);
+    const failureRoot=join(root,'failed-attempt'),failurePublic=join(failureRoot,'nelyon-private-authority-public'),failureGate=join(failureRoot,'gate-evidence');
+    mkdirSync(failurePublic,{recursive:true});mkdirSync(failureGate);
+    const failurePre=join(failurePublic,'pre.json'),failureGatePath=join(failurePublic,'gate.json');
+    writeFileSync(failurePre,canonicalJson(pre));writeFileSync(failureGatePath,canonicalJson(gate));
+    failApply=true;
+    const failure=await invoke('apply-migrations','partial-failure',{...migrationEnvironment,RUNNER_TEMP:failureRoot},{prePath:failurePre,gatePath:failureGatePath});
+    assert.notEqual(failure.code,0);assert.equal(existsSync(failure.output),false);assert.equal(existsSync(failure.verification),false);
+    assert.equal(retainB2MigrationAttemptProof({trustedProofRoot:failurePublic,destinationDirectory:failureGate,manifest,request:releaseRequest,expectedReceipt}),true);
+    const retained=JSON.parse(readFileSync(join(failureGate,'protected-stage-proofs.json')));
+    assert.equal(retained[0].stage,'migrations');assert.equal(Object.hasOwn(retained[0],'complete'),false);
+    assert.equal(mints,5);assert.equal(executions,5);
+
+  });
+
   await t.test('junction stage input cannot escape RUNNER_TEMP', async () => {
     const externalStageRoot = mkdtempSync(join(tmpdir(), 'nelyon-b2-stage-escape-'));
     const stageJunction = join(root, 'stage-input-junction');

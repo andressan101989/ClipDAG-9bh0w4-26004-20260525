@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "contract": {
+    "id": "web-control-centers-b2-scheduled-publishing-v1",
+    "state": "candidate",
+    "release_ready": false,
+    "from_phase": "web_control_centers_b1_qa_c3",
+    "to_phase": "web-control-centers-b2",
+    "baseline_sha": "612a90d087817f06e2c979665a63c054bbddcf18",
+    "reviewed_source_sha": null,
+    "integration_base_sha": null,
+    "approved_sha_ancestry": "verified_integration_base",
+    "productive_changes": [
+      {
+        "path": "supabase/config.toml",
+        "status": "M",
+        "blob": "58ca1a315f3ef0547e5857aef250bfe7022c3ef2",
+        "sha256": "b6c378a86739b5c122d8c424e1da7e4d1c1c03bf3ad276603f8b51ea2d900bdd",
+        "byte_length": 1000
+      },
+      {
+        "path": "supabase/functions/_shared/r2.ts",
+        "status": "M",
+        "blob": "843443a3968674d4019077a3c4f16eee21365a35",
+        "sha256": "4575b2eaf8c13ecfc59272ab52546e85a370068b19f2a1a956f2e8426afb0395",
+        "byte_length": 8632
+      },
+      {
+        "path": "supabase/functions/process-scheduled-publications/index.ts",
+        "status": "A",
+        "blob": "5bb6ea7e3bce8c888889bedc520dbd5ba7a0d68a",
+        "sha256": "d78f7da2d3386f9440a9a6005f17a6ef8a33ca4c5d6ff0a9b7bf400e9444533f",
+        "byte_length": 2325
+      },
+      {
+        "path": "supabase/functions/process-scheduled-publications/worker.ts",
+        "status": "A",
+        "blob": "f6a257e8861e40b9fb2cd7052cfa737e4301d06d",
+        "sha256": "d4aea6b5ac17773d1a0720baa896046c68a9f6d0e3ef637c430c1d3517f14342",
+        "byte_length": 11189
+      },
+      {
+        "path": "supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql",
+        "status": "A",
+        "blob": "b1036c36d3ca3ef043e7002365be316e6d1edc05",
+        "sha256": "183c863ba7174d38c44eca576080ee54317611c73e6e95f2369d37330296ad4f",
+        "byte_length": 77363
+      }
+    ],
+    "functions": [
+      { "name": "ai-handoff", "verify_jwt": false, "source_sha256": null, "config_sha256": null },
+      { "name": "cleanup-stale-media-uploads", "verify_jwt": false, "source_sha256": null, "config_sha256": null },
+      { "name": "content-safety-scan", "verify_jwt": true, "source_sha256": null, "config_sha256": null },
+      { "name": "create-media-upload", "verify_jwt": true, "source_sha256": null, "config_sha256": null },
+      { "name": "finalize-media-upload", "verify_jwt": true, "source_sha256": null, "config_sha256": null },
+      { "name": "get-media-url", "verify_jwt": true, "source_sha256": null, "config_sha256": null },
+      { "name": "process-scheduled-publications", "verify_jwt": false, "source_sha256": null, "config_sha256": null },
+      { "name": "video-semantic-index", "verify_jwt": true, "source_sha256": null, "config_sha256": null }
+    ],
+    "function_inventory": { "before": null, "after": null },
+    "managed_scope_transition": { "add": ["process-scheduled-publications"], "remove": [] },
+    "cron_activation": false,
+    "finance_invariants": {
+      "platform_fee_bps": 2000,
+      "purchase_enabled": true,
+      "refunds_enabled": true,
+      "subscription_enabled": true,
+      "require_no_movement": true
+    },
+    "private_authority_max_bytes": 2097152,
+    "requires_separate_baseline_promotion": true
+  },
+  "public_contract_sha256": "deee79e72ece0632696a5c248565c6c13afde975a3370eff7c70caaabbc7dc2a",
+  "private_authority": {
+    "required": true,
+    "schema_version": 1,
+    "authority_id": "web-control-centers-b2-release-authority-v1",
+    "sha256": null
+  }
+}

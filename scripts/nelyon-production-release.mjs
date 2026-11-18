@@ -2654,6 +2654,8 @@ const B2_RUNTIME_CLOSURE_PATHS = Object.freeze([
   'package-lock.json',
   'package.json',
   'scripts/nelyon-admin-production-release.mjs',
+  'scripts/nelyon-b2-explicit-connection.mjs',
+  'scripts/nelyon-b2-hermetic-workspace.mjs',
   'scripts/nelyon-b2-recovery-provenance.mjs',
   'scripts/nelyon-b2-source-parity.mjs',
   'scripts/nelyon-private-authority-cli.mjs',
@@ -2853,7 +2855,7 @@ function b2AuthorityReject() {
 }
 
 /** Protected callers supply a Task 2 minted context, never a candidate receipt. */
-export function verifyB2ProtectedAuthority({ manifest, authorityContext, inventory, requestedAt }) {
+export function verifyB2PreflightAuthority({ manifest, authorityContext, requestedAt }) {
   try {
     const binding = manifest?.resources?.web_control_centers_b2_transition;
     if (!binding) {
@@ -2895,6 +2897,16 @@ export function verifyB2ProtectedAuthority({ manifest, authorityContext, invento
     assertAuthorityReceiptMatch(receipt, { ...receipt, bindingSha256: expectedBinding,
       descriptorSha256: binding.descriptorSha256, publicContractSha256: binding.publicContractSha256,
       privateAuthoritySha256: binding.expectedPrivateAuthoritySha256 });
+    return { authorityReceipt: receipt };
+  } catch { b2AuthorityReject(); }
+}
+
+// Full production authority retains mandatory live inventory validation.
+export function verifyB2ProtectedAuthority({ manifest, authorityContext, inventory, requestedAt }) {
+  try {
+    const proof = verifyB2PreflightAuthority({ manifest, authorityContext, requestedAt });
+    if (!manifest?.resources?.web_control_centers_b2_transition) return proof;
+    const descriptor = authorityContext.descriptor;
     b2Exact(inventory, ['schemaVersion', 'complete', 'capturedAt', 'names']);
     const age = Date.parse(requestedAt) - Date.parse(inventory.capturedAt);
     if (inventory.schemaVersion !== 1 || inventory.complete !== true || !Number.isFinite(age) || age < 0 || age > 300_000
@@ -2903,10 +2915,10 @@ export function verifyB2ProtectedAuthority({ manifest, authorityContext, invento
       || inventory.names.length !== descriptor.contract.function_inventory.before
       || inventory.names.includes('process-scheduled-publications')
       || B2_FUNCTION_NAMES.filter(name => name !== 'process-scheduled-publications').some(name => !inventory.names.includes(name))) b2AuthorityReject();
-    return { authorityReceipt: receipt };
+
+    return proof;
   } catch { b2AuthorityReject(); }
 }
-
 function expectedConfirmation(request, policy) {
   if (request.mode === 'plan_only') return policy.scope_confirmations.plan_only;
   if (request.mode === 'gate_proof') return policy.scope_confirmations.gate_proof;
@@ -6102,6 +6114,23 @@ function verifyB2CurrentOperation(options) {
   return receipt;
 }
 
+/** Revalidate an ordinary B2 release mutation at the protected caller's current
+ * clock, without writing a second stage proof. Never accepts recovery modes. */
+export function verifyB2ProtectedReleaseMutation(options) {
+  try {
+    if (options?.request?.mode !== 'release') b2RecoveryReject();
+    const receipt = verifyB2CurrentOperation(options);
+    const binding = options.manifest.resources?.web_control_centers_b2_transition;
+    if (!binding || canonicalJson(binding.contract) !== canonicalJson(options.authorityContext.descriptor.contract)
+      || binding.descriptorSha256 !== receipt.descriptorSha256
+      || binding.expectedPrivateAuthoritySha256 !== receipt.privateAuthoritySha256) b2RecoveryReject();
+    const { approval, backup } = options.authorityContext.privateAuthority;
+    const at = b2ProofTime(options.requestedAt);
+    if (at < b2ProofTime(approval.approvedAt) || at < b2ProofTime(backup.completedObservedAt)
+      || at >= b2ProofTime(approval.expiresAt) || at >= b2ProofTime(backup.expiresAt)) b2RecoveryReject();
+    return receipt;
+  } catch { b2RecoveryReject(); }
+}
 /** Identity-only preflight; never authorizes a mutation or completed recovery. */
 export function verifyB2RecoveryPreflight({ recoveryRequest, recoveryManifest, verifiedSource, authorityContext,
   currentGate, policy, requestedAt = new Date().toISOString() }) {
@@ -6223,6 +6252,40 @@ async function persistB2MutationProof({ trustedProofRoot, proofPath, request, cu
     if (tempStat && b2SameFile(tempStat, lstatSync(tempPath, { throwIfNoEntry: false }))) unlinkSync(tempPath);
     if (lockStat && b2SameFile(lockStat, lstatSync(lockPath, { throwIfNoEntry: false }))) unlinkSync(lockPath);
   }
+}
+
+/** Retain only the closed public migration-attempt proof, including after a
+ * failed/indeterminate apply. This is evidence retention, never authorization
+ * or an assertion that the operation succeeded. No private provider is read. */
+export function retainB2MigrationAttemptProof({trustedProofRoot,destinationDirectory,manifest,request,expectedReceipt}) {
+  try {
+    const source=join(trustedProofRoot,'protected-stage-proofs.json');
+    b2ProofRoot(trustedProofRoot,source);
+    const stat=lstatSync(source,{throwIfNoEntry:false});if(!stat)return false;
+    if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size>65536)b2RecoveryReject();
+    const fd=openSync(source,fsConstants.O_RDONLY|(fsConstants.O_NOFOLLOW??0));let bytes;
+    try{if(!b2SameFile(stat,fstatSync(fd)))b2RecoveryReject();bytes=readFileSync(fd);}finally{closeSync(fd);}
+    const proofs=JSON.parse(bytes.toString('utf8'));
+    if(!Array.isArray(proofs)||proofs.length!==1||canonicalJson(proofs)!==bytes.toString('utf8'))b2RecoveryReject();
+    assertAuthorityReceiptMatch(expectedReceipt,expectedReceipt);
+    const proof=proofs[0],identity=manifest?.identity,binding=manifest?.resources?.web_control_centers_b2_transition;
+    b2Exact(proof,['runId','runAttempt','releaseId','approvedSha','manifestSha256','stage','verifiedAt','receipt']);
+    if(!identity||!binding||proof.stage!=='migrations'||proof.runId!==String(request?.runId)
+      ||proof.runId!==identity.run_id||!/^[1-9][0-9]*$/.test(proof.runId)
+      ||proof.runAttempt!==request.runAttempt||proof.runAttempt!==identity.run_attempt||!Number.isSafeInteger(proof.runAttempt)||proof.runAttempt<1
+      ||proof.releaseId!==request.releaseId||proof.releaseId!==identity.release_id||!/^nelyon-[0-9]{8}-[0-9]{3}$/.test(proof.releaseId)
+      ||proof.approvedSha!==request.approvedSha||proof.approvedSha!==identity.approved_sha||!/^[a-f0-9]{40}$/.test(proof.approvedSha)
+      ||proof.manifestSha256!==sha256Hex(canonicalJson(manifest))
+      ||proof.receipt.descriptorSha256!==binding.descriptorSha256
+      ||proof.receipt.privateAuthoritySha256!==binding.expectedPrivateAuthoritySha256
+      ||proof.receipt.publicContractSha256!==binding.publicContractSha256)b2RecoveryReject();
+    b2ProofTime(proof.verifiedAt);assertAuthorityReceiptMatch(expectedReceipt,proof.receipt);
+    const destination=join(destinationDirectory,'protected-stage-proofs.json');b2ProofRoot(destinationDirectory,destination);
+    const existing=lstatSync(destination,{throwIfNoEntry:false});
+    if(existing){if(!existing.isFile()||existing.isSymbolicLink()||existing.nlink!==1||!readFileSync(destination).equals(bytes))b2RecoveryReject();}
+    else writeFileSync(destination,canonicalJson(proofs),{encoding:'utf8',flag:'wx',mode:0o600});
+    return true;
+  }catch{b2RecoveryReject();}
 }
 
 /** Protected runtime primitive. The caller owns the clock and mutation callback;
@@ -8601,7 +8664,7 @@ export async function runCli(argv, authorityContext, inventory, recoveryRuntime,
     runtime.stdout.write(`REVALIDATED ${digest}\n`);
     return 0;
   }
-  if (command === 'revalidate') {
+  if (command === 'revalidate' || command === 'preflight-release') {
     for (const required of ['policy', 'request', 'bundle', 'compiler-sha256', 'remote-evidence', 'output']) {
       if (!values[required]) throw new Error(`missing --${required}`);
     }
@@ -8614,7 +8677,8 @@ export async function runCli(argv, authorityContext, inventory, recoveryRuntime,
       environmentName: policy.environment.name, manifestDigest: initialDigest, releaseId: releaseRequest.releaseId,
       runAttempt: releaseRequest.runAttempt, runId: releaseRequest.runId,
     } });
-    const authorityProof = verifyB2ProtectedAuthority({ manifest: initialBundle.manifest,
+    if (command === 'preflight-release' && releaseRequest.mode !== 'release') b2AuthorityReject();
+    const authorityProof = (command === 'preflight-release' ? verifyB2PreflightAuthority : verifyB2ProtectedAuthority)({ manifest: initialBundle.manifest,
       authorityContext, inventory, requestedAt: runtime.now() });
     const gitState = resolveGitState({
       cwd: process.cwd(),
@@ -8658,10 +8722,10 @@ export async function runCli(argv, authorityContext, inventory, recoveryRuntime,
     if (canonicalJson(regenerated) !== canonicalJson(verified.manifest)) {
       deny('POST_APPROVAL_DRIFT', 'regenerated manifest differs from the approved artifact');
     }
-    const result = { schema_version: 1, result: 'REVALIDATED', manifest_sha256: digest, approved_sha: releaseRequest.approvedSha,
+    const result = { schema_version: 1, result: command === 'preflight-release' ? 'RELEASE_PREFLIGHT_VERIFIED' : 'REVALIDATED', manifest_sha256: digest, approved_sha: releaseRequest.approvedSha,
       ...authorityProof };
     writeFileSync(resolve(values.output), canonicalJson(result), { encoding: 'utf8', flag: 'wx' });
-    runtime.stdout.write(`REVALIDATED ${digest}\n`);
+    runtime.stdout.write(`${result.result} ${digest}\n`);
     return 0;
   }
   if (command === 'postcheck') {
@@ -8824,7 +8888,7 @@ export async function runCli(argv, authorityContext, inventory, recoveryRuntime,
     runtime.stdout.write(`GATE VERIFIED ${digest}\n`);
     return 0;
   }
-  if (command === 'verify-gate') {
+  if (command === 'verify-gate' || command === 'authorize-refresh') {
     for (const required of ['policy', 'policy-sha256', 'request', 'bundle', 'compiler-sha256', 'environment', 'branch-policies', 'approvals', 'runs', 'output']) {
       if (!values[required]) throw new Error(`missing --${required}`);
     }
@@ -8848,7 +8912,8 @@ export async function runCli(argv, authorityContext, inventory, recoveryRuntime,
         runId: releaseRequest.runId,
       },
     });
-    const authorityProof = verifyB2ProtectedAuthority({ manifest: verifiedBundle.manifest,
+    if (command === 'authorize-refresh' && releaseRequest.mode !== 'release') b2AuthorityReject();
+    const authorityProof = (command === 'authorize-refresh' ? verifyB2PreflightAuthority : verifyB2ProtectedAuthority)({ manifest: verifiedBundle.manifest,
       authorityContext, inventory, requestedAt: runtime.now() });
     if (verifiedBundle.manifest.compiler?.sha256 !== sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-release.mjs')))
       || verifiedBundle.manifest.compiler?.snapshot_adapter_sha256 !== sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs')))) {
@@ -8905,11 +8970,12 @@ export async function runCli(argv, authorityContext, inventory, recoveryRuntime,
       runs: JSON.parse(readFileSync(values.runs, 'utf8')),
       currentRunId: releaseRequest.runId,
     });
-    requiredSecretsForMode(releaseRequest.mode,
+    if (command !== 'authorize-refresh') requiredSecretsForMode(releaseRequest.mode,
       ['release', 'admin_recovery'].includes(releaseRequest.mode) ? process.env : {});
     const proof = {
       schema_version: 1,
-      result: 'GATE_VERIFIED',
+      result: command === 'authorize-refresh' ? 'READ_ONLY_REFRESH_AUTHORIZED' : 'GATE_VERIFIED',
+      ...(command === 'authorize-refresh' ? { supabase_access: 'read_only_inventory' } : {}),
       run_id: releaseRequest.runId,
       run_attempt: releaseRequest.runAttempt,
       environment: { id: environment.id, name: environment.name },
@@ -8923,7 +8989,7 @@ export async function runCli(argv, authorityContext, inventory, recoveryRuntime,
       ...authorityProof,
     };
     writeFileSync(resolve(values.output), canonicalJson(proof), { encoding: 'utf8', flag: 'wx' });
-    runtime.stdout.write(`GATE VERIFIED ${verifiedBundle.digest}\n`);
+    runtime.stdout.write(`${command === 'authorize-refresh' ? proof.result : 'GATE VERIFIED'} ${verifiedBundle.digest}\n`);
     return 0;
   }
   if (command !== 'plan') throw new Error(`command ${command} is not implemented yet`);

@@ -29,7 +29,7 @@ const WRANGLER_VERSION = '4.135.0';
 const AWS_VERSION = '1.0.20';
 const AWS_INTEGRITY = 'sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==';
 const AWS_RESOLVED = 'https://registry.npmjs.org/aws4fetch/-/aws4fetch-1.0.20.tgz';
-const EXPECTED_CLOSURE_SHA256 = '534a7247bced0dd1ee31c4641fd51d307ca97ba74363ceb81976eed3bbb0c5f1';
+const EXPECTED_CLOSURE_SHA256 = '57b700b8576ab8e622c8ef9c439d0609409b09662481331478f29e65f6ca2e4f';
 const MARKER = 'SYNTHETIC_RUNTIME_CLOSURE_PRIVATE_MARKER';
 
 const MEMBERS = Object.freeze([
@@ -37,6 +37,8 @@ const MEMBERS = Object.freeze([
   'package-lock.json',
   'package.json',
   'scripts/nelyon-admin-production-release.mjs',
+  'scripts/nelyon-b2-explicit-connection.mjs',
+  'scripts/nelyon-b2-hermetic-workspace.mjs',
   'scripts/nelyon-b2-recovery-provenance.mjs',
   'scripts/nelyon-b2-source-parity.mjs',
   'scripts/nelyon-private-authority-cli.mjs',
@@ -150,7 +152,7 @@ function verifiedOptions(files, manifestClosure = buildClosure({
   };
 }
 
-test('builds the exact sorted 15-member canonical closure from exact bytes', () => {
+test('builds the exact sorted 17-member canonical closure from exact bytes', () => {
   const files = fixtureFiles();
   const calls = [];
   const actual = buildClosure({ repositoryRoot: ROOT, readFile: fixtureReader(files, calls) });

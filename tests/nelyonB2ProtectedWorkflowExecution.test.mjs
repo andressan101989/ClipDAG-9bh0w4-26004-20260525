@@ -46,7 +46,7 @@ for (const mode of ['gate_proof', 'release']) test(`${mode}: protected execution
   const integratedSource=release.verifyB2IntegratedSource(f);
   const publicInputs={descriptorBytes:f.descriptorBytes,manifestBytes:Buffer.from(json(f.manifest)),manifestDigestBytes:Buffer.from(hash(json(f.manifest))+'\n'),policyBytes:Buffer.from(json(f.policy)),requestBytes:Buffer.from(json(f.request))};
   const bootstrapCapability=await bootstrapPrivateAuthorityRuntime({environment:env,manifestClosure:f.manifest.runtime_closure,repositoryRoot:f.cwd,readFile:fs.readFileSync,nodeVersion:'24.21.0'});
-  const controllerFor=environment=>createPrivateAuthorityRuntime({bootstrapCapability,environment,fetchImpl,now:()=>AT,integratedSource,host:createPrivateAuthorityProductionHost({publicInputs,environment,fetchImpl,repositoryRoot:f.cwd,integratedSource})});
+  const controllerFor=(environment,at=AT)=>createPrivateAuthorityRuntime({bootstrapCapability,environment,fetchImpl,now:()=>at,integratedSource,host:createPrivateAuthorityProductionHost({publicInputs,environment,fetchImpl,repositoryRoot:f.cwd,integratedSource})});
   const controller=controllerFor(env);
   const invocation=(action,extra={},label=action)=>({action,inputs:{policy,request,bundle,...extra},verificationOutput:path.join(runner,label+'-receipt.json')});
   const proof=invocation('authority-proof');await controller.execute(proof);assert.equal(inventoryCalls,0);
@@ -56,12 +56,49 @@ for (const mode of ['gate_proof', 'release']) test(`${mode}: protected execution
   assertPrivateOutputAbsent(child);assert.notEqual(child.status,0);assert.match(child.stderr,/B2 protected authority required/);assert.equal(fs.existsSync(directOutput),false);
   const previous=process.cwd();process.chdir(f.cwd);
   try {
+    let offlineController;
+    if(mode==='release') {
+      const offlineEnv={...env};delete offlineEnv.SUPABASE_ACCESS_TOKEN;
+      offlineController=controllerFor(offlineEnv);
+      const count=inventoryCalls;
+      const preflight=invocation('preflight-release',{compilerSha256:f.manifest.compiler.sha256,remoteEvidence,stageOutput:path.join(runner,'preflight.json')});
+      await offlineController.execute(preflight);
+      assert.equal(JSON.parse(fs.readFileSync(preflight.inputs.stageOutput)).result,'RELEASE_PREFLIGHT_VERIFIED');
+      assert.equal(inventoryCalls,count,'preflight must not read Supabase or need its PAT');
+    }
     const revalidate=invocation('revalidate',{compilerSha256:f.manifest.compiler.sha256,remoteEvidence,stageOutput:path.join(runner,'revalidated.json')});
+    const gate=invocation('verify-gate',{policySha256:hash(json(f.policy)),compilerSha256:f.manifest.compiler.sha256,environmentEvidence:put('environment.json',{id:f.policy.environment.id,name:'production',can_admins_bypass:false,protection_rules:[],deployment_branch_policy:{protected_branches:false,custom_branch_policies:true}}),branchPolicies:put('branches.json',{complete:true,pages:[{items:[{name:f.policy.default_branch}]}]}),approvals:put('approvals.json',{complete:true,sourceRunId:f.request.runId,sourceRunAttempt:f.request.runAttempt,pages:[{items:[]}]}),runs:put('runs.json',{complete:true,pages:[{items:[]}]}),autoDeployExpected:'OFF',stageOutput:path.join(runner,'gate.json')});
+    if(mode==='release') {
+      const count=inventoryCalls;
+      const authorize=invocation('authorize-refresh',{...gate.inputs,stageOutput:path.join(runner,'refresh-authorization.json')});
+      await offlineController.execute(authorize);
+      const permission=JSON.parse(fs.readFileSync(authorize.inputs.stageOutput));
+      assert.equal(permission.result,'READ_ONLY_REFRESH_AUTHORIZED');
+      assert.equal(permission.supabase_access,'read_only_inventory');
+      assert.equal(inventoryCalls,count,'authorization must not read Supabase or need its PAT');
+      assert.notEqual(permission.result,'GATE_VERIFIED','read-only authorization must not substitute for deployment gate');
+      for (const [label, candidate, stage] of [
+        ['unexpected-pat',controller,authorize],
+        ['expired-authority',controllerFor(Object.fromEntries(Object.entries(env).filter(([key])=>key!=='SUPABASE_ACCESS_TOKEN')),'2030-01-01T00:00:00.000Z'),authorize],
+        ['wrong-policy',offlineController,{...authorize,inputs:{...authorize.inputs,policySha256:'0'.repeat(64)}}],
+        ['auto-deploy-enabled',offlineController,{...authorize,inputs:{...authorize.inputs,autoDeployExpected:'ON'}}],
+      ]) await t.test('read-only authorization rejects '+label+' before inventory',async()=>{
+        const output=path.join(runner,'rejected-'+label+'.json');
+        await assert.rejects(candidate.execute({...stage,inputs:{...stage.inputs,stageOutput:output},verificationOutput:path.join(runner,'rejected-'+label+'-receipt.json')}));
+        assert.equal(fs.existsSync(output),false);
+        assert.equal(inventoryCalls,count);
+      });
+      const branches=fs.readFileSync(gate.inputs.branchPolicies);
+      fs.writeFileSync(gate.inputs.branchPolicies,json({complete:true,pages:[{items:[{name:'unapproved-branch'}]}]}));
+      try { await assert.rejects(offlineController.execute({...authorize,inputs:{...authorize.inputs,stageOutput:path.join(runner,'rejected-branch.json')},verificationOutput:path.join(runner,'rejected-branch-receipt.json')})); }
+      finally { fs.writeFileSync(gate.inputs.branchPolicies,branches); }
+      assert.equal(inventoryCalls,count);
+
+    }
+    if(mode==='release')assert.equal(process.env.SUPABASE_ACCESS_TOKEN,'SYNTHETIC_TOKEN_MARKER','launch test with synthetic token, never a real credential');
     await controller.execute(revalidate);
     assert.equal(JSON.parse(fs.readFileSync(revalidate.inputs.stageOutput)).result,'REVALIDATED');
     assert.deepEqual(JSON.parse(fs.readFileSync(revalidate.verificationOutput)),expected);
-    const gate=invocation('verify-gate',{policySha256:hash(json(f.policy)),compilerSha256:f.manifest.compiler.sha256,environmentEvidence:put('environment.json',{id:f.policy.environment.id,name:'production',can_admins_bypass:false,protection_rules:[],deployment_branch_policy:{protected_branches:false,custom_branch_policies:true}}),branchPolicies:put('branches.json',{complete:true,pages:[{items:[{name:f.policy.default_branch}]}]}),approvals:put('approvals.json',{complete:true,sourceRunId:f.request.runId,sourceRunAttempt:f.request.runAttempt,pages:[{items:[]}]}),runs:put('runs.json',{complete:true,pages:[{items:[]}]}),autoDeployExpected:'OFF',stageOutput:path.join(runner,'gate.json')});
-    if(mode==='release')assert.equal(process.env.SUPABASE_ACCESS_TOKEN,'SYNTHETIC_TOKEN_MARKER','launch test with synthetic token, never a real credential');
     await controller.execute(gate);
     assert.equal(JSON.parse(fs.readFileSync(gate.inputs.stageOutput)).result,'GATE_VERIFIED');
     assert.deepEqual(JSON.parse(fs.readFileSync(gate.verificationOutput)),expected);
