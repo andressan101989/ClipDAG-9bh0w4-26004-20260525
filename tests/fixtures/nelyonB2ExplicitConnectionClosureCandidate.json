@@ -25,7 +25,7 @@
       },
       {
         "path": "scripts/nelyon-b2-explicit-connection.mjs",
-        "sha256": "2d4fd7b778e67194b404cf3211776bc59254a5491a8504552b34ba5f30b17c8c"
+        "sha256": "7b014186eedb5bfffed2b1477353e3885d8078c681a210864846b7b01b5f6040"
       },
       {
         "path": "scripts/nelyon-b2-hermetic-workspace.mjs",
@@ -92,12 +92,12 @@
       "wrangler": "4.135.0",
       "supabase_setup_action": "45a513f8c64c0bc8e0e3dfe572b5c95be85f6359"
     },
-    "closure_sha256": "761024bab97ac8b96c71eaebabdbda626fe6edb47a1b803b0fb74ae3dbdc18e5"
+    "closure_sha256": "86136f8847b061af9277eaf35c77dc33a233d3cebb16ed4141fd847472eb736f"
   },
   "proposed_members": [
     {
       "path": "scripts/nelyon-b2-explicit-connection.mjs",
-      "sha256": "2d4fd7b778e67194b404cf3211776bc59254a5491a8504552b34ba5f30b17c8c"
+      "sha256": "7b014186eedb5bfffed2b1477353e3885d8078c681a210864846b7b01b5f6040"
     },
     {
       "path": "scripts/nelyon-b2-hermetic-workspace.mjs",
