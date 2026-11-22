@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {Buffer} from 'node:buffer';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {mkdtempSync,writeFileSync,readFileSync,rmSync,mkdirSync,symlinkSync,linkSync} from 'node:fs';
