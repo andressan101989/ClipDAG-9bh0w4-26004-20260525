@@ -6764,10 +6764,14 @@ export async function captureB2AuthorityObservation(options) {
         generated.fill(0);
       }
     });
+    // Owner-approved exception: the dedicated read-only role cannot execute the
+    // internal Vault decrypt primitive. Keep this one query byte-fixed, locally
+    // proved read-only and scoped to the protected runtime; never grant decrypt to
+    // supabase_read_only_user or retain the sensitive response.
     const vaultResponse = await authorityObservationStage('VAULT_PARITY_READ', () => fixedRequest({ fetchImpl, token,
-      path: `${base}/database/query/read-only`, method: 'POST',
-      body: { query: B2_VAULT_EDGE_PARITY_SQL, parameters: [nonce.toString('hex')] }, expectedStatus: 201,
-      timeoutMs: SQL_TIMEOUT_MS, label: 'Vault parity observation', sensitive: true }));
+      path: `${base}/database/query`, method: 'POST',
+      body: { query: B2_VAULT_EDGE_PARITY_SQL, parameters: [nonce.toString('hex')], read_only: false },
+      expectedStatus: 201, timeoutMs: SQL_TIMEOUT_MS, label: 'Vault parity observation', sensitive: true }));
     vaultTag = await authorityObservationStage('VAULT_PARITY_NORMALIZE',
       () => normalizeVaultParitySnapshot(vaultResponse.body));
     await authorityObservationStage('VAULT_PARITY_COMPARE', () => {
