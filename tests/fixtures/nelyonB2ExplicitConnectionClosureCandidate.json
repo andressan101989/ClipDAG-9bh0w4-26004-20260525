@@ -49,11 +49,11 @@
       },
       {
         "path": "scripts/nelyon-private-authority-cli.mjs",
-        "sha256": "5965924c8d3ce536bf4344ac7c03ebcbbcb0f42a3740b6e282c807c3761e9005"
+        "sha256": "d12ecc3916d72293eee1ab98e9b925b598de0ebe214fd474e2c19e575b669f6d"
       },
       {
         "path": "scripts/nelyon-private-authority-issuer.mjs",
-        "sha256": "d045b646c6d0266400f5d2bd79bfd41291770194e615cf42f4aa653faec1b532"
+        "sha256": "374f2d512071fc73433c1415f12cefd508dd8730a62707e44ee7343a253ab65c"
       },
       {
         "path": "scripts/nelyon-private-authority-provider.mjs",
@@ -112,7 +112,7 @@
       "wrangler": "4.135.0",
       "supabase_setup_action": "45a513f8c64c0bc8e0e3dfe572b5c95be85f6359"
     },
-    "closure_sha256": "591e018e38b592202cde26505b9dbac626dd9abbb9d585ca0e9c38b6d0d87869"
+    "closure_sha256": "76706468c4eabe3834144ef631135614ded2d866b45ef449d9a1ff6d380131a2"
   },
   "proposed_members": [
     {

@@ -10,10 +10,14 @@ import test from 'node:test';
 import * as issuerModule from '../scripts/nelyon-private-authority-issuer.mjs';
 
 import {
+  B2_AUTHORITY_INTEGRATION_BASE_SHA,
   classifyB2AuthorityIssuanceDescriptor,
   computeB2AuthorityPreissuance,
   createB2AuthorityIssuanceGithubObserver,
   issueB2PrivateAuthority,
+  prepareB2AuthorityIssuance,
+  readB2AuthorityIssuanceDiagnostic,
+  readB2AuthorityPreparationSummary,
   readTrustedB2AuthorityApproval,
   readTrustedB2AuthorityObservation,
   verifyB2ApprovedDescriptorRenewalBoundary,
@@ -76,7 +80,7 @@ function storedZip(name, bytes, { streamed = false } = {}) {
   return Buffer.concat([local, bytes, descriptor, central, end]);
 }
 
-function observation() {
+function observation({ approvedSha = SHA, approvedTreeSha = TREE } = {}) {
   const names = [
     'ai-handoff', 'cleanup-stale-media-uploads', 'content-safety-scan', 'create-media-upload',
     'finalize-media-upload', 'get-media-url', 'video-semantic-index',
@@ -91,8 +95,8 @@ function observation() {
     kind: 'nelyon-b2-authority-observation-v1',
     projectRef: 'aewwdlvbwpczqyvkwvvj',
     repository: REPOSITORY,
-    approvedSha: SHA,
-    approvedTreeSha: TREE,
+    approvedSha,
+    approvedTreeSha,
     startedAt: '2026-11-22T10:00:00.000Z',
     completedObservedAt: '2026-11-22T10:01:00.000Z',
     backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical',
@@ -120,22 +124,23 @@ function jsonResponse(value) {
 
 function fixture({ duplicate = false, issueCreatedAt = '2026-11-22T10:02:00Z', streamedArtifact = false,
   observationActorId = OWNER_ID, issueActorId = OWNER_ID,
-  repositoryOwnerIds = [OWNER_ID, OWNER_ID] } = {}) {
-  const observed = observation();
+  repositoryOwnerIds = [OWNER_ID, OWNER_ID], approvedSha = SHA, approvedTreeSha = TREE } = {}) {
+  const observed = observation({ approvedSha, approvedTreeSha });
   const observationBytes = canonicalBytes(observed);
   const archive = storedZip('observation.json', observationBytes, { streamed: streamedArtifact });
   const preissuance = computeB2AuthorityPreissuance({
-    repository: REPOSITORY, workflowPath: WORKFLOW, approvedSha: SHA, approvedTreeSha: TREE,
+    repository: REPOSITORY, workflowPath: WORKFLOW, approvedSha, approvedTreeSha,
     publicContractSha256: '5'.repeat(64), manifestSha256: '6'.repeat(64), policySha256: '7'.repeat(64),
     baselineSha: '8'.repeat(40), runtimeClosureSha256: '9'.repeat(64),
     observationSha256: observed.observationSha256,
   });
   const releaseId = `b2-authority-${preissuance.preissuanceSha256}`;
+  let currentIssueReleaseId = releaseId;
   const run = (id, issue = false) => ({ id: Number(id), run_attempt: 1,
     status: issue ? 'in_progress' : 'completed', conclusion: issue ? null : 'success', event: 'workflow_dispatch',
-    head_branch: 'main', head_sha: SHA, path: WORKFLOW, created_at: issue
+    head_branch: 'main', head_sha: approvedSha, path: WORKFLOW, created_at: issue
       ? issueCreatedAt : '2026-11-22T09:59:00Z',
-    display_title: issue ? releaseId : 'Nelyon B2 authority observation',
+    display_title: issue ? currentIssueReleaseId : 'Nelyon B2 authority observation',
     actor: { login: 'andressan101989', id: issue ? issueActorId : observationActorId },
     triggering_actor: { login: 'andressan101989', id: issue ? issueActorId : observationActorId },
     repository: { full_name: REPOSITORY } });
@@ -155,19 +160,23 @@ function fixture({ duplicate = false, issueCreatedAt = '2026-11-22T10:02:00Z', s
     }
     if (url.pathname.endsWith(`/actions/runs/${OBSERVATION_RUN}/attempts/1`)) return jsonResponse(run(OBSERVATION_RUN));
     if (url.pathname.endsWith(`/actions/runs/${ISSUE_RUN}/attempts/1`)) return jsonResponse(run(ISSUE_RUN, true));
-    if (url.pathname.endsWith(`/git/commits/${SHA}`)) return jsonResponse({ sha: SHA, tree: { sha: TREE } });
+    if (url.pathname.endsWith(`/git/commits/${approvedSha}`)) {
+      return jsonResponse({ sha: approvedSha, tree: { sha: approvedTreeSha } });
+    }
     if (url.pathname.endsWith(`/actions/runs/${OBSERVATION_RUN}/attempts/1/jobs`)) return jsonResponse({
       total_count: 1, jobs: [{ id: OBSERVATION_JOB_ID, run_id: Number(OBSERVATION_RUN), run_attempt: 1,
-        name: 'Observe fresh B2 backup and Vault/Edge parity', status: 'completed', conclusion: 'success', head_sha: SHA }],
+        name: 'Observe fresh B2 backup and Vault/Edge parity', status: 'completed', conclusion: 'success',
+        head_sha: approvedSha }],
     });
     if (url.pathname.endsWith(`/actions/runs/${ISSUE_RUN}/attempts/1/jobs`)) return jsonResponse({
       total_count: 1, jobs: [{ id: ISSUE_JOB_ID, run_id: Number(ISSUE_RUN), run_attempt: 1,
-        name: 'Issue immutable B2 private authority', status: 'in_progress', conclusion: null, head_sha: SHA }],
+        name: 'Issue immutable B2 private authority', status: 'in_progress', conclusion: null,
+        head_sha: approvedSha }],
     });
     if (url.pathname.endsWith(`/actions/runs/${OBSERVATION_RUN}/artifacts`)) return jsonResponse({ total_count: 1,
       artifacts: [{ id: ARTIFACT_ID, name: `nelyon-b2-authority-observation-${OBSERVATION_RUN}`,
         size_in_bytes: archive.length, digest: `sha256:${hash(archive)}`, expired: false,
-        workflow_run: { id: Number(OBSERVATION_RUN), head_branch: 'main', head_sha: SHA } }] });
+        workflow_run: { id: Number(OBSERVATION_RUN), head_branch: 'main', head_sha: approvedSha } }] });
     if (url.pathname.endsWith(`/actions/artifacts/${ARTIFACT_ID}/zip`)) {
       if (init.headers?.accept !== 'application/vnd.github+json') {
         return new Response(JSON.stringify({ message: 'Unsupported Media Type' }), {
@@ -185,7 +194,8 @@ function fixture({ duplicate = false, issueCreatedAt = '2026-11-22T10:02:00Z', s
     }
     throw new Error(`unexpected ${url}`);
   };
-  return { observed, preissuance, releaseId, fetchImpl, calls, archive };
+  return { observed, preissuance, releaseId, fetchImpl, calls, archive,
+    setIssueReleaseId(value) { currentIssueReleaseId = value; history[0].display_title = value; } };
 }
 
 test('authenticated observation and owner dispatch approval bind exact GitHub provenance and paginate all statuses', async () => {
@@ -289,6 +299,53 @@ test('approved descriptor bytes are fully parsed before immutable provider publi
   const descriptorParse = source.indexOf('parseB2ReleaseDescriptor(descriptorBytes, descriptorSha256)');
   const publication = source.indexOf('input.publisher.publishBySha256(authoritySha256, authorityBytes)');
   assert.ok(descriptorParse >= 0 && publication > descriptorParse);
+});
+
+test('R2 write/readback failures have a non-forgeable closed issuance diagnostic', async () => {
+  assert.equal(typeof readB2AuthorityIssuanceDiagnostic, 'function');
+  const repositoryRoot = process.cwd();
+  const approvedSha = execFileSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim();
+  const approvedTreeSha = execFileSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD^{tree}'], {
+    encoding: 'utf8',
+  }).trim();
+  const value = fixture({ approvedSha, approvedTreeSha });
+  const observer = createB2AuthorityIssuanceGithubObserver({ fetchImpl: value.fetchImpl,
+    githubToken: 'github-token-not-retained', repository: REPOSITORY, workflowPath: WORKFLOW,
+    apiOrigin: 'https://api.github.com' });
+  const observed = await observer.authenticateObservation({ runId: OBSERVATION_RUN, runAttempt: 1,
+    approvedSha, approvedTreeSha, expectedObservationSha256: value.observed.observationSha256 });
+  const preparation = prepareB2AuthorityIssuance({ repositoryRoot, approvedSha, approvedTreeSha,
+    integrationBaseSha: B2_AUTHORITY_INTEGRATION_BASE_SHA, observation: observed });
+  const summary = readB2AuthorityPreparationSummary(preparation);
+  value.setIssueReleaseId(summary.releaseId);
+  const approved = await observer.authenticateOwnerApproval({ runId: ISSUE_RUN, runAttempt: 1,
+    approvedSha, approvedTreeSha, releaseId: summary.releaseId,
+    preissuanceSha256: summary.preissuanceSha256, observation: observed });
+  const privateMarker = 'PRIVATE_R2_PROVIDER_BODY_NEVER_EXPOSED';
+  let failure;
+  await assert.rejects(() => issueB2PrivateAuthority({ preparation, observation: observed,
+    approval: approved, publisher: Object.freeze({ async publishBySha256() {
+      throw new Error(`${privateMarker} https://private.example.invalid/authority status=503`);
+    } }), issuedAt: '2026-11-22T10:03:00.000Z' }), error => {
+    failure = error;
+    assert.equal(String(error), 'Error: B2 authority issuance blocked');
+    return true;
+  });
+  const diagnostic = readB2AuthorityIssuanceDiagnostic(failure);
+  assert.deepEqual(diagnostic, Object.freeze({
+    phase: 'AUTHORITY_ISSUANCE',
+    category: 'R2_WRITE_READBACK',
+  }));
+  assert.equal(Object.isFrozen(diagnostic), true);
+  assert.doesNotMatch(`${String(failure)}${JSON.stringify(diagnostic)}`,
+    /PRIVATE_R2_PROVIDER_BODY|private\.example|503/iu);
+  const forged = new Error('B2 authority issuance blocked');
+  Object.defineProperty(forged, 'diagnostic', {
+    value: { phase: 'AUTHORITY_ISSUANCE', category: 'R2_WRITE_READBACK' }, enumerable: true,
+  });
+  assert.equal(readB2AuthorityIssuanceDiagnostic(forged), undefined);
 });
 
 test('authority descriptor classifier accepts the initial candidate and an invariant approved renewal', () => {

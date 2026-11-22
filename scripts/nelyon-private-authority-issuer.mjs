@@ -45,11 +45,19 @@ const observationCapabilities = new WeakMap();
 const approvalCapabilities = new WeakMap();
 const preparationCapabilities = new WeakMap();
 const issuanceCapabilities = new WeakMap();
+const issuanceDiagnostics = new WeakMap();
 
-function reject() {
+export function readB2AuthorityIssuanceDiagnostic(error) {
+  return issuanceDiagnostics.get(error);
+}
+
+function reject(category = null) {
   const error = new Error('B2 authority issuance blocked');
   error.code = 'B2_AUTHORITY_ISSUANCE_BLOCKED';
   error.stack = 'Error: B2 authority issuance blocked';
+  if (category === 'R2_WRITE_READBACK') {
+    issuanceDiagnostics.set(error, Object.freeze({ phase: 'AUTHORITY_ISSUANCE', category }));
+  }
   throw Object.freeze(error);
 }
 
@@ -721,8 +729,29 @@ export async function issueB2PrivateAuthority(input) {
       integrationBaseSha: prepared.contract.integration_base_sha },
     successorCatalog: prepared.successorCatalog,
     securityAdvisor: prepared.securityAdvisor,
-    backup: observed.observation.backup,
-    vaultEdgeParity: observed.observation.vaultEdgeParity,
+    backup: {
+      schemaVersion: observed.observation.backup.schemaVersion,
+      provider: observed.observation.backup.provider,
+      kind: observed.observation.backup.kind,
+      projectRefSha256: observed.observation.backup.projectRefSha256,
+      evidenceSha256: observed.observation.backup.evidenceSha256,
+      status: observed.observation.backup.status,
+      insertedAt: observed.observation.backup.insertedAt,
+      completedObservedAt: observed.observation.backup.completedObservedAt,
+      expiresAt: observed.observation.backup.expiresAt,
+    },
+    vaultEdgeParity: {
+      schemaVersion: observed.observation.vaultEdgeParity.schemaVersion,
+      projectRef: observed.observation.vaultEdgeParity.projectRef,
+      functionName: observed.observation.vaultEdgeParity.functionName,
+      mechanism: observed.observation.vaultEdgeParity.mechanism,
+      result: observed.observation.vaultEdgeParity.result,
+      observationId: observed.observation.vaultEdgeParity.observationId,
+      vault: { secretName: observed.observation.vaultEdgeParity.vault.secretName },
+      edge: { secretName: observed.observation.vaultEdgeParity.edge.secretName },
+      observedAt: observed.observation.vaultEdgeParity.observedAt,
+      expiresAt: observed.observation.vaultEdgeParity.expiresAt,
+    },
     approval: approved.approval,
   };
   const authorityBytes = Buffer.from(JSON.stringify(authority), 'utf8');
@@ -742,7 +771,7 @@ export async function issueB2PrivateAuthority(input) {
     || parsedDescriptor.private_authority.sha256 !== authoritySha256) reject();
   let publication;
   try { publication = await input.publisher.publishBySha256(authoritySha256, authorityBytes); }
-  catch { reject(); }
+  catch { reject('R2_WRITE_READBACK'); }
   exact(publication, ['schemaVersion', 'result', 'sha256', 'byteLength', 'key', 'etag', 'readback']);
   if (publication.schemaVersion !== 1 || publication.sha256 !== authoritySha256
     || publication.byteLength !== authorityBytes.length

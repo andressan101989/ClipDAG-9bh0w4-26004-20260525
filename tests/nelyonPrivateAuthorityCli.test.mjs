@@ -21,6 +21,7 @@ const {
   createPrivateAuthorityProductionHost,
   executeAuthorityIssuance,
   executeAuthorityObservation,
+  readAuthorityIssuanceDiagnostic,
   runPrivateAuthorityCli,
   writeB2AuthorityObservationMetadata,
   writeB2AuthorityIssuanceMetadata,
@@ -706,6 +707,86 @@ test('authority-observe bridges only trusted snapshot stage diagnostics to the t
   });
   assert.equal(host.stderr.read(), 'DENY PRIVATE_AUTHORITY_STAGE_BLOCKED\n');
   assert.doesNotMatch(host.stdout.read() + host.stderr.read(), /synthetic-token|database\/backups|https:/u);
+});
+
+test('authority-issue exposes only a closed observation-authentication stage diagnostic', async () => {
+  assert.equal(typeof readAuthorityIssuanceDiagnostic, 'function');
+  assert.equal(process.versions.node, '24.21.0');
+  const repositoryRoot = process.cwd();
+  const approvedSha = execFileSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const approvedTree = execFileSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+  const runnerTemp = mkdtempSync(path.join(tmpdir(), 'nelyon-b2-issuance-diagnostic-'));
+  const outputDirectory = path.join(runnerTemp, 'nelyon-b2-authority-issue');
+  mkdirSync(outputDirectory);
+  const receiptOutput = path.join(outputDirectory, 'receipt.json');
+  const descriptorOutput = path.join(outputDirectory, 'nelyon-web-control-centers-b2-release-descriptor.json');
+  const environment = Object.freeze({
+    GITHUB_EVENT_NAME: 'workflow_dispatch',
+    GITHUB_REPOSITORY: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+    GITHUB_REF: 'refs/heads/main',
+    GITHUB_WORKFLOW_REF: 'andressan101989/ClipDAG-9bh0w4-26004-20260525/.github/workflows/nelyon-production-release.yml@refs/heads/main',
+    GITHUB_ACTOR: 'andressan101989',
+    GITHUB_TRIGGERING_ACTOR: 'andressan101989',
+    GITHUB_SHA: approvedSha,
+    GITHUB_RUN_ATTEMPT: '1',
+    GITHUB_RUN_ID: '99990001',
+    GITHUB_TOKEN: 'synthetic-github-token-never-retained',
+    NELYON_APPROVED_SHA: approvedSha,
+    NELYON_APPROVED_TREE: approvedTree,
+    RUNNER_TEMP: runnerTemp,
+  });
+  const secretMarker = 'SYNTHETIC_PRIVATE_REMOTE_BODY_NEVER_EXPOSED';
+  let stagedError;
+  try {
+    await assert.rejects(() => executeAuthorityIssuance({
+      invocation: Object.freeze({
+        action: 'authority-issue',
+        inputs: Object.freeze({
+          policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'),
+          approvedSha,
+          approvedTree,
+          integrationBaseSha: B2_INTEGRATION_BOUNDARY_SHA,
+          observationRun: '99990000',
+          observationSha256: 'd'.repeat(64),
+          releaseId: `b2-authority-${'e'.repeat(64)}`,
+        }),
+        approvedDescriptorOutput: descriptorOutput,
+        verificationOutput: receiptOutput,
+      }),
+      environment,
+      fetchImpl: async () => new Response(`{\"message\":\"${secretMarker}\"}`, {
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+      }),
+      repositoryRoot,
+    }), error => {
+      stagedError = error;
+      assert.deepEqual(readAuthorityIssuanceDiagnostic(error), Object.freeze({
+        phase: 'AUTHORITY_ISSUANCE',
+        category: 'OBSERVATION_AUTHENTICATION',
+      }));
+      return true;
+    });
+    const host = trustedHost(async () => { throw stagedError; });
+    assert.equal(await runPrivateAuthorityCli(['authority-issue', ...ISSUE], host), 2);
+    assert.deepEqual(JSON.parse(host.stdout.read()), {
+      schemaVersion: 1,
+      result: 'BLOCKED',
+      releaseReady: false,
+      code: 'PRIVATE_AUTHORITY_STAGE_BLOCKED',
+      diagnostic: { phase: 'AUTHORITY_ISSUANCE', category: 'OBSERVATION_AUTHENTICATION' },
+    });
+    assert.equal(host.stderr.read(), 'DENY PRIVATE_AUTHORITY_STAGE_BLOCKED\n');
+    assert.doesNotMatch(host.stdout.read() + host.stderr.read(),
+      /SYNTHETIC_PRIVATE_REMOTE_BODY|github-token|api\.github|403|message/iu);
+    const forged = new Error('Private authority operation blocked');
+    Object.defineProperty(forged, 'diagnostic', { value: {
+      phase: 'AUTHORITY_ISSUANCE', category: 'R2_WRITE_READBACK',
+    }, enumerable: true });
+    assert.equal(readAuthorityIssuanceDiagnostic(forged), undefined);
+  } finally {
+    rmSync(runnerTemp, { recursive: true, force: true });
+  }
 });
 
 test('unknown actions, duplicate/unknown flags, passthrough and private authority inputs fail before execute', async () => {
