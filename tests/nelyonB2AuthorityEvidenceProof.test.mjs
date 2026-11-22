@@ -9,6 +9,19 @@ const preparation = readFileSync(new URL('../scripts/nelyon-b2-authority-prepara
 const trustedDockerBin = process.platform === 'win32'
   ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe'
   : '/usr/bin/docker';
+const reviewedImageIndexDigest = 'sha256:80d7b27c3e8d77cfa7226eee9508671796da214781ff15a35b3670d7ad5ee453';
+const reviewedAmd64ManifestDigest = 'sha256:b021e96054128399f84f24e39d29c21ee7c7169515e5d9e4e99ff15d5043d1d8';
+const reviewedImageId = 'sha256:2d3ac69ad5c95d81458cc93a6cc6c31a98dfa00cd28f88a0a9358d315e1c357a';
+const reviewedImage = `public.ecr.aws/supabase/postgres@${reviewedImageIndexDigest}`;
+
+test('reviewed OCI index, amd64 manifest and image config remain distinct immutable identities', () => {
+  assert.notEqual(reviewedImageIndexDigest, reviewedAmd64ManifestDigest);
+  assert.notEqual(reviewedAmd64ManifestDigest, reviewedImageId);
+  assert.notEqual(reviewedImageIndexDigest, reviewedImageId);
+  assert.match(reviewedImage, new RegExp(`${reviewedImageIndexDigest}$`, 'u'));
+  assert.match(reviewedAmd64ManifestDigest, /^sha256:[0-9a-f]{64}$/u);
+  assert.match(reviewedImageId, /^sha256:[0-9a-f]{64}$/u);
+});
 
 test('PG17 catalog evidence is branded as a component and excludes every synthetic cron row', () => {
   assert.match(catalogProof, /kind:\s*'nelyon-b2-postgres-catalog-evidence-v1'/);
@@ -52,13 +65,14 @@ test('real pg_cron evidence binds the exact extension, hosted role, image and da
   assert.match(cronProof, /identity:\s*'process-scheduled-publications-b2'/);
   assert.match(cronProof, /commandSha256:\s*sha256\('select public\.wake_scheduled_publications_b2_v1\(\)'\)/);
   assert.match(cronProof, /capabilitySha256:\s*sha256\(canonicalJson\(core\)\)/);
-  assert.match(cronProof, /expectedImageId\s*=\s*'sha256:80d7b27c3e8d77cfa7226eee9508671796da214781ff15a35b3670d7ad5ee453'/);
-  assert.match(cronProof, /image\s*=\s*`public\.ecr\.aws\/supabase\/postgres@\$\{expectedImageId\}`/);
+  assert.match(cronProof, /expectedImageIndexDigest\s*=\s*'sha256:80d7b27c3e8d77cfa7226eee9508671796da214781ff15a35b3670d7ad5ee453'/);
+  assert.match(cronProof, /expectedImageId\s*=\s*'sha256:2d3ac69ad5c95d81458cc93a6cc6c31a98dfa00cd28f88a0a9358d315e1c357a'/);
+  assert.match(cronProof, /image\s*=\s*`public\.ecr\.aws\/supabase\/postgres@\$\{expectedImageIndexDigest\}`/);
   assert.match(cronProof, /assert\.equal\(imageId,\s*expectedImageId/,
     'the image must match one reviewed content digest, not merely a digest-shaped value');
   assert.match(cronProof,
     /pullPolicy\s*=\s*process\.env\.NELYON_B2_REVIEWED_PROOF\s*===\s*'1'\s*\?\s*'always'\s*:\s*'never'/u,
-    'a clean reviewed runner fetches the immutable digest while direct local proof cannot fall back to a tag');
+    'a clean reviewed runner fetches the immutable index while direct local proof cannot fall back to a tag');
   assert.match(cronProof, /`--pull=\$\{pullPolicy\}`/u);
   assert.match(cronProof, /'--platform',\s*'linux\/amd64'/u);
   assert.match(cronProof, /assert\.equal\(imageMetadata\.Os,\s*'linux'/u);
@@ -75,14 +89,15 @@ test('catalog proof authority mode is portable and bound to the same reviewed im
   assert.doesNotMatch(catalogProof, /D:\/CodexTemp|postgres-17\.11-disposable/u);
   assert.match(catalogProof, /process\.platform\s*===\s*'win32'\s*\?\s*`\$\{tool\}\.exe`\s*:\s*tool/u,
     'local fallback selects the executable suffix by platform instead of hardcoding Windows');
-  assert.match(catalogProof, /expectedImageId\s*=\s*'sha256:80d7b27c3e8d77cfa7226eee9508671796da214781ff15a35b3670d7ad5ee453'/);
-  assert.match(catalogProof, /image\s*=\s*`public\.ecr\.aws\/supabase\/postgres@\$\{expectedImageId\}`/);
+  assert.match(catalogProof, /expectedImageIndexDigest\s*=\s*'sha256:80d7b27c3e8d77cfa7226eee9508671796da214781ff15a35b3670d7ad5ee453'/);
+  assert.match(catalogProof, /expectedImageId\s*=\s*'sha256:2d3ac69ad5c95d81458cc93a6cc6c31a98dfa00cd28f88a0a9358d315e1c357a'/);
+  assert.match(catalogProof, /image\s*=\s*`public\.ecr\.aws\/supabase\/postgres@\$\{expectedImageIndexDigest\}`/);
   assert.match(catalogProof, /assert\.equal\(imageId,\s*expectedImageId/,
     'catalog evidence must bind the exact reviewed runtime bytes');
   assert.match(catalogProof, /dockerMode\s*=\s*process\.argv\.includes\('--authority-evidence'\)/u);
   assert.match(catalogProof,
     /pullPolicy\s*=\s*process\.env\.NELYON_B2_REVIEWED_PROOF\s*===\s*'1'\s*\?\s*'always'\s*:\s*'never'/u,
-    'reviewed catalog proof can fetch on a clean runner and local proof remains cache-only');
+    'reviewed catalog proof fetches the immutable index while direct local proof remains cache-only');
   assert.match(catalogProof, /`--pull=\$\{pullPolicy\}`/u);
   assert.match(catalogProof, /'--platform',\s*'linux\/amd64'/u);
   assert.match(catalogProof, /assert\.equal\(imageMetadata\.Os,\s*'linux'/u);
