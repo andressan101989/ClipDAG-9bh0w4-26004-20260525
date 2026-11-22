@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
+import { createReleaseAuthorityContext, publicAuthorityReceipt } from '../scripts/nelyon-release-authority-context.mjs';
+import { syntheticVaultEdgeParity } from './fixtures/nelyonB2SyntheticVaultEdgeParity.mjs';
 
 const cliModule = await import('../scripts/nelyon-private-authority-cli.mjs').catch(error => {
   if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error;
@@ -139,6 +142,79 @@ function trustedHost(execute) {
   return { execute, stdout, stderr };
 }
 
+const sha256 = value => createHash('sha256').update(value).digest('hex');
+const canonicalJson = value => `${JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item)
+  ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left.localeCompare(right))) : item)}\n`;
+
+function providerOnlyAuthorityContext() {
+  const contract = {
+    id: 'synthetic-provider-only-authority',
+    to_phase: 'web-control-centers-b2',
+    baseline_sha: 'a'.repeat(40),
+    reviewed_source_sha: 'b'.repeat(40),
+    integration_base_sha: 'c'.repeat(40),
+  };
+  const publicContractSha256 = sha256(canonicalJson(contract));
+  const relation = {
+    identity: 'private.synthetic_provider_only',
+    definitionSha256: 'd'.repeat(64),
+    owner: 'postgres',
+    rls: true,
+    forceRls: true,
+  };
+  const expectedCanonicalJson = canonicalJson(relation).trimEnd();
+  const authority = {
+    schemaVersion: 1,
+    authorityId: 'synthetic-provider-only-authority',
+    publicContractSha256,
+    phase: contract.to_phase,
+    issuedFor: {
+      baselineSha: contract.baseline_sha,
+      reviewedSourceSha: contract.reviewed_source_sha,
+      integrationBaseSha: contract.integration_base_sha,
+    },
+    successorCatalog: { schemaVersion: 1, records: [{
+      kind: 'relation', identity: relation.identity, expectedCanonicalJson,
+      expectedSha256: sha256(expectedCanonicalJson),
+    }] },
+    securityAdvisor: { schemaVersion: 2, baselineSha256: sha256('[]\n'), baselineItems: [], records: [] },
+    backup: {
+      schemaVersion: 2, provider: 'supabase', kind: 'physical', projectRefSha256: 'e'.repeat(64),
+      evidenceSha256: 'f'.repeat(64), status: 'COMPLETED', insertedAt: '2026-11-08T10:00:00.000Z',
+      completedObservedAt: '2026-11-08T10:30:00.000Z', expiresAt: '2026-11-09T10:00:00.000Z',
+    },
+    vaultEdgeParity: syntheticVaultEdgeParity('2026-11-08T11:00:00.000Z'),
+    approval: {
+      schemaVersion: 1, decision: 'APPROVED', scope: [contract.to_phase], authorizationSha256: '1'.repeat(64),
+      approvedAt: '2026-11-08T11:00:00.000Z', expiresAt: '2026-11-09T11:00:00.000Z',
+    },
+  };
+  const authorityJson = JSON.stringify(authority);
+  const descriptorBytes = Buffer.from(JSON.stringify({
+    schema_version: 1,
+    contract,
+    public_contract_sha256: publicContractSha256,
+    private_authority: {
+      required: true,
+      schema_version: 1,
+      authority_id: authority.authorityId,
+      sha256: sha256(authorityJson),
+    },
+  }));
+  return createReleaseAuthorityContext({
+    descriptorBytes,
+    expectedDescriptorSha256: sha256(descriptorBytes),
+    phase: contract.to_phase,
+    transitionId: contract.id,
+    baselineSha: contract.baseline_sha,
+    reviewedSourceSha: contract.reviewed_source_sha,
+    integrationBaseSha: contract.integration_base_sha,
+    requestedAt: '2026-11-08T12:00:00.000Z',
+    authorityJson,
+    expectedPrivateAuthoritySha256: sha256(authorityJson),
+  });
+}
+
 test('strict authority-proof CLI emits exact closed success and passes only parsed public invocation', async () => {
   assert.equal(typeof runPrivateAuthorityCli, 'function');
   let received;
@@ -161,19 +237,8 @@ test('strict authority-proof CLI emits exact closed success and passes only pars
 
 test('production authority-proof is provider-only and never reads Supabase operation inventory', async () => {
   assert.equal(typeof createPrivateAuthorityProductionHost, 'function');
-  const receipt = Object.freeze({
-    schemaVersion: 1,
-    authorityId: 'synthetic-authority',
-    descriptorSha256: '1'.repeat(64),
-    publicContractSha256: '2'.repeat(64),
-    privateAuthoritySha256: '3'.repeat(64),
-    bindingSha256: '4'.repeat(64),
-    successorCatalogSha256: '5'.repeat(64),
-    securityAdvisorSha256: '6'.repeat(64),
-    backupSha256: '7'.repeat(64),
-    approvalSha256: '8'.repeat(64),
-    verified: true,
-  });
+  const authorityContext = providerOnlyAuthorityContext();
+  const receipt = publicAuthorityReceipt(authorityContext);
   let operationFetches = 0;
   const host = createPrivateAuthorityProductionHost({
     publicInputs: Object.freeze({
@@ -189,7 +254,7 @@ test('production authority-proof is provider-only and never reads Supabase opera
   const actual = await host.dispatch({
     action: 'authority-proof',
     inputs: Object.freeze({}),
-    authorityContext: Object.freeze({}),
+    authorityContext,
     receipt,
     manifest: Object.freeze({}),
     now: '2026-11-08T12:00:00.000Z',

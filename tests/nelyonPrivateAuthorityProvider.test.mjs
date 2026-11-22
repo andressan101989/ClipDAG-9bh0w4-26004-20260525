@@ -238,13 +238,15 @@ test('R2 enforces absolute timeout when immediate stream reads starve timers', a
 test('R2 aborts stalled fetches and streams and sanitizes provider failures', async () => {
   let signal;
   const stalled = request => { signal = request.signal; return new Promise(() => {}); };
-  await rejected(() => r2({ ...config(stalled), timeoutMs: 15 }).getBySha256(SHA));
+  // Leave enough time for real SigV4 setup so this case exercises an in-flight
+  // transport. Short absolute-deadline behavior is covered independently below.
+  await rejected(() => r2({ ...config(stalled), timeoutMs: 1000 }).getBySha256(SHA));
   assert.equal(signal.aborted, true);
   let cancelled = false;
   const fake = fakeReader({ get: () => new Response(new ReadableStream({
     cancel() { cancelled = true; },
   }), { headers: { 'content-length': String(BYTES.length) } }) });
-  await rejected(() => r2({ ...config(fake.fetch), timeoutMs: 15 }).getBySha256(SHA));
+  await rejected(() => r2({ ...config(fake.fetch), timeoutMs: 1000 }).getBySha256(SHA));
   assert.equal(cancelled, true);
   await rejected(() => r2(config(async () => { throw new Error(MARKER); })).getBySha256(SHA));
   const broken = fakeReader({ get: () => new Response(new ReadableStream({ start(controller) {
