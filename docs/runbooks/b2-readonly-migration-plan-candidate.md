@@ -5,8 +5,8 @@
 This checkpoint is local-only on `codex/web-control-centers-b2-r5-c1`. It is
 based on remote main `f92f8cbc6b2cdffc2e7688a95545d4b69bdbf56c` and the
 reviewed R2 candidate `231eb776ace92407ef7d0709c195b548bef5e59f`. The focal
-corrective payload is committed locally as
-`5799d6ddec49b11248e864c5d820e4ceb6eabd40`. No branch has been pushed, no PR
+corrective code and tests are committed locally through
+`e70ce5e71b081a11718ae0c32369060643aa144f`. No branch has been pushed, no PR
 has been opened, and no release or productive mutation has occurred.
 
 Node 24.21.0 is the validated runtime. Cron reconciliation no longer attempts
@@ -25,7 +25,7 @@ repository contains only the contract and tests, not productive parity
 evidence or secret material.
 
 The 17-member local closure is regenerated from exact Git blob bytes with root
-`761024bab97ac8b96c71eaebabdbda626fe6edb47a1b803b0fb74ae3dbdc18e5`.
+`86136f8847b061af9277eaf35c77dc33a233d3cebb16ed4141fd847472eb736f`.
 The public descriptor remains `state=candidate`, `release_ready=false`, with
 null reviewed/integration/private-authority pins. B2 is not deployed: its SQL,
 Edge worker and cron remain pending. The next permitted action after final
