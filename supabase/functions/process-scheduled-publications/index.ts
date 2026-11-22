@@ -10,9 +10,21 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-  // Same exact internal bearer contract as video-semantic-index. Never decode JWT roles.
-  const secret = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-  if (!secret || !timingSafeEqual(req.headers.get('authorization') ?? '', `Bearer ${secret}`)) {
+  // Preserve the existing service-role caller and add the canonical Vault ->
+  // pg_net wake path. The dispatch secret remains the authority; bearer and
+  // apikey must also be the same gateway credential. Never decode JWT roles.
+  const authorization = req.headers.get('authorization') ?? '';
+  const apiKey = req.headers.get('apikey') ?? '';
+  const serviceRole = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  const dispatchSecret = Deno.env.get('CALL_DISPATCH_SECRET') ?? '';
+  const suppliedDispatchSecret = req.headers.get('x-scheduled-publications-secret') ?? '';
+  const serviceAuthorized = serviceRole.length > 0
+    && timingSafeEqual(authorization, `Bearer ${serviceRole}`);
+  const cronAuthorized = apiKey.length > 0
+    && timingSafeEqual(authorization, `Bearer ${apiKey}`)
+    && dispatchSecret.length >= 32
+    && timingSafeEqual(suppliedDispatchSecret, dispatchSecret);
+  if (!serviceAuthorized && !cronAuthorized) {
     return json({ error: 'unauthorized' }, 401);
   }
   try {

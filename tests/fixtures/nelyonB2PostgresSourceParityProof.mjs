@@ -71,7 +71,7 @@ export function proveB2PostgresSourceParity({ catalogRows, functionRows, relatio
   assert.doesNotThrow(() => { parity = compileB2SourceParity({ authorityContext, manifest, descriptorBytes,
     reviewedTree, deployedFunctionInventory, capturedAt: at }); }, 'reviewed source must compile against real PostgreSQL function definitions');
   const functions = normalizeB2DatabaseFunctionAttestations(functionRows);
-  assert.deepEqual(parity.databaseFunctions, functions.items, 'all 30 compiled function definitions and security fields equal PostgreSQL');
+  assert.deepEqual(parity.databaseFunctions, functions.items, 'all 31 compiled function definitions and security fields equal PostgreSQL');
   assert.equal(verifyB2DatabaseFunctionAuthority(functions.items, parity.databaseFunctions, authorityContext), true);
   const relations = relationRows.map(row => ({ ...row,
     definitionSha256: catalogRows.find(record => record.kind === 'relation' && record.value.identity === row.identity).value.definitionSha256 }));
@@ -95,5 +95,5 @@ export function proveB2PostgresSourceParity({ catalogRows, functionRows, relatio
         { code: 'B2_SNAPSHOT_AUTHORITY_INVALID' }); negativeChecks++;
     }
   }
-  console.log(`B2_POSTGRES_SOURCE_PARITY_PASS functions=30 relations=7 negativeChecks=${negativeChecks} postgres=17 syntheticOnly=true`);
+  console.log(`B2_POSTGRES_SOURCE_PARITY_PASS functions=31 relations=7 negativeChecks=${negativeChecks} postgres=17 syntheticOnly=true`);
 }

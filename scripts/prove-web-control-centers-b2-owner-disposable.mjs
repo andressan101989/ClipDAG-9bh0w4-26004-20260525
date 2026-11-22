@@ -93,7 +93,55 @@ try {
   const b1Definition = scalar("select pg_catalog.md5(pg_catalog.string_agg(pg_catalog.concat_ws('|',p.oid,p.proowner,p.proacl,p.provolatile,p.prosecdef,p.proconfig,pg_catalog.pg_get_function_arguments(p.oid),pg_catalog.pg_get_function_result(p.oid)),'' order by p.oid)) from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','private')");
   const b1Oids = scalar("select pg_catalog.string_agg(p.oid::text,',') from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','private')");
   const migration = read('supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql');
+  const missingDependencies = sql(migration, true);
+  assert.notEqual(missingDependencies.status, 0);
+  assert.match(missingDependencies.stderr, /publication_scheduler_dependency_missing/);
+  checks++;
+  eq(scalar("select pg_catalog.to_regclass('private.publication_schedules') is null"), 't',
+    'missing scheduler dependencies roll back every B2 object');
+  sql(read('tests/fixtures/web-control-centers-b2-cron-stubs.sql'));
+  sql("select cron.schedule('process-scheduled-publications-b2','0 0 * * *','select false'); select cron.schedule('process-scheduled-publications-b2','30 0 * * *','select true')");
+  const duplicateCron = sql(migration, true);
+  assert.notEqual(duplicateCron.status, 0);
+  assert.match(duplicateCron.stderr, /publication_scheduler_duplicate_job/);
+  checks++;
+  eq(scalar("select pg_catalog.to_regclass('private.publication_schedules') is null"), 't',
+    'duplicate scheduler jobs roll back every B2 object');
+  sql("delete from cron.job where jobname='process-scheduled-publications-b2'");
+  sql("select cron.schedule('process-scheduled-publications-b2','0 0 * * *','select false')");
+  sql("select cron.alter_job((select jobid from cron.job where jobname='process-scheduled-publications-b2'),database:='wrong_database',username:='wrong_user',active:=false)");
   sql(migration);
+  eq(scalar("select count(*)||':'||min(schedule)||':'||min(command)||':'||min(database)||':'||min(username)||':'||bool_and(active) from cron.job where jobname='process-scheduled-publications-b2'"),
+    '1:* * * * *:select public.wake_scheduled_publications_b2_v1():b2owner:postgres:true',
+    'existing cron is repaired to the canonical schedule, command, executor and database without duplication');
+  eq(scalar(`select prosecdef and proowner=(select oid from pg_roles where rolname='postgres') and proconfig=array['search_path=""'] and not has_function_privilege('public','public.wake_scheduled_publications_b2_v1()','EXECUTE') from pg_proc where oid='public.wake_scheduled_publications_b2_v1()'::regprocedure`),
+    't','wake remains postgres-owned, SECURITY DEFINER, empty-search-path and non-public');
+  eq(scalar("select public.wake_scheduled_publications_b2_v1()"),'1','wake records one disposable pg_net request');
+  eq(scalar("select url||':'||timeout_milliseconds||':'||(headers->>'Authorization'='Bearer '||(headers->>'apikey')) from net.http_requests"),
+    'https://project.example/functions/v1/process-scheduled-publications:10000:true','wake uses the exact endpoint, matched gateway credential and bounded timeout');
+  sql("update vault.decrypted_secrets set decrypted_secret='short' where name='call_dispatch_secret'");
+  const shortWake=sql("select public.wake_scheduled_publications_b2_v1()",true);
+  assert.notEqual(shortWake.status,0);
+  assert.match(shortWake.stderr,/publication_scheduler_secret_missing/);
+  checks++;
+  sql("update vault.decrypted_secrets set decrypted_secret=repeat('d',32) where name='call_dispatch_secret'");
+  sql("delete from vault.decrypted_secrets where name='call_dispatch_project_url'");
+  const missingProjectUrlWake=sql("select public.wake_scheduled_publications_b2_v1()",true);
+  assert.notEqual(missingProjectUrlWake.status,0);
+  assert.match(missingProjectUrlWake.stderr,/publication_scheduler_secret_missing/);
+  checks++;
+  sql("insert into vault.decrypted_secrets(name,decrypted_secret) values ('call_dispatch_project_url','https://project.example')");
+  sql("delete from vault.decrypted_secrets where name='call_dispatch_publishable_key'");
+  const missingPublishableKeyWake=sql("select public.wake_scheduled_publications_b2_v1()",true);
+  assert.notEqual(missingPublishableKeyWake.status,0);
+  assert.match(missingPublishableKeyWake.stderr,/publication_scheduler_secret_missing/);
+  checks++;
+  sql("insert into vault.decrypted_secrets(name,decrypted_secret) values ('call_dispatch_publishable_key','publishable-test-key')");
+  sql("delete from vault.decrypted_secrets where name='call_dispatch_secret'");
+  const missingWake=sql("select public.wake_scheduled_publications_b2_v1()",true);
+  assert.notEqual(missingWake.status,0);
+  assert.match(missingWake.stderr,/publication_scheduler_secret_missing/);
+  checks++;
   const draft = createDraft();
   const local = scalar("select to_char(clock_timestamp() at time zone 'UTC' + interval '1 day','YYYY-MM-DD HH24:MI:SS.US')");
   const createCommand = command();

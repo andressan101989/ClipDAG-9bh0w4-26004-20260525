@@ -164,7 +164,7 @@ test('trusted compiler derives the complete source authority from exact reviewed
     negativeEvidenceSha256: f.advisor.negativeEvidenceSha256,
     originSha256: f.advisor.originSha256 }]);
   assert.deepEqual(result.databaseFunctions, f.matrix.sourceRows);
-  assert.equal(result.databaseFunctions.length, 30);
+  assert.equal(result.databaseFunctions.length, 31);
   assert.deepEqual(result.databaseRelations.map(row => row.identity),
     f.relationNames.map(name => `private.${name}`).sort());
   for (const row of result.databaseRelations) {

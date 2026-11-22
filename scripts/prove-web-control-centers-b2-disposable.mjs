@@ -176,6 +176,14 @@ const SYNTHETIC_CRON_JOB = Object.freeze({
   username: 'postgres',
   active: false,
 });
+const B2_CRON_JOB = Object.freeze({
+  identity: 'process-scheduled-publications-b2',
+  schedule: '* * * * *',
+  command: 'select public.wake_scheduled_publications_b2_v1()',
+  database: 'b2concurrency',
+  username: 'postgres',
+  active: true,
+});
 
 function runB2PostgresQueryProof() {
   let queryChecks = 0;
@@ -241,9 +249,7 @@ function runB2PostgresQueryProof() {
     return { schema: match[1], name: match[2], argument_types };
   });
 
-  sql(`create schema cron;
-    create table cron.job(jobname text primary key,schedule text not null,command text not null,database text not null,username text not null,active boolean not null);
-    insert into cron.job(jobname,schedule,command,database,username,active)
+  sql(`insert into cron.job(jobname,schedule,command,database,username,active)
       values('synthetic-publication-query-proof','* * * * *','select 1',current_database(),current_user,false)`);
   qeq(scalar("select count(*) from pg_catalog.pg_extension where extname='pg_cron'"), '0', 'synthetic cron shape is not pg_cron');
 
@@ -287,7 +293,7 @@ $b2_relation_acl_query$;
   const executeKeys = ['public', 'anon', 'authenticated', 'service_role'];
   const functionAclPrivileges = new Set(['EXECUTE']);
   const tableAclPrivileges = new Set(['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']);
-  qeq(functionRows.length, 30, 'parameterized function query returns every exact identity once');
+  qeq(functionRows.length, 31, 'parameterized function query returns every exact identity once');
   const observedFunctionIdentities = [];
   for (const [index, row] of functionRows.entries()) {
     const label = `function[${index}]`;
@@ -305,7 +311,7 @@ $b2_relation_acl_query$;
     q(/^CREATE OR REPLACE FUNCTION\s/i.test(row.definition), `${label}.definition is a PostgreSQL function definition`);
     observedFunctionIdentities.push(`${row.schema}.${row.name}(${row.argument_types.join(',').replaceAll(' ', '')})`);
   }
-  qeq(new Set(observedFunctionIdentities).size, 30, 'function query contains no duplicate identity');
+  qeq(new Set(observedFunctionIdentities).size, 31, 'function query contains no duplicate identity');
   qeq([...observedFunctionIdentities].sort(), [...B2_DATABASE_FUNCTION_SCOPE].sort(), 'function query contains no missing or extra identity');
 
   const catalogShapes = Object.freeze({
@@ -360,9 +366,10 @@ $b2_relation_acl_query$;
   for (const kind of ['policy', 'trigger', 'index']) {
     qeq([...catalogIdentities.get(kind)].sort(), expectedCatalogIdentities(kind), `catalog ${kind} identities match independent pg_catalog enumeration`);
   }
-  qeq(catalogIdentities.get('cron_job'), [SYNTHETIC_CRON_JOB.identity], 'catalog contains only the synthetic cron identity');
-  const cronRow = catalogRows.find(row => row.kind === 'cron_job').value;
-  qeq(cronRow, {
+  qeq([...catalogIdentities.get('cron_job')].sort(), [B2_CRON_JOB.identity,SYNTHETIC_CRON_JOB.identity].sort(),
+    'catalog contains the versioned B2 cron and the inert synthetic identity');
+  const syntheticCronRow = catalogRows.find(row => row.kind === 'cron_job' && row.value.identity===SYNTHETIC_CRON_JOB.identity).value;
+  qeq(syntheticCronRow, {
     identity: SYNTHETIC_CRON_JOB.identity,
     schedule: SYNTHETIC_CRON_JOB.schedule,
     commandSha256: createHash('sha256').update(SYNTHETIC_CRON_JOB.command).digest('hex'),
@@ -370,6 +377,15 @@ $b2_relation_acl_query$;
     username: SYNTHETIC_CRON_JOB.username,
     active: false,
   }, 'synthetic cron row is inert and has the exact query projection');
+  const b2CronRow = catalogRows.find(row => row.kind === 'cron_job' && row.value.identity===B2_CRON_JOB.identity).value;
+  qeq(b2CronRow, {
+    identity: B2_CRON_JOB.identity,
+    schedule: B2_CRON_JOB.schedule,
+    commandSha256: createHash('sha256').update(B2_CRON_JOB.command).digest('hex'),
+    database: B2_CRON_JOB.database,
+    username: B2_CRON_JOB.username,
+    active: true,
+  }, 'B2 cron row is active and has the exact query projection');
 
   qeq(relationRows.length, 7, 'relation ACL query returns the exact fixed relation scope');
   const observedRelationIdentities = [];
@@ -421,6 +437,7 @@ try {
   sql('create trigger proof_identity before update on public.media_assets for each row execute function private.guard_ready_media_asset_identity(); create trigger media_asset_links_guard_lifecycle_c1 before insert or update on public.media_asset_links for each row execute function private.guard_media_asset_link_lifecycle_v1()');
   const b1Oids=scalar("select string_agg(p.oid::text,',') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public'");
   const b1Catalog=scalar("select md5(string_agg(concat_ws('|',p.oid,p.proowner,p.proacl,p.provolatile,p.prosecdef,p.proconfig,pg_get_function_arguments(p.oid),pg_get_function_result(p.oid)),'' order by p.oid)) from pg_proc p where p.oid in ("+b1Oids+")");
+  sql(read('tests/fixtures/web-control-centers-b2-cron-stubs.sql'));
   sql(read('supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql'));
   runB2PostgresQueryProof();
   if (!process.argv.includes('--source-parity-proof')) {

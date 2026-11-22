@@ -2524,7 +2524,8 @@ export function parseB2ReleaseDescriptor(descriptorBytes, expectedDescriptorSha2
       || c.from_phase !== 'web_control_centers_b1_qa_c3' || c.to_phase !== 'web-control-centers-b2'
       || !b2Matches(c.baseline_sha, SHA_PATTERN)
       || c.approved_sha_ancestry !== 'verified_integration_base'
-      || c.cron_activation !== false || c.requires_separate_baseline_promotion !== true
+      || typeof c.cron_activation !== 'boolean' || (approved && c.cron_activation !== true)
+      || c.requires_separate_baseline_promotion !== true
       || c.private_authority_max_bytes !== 2 * 1024 * 1024
       || !b2Matches(descriptor.public_contract_sha256, B2_HEX64)
       || sha256Hex(canonicalJson(c)) !== descriptor.public_contract_sha256) b2Reject();

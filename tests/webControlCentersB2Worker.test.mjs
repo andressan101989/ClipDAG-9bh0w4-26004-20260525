@@ -239,7 +239,7 @@ test('explicit internal batch limit remains supported while later queued work st
   assert.equal(f.posts.size, 3);
 });
 
-function edgeFixture(secret = 'internal-service-secret', f = fixture({ empty: true })) {
+function edgeFixture(secret = 'internal-service-secret', f = fixture({ empty: true }), env = {}) {
   let handler, clients = 0;
   const modules = {
     '../_shared/mediaAuth.ts': { admin: () => { clients++; return f.deps.db; } },
@@ -250,7 +250,16 @@ function edgeFixture(secret = 'internal-service-secret', f = fixture({ empty: tr
     },
     './worker.ts': worker,
   };
-  load('supabase/functions/process-scheduled-publications/index.ts', modules, { Deno: { env: { get: name => name === 'SUPABASE_SERVICE_ROLE_KEY' ? secret : undefined }, serve: fn => { handler = fn; } } });
+  load('supabase/functions/process-scheduled-publications/index.ts', modules, {
+    Deno: {
+      env: {
+        get: name => name === 'SUPABASE_SERVICE_ROLE_KEY'
+          ? secret
+          : env[name],
+      },
+      serve: fn => { handler = fn; },
+    },
+  });
   return { f, handle: req => { assert.equal(typeof handler, 'function', 'entrypoint must register handler'); return handler(req); }, get clients() { return clients; } };
 }
 for (const [method, auth, secret, expected] of [['GET', 'Bearer internal-service-secret', 'internal-service-secret', 405], ['POST', null, 'internal-service-secret', 401], ['POST', 'Bearer wrong', 'internal-service-secret', 401], ['POST', 'Bearer internal-service-secret', '', 401], ['POST', 'Bearer eyJhbGciOiJub25lIn0.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.', 'internal-service-secret', 401]]) test(`auth before client construction: ${method}/${auth}/${secret}`, async () => {
@@ -261,6 +270,41 @@ for (const body of ['{"limit":100}', '{"owner_id":"chosen"}', '[]', 'null', 'gar
 });
 test('authorized endpoint accepts only empty object, fixed batch, no CORS or sensitive output', async () => {
   const f = edgeFixture(); const response = await f.handle(new Request('https://local.test', { method: 'POST', headers: { authorization: 'Bearer internal-service-secret' }, body: '{}' })); assert.equal(response.status, 200); assert.equal(f.clients, 1); assert.equal(response.headers.get('access-control-allow-origin'), null); assert.deepEqual(await response.json(), { ...success, claimed: 0, published: 0 });
+});
+
+test('cron dispatch requires matching bearer, apikey and constant-time dispatch secret', async () => {
+  const edge = edgeFixture('internal-service-secret', fixture({ empty: true }), {
+    CALL_DISPATCH_SECRET: 'd'.repeat(32),
+  });
+  const authorized = await edge.handle(new Request('https://local.test', {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer publishable-test-key',
+      apikey: 'publishable-test-key',
+      'x-scheduled-publications-secret': 'd'.repeat(32),
+    },
+    body: '{}',
+  }));
+  assert.equal(authorized.status, 200);
+  assert.equal(edge.clients, 1);
+});
+
+for (const [label, headers] of [
+  ['publishable only', { authorization: 'Bearer publishable-test-key', apikey: 'publishable-test-key' }],
+  ['wrong dispatch secret', { authorization: 'Bearer publishable-test-key', apikey: 'publishable-test-key', 'x-scheduled-publications-secret': 'x'.repeat(32) }],
+  ['wrong bearer', { authorization: 'Bearer wrong', apikey: 'publishable-test-key', 'x-scheduled-publications-secret': 'd'.repeat(32) }],
+  ['wrong apikey', { authorization: 'Bearer publishable-test-key', apikey: 'wrong', 'x-scheduled-publications-secret': 'd'.repeat(32) }],
+]) test(`cron dispatch rejects ${label} before client construction`, async () => {
+  const edge = edgeFixture('internal-service-secret', fixture({ empty: true }), {
+    CALL_DISPATCH_SECRET: 'd'.repeat(32),
+  });
+  const response = await edge.handle(new Request('https://local.test', {
+    method: 'POST',
+    headers,
+    body: '{}',
+  }));
+  assert.equal(response.status, 401);
+  assert.equal(edge.clients, 0);
 });
 
 test('authorized endpoint processes one due job and leaves the rest without attempts or leases', async () => {

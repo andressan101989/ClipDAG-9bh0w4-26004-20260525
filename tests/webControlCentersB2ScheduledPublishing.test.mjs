@@ -13,7 +13,36 @@ test('B2 public release descriptor remains a candidate requiring protected autho
   assert.equal(descriptor.contract.release_ready, false);
   assert.equal(descriptor.private_authority.required, true);
   assert.equal(descriptor.private_authority.sha256, null);
-  assert.equal(descriptor.contract.cron_activation, false);
+  assert.equal(descriptor.contract.cron_activation, true);
+});
+
+test('B2 migration installs one fail-closed canonical one-minute wake without embedded credentials', () => {
+  const names = readdirSync(migrations).filter(name => name.endsWith(suffix));
+  assert.equal(names.length, 1, 'exactly one B2 migration is required');
+  const sql = readFileSync(`${migrations}/${names[0]}`, 'utf8').toLowerCase();
+  assert.match(sql, /create or replace function public\.wake_scheduled_publications_b2_v1\(\)/);
+  assert.match(sql, /security definer\s+set search_path\s*=\s*''/);
+  assert.match(sql, /call_dispatch_project_url/);
+  assert.match(sql, /call_dispatch_publishable_key/);
+  assert.match(sql, /call_dispatch_secret/);
+  assert.match(sql, /\/functions\/v1\/process-scheduled-publications/);
+  assert.match(sql, /x-scheduled-publications-secret/);
+  assert.match(sql, /net\.http_post/);
+  assert.match(sql, /process-scheduled-publications-b2/);
+  assert.match(sql, /'\* \* \* \* \*'/);
+  assert.match(sql, /select public\.wake_scheduled_publications_b2_v1\(\)/);
+  assert.match(sql, /cron\.alter_job/);
+  assert.match(sql, /lock table cron\.job in share row exclusive mode/);
+  assert.match(sql, /select pg_catalog\.count\(\*\)::integer into v_job_count[\s\S]*?if v_job_count<>1 or not exists/);
+  assert.match(sql, /active\s*:=\s*true/);
+  assert.match(sql, /database\s*:=\s*pg_catalog\.current_database\(\)/);
+  assert.match(sql, /username\s*:=\s*'postgres'/);
+  assert.match(sql, /octet_length\(v_dispatch_secret\)\s*<\s*32/);
+  assert.match(sql, /publication_scheduler_dependency_missing/);
+  assert.match(sql, /publication_scheduler_secret_missing/);
+  assert.match(sql, /publication_scheduler_duplicate_job/);
+  assert.doesNotMatch(sql, /service_role_key\s*[:=]|eyj[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+/i);
+  assert.doesNotMatch(sql, /insert\s+into\s+cron\.job|update\s+cron\.job/);
 });
 
 test('B2 owner authority is forward-only with private worker storage', () => {

@@ -9,11 +9,11 @@ import * as parity from '../scripts/nelyon-b2-source-parity.mjs';
 import { createReleaseAuthorityContext } from '../scripts/nelyon-release-authority-context.mjs';
 import { createPrivateAuthorityProductionHost } from '../scripts/nelyon-private-authority-cli.mjs';
 import { bootstrapPrivateAuthorityRuntime, createPrivateAuthorityRuntime } from '../scripts/nelyon-private-authority-runtime.mjs';
-const ROOT=process.cwd(), AT='2026-11-08T12:00:00.000Z';
+import { integratedFixture as fixture } from './fixtures/nelyonB2IntegratedFixture.mjs';
+
+const AT='2026-11-08T12:00:00.000Z';
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const json=release.canonicalJson;
-
-import { integratedFixture as fixture } from './fixtures/nelyonB2IntegratedFixture.mjs';
 
 test('integrated Git source proves authority, database preflight and post parity without equating reviewed and final SHA',async t=>{
   const f=fixture(t);
@@ -26,7 +26,7 @@ test('integrated Git source proves authority, database preflight and post parity
   const filePaths=new Set([migration.path,...f.contracts.flatMap(x=>x.source_files.map(f=>f.path))]);
   const reviewedTree=parity.createTrustedB2ReviewedTree({approvedSha:f.request.approvedSha,files:[...filePaths].map(p=>({path:p,bytes:fs.readFileSync(path.join(f.cwd,p))})),functionConfigs:c.functions.map(x=>({name:x.name,config:f.configAfter[x.name]}))});
   const deployedFunctionInventory=parity.createTrustedB2DeployedFunctionInventory({capturedAt:AT,functions:c.functions.map(x=>({name:x.name,deployedSha256:'a'.repeat(64)}))});
-  assert.equal(parity.compileB2SourceParity({authorityContext:ctx,manifest:f.manifest,descriptorBytes:f.descriptorBytes,reviewedTree,deployedFunctionInventory,capturedAt:AT,integratedSource}).databaseFunctions.length,30);
+  assert.equal(parity.compileB2SourceParity({authorityContext:ctx,manifest:f.manifest,descriptorBytes:f.descriptorBytes,reviewedTree,deployedFunctionInventory,capturedAt:AT,integratedSource}).databaseFunctions.length,31);
   const env={NELYON_PRIVATE_AUTHORITY_PROVIDER:'r2',NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID:'a'.repeat(32),NELYON_PRIVATE_AUTHORITY_R2_BUCKET:'synthetic-bucket',NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID:'synthetic',NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY:'synthetic',NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256:hash(f.descriptorBytes),NELYON_PRIVATE_AUTHORITY_SHA256:hash(f.authorityBytes),NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256:f.manifest.runtime_closure.closure_sha256,NELYON_RELEASE_POLICY_SHA256:hash(json(f.policy)),RUNNER_TEMP:f.cwd};
   const bootstrapCapability=await bootstrapPrivateAuthorityRuntime({environment:env,manifestClosure:f.manifest.runtime_closure,repositoryRoot:f.cwd,readFile:fs.readFileSync,nodeVersion:'24.21.0'});
   const manifestBytes=Buffer.from(json(f.manifest));const publicInputs={descriptorBytes:f.descriptorBytes,manifestBytes,manifestDigestBytes:Buffer.from(hash(manifestBytes)+'\n'),policyBytes:Buffer.from(json(f.policy)),requestBytes:Buffer.from(json(f.request))};

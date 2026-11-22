@@ -168,7 +168,22 @@ const financeSnapshot = financePolicy => ({
     premium_finance_policy_row_count_mismatch: 0,
   },
 });
-const cronSnapshot = () => ({ schema_version: 1, complete: true, query_id: 'nelyon-cron-snapshot-v1', count: 0, items: [] });
+const cronSnapshot = installed => {
+  const command = 'select public.wake_scheduled_publications_b2_v1()';
+  const items = installed ? [{
+    jobid: '1',
+    jobname: 'process-scheduled-publications-b2',
+    schedule: '* * * * *',
+    database: 'postgres',
+    username: 'postgres',
+    active: true,
+    nodename: 'localhost',
+    nodeport: 5432,
+    command_sha256: sha256(command),
+    legacy_normalized_command_sha256: sha256(command),
+  }] : [];
+  return { schema_version: 1, complete: true, query_id: 'nelyon-cron-snapshot-v1', count: items.length, items };
+};
 const premiumState = () => ({
   schema_version: 1,
   complete: true,
@@ -266,7 +281,10 @@ function baseManagementFetch({ policy, contract, phase, backupMode = 'source', p
       if (query.includes('nelyon-finance-snapshot-v1')) {
         return jsonResponse([{ snapshot: financeSnapshot(policy.supabase.finance_policy) }], 201);
       }
-      if (query.includes('nelyon-cron-snapshot-v1')) return jsonResponse([{ snapshot: cronSnapshot() }], 201);
+      if (query.includes('nelyon-cron-snapshot-v1')) {
+        const installed = phase() !== 'pre' && phase() !== 'authority';
+        return jsonResponse([{ snapshot: cronSnapshot(installed) }], 201);
+      }
       if (query.includes('nelyon-premium-postcheck-state-v1')) return jsonResponse([{ snapshot: premiumState() }], 201);
       if (query.includes('nelyon-b2-catalog-v1')) {
         assert.ok(parity(), 'post/recovery catalog requires branded parity-derived fixture');

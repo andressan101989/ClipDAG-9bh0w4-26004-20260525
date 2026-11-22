@@ -2784,6 +2784,60 @@ test('F5 cron transition preserves exact command bytes and rejects quoted whites
   ), /REMOTE_POSTCHECK_FAILED|INVALID_SNAPSHOT/);
 });
 
+test('B2 cron postcheck accepts only the exact scheduled-publication wake delta', async () => {
+  const adapter = await loadAdapter();
+  const transition = adapter.B2_SCHEDULED_PUBLICATIONS_CRON_TRANSITION;
+  const cron = transition.cron_job;
+  assert.deepEqual({
+    active: cron.active,
+    command: cron.command,
+    database: cron.database,
+    jobname: cron.jobname,
+    schedule: cron.schedule,
+    username: cron.username,
+  }, {
+    active: true,
+    command: 'select public.wake_scheduled_publications_b2_v1()',
+    database: 'postgres',
+    jobname: 'process-scheduled-publications-b2',
+    schedule: '* * * * *',
+    username: 'postgres',
+  });
+  assert.equal(cron.normalized_command_sha256, adapter.normalizedCronCommandSha256(cron.command));
+  const existing = {
+    jobid: '3', jobname: 'existing-safe-job', schedule: '0 3 * * *', database: 'postgres',
+    username: 'postgres', active: true, nodename: 'localhost', nodeport: 5432,
+    command_sha256: adapter.cronCommandSha256('select public.existing_job()'),
+    legacy_normalized_command_sha256: adapter.normalizedCronCommandSha256('select public.existing_job()'),
+  };
+  const added = {
+    jobid: '19', jobname: cron.jobname, schedule: cron.schedule, database: cron.database,
+    username: cron.username, active: cron.active, nodename: 'localhost', nodeport: 5432,
+    command_sha256: adapter.cronCommandSha256(cron.command),
+    legacy_normalized_command_sha256: cron.normalized_command_sha256,
+  };
+  const snapshot = items => ({ schema_version: 1, complete: true, query_id: 'nelyon-cron-snapshot-v1',
+    count: items.length, items });
+  const pre = snapshot([existing]);
+  const post = snapshot([existing, added]);
+  assert.equal(adapter.verifyCronSnapshotTransition(pre, post, transition), true);
+  const mutations = [
+    items => items.filter(item => item.jobid !== existing.jobid),
+    items => [...items, { ...added, jobid: '20' }],
+    items => items.map(item => item.jobid === added.jobid ? { ...item, jobname: 'renamed' } : item),
+    items => items.map(item => item.jobid === added.jobid ? { ...item, active: false } : item),
+    items => items.map(item => item.jobid === added.jobid ? { ...item, schedule: '*/2 * * * *' } : item),
+    items => items.map(item => item.jobid === added.jobid ? { ...item, database: 'other' } : item),
+    items => items.map(item => item.jobid === added.jobid ? { ...item, username: 'supabase_admin' } : item),
+    items => items.map(item => item.jobid === added.jobid ? { ...item, command_sha256: 'b'.repeat(64) } : item),
+    items => items.map(item => item.jobid === added.jobid
+      ? { ...item, legacy_normalized_command_sha256: 'c'.repeat(64) } : item),
+  ];
+  for (const mutate of mutations) assert.throws(() => adapter.verifyCronSnapshotTransition(
+    pre, snapshot(mutate(post.items)), transition,
+  ), /REMOTE_POSTCHECK_FAILED|INVALID_SNAPSHOT/);
+});
+
 test('F5 post-release facts forbid retroactive enrollment and any release-window financial delta', async () => {
   const adapter = await loadAdapter();
   const pre = {
@@ -4235,6 +4289,25 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
   });
   let postSourceParity;
   assert.doesNotThrow(() => { postSourceParity = compileSourceParity(m, at); }, 'branded post source parity compiles');
+  const cronCommand = 'select public.wake_scheduled_publications_b2_v1()';
+  const postCron = {
+    schema_version: 1,
+    complete: true,
+    query_id: 'nelyon-cron-snapshot-v1',
+    count: 1,
+    items: [{
+      jobid: '1',
+      jobname: 'process-scheduled-publications-b2',
+      schedule: '* * * * *',
+      database: 'postgres',
+      username: 'postgres',
+      active: true,
+      nodename: 'localhost',
+      nodeport: 5432,
+      command_sha256: adapter.cronCommandSha256(cronCommand),
+      legacy_normalized_command_sha256: adapter.normalizedCronCommandSha256(cronCommand),
+    }],
+  };
   let catalogMode = 'exact';
   const postArgs = { ...args, phase: 'post', authorityContext, requestedAt: at,
     sourceParity: postSourceParity,
@@ -4247,7 +4320,7 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
         const extras = ['private.guard_publication_receipt_immutable_v1()', 'public.reconcile_creator_premium_publications_v1(integer)',
           'public.claim_publication_schedules_v1(text)'].map(identity => ({ kind: 'function', value: { ...databaseMatrix.catalog[0].value, identity } }));
         const selected = [...databaseMatrix.catalog, ...extras].filter(row => identities.includes(row.value.identity));
-        assert.equal(selected.length, 30);
+        assert.equal(selected.length, databaseMatrix.catalog.length);
         if (catalogMode === 'missing') selected.pop();
         if (catalogMode === 'extra') selected.push(extras[0]);
         const relations = postArgs.sourceParity.databaseRelations.map(({ acl: ignoredAcl, access: ignoredAccess, ...value }) => ({ kind: 'relation', value }));
@@ -4255,7 +4328,7 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
       }
       if (query === adapter.RPC_SECURITY_ATTESTATION_SQL) {
         const requested = JSON.parse(JSON.parse(options.body).parameters[0]);
-        return jsonResponse(requested.length === 30 ? databaseMatrix.rows : rpcSecurityRows().filter(row =>
+        return jsonResponse(requested.length === databaseMatrix.rows.length ? databaseMatrix.rows : rpcSecurityRows().filter(row =>
           requested.some(item => item.schema === row.schema && item.name === row.name && canonicalJson(item.argument_types) === canonicalJson(row.argument_types))), 201);
       }
       if (query?.includes('nelyon-b2-relation-acl-v1')) {
@@ -4265,7 +4338,7 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
         { slug: 'content-safety-scan', status: 'ACTIVE', version: 36, verify_jwt: true, ezbr_sha256: '7'.repeat(64) },
         { slug: 'process-scheduled-publications', status: 'ACTIVE', version: 1, verify_jwt: true, ezbr_sha256: '8'.repeat(64) },
       ]);
-      return successfulFetchWithFunctionVersion([], 35)(url, options);
+      return successfulFetchWithFunctionVersion([], 35, { cron: postCron })(url, options);
     } };
   let post;
   await assert.doesNotReject(async () => { post = await adapter.captureProductionSnapshot(postArgs); }, 'positive post capture');

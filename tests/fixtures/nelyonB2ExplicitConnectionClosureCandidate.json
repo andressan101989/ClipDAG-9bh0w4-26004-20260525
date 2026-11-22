@@ -1,7 +1,7 @@
 {
   "fixture_only": true,
   "deployment_authorized": false,
-  "description": "Extended17-member LOCAL dirty-worktree closure; not a protected pin, release descriptor or production authority.",
+  "description": "Extended17-member LOCAL B2-R2 candidate closure; not a protected pin, release descriptor or production authority.",
   "current_local_closure": {
     "schema_version": 1,
     "identity": "nelyon-b2-private-release-runtime-v1",
@@ -13,31 +13,31 @@
       },
       {
         "path": "package-lock.json",
-        "sha256": "f4ccaac2695d90169324ab69e0f83e9a0d86d117ee1416bc0b1e738d96503ab6"
+        "sha256": "a9a134d3f37115025e28012e319a9bd94ed71f043e5aead29cebc530ec8db5b4"
       },
       {
         "path": "package.json",
-        "sha256": "da1036dc4417dc38db6bde373dff1d280e2f2159245f4bac1b7031ecff51a141"
+        "sha256": "9802f3ab9758997e82deee2d8778f0d7dda0d5c1fe14a941226aaefa5187bd33"
       },
       {
         "path": "scripts/nelyon-admin-production-release.mjs",
-        "sha256": "0f5e9931004e38d3862539b7c6c201a24dcb6cf730a0bd62c47690c8f4e88b70"
+        "sha256": "9d4e8f6af064c0e2396a6c343a2804a2571c5791b655397c8c937b85f0628338"
       },
       {
         "path": "scripts/nelyon-b2-explicit-connection.mjs",
-        "sha256": "cbd46b0134369df95cb7011968ca2f3942c60a1d344aa9431ce82c4853325e4a"
+        "sha256": "c7bc8cf483b1eea148c79f7226d43f412c5712fd13c11b5a2b7d603c1e8ce3d8"
       },
       {
         "path": "scripts/nelyon-b2-hermetic-workspace.mjs",
-        "sha256": "edade583786bd949f2faeff27b5a1da860cf6425409b7961b99401ac3476b0d9"
+        "sha256": "c3ba4dcf7e9b3eaa62b94fcad5c2b321bc76ab27d444b73c348f7c7deab8dacb"
       },
       {
         "path": "scripts/nelyon-b2-recovery-provenance.mjs",
-        "sha256": "b7bf1cc743fc5ab9d0ce08ff5bf54d6e2e29ebbb11190b1d8041e90486b14fa2"
+        "sha256": "431d19f5b6b3c2baf3bf7d43adb60e8739b2436cb03bc3cd195f1c1cf655d904"
       },
       {
         "path": "scripts/nelyon-b2-source-parity.mjs",
-        "sha256": "148f7631cc4e98b1b86d56bb56c162dedd6927fc1e0ce7eda25131b32308f3f4"
+        "sha256": "1180687657d33b123080b41095b7e3f8c194e7d2b961fb16ddf2c9f94a16c818"
       },
       {
         "path": "scripts/nelyon-private-authority-cli.mjs",
@@ -45,7 +45,7 @@
       },
       {
         "path": "scripts/nelyon-private-authority-provider.mjs",
-        "sha256": "bb26c45255155e2cfb679e73d0efce75f2620c3702aebedb5fd8e86d39889600"
+        "sha256": "c2f008b3d2421254baba4c4314417d699ff8ae973a761aac103f97b3e18881ee"
       },
       {
         "path": "scripts/nelyon-private-authority-runtime.mjs",
@@ -53,27 +53,27 @@
       },
       {
         "path": "scripts/nelyon-private-authority.mjs",
-        "sha256": "706e31dfcfeb7f6ce2feafe39bbe6e51ff723e4afb6460a430523b713a13cf93"
+        "sha256": "9f9641adf377867efbad2889750013b44e45df5918a04a8bdf4d90f1b099dbd6"
       },
       {
         "path": "scripts/nelyon-private-runtime-closure.mjs",
-        "sha256": "8a189bd300e9da3fe644d97b2f6dde2c978ceb83f7849013ee669865fea8b7c8"
+        "sha256": "402da8a233d87907759e2153ecca1e400e144318046a4507c956e2438efd0b47"
       },
       {
         "path": "scripts/nelyon-production-release.mjs",
-        "sha256": "5acb3609dc7d1bbfd0f85c88bbd1219dc35265d100cfceb61e973600b39bd969"
+        "sha256": "d21b66bf420c023d9f7685d3cca9f9e5abc6881e1be5f4c824681ed13806323b"
       },
       {
         "path": "scripts/nelyon-production-snapshot-adapter.mjs",
-        "sha256": "f0eb25c8b4a2e886182c0cccf7b0e2556ab43dfa3d53edf9eb02e8ba17b33f7b"
+        "sha256": "5880add707d8f20741302cd149d2b34606bf8cbe8cc33e66988644457cdc23b3"
       },
       {
         "path": "scripts/nelyon-release-authority-context.mjs",
-        "sha256": "fac398ba183c9051ad863e9fb1cb9218a54d6cd0593af93c51b44b6f6b683980"
+        "sha256": "94645afb43f317c4feeef16f71421c5294cc483e9fef1c3f6c3d49173ba0c00b"
       },
       {
         "path": "shared/web-deployment/publicSupabaseBuildEnv.mjs",
-        "sha256": "6ad1c25eb20ae84a0f7ea65e2fa47ddca4d099545784627294d637a6d4552b15"
+        "sha256": "74ad7f3f52ff92afadb3cd0291896b2701c03dd7a3884accd74806414ccaa1d7"
       }
     ],
     "runtime": {
@@ -92,16 +92,16 @@
       "wrangler": "4.135.0",
       "supabase_setup_action": "45a513f8c64c0bc8e0e3dfe572b5c95be85f6359"
     },
-    "closure_sha256": "007261b72851519df8247ed0516eca1cc1f937fe1f503c136cfe80741d1591b5"
+    "closure_sha256": "1d1020bb62df8f95f22e6984dc4b04dc7d29c5863bf70fe6a7d69adbbd6d00fa"
   },
   "proposed_members": [
     {
       "path": "scripts/nelyon-b2-explicit-connection.mjs",
-      "sha256": "cbd46b0134369df95cb7011968ca2f3942c60a1d344aa9431ce82c4853325e4a"
+      "sha256": "c7bc8cf483b1eea148c79f7226d43f412c5712fd13c11b5a2b7d603c1e8ce3d8"
     },
     {
       "path": "scripts/nelyon-b2-hermetic-workspace.mjs",
-      "sha256": "edade583786bd949f2faeff27b5a1da860cf6425409b7961b99401ac3476b0d9"
+      "sha256": "c3ba4dcf7e9b3eaa62b94fcad5c2b321bc76ab27d444b73c348f7c7deab8dacb"
     }
   ]
 }

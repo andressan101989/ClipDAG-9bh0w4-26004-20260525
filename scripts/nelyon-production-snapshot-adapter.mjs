@@ -495,6 +495,7 @@ export const B2_DATABASE_FUNCTION_SCOPE = Object.freeze([
   'public.retry_my_publication_schedule_v1(uuid,bigint,uuid)',
   'public.schedule_my_publication_draft_v1(uuid,bigint,uuid,timestampwithouttimezone,text,integer)',
   'public.update_my_publication_draft_v1(uuid,bigint,uuid,text,text,text,jsonb,uuid[])',
+  'public.wake_scheduled_publications_b2_v1()',
 ]);
 // Fixed catalog scope. No query text, object locator or SQL expression comes
 // from an authority envelope. Digests below cover PostgreSQL's canonical
@@ -1417,6 +1418,20 @@ export function cronCommandSha256(command) {
 export function normalizedCronCommandSha256(command) {
   return sha256(normalizeCronCommand(command));
 }
+
+const B2_SCHEDULED_PUBLICATIONS_CRON_COMMAND = 'select public.wake_scheduled_publications_b2_v1()';
+export const B2_SCHEDULED_PUBLICATIONS_CRON_TRANSITION = Object.freeze({
+  to_phase: 'web_control_centers_b2',
+  cron_job: Object.freeze({
+    active: true,
+    command: B2_SCHEDULED_PUBLICATIONS_CRON_COMMAND,
+    database: 'postgres',
+    jobname: 'process-scheduled-publications-b2',
+    normalized_command_sha256: normalizedCronCommandSha256(B2_SCHEDULED_PUBLICATIONS_CRON_COMMAND),
+    schedule: '* * * * *',
+    username: 'postgres',
+  }),
+});
 
 export function projectCronBaselineItems(items, useRawCommandIdentity) {
   if (!Array.isArray(items)) fail('INVALID_SNAPSHOT', 'cron baseline items must be an array');
@@ -4644,7 +4659,8 @@ function validateCronSnapshot(snapshot) {
 export function verifyCronSnapshotTransition(pre, post, transition = null) {
   validateCronSnapshot(pre);
   validateCronSnapshot(post);
-  if (transition?.to_phase !== 'f5_autonomous') {
+  const transitionKind = transition?.to_phase;
+  if (!['f5_autonomous', 'web_control_centers_b2'].includes(transitionKind)) {
     if (canonicalJson(pre) !== canonicalJson(post)) fail('REMOTE_POSTCHECK_FAILED', 'cron configuration changed during release');
     return true;
   }
@@ -4652,7 +4668,7 @@ export function verifyCronSnapshotTransition(pre, post, transition = null) {
   if (!expected || normalizeCronCommand(expected.command) !== expected.command
     || normalizedCronCommandSha256(expected.command) !== expected.normalized_command_sha256
     || pre.items.some(item => item.jobname === expected.jobname) || post.count !== pre.count + 1) {
-    fail('REMOTE_POSTCHECK_FAILED', 'F5 cron transition contract is invalid');
+    fail('REMOTE_POSTCHECK_FAILED', `${transitionKind} cron transition contract is invalid`);
   }
   const before = new Map(pre.items.map(item => [item.jobid, item]));
   const after = new Map(post.items.map(item => [item.jobid, item]));
@@ -4683,7 +4699,7 @@ export function verifyCronSnapshotTransition(pre, post, transition = null) {
     nodeport: 5432,
     schedule: expected.schedule,
     username: expected.username,
-  })) fail('REMOTE_POSTCHECK_FAILED', 'F5 cron delta differs from the exact reviewed job');
+  })) fail('REMOTE_POSTCHECK_FAILED', `${transitionKind} cron delta differs from the exact reviewed job`);
   return true;
 }
 
@@ -5953,7 +5969,11 @@ function verifyProductionSnapshotPairInternal({ pre, post, policy, request, mani
     fail('REMOTE_POSTCHECK_FAILED', 'not every manifest function produced a verified remote version change');
   }
 
-  verifyCronSnapshotTransition(pre.cron_security.cron, post.cron_security.cron, financeTransition);
+  verifyCronSnapshotTransition(
+    pre.cron_security.cron,
+    post.cron_security.cron,
+    b2 ? B2_SCHEDULED_PUBLICATIONS_CRON_TRANSITION : financeTransition,
+  );
   const preExceptions = advisorExceptionsForPhase(policy, manifest, 'pre', {
     request,
     migrations: pre.migrations,
