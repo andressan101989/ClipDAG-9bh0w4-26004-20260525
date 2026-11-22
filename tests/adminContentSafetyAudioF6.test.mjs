@@ -265,8 +265,8 @@ test("B7 claim identity must precede the target-aware worker deployment",()=>{
   assert.doesNotMatch(legacyClaim,/jsonb_build_object\([^;]*'target_type'/s);
   assert.match(b7Claim,/'target_type',v_row\.target_type/);
   assert.match(worker,/streamAudioDownload\(scan\.cloudflare_uid,\s*scan\.target_type\)/);
-  const migrationDeploy=releaseWorkflow.indexOf('name: Apply exact manifest migrations');
-  const functionDeploy=releaseWorkflow.indexOf('name: Deploy each exact manifest function');
+  const migrationDeploy=releaseWorkflow.indexOf('name: B2 protected migrations');
+  const functionDeploy=releaseWorkflow.indexOf('name: B2 protected functions');
   assert.ok(migrationDeploy>=0);
   assert.ok(functionDeploy>=0);
   assert.ok(migrationDeploy<functionDeploy);

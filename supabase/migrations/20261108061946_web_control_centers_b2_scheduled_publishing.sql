@@ -1187,10 +1187,14 @@ do $activation$
 declare
   v_job_count integer;
   v_job_id bigint;
+  v_job_username text;
 begin
+  if current_user <> 'postgres' then
+    raise exception using errcode='42501',message='publication_scheduler_executor_invalid';
+  end if;
   lock table cron.job in share row exclusive mode;
-  select pg_catalog.count(*)::integer,pg_catalog.min(j.jobid)
-    into v_job_count,v_job_id
+  select pg_catalog.count(*)::integer,pg_catalog.min(j.jobid),pg_catalog.min(j.username)
+    into v_job_count,v_job_id,v_job_username
     from cron.job j where j.jobname='process-scheduled-publications-b2';
   if v_job_count>1 then
     raise exception using errcode='55000',message='publication_scheduler_duplicate_job';
@@ -1200,16 +1204,17 @@ begin
       '* * * * *',
       'select public.wake_scheduled_publications_b2_v1()'
     ) into v_job_id;
+  elsif v_job_username is distinct from 'postgres' then
+    raise exception using errcode='42501',message='publication_scheduler_unexpected_owner';
+  else
+    perform cron.alter_job(
+      v_job_id,
+      schedule:='* * * * *',
+      command:='select public.wake_scheduled_publications_b2_v1()',
+      database:=pg_catalog.current_database(),
+      active:=true
+    );
   end if;
-
-  perform cron.alter_job(
-    v_job_id,
-    schedule:='* * * * *',
-    command:='select public.wake_scheduled_publications_b2_v1()',
-    database:=pg_catalog.current_database(),
-    username:='postgres',
-    active:=true
-  );
 
   select pg_catalog.count(*)::integer into v_job_count
     from cron.job j where j.jobname='process-scheduled-publications-b2';

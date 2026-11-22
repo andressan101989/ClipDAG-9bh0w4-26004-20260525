@@ -1,3 +1,4 @@
+import { syntheticVaultEdgeParity } from './nelyonB2SyntheticVaultEdgeParity.mjs';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
@@ -46,7 +47,9 @@ export function integratedFixture(t, { mode = 'plan_only' } = {}) {
     const p={identity:'private.'+n,definitionSha256:hash(n),owner:'postgres',rls:true,forceRls:true};const expectedCanonicalJson=json(p).trimEnd();return {kind:'relation',identity:p.identity,expectedCanonicalJson,expectedSha256:hash(expectedCanonicalJson)};
   });
   const records=[...matrix.records,...relations,...b2SyntheticRelationAclRecords(relations)].sort((a,b)=>`${a.kind}\0${a.identity}`<`${b.kind}\0${b.identity}`?-1:1);
-  const authority={schemaVersion:1,authorityId:d.private_authority.authority_id,publicContractSha256:d.public_contract_sha256,phase:c.to_phase,issuedFor:{baselineSha:baseline,reviewedSourceSha:reviewed,integrationBaseSha:baseline},successorCatalog:{schemaVersion:1,records},securityAdvisor:{schemaVersion:2,baselineSha256:hash('[]\n'),baselineItems:[],records:[]},backup:{schemaVersion:2,provider:'supabase',kind:'physical',projectRefSha256:'1'.repeat(64),evidenceSha256:'2'.repeat(64),status:'COMPLETED',insertedAt:'2026-11-08T10:00:00.000Z',completedObservedAt:'2026-11-08T10:30:00.000Z',expiresAt:'2026-11-09T10:00:00.000Z'},approval:{schemaVersion:1,decision:'APPROVED',scope:[c.to_phase],authorizationSha256:'3'.repeat(64),approvedAt:'2026-11-08T11:00:00.000Z',expiresAt:'2026-11-09T11:00:00.000Z'}};
+  const authority={schemaVersion:1,authorityId:d.private_authority.authority_id,publicContractSha256:d.public_contract_sha256,phase:c.to_phase,issuedFor:{baselineSha:baseline,reviewedSourceSha:reviewed,integrationBaseSha:baseline},successorCatalog:{schemaVersion:1,records},securityAdvisor:{schemaVersion:2,baselineSha256:hash('[]\n'),baselineItems:[],records:[]},backup:{schemaVersion:2,provider:'supabase',kind:'physical',projectRefSha256:'1'.repeat(64),evidenceSha256:'2'.repeat(64),status:'COMPLETED',insertedAt:'2026-11-08T10:00:00.000Z',completedObservedAt:'2026-11-08T10:30:00.000Z',expiresAt:'2026-11-09T10:00:00.000Z'},
+    vaultEdgeParity: syntheticVaultEdgeParity('2026-11-08T11:00:00.000Z'),
+    approval:{schemaVersion:1,decision:'APPROVED',scope:[c.to_phase],authorizationSha256:'3'.repeat(64),approvedAt:'2026-11-08T11:00:00.000Z',expiresAt:'2026-11-09T11:00:00.000Z'}};
   const authorityBytes=Buffer.from(JSON.stringify(authority));d.private_authority.sha256=hash(authorityBytes);const descriptorBytes=Buffer.from(JSON.stringify(d)+'\n');write('.github/nelyon-web-control-centers-b2-release-descriptor.json',descriptorBytes);
   git(['add','.']);git(['commit','--quiet','-m','synthetic integrated descriptor']);const approved=git(['rev-parse','HEAD']).toString().trim();git(['update-ref','refs/remotes/origin/main',approved]);
   const policy=JSON.parse(fs.readFileSync('.github/nelyon-production-release-policy.json'));policy.baseline.sha=baseline;

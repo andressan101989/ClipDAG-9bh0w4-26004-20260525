@@ -164,3 +164,32 @@ export async function runB2ProtectedDryRun({operation,connection,now=()=>new Dat
  const result=await runB2HermeticConnection({...connection,manifest:operation.manifest,verifyContext});
  revalidate();return result;
 }
+
+/** Protected Edge mutation boundary. The caller supplies the already pinned
+ * absolute CLI and a closed executor; no shell command or candidate argument
+ * can enter this path. One proof covers the exact manifest-ordered batch. */
+export async function runB2ProtectedFunctions({operation,connection,now=()=>new Date().toISOString()}) {
+  if(operation?.request?.mode!=='release'||typeof now!=='function'
+    ||connection?.projectRef!==PROJECT||typeof connection.binaryPath!=='string'
+    ||typeof connection.repositoryRoot!=='string'||typeof connection.token!=='string'||!connection.token
+    ||![connection.verifyFunction,connection.execute].every(fn=>typeof fn==='function'))fail();
+  const functions=operation.manifest?.resources?.functions;
+  if(!Array.isArray(functions)||functions.length<1||new Set(functions).size!==functions.length
+    ||functions.some(name=>typeof name!=='string'||!/^[a-z0-9][a-z0-9-]{0,62}$/.test(name)))fail();
+  const revalidate=()=>verifyB2ProtectedReleaseMutation({...operation,requestedAt:now()});
+  revalidate();
+  await executeB2ProtectedMutation({...operation,requestedAt:now(),stage:'functions',mutate:async()=>{
+    for(const functionName of functions){
+      revalidate();
+      const verified=connection.verifyFunction(functionName);
+      if(verified?.result!=='FUNCTION_CONTRACT_VERIFIED'||verified.functions?.length!==1
+        ||verified.functions[0]?.name!==functionName)fail();
+      revalidate();
+      const result=await connection.execute({executable:connection.binaryPath,cwd:connection.repositoryRoot,
+        args:['functions','deploy',functionName,'--project-ref',PROJECT,'--use-api'],
+        env:{SUPABASE_ACCESS_TOKEN:connection.token},shell:false,timeoutMs:120000,maxBuffer:1048576});
+      if(result?.exitCode!==0)fail();
+    }
+  }});
+  return {complete:true,count:functions.length};
+}

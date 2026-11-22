@@ -1,3 +1,4 @@
+import { syntheticVaultEdgeParity } from './fixtures/nelyonB2SyntheticVaultEdgeParity.mjs';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
@@ -234,6 +235,8 @@ const protectedRpcRows = () => PROTECTED_RPC_IDENTITIES.map(([name, argumentType
   definition: `CREATE FUNCTION public.${name}(${argumentTypes.join(',')})\r\nRETURNS jsonb\r\nSECURITY DEFINER`,
 }));
 
+const deployedBundleSha256 = name => sha256(`synthetic deployed bundle for ${name}`);
+
 function deployedRows(policy, contract, installed) {
   const names = [...policy.supabase.managed_functions];
   let index = 0;
@@ -242,12 +245,12 @@ function deployedRows(policy, contract, installed) {
     const expected = contract?.functions?.find(item => item.name === name);
     return { slug: name, status: 'ACTIVE', version: rowIndex + 1 + (installed && expected ? 100 : 0),
       verify_jwt: expected?.verify_jwt ?? true,
-      ezbr_sha256: expected ? installed ? expected.source_sha256 : sha256(`pre:${name}`) : sha256(name) };
+      ezbr_sha256: expected ? installed ? deployedBundleSha256(name) : sha256(`pre:${name}`) : sha256(name) };
   });
   if (installed) {
     const expected = contract.functions.find(item => item.name === 'process-scheduled-publications');
     rows.push({ slug: expected.name, status: 'ACTIVE', version: 1,
-      verify_jwt: expected.verify_jwt, ezbr_sha256: expected.source_sha256 });
+      verify_jwt: expected.verify_jwt, ezbr_sha256: deployedBundleSha256(expected.name) });
   }
   return rows.sort((left, right) => left.slug.localeCompare(right.slug));
 }
@@ -521,6 +524,7 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
       projectRefSha256: sha256(policy.supabase.project_ref), evidenceSha256: sha256(canonicalJson(legacy.backup)),
       status: 'COMPLETED', insertedAt: legacy.backup.inserted_at, completedObservedAt: legacy.observed_at,
       expiresAt: new Date(Date.parse(legacy.backup.inserted_at) + 86_400_000).toISOString() },
+    vaultEdgeParity: syntheticVaultEdgeParity(legacy.observed_at),
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: [contract.to_phase],
       authorizationSha256: '5'.repeat(64), approvedAt: legacy.observed_at,
       expiresAt: '2026-10-13T11:00:00.000Z' },
@@ -570,6 +574,10 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     expectedPrivateAuthoritySha256: sha256(authorityBytes) };
   const expectedContext = createReleaseAuthorityContext(contextArgs);
   const expectedReceipt = publicAuthorityReceipt(expectedContext);
+  for (const privateMetadata of [authority.vaultEdgeParity.vault.revision, authority.vaultEdgeParity.edge.provisioningGeneration,
+    authority.vaultEdgeParity.changeFreezeId, authority.vaultEdgeParity.vault.secretVersion]) {
+    assert.equal(JSON.stringify(expectedReceipt).includes(privateMetadata), false);
+  }
   manifest.resources.web_control_centers_b2_transition = { contract, descriptorSha256: sha256(descriptorBytes),
     publicContractSha256: authority.publicContractSha256, expectedPrivateAuthoritySha256: sha256(authorityBytes),
     privateAuthorityRequired: true };
@@ -626,11 +634,11 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     functionConfigs: contract.functions.map(item => ({ name: item.name, config: functionConfig[item.name] })) });
   compiledParity = compileB2SourceParity({ authorityContext: expectedContext, manifest, descriptorBytes,
     reviewedTree, deployedFunctionInventory: createTrustedB2DeployedFunctionInventory({ capturedAt: SOURCE_AT,
-      functions: contract.functions.map(item => ({ name: item.name, deployedSha256: item.source_sha256 })) }),
+      functions: contract.functions.map(item => ({ name: item.name, deployedSha256: deployedBundleSha256(item.name) })) }),
     capturedAt: SOURCE_AT });
   const recoveryParity = compileB2SourceParity({ authorityContext: expectedContext, manifest, descriptorBytes,
     reviewedTree, deployedFunctionInventory: createTrustedB2DeployedFunctionInventory({ capturedAt: RECOVERY_AT,
-      functions: contract.functions.map(item => ({ name: item.name, deployedSha256: item.source_sha256 })) }),
+      functions: contract.functions.map(item => ({ name: item.name, deployedSha256: deployedBundleSha256(item.name) })) }),
     capturedAt: RECOVERY_AT });
   assert.equal(compiledParity.manifestSha256, sha256(canonicalJson(manifest)));
   const calls = [];
@@ -725,6 +733,13 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     writeFileSync(gatePath,canonicalJson({...gate,result:'READ_ONLY_REFRESH_AUTHORIZED'}));
     assert.notEqual((await invoke('dryrun-migrations','readonly-not-full-gate')).code,0);assert.equal(mints,0);assert.equal(executions,0);
     writeFileSync(gatePath,canonicalJson(gate));
+    time=authority.vaultEdgeParity.expiresAt;
+    const expiredParity=await invoke('apply-migrations','expired-parity');
+    assert.notEqual(expiredParity.code,0);
+    assert.equal(mints,0);assert.equal(executions,0);
+    assert.equal(existsSync(expiredParity.verification),false);
+    assert.equal(existsSync(join(migrationRoot,'protected-stage-proofs.json')),false);
+    time=SOURCE_AT;
     expireAfterMint=true;assert.notEqual((await invoke('dryrun-migrations','expired-during-mint')).code,0);
     assert.equal(mints,1);assert.equal(executions,0);time=SOURCE_AT;expireAfterMint=false;mints=0;
     const dry=await invoke('dryrun-migrations','protected-dryrun');assert.equal(dry.code,0);
@@ -881,7 +896,7 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
   let historical;
   await assert.doesNotReject(async () => {
     historical = await b2HistoricalCapture({ manifest, request: releaseRequest, contextArgs, policy,
-      at: SOURCE_AT });
+      at: SOURCE_AT, deployedFunctionRows: deployedRows(policy, contract, true) });
   }, 'historical source artifacts authenticate the completed direct attempt');
   // The real protected policy has no approved B2 attempt. Even valid synthetic
   // artifacts cannot supply that missing approval or replace its policy pin.
@@ -978,6 +993,43 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
   assert.deepEqual(directPostcheck.receipt, expectedReceipt);
   assert.ok(Object.values(directPostcheck.checks).every(value => value === true));
 
+  await t.test('historical capture rejects a live Edge version absent from the authenticated attempt', async () => {
+    const liveRows = deployedRows(policy, contract, true);
+    liveRows.find(row => row.slug === 'process-scheduled-publications').version += 1;
+    await assert.rejects(captureProductionSnapshot({
+      phase: 'recovery', policy: recoveryPolicy, request: directRequest, manifest: directManifest,
+      token: 'synthetic-supabase-token', observedAt: RECOVERY_AT, requestedAt: RECOVERY_AT,
+      adapterSourceSha256: manifest.compiler.snapshot_adapter_sha256, authorityContext: historical.authorityContext,
+      sourceParity: recoveryParity, recoveryAuthorization: { verifiedSource: historical.verifiedSource, currentGate },
+      fetchImpl: (input, options) => new URL(input).pathname.endsWith('/functions')
+        ? jsonResponse(liveRows)
+        : recoveryFetch(input, options),
+    }), { code: 'B2_SNAPSHOT_AUTHORITY_INVALID' });
+  });
+
+  await t.test('historical recovery rejects a different deployed Edge function with a recomputed snapshot digest', () => {
+    for (const [key, change] of [
+      ['ezbr_sha256', () => sha256('unapproved Edge bundle')],
+      ['version', version => version + 1],
+      ['verify_jwt', verifyJwt => !verifyJwt],
+    ]) {
+      const different = structuredClone(direct);
+      const row = different.functions.items.find(item => item.slug === 'process-scheduled-publications');
+      row[key] = change(row[key]);
+      if (Object.hasOwn(different.functions, 'sha256')) {
+        different.functions.sha256 = sha256(canonicalJson(different.functions.items));
+      }
+      const { evidence_sha256: previousDigest, ...unsigned } = different;
+      different.evidence_sha256 = sha256(canonicalJson(unsigned));
+      assert.notEqual(different.evidence_sha256, previousDigest);
+      assert.throws(() => verifyProductionRecoverySnapshot({
+        recovery: different, policy: recoveryPolicy, request: directRequest, manifest: directManifest,
+        adapterSourceSha256: manifest.compiler.snapshot_adapter_sha256, authorityContext: historical.authorityContext,
+        requestedAt: RECOVERY_AT, recoveryAuthorization: { verifiedSource: historical.verifiedSource, currentGate },
+      }), { code: 'B2_SNAPSHOT_AUTHORITY_INVALID' }, key);
+    }
+  });
+
   backupMode = 'stale';
   await assert.rejects(captureProductionSnapshot({ phase: 'recovery', policy: recoveryPolicy,
     request: directRequest, manifest: directManifest, token: 'synthetic-supabase-token',
@@ -1052,6 +1104,8 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     const realContract = structuredClone(contract);
     realContract.baseline_sha = installedPolicy.baseline.sha;
     const realAuthority = structuredClone(authority);
+    // The historical owner capture has no protected Vault/Edge parity observation.
+    delete realAuthority.vaultEdgeParity;
     const b2InstalledB1State = structuredClone(ownerCapture.web_control_centers_b1_state);
     const predecessorConstraint = b2InstalledB1State.media_asset_links.entity_type_constraint;
     b2InstalledB1State.media_asset_links.entity_type_constraint = predecessorConstraint.replace(
@@ -1134,7 +1188,8 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     };
     const realHistorical = await b2HistoricalCapture({ manifest: realSourceManifest,
       request: releaseRequest, contextArgs: realContextArgs, policy: installedPolicy,
-      at: ownerCapture.observed_at, proofAt: sourceProofAt, admin: true });
+      at: ownerCapture.observed_at, proofAt: sourceProofAt, admin: true,
+      deployedFunctionRows: admin.functions.items });
     assert.deepEqual(realHistorical.authorityContext.receipt, realAuthorityContext.receipt,
       'the exact source resolves the same private authority receipt');
 

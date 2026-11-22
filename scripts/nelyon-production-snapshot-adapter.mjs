@@ -121,9 +121,12 @@ function requireB2Captured(evidence, stage, args) {
     const historical = args.recoveryAuthorization
       ? b2HistoricalSnapshotBinding({ ...args.recoveryAuthorization, authorityContext: args.authorityContext }) : null;
     const receipt = b2Binding(historical ? { ...args, ...historical } : args);
-    if (historical) verifyB2RecoveryOperation({ recoveryRequest: args.request, recoveryManifest: args.manifest,
-      ...args.recoveryAuthorization, authorityContext: args.authorityContext, policy: args.policy,
-      backup: evidence.backup, requestedAt: args.requestedAt });
+    if (historical) {
+      verifyB2RecoveryOperation({ recoveryRequest: args.request, recoveryManifest: args.manifest,
+        ...args.recoveryAuthorization, authorityContext: args.authorityContext, policy: args.policy,
+        backup: evidence.backup, requestedAt: args.requestedAt });
+      verifyB2HistoricalEdgeFunctions(historical.edgeFunctions, evidence.functions);
+    }
     const verification = evidence?.authority_verification;
     b2Exact(verification, ['schemaVersion', 'stage', 'result', 'receipt', 'checks']);
     assertAuthorityReceiptMatch(receipt, verification.receipt);
@@ -375,6 +378,13 @@ function b2SourceInventory(sourceParity, functions) {
     return { kind: 'function_inventory', value: { identity: item.identity, verifyJwt: item.verifyJwt,
       sourceSha256: item.sourceSha256, configSha256: item.configSha256 } };
   });
+}
+
+function verifyB2HistoricalEdgeFunctions(expected, functions) {
+  for (const row of expected) {
+    const actual = functions.items.find(item => item.slug === row.slug);
+    if (!actual || canonicalJson(actual) !== canonicalJson(row)) b2SnapshotReject();
+  }
 }
 
 export function b2AdvisorObjectIdentity(lint) {
@@ -7243,6 +7253,7 @@ export async function captureProductionSnapshot(options) {
       evidence.authority_verification = b2Verification('pre_snapshot', receipt);
     } else {
       if (phase !== 'post' && !(phase === 'recovery' && historical)) b2SnapshotReject();
+      if (historical) verifyB2HistoricalEdgeFunctions(historical.edgeFunctions, evidence.functions);
       const inventory = b2SourceInventory(sourceParity, evidence.functions);
       if (evidence.functions.count !== authorityContext.descriptor.contract.function_inventory.after) b2SnapshotReject();
       // The private catalog cannot add query text. Strip SQL literals from

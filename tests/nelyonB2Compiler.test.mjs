@@ -1,3 +1,4 @@
+import { syntheticVaultEdgeParity } from './fixtures/nelyonB2SyntheticVaultEdgeParity.mjs';
 import { b2SyntheticRelationAclRecords } from './fixtures/nelyonB2DatabaseFunctionMatrix.mjs';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
@@ -52,6 +53,7 @@ function fixture(at = AT, backupLifetimeHours = 22, approvalLifetimeHours = 23) 
     successorCatalog: { schemaVersion: 1, records: [{ kind: 'relation', identity: 'private.synthetic', expectedCanonicalJson, expectedSha256: hash(expectedCanonicalJson) }] },
     securityAdvisor: { schemaVersion: 2, baselineSha256: hash('[]\n'), baselineItems: [], records: [] },
     backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical', projectRefSha256: '3'.repeat(64), evidenceSha256: '4'.repeat(64), status: 'COMPLETED', insertedAt: new Date(Date.parse(at) - 7200000).toISOString(), completedObservedAt: new Date(Date.parse(at) - 5400000).toISOString(), expiresAt: new Date(Date.parse(at) + backupLifetimeHours * 3600000).toISOString() },
+    vaultEdgeParity: syntheticVaultEdgeParity(new Date(Date.parse(at) - 3_600_000).toISOString()),
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: [c.to_phase], authorizationSha256: '5'.repeat(64), approvedAt: new Date(Date.parse(at) - 3600000).toISOString(), expiresAt: new Date(Date.parse(at) + approvalLifetimeHours * 3600000).toISOString() } };
   authority.successorCatalog.records.push(...b2SyntheticRelationAclRecords(authority.successorCatalog.records));
   const authorityJson = JSON.stringify(authority);

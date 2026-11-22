@@ -329,14 +329,9 @@ test('provider configuration is step-scoped only to closed private runtime invoc
       const before = text.lastIndexOf('      - name: ', match.index);
       const after = text.indexOf('\n      - name: ', before + 1);
       const owningStep = text.slice(before, after === -1 ? text.length : after);
-      if (owningStep.includes('- name: Deploy each exact manifest function')) {
-        assert.match(owningStep, /nelyon-private-authority-cli\.mjs authority-proof[\s\S]*env -u NELYON_PRIVATE_AUTHORITY_PROVIDER[\s\S]*supabase functions deploy/);
-        assert.match(owningStep, new RegExp(`-u ${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-      } else {
-        assert.match(owningStep, /- name: (?:Resolve protected private authority|Revalidate protected release|Preflight protected release|Stage exact protected B2 recovery source|Verify B2 Admin recovery gate)/);
-        assert.match(owningStep, /nelyon-private-authority-cli\.mjs/);
-        assert.doesNotMatch(owningStep, /npm ci|build:deployment|supabase\s+(?:db\s+push|functions\s+deploy)|versions (?:upload|deploy)|triggers deploy/);
-      }
+      assert.match(owningStep, /- name: (?:Resolve protected private authority|Revalidate protected release|Preflight protected release|Stage exact protected B2 recovery source|Verify B2 Admin recovery gate)/);
+      assert.match(owningStep, /nelyon-private-authority-cli\.mjs/);
+      assert.doesNotMatch(owningStep, /npm ci|build:deployment|supabase\s+(?:db\s+push|functions\s+deploy)|versions (?:upload|deploy)|triggers deploy/);
     }
   }
 });
@@ -395,14 +390,11 @@ test('every release mutation has fresh proof and successful cleanup before the f
   assert.ok(migrationProof > 0 && migration > migrationProof);
   assert.match(step(deploy, 'B2 protected migrations'), /steps\.b2_migration_authority\.outcome == 'success'/);
 
-  const functions = step(deploy, 'Deploy each exact manifest function');
-  const loop = functions.indexOf('while IFS= read -r function_name');
-  const verify = functions.indexOf('verify-function-contract', loop);
-  const bootstrap = functions.indexOf('nelyon-private-runtime-bootstrap.cjs', verify);
-  const proof = functions.indexOf('nelyon-private-authority-cli.mjs authority-proof', bootstrap);
-  const cleanup = functions.indexOf('nelyon-private-runtime-cleanup.cjs', proof);
-  const deployFunction = functions.indexOf('supabase functions deploy "$function_name"', cleanup);
-  assert.ok(loop >= 0 && verify > loop && bootstrap > verify && proof > bootstrap && cleanup > proof && deployFunction > cleanup);
+  const functions = step(deploy, 'B2 protected functions');
+  assert.match(functions, /nelyon-private-authority-cli\.mjs deploy-functions/);
+  assert.match(functions, /--current-gate[\s\S]*--pre-snapshot[\s\S]*--binary-path/);
+  assert.ok(deploy.indexOf('- name: Clean private authority scratch after protected functions') > deploy.indexOf('- name: B2 protected functions'));
+  assert.ok(deploy.indexOf('- name: Retain public B2 mutation attempt proofs even after failure') > deploy.indexOf('- name: Clean private authority scratch after protected functions'));
 
   for (const [proofName, mutationName] of [
     ['Resolve protected private authority before temporary Admin URLs', 'Enable exact temporary Admin workers.dev and Version URLs'],
@@ -631,37 +623,13 @@ test('every Admin recovery mutation is receipt-bound after cleanup with an exclu
   assert.equal(new Set(boundaries.map(([, , , receipt]) => receipt)).size, boundaries.length);
 });
 
-test('function-loop wrapper strips provider authority from every non-runtime child', () => {
-  const functions = step(workflowJob(workflowText(), 'deploy'), 'Deploy each exact manifest function');
-  const authorityNames = [
-    'NELYON_PRIVATE_AUTHORITY_PROVIDER',
-    'NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID',
-    'NELYON_PRIVATE_AUTHORITY_R2_BUCKET',
-    'NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID',
-    'NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY',
-    'NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256',
-    'NELYON_PRIVATE_AUTHORITY_SHA256',
-    'NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256',
-    'NELYON_RELEASE_POLICY_SHA256',
-    'NELYON_APPROVED_SHA',
-  ];
-  const scrubbed = (command, names = authorityNames) => {
-    const prefix = names.map(name => `-u ${name}`).join('[\\s\\S]*');
-    assert.match(functions, new RegExp(`env ${prefix}[\\s\\S]*?${command}`));
-  };
-  assert.doesNotMatch(functions, /node "\$NELYON_HELPER" revalidate/,
-    'the function loop must consume the authenticated pre-function stage, never invoke a context-free B2 revalidation');
-  scrubbed('node "\\$NELYON_HELPER" verify-function-contract');
-  scrubbed('node "\\$RUNNER_TEMP/nelyon-private-runtime-bootstrap\\.cjs"',
-    authorityNames.filter(name => name !== 'NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256'));
-  scrubbed('node "\\$RUNNER_TEMP/nelyon-private-runtime-cleanup\\.cjs"');
-  scrubbed('cmp "\\$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt\\.json"');
-  scrubbed('supabase functions deploy');
-  scrubbed('node -e "const m=require');
-  const proof = functions.indexOf('node scripts/nelyon-private-authority-cli.mjs authority-proof');
-  assert.ok(proof > 0);
-  assert.doesNotMatch(functions.slice(functions.lastIndexOf('env ', proof), proof), /-u NELYON_PRIVATE_AUTHORITY_PROVIDER/,
-    'the exact private runtime invocation must retain its provider environment');
+test('Edge batch reaches only the closed protected runtime and never a raw shell deploy', () => {
+  const functions = step(workflowJob(workflowText(), 'deploy'), 'B2 protected functions');
+  assert.match(functions, /env: \*current_private_release_env/);
+  assert.match(functions, /nelyon-private-authority-cli\.mjs deploy-functions/);
+  assert.doesNotMatch(functions, /while IFS=|supabase functions deploy|verify-function-contract|authority-proof/);
+  assert.match(functions, /function-apply-receipt\.json/);
+  assert.match(step(workflowJob(workflowText(), 'deploy'), 'Clean private authority scratch after protected functions'), /if: always\(\)/);
 });
 
 test('temporary Admin URL closure attempts fresh authority but remains an unconditional safety cleanup', () => {
@@ -761,7 +729,7 @@ test('failed authority, cleanup or receipt acceptance cannot admit a release mut
     ['Accept protected release revalidation',['b2_release_revalidation','b2_release_revalidation_cleanup']],
     ['B2 protected migrations',['migration_dry_run','b2_migration_authority','b2_migration_authority_cleanup']],
     ['Accept protected release pre-function revalidation',['b2_function_revalidation','b2_function_revalidation_cleanup']],
-    ['Deploy each exact manifest function',['apply_migrations','apply_migrations_cleanup','b2_function_revalidation','b2_function_revalidation_cleanup','b2_function_revalidation_receipt']],
+    ['B2 protected functions',['apply_migrations','apply_migrations_cleanup','b2_function_revalidation','b2_function_revalidation_cleanup','b2_function_revalidation_receipt']],
   ]) {
     const consumer=step(deploy,name);
     assert.equal(admitted(consumer,{mode:'release',priorFailed:false}),true,name);
@@ -878,17 +846,19 @@ test('both migration phases use protected controller with independent binary pin
 });
 
 
-test('migration attempt proof retention runs on failure without credentials or a success requirement',()=>{
- const deploy=workflowJob(workflowText(),'deploy'),retain=step(deploy,'Retain public migration attempt proof even after failure');
+test('B2 mutation proof retention runs after Edge cleanup without credentials or a success requirement',()=>{
+ const deploy=workflowJob(workflowText(),'deploy'),retain=step(deploy,'Retain public B2 mutation attempt proofs even after failure');
  assert.match(retain,/if: always\(\) && needs\.plan\.outputs\.mode == 'release'/);
  assert.doesNotMatch(retain,/outcome == 'success'|SUPABASE_ACCESS_TOKEN|env:|PRIVATE_AUTHORITY_R2/);
  assert.match(retain,/retainB2MigrationAttemptProof/);
+ assert.ok(deploy.indexOf('name: Retain public B2 mutation attempt proofs even after failure')>deploy.indexOf('name: Clean private authority scratch after protected functions'));
  assert.match(deploy.slice(deploy.indexOf('name: Upload sanitized gate evidence')),/gate-evidence\/protected-stage-proofs\.json/);
 });
 
-test('migration stages resolve independently pinned Linux ELF instead of passing npm shim',()=>{
+test('migration and Edge stages resolve independently pinned Linux ELF instead of passing npm shim',()=>{
  const workflow=workflowText();
- assert.equal(workflow.split('process.stdout.write(resolveInstalledLinuxCliBinary').length-1,2);
+ assert.equal(workflow.split('process.stdout.write(resolveInstalledLinuxCliBinary').length-1,3);
  assert.equal((workflow.match(/--binary-path "\$NELYON_MIGRATION_BINARY"/g)??[]).length,2);
+ assert.equal((workflow.match(/--binary-path "\$NELYON_FUNCTION_BINARY"/g)??[]).length,1);
  assert.doesNotMatch(workflow,/--binary-path "\$\(command -v supabase\)"/);
 });

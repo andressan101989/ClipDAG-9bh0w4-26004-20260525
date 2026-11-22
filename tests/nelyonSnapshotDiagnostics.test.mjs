@@ -1,3 +1,4 @@
+import { syntheticVaultEdgeParity } from './fixtures/nelyonB2SyntheticVaultEdgeParity.mjs';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
@@ -64,6 +65,7 @@ function authorityFixture() {
       projectRefSha256: '6'.repeat(64), evidenceSha256: '7'.repeat(64), status: 'COMPLETED',
       insertedAt: '2026-11-08T10:00:00.000Z', completedObservedAt: '2026-11-08T10:30:00.000Z', expiresAt: '2026-11-09T10:00:00.000Z',
     },
+    vaultEdgeParity: syntheticVaultEdgeParity('2026-11-08T11:00:00.000Z'),
     approval: {
       schemaVersion: 1, decision: 'APPROVED', scope: [contract.to_phase],
       authorizationSha256: '8'.repeat(64), approvedAt: '2026-11-08T11:00:00.000Z',

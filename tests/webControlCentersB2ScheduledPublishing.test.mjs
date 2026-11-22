@@ -36,13 +36,23 @@ test('B2 migration installs one fail-closed canonical one-minute wake without em
   assert.match(sql, /select pg_catalog\.count\(\*\)::integer into v_job_count[\s\S]*?if v_job_count<>1 or not exists/);
   assert.match(sql, /active\s*:=\s*true/);
   assert.match(sql, /database\s*:=\s*pg_catalog\.current_database\(\)/);
-  assert.match(sql, /username\s*:=\s*'postgres'/);
+  assert.match(sql, /publication_scheduler_unexpected_owner/);
+  assert.doesNotMatch(sql, /username\s*:=/);
   assert.match(sql, /octet_length\(v_dispatch_secret\)\s*<\s*32/);
   assert.match(sql, /publication_scheduler_dependency_missing/);
   assert.match(sql, /publication_scheduler_secret_missing/);
   assert.match(sql, /publication_scheduler_duplicate_job/);
   assert.doesNotMatch(sql, /service_role_key\s*[:=]|eyj[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+/i);
   assert.doesNotMatch(sql, /insert\s+into\s+cron\.job|update\s+cron\.job/);
+});
+
+test('B2 cron reconciliation works with real pg_cron under hosted-equivalent NOSUPERUSER ownership', { timeout: 180_000 }, t => {
+  const result = spawnSync(process.execPath, ['scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs'], {
+    encoding: 'utf8', windowsHide: true, timeout: 170_000,
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /B2_REAL_PG_CRON_PASS/);
+  t.diagnostic(result.stdout.trim());
 });
 
 test('B2 owner authority is forward-only with private worker storage', () => {

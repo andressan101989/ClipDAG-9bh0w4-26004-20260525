@@ -1,3 +1,4 @@
+import { syntheticVaultEdgeParity } from './fixtures/nelyonB2SyntheticVaultEdgeParity.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Buffer } from 'node:buffer';
@@ -41,6 +42,7 @@ function fixture({ backupInsertedAt = '2026-11-08T10:00:00.000Z' } = {}) {
     backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical', projectRefSha256: hash('aewwdlvbwpczqyvkwvvj'),
       evidenceSha256: hash(release.canonicalJson({ id: MARKER, inserted_at: '2026-11-08T10:00:00.000Z', is_physical_backup: true, status: 'COMPLETED' })),
       status: 'COMPLETED', insertedAt: backupInsertedAt, completedObservedAt: '2026-11-08T10:30:00.000Z', expiresAt: '2026-11-09T10:00:00.000Z' },
+    vaultEdgeParity: syntheticVaultEdgeParity('2026-11-08T11:00:00.000Z'),
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: [contract.to_phase], authorizationSha256: 'f'.repeat(64),
       approvedAt: '2026-11-08T11:00:00.000Z', expiresAt: '2026-11-09T11:00:00.000Z' } };
   const authorityJson = JSON.stringify(authority);

@@ -659,7 +659,7 @@ function validateProtectedSteps(jobs, source, proofs) {
     if (!Number.isSafeInteger(id) || id < 1 || jobIds.has(id)
       || String(data.run_id?.value) !== source.run_id || data.run_attempt?.value !== source.run_attempt) reject();
     jobIds.add(id);
-    const steps = arrayValues(data.steps?.value, 100);
+    const steps = arrayValues(data.steps?.value, MAX_ITEMS);
     for (const step of steps) {
       const stepData = ownData(step);
       const name = stepData.name?.value;

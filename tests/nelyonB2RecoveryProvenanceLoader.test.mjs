@@ -571,6 +571,22 @@ test('exact attempt uses bounded pagination, authenticates archive/proof bytes a
   });
 });
 
+test('actual-sized deploy job admits more than 100 bounded steps while retaining exact protected stages', async () => {
+  const fixture = makeFixture({ mutateJobs: jobs => {
+    const protectedSteps = jobs[0].steps;
+    jobs[0].steps = [
+      ...Array.from({ length: 108 }, (_, index) => ({ name: `ordinary-before-${index}`, status: 'completed', conclusion: 'success', number: index + 1,
+        started_at: '2026-11-08T11:00:00.000Z', completed_at: '2026-11-08T11:00:01.000Z' })),
+      protectedSteps[0], protectedSteps[1],
+      ...Array.from({ length: 108 }, (_, index) => ({ name: `ordinary-after-${index}`, status: 'completed', conclusion: 'success', number: index + 111,
+        started_at: '2026-11-08T13:00:00.000Z', completed_at: '2026-11-08T13:00:01.000Z' })),
+    ];
+  } });
+  const result = await loader(fakeGithub(fixture).fetchImpl).loadExactAttempt({ approvedSource: approved(fixture) });
+  assert.deepEqual(readTrustedB2RecoveryProvenance(result).protectedSteps.steps.map(item => item.name),
+    ['B2 protected migrations', 'B2 protected functions']);
+});
+
 test('candidate provenance fields are rejected before transport', async () => {
   const fixture = makeFixture();
   const transport = fakeGithub(fixture);

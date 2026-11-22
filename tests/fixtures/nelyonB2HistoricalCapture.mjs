@@ -69,7 +69,8 @@ const bundle = (directory, manifest, request) => {
 };
 
 export async function b2HistoricalCapture({ manifest: inputManifest, request: inputRequest, contextArgs, policy, at, admin = false,
-  adminStages = [], observedAdminStages = adminStages, proofAt = at, allowUnresolvedAuthority = false }) {
+  adminStages = [], observedAdminStages = adminStages, proofAt = at, allowUnresolvedAuthority = false,
+  deployedFunctionRows = null }) {
   const manifest = structuredClone(inputManifest); manifest.identity.mode = 'release';
   const request = { ...inputRequest, repository: policy.repository, mainSha: inputRequest.approvedSha, mode: 'release' };
   const paths = directories(); const digest = hash(release.canonicalJson(manifest));
@@ -88,6 +89,10 @@ export async function b2HistoricalCapture({ manifest: inputManifest, request: in
     expected_latest_migration: manifest.resources.migrations.at(-1).path.replace(/^.*\//, '').replace(/\.sql$/, ''),
     edge_functions: manifest.resources.functions.map(name => {
       const contract = manifest.resources.function_contracts?.find(item => item.name === name);
+      if (deployedFunctionRows) {
+        const { ezbr_sha256, status, verify_jwt, version } = deployedFunctionRows.find(row => row.slug === name);
+        return { name, source_sha256: ezbr_sha256, status, verify_jwt, version };
+      }
       return { name, source_sha256: contract?.source_sha256 ?? '0'.repeat(64), status: 'ACTIVE',
         verify_jwt: contract?.verify_jwt ?? true, version: 1 };
     }),

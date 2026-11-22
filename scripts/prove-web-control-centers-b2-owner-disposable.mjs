@@ -93,6 +93,8 @@ try {
   const b1Definition = scalar("select pg_catalog.md5(pg_catalog.string_agg(pg_catalog.concat_ws('|',p.oid,p.proowner,p.proacl,p.provolatile,p.prosecdef,p.proconfig,pg_catalog.pg_get_function_arguments(p.oid),pg_catalog.pg_get_function_result(p.oid)),'' order by p.oid)) from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','private')");
   const b1Oids = scalar("select pg_catalog.string_agg(p.oid::text,',') from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','private')");
   const migration = read('supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql');
+  const activation = migration.match(/do \$activation\$[\s\S]*?\$activation\$;/i)?.[0];
+  assert.ok(activation, 'B2 cron activation block must remain extractable');
   const missingDependencies = sql(migration, true);
   assert.notEqual(missingDependencies.status, 0);
   assert.match(missingDependencies.stderr, /publication_scheduler_dependency_missing/);
@@ -109,11 +111,23 @@ try {
     'duplicate scheduler jobs roll back every B2 object');
   sql("delete from cron.job where jobname='process-scheduled-publications-b2'");
   sql("select cron.schedule('process-scheduled-publications-b2','0 0 * * *','select false')");
-  sql("select cron.alter_job((select jobid from cron.job where jobname='process-scheduled-publications-b2'),database:='wrong_database',username:='wrong_user',active:=false)");
+  const ownedJobId=scalar("select jobid from cron.job where jobname='process-scheduled-publications-b2'");
+  sql("select cron.alter_job((select jobid from cron.job where jobname='process-scheduled-publications-b2'),schedule:='0 0 * * *',command:='select false',database:='wrong_database',active:=false)");
   sql(migration);
+  eq(scalar("select jobid from cron.job where jobname='process-scheduled-publications-b2'"),ownedJobId,
+    'same-owner reconciliation preserves the existing job identity');
   eq(scalar("select count(*)||':'||min(schedule)||':'||min(command)||':'||min(database)||':'||min(username)||':'||bool_and(active) from cron.job where jobname='process-scheduled-publications-b2'"),
     '1:* * * * *:select public.wake_scheduled_publications_b2_v1():b2owner:postgres:true',
-    'existing cron is repaired to the canonical schedule, command, executor and database without duplication');
+    'existing same-owner cron is repaired to the canonical schedule, command and database without duplication');
+  sql("delete from cron.job where jobname='process-scheduled-publications-b2'");
+  sql("select cron.schedule('process-scheduled-publications-b2','0 0 * * *','select false')");
+  sql("update cron.job set username='unexpected_owner' where jobname='process-scheduled-publications-b2'");
+  const unexpectedOwnerBefore=scalar("select pg_catalog.row_to_json(j)::text from cron.job j where jobname='process-scheduled-publications-b2'");
+  const unexpectedOwner=sql(activation,true);
+  assert.notEqual(unexpectedOwner.status,0);
+  assert.match(unexpectedOwner.stderr,/publication_scheduler_unexpected_owner/);
+  eq(scalar("select pg_catalog.row_to_json(j)::text from cron.job j where jobname='process-scheduled-publications-b2'"),unexpectedOwnerBefore,
+    'unexpected owner rejection preserves the pre-existing job and rolls back B2 objects');
   eq(scalar(`select prosecdef and proowner=(select oid from pg_roles where rolname='postgres') and proconfig=array['search_path=""'] and not has_function_privilege('public','public.wake_scheduled_publications_b2_v1()','EXECUTE') from pg_proc where oid='public.wake_scheduled_publications_b2_v1()'::regprocedure`),
     't','wake remains postgres-owned, SECURITY DEFINER, empty-search-path and non-public');
   eq(scalar("select public.wake_scheduled_publications_b2_v1()"),'1','wake records one disposable pg_net request');
