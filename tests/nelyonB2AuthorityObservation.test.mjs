@@ -8,6 +8,7 @@ import {
   captureB2AuthorityObservation,
   normalizeB2EdgeSecretDigestInventory,
   readSnapshotDiagnostic,
+  selectRecentCompletedBackup,
   verifyB2AuthorityObservation,
 } from '../scripts/nelyon-production-snapshot-adapter.mjs';
 
@@ -290,6 +291,35 @@ test('authority observation rejects stale, future, absent, duplicate and ambiguo
     });
     await rejectsWithoutSensitiveSurface(options);
   }
+});
+
+test('backup selection canonicalizes provider numeric ids and rejects unsafe or colliding identities', () => {
+  const numeric = selectRecentCompletedBackup({ backups: [{
+    id: 1988056631,
+    inserted_at: '2026-11-22T08:55:00.000Z',
+    is_physical_backup: true,
+    status: 'COMPLETED',
+  }] }, COMPLETED, BACKUP_POLICY);
+  assert.deepEqual(numeric, {
+    id: '1988056631',
+    inserted_at: '2026-11-22T08:55:00.000Z',
+    is_physical_backup: true,
+    status: 'COMPLETED',
+  });
+
+  for (const id of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => selectRecentCompletedBackup({ backups: [{
+      id,
+      inserted_at: '2026-11-22T08:55:00.000Z',
+      is_physical_backup: true,
+      status: 'COMPLETED',
+    }] }, COMPLETED, BACKUP_POLICY));
+  }
+
+  assert.throws(() => selectRecentCompletedBackup({ backups: [
+    { id: 123, inserted_at: '2026-11-22T08:55:00.000Z', is_physical_backup: true, status: 'COMPLETED' },
+    { id: '123', inserted_at: '2026-11-22T08:54:00.000Z', is_physical_backup: true, status: 'COMPLETED' },
+  ] }, COMPLETED, BACKUP_POLICY));
 });
 
 test('sensitive transport rejects auth, redirect, non-JSON and oversized responses without retained evidence', async () => {

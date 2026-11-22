@@ -6506,15 +6506,18 @@ export function selectRecentCompletedBackup(body, observedAt, backupPolicy) {
   const ids = new Set();
   const normalized = body.backups.map(item => {
     exactKeys(item, ['id', 'inserted_at', 'is_physical_backup', 'status'], 'INVALID_BACKUP');
+    const id = typeof item.id === 'string'
+      ? item.id
+      : Number.isSafeInteger(item.id) && item.id > 0 ? String(item.id) : null;
     const inserted = Date.parse(item.inserted_at);
-    if (typeof item.id !== 'string' || item.id.length === 0 || ids.has(item.id)
+    if (id === null || id.length === 0 || ids.has(id)
       || typeof item.inserted_at !== 'string' || !Number.isFinite(inserted)
       || typeof item.is_physical_backup !== 'boolean' || typeof item.status !== 'string' || item.status.length === 0) {
       fail('INVALID_BACKUP', 'backup inventory contains an invalid or duplicate row');
     }
-    ids.add(item.id);
+    ids.add(id);
     return {
-      id: item.id,
+      id,
       inserted_at: new Date(inserted).toISOString(),
       is_physical_backup: item.is_physical_backup,
       status: item.status,
