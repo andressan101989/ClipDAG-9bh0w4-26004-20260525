@@ -11,9 +11,16 @@ import {
   createTrustedB2DeployedFunctionInventory,
   createTrustedB2ReviewedTree,
 } from '../scripts/nelyon-b2-source-parity.mjs';
+import {
+  B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256,
+  B2_ADVISOR_CHANGED_OBJECT_IDENTITIES,
+  B2_AUTHORITY_EDGE_FUNCTION_SCOPE,
+  computeB2AdvisorAuthorizations,
+} from '../scripts/nelyon-b2-authority-preparation.mjs';
 import { buildPrivateRuntimeClosure } from '../scripts/nelyon-private-runtime-closure.mjs';
 import { createReleaseAuthorityContext } from '../scripts/nelyon-release-authority-context.mjs';
-import { b2DatabaseFunctionMatrix, b2SyntheticRelationAclRecords } from './fixtures/nelyonB2DatabaseFunctionMatrix.mjs';
+import { b2DatabaseFunctionMatrix } from './fixtures/nelyonB2DatabaseFunctionMatrix.mjs';
+import { b2SyntheticCompleteSuccessorCatalog } from './fixtures/nelyonB2CompleteAuthorityFixture.mjs';
 import { b2HistoricalCapture, b2ChainedCapture } from './fixtures/nelyonB2HistoricalCapture.mjs';
 
 const adapterUrl = new URL('../scripts/nelyon-production-snapshot-adapter.mjs', import.meta.url);
@@ -1947,7 +1954,8 @@ test('Web Control Centers B1 baseline accepts canonical PostgreSQL type spelling
     reviewed_source_sha: 'a'.repeat(40), integration_base_sha: 'b'.repeat(40) };
   const records = b2State.web_control_centers_b1_state.media_asset_links.policies.map(row => {
     const value = { identity: `${row.schema}.${row.table}.${row.name}`, relation: `${row.schema}.${row.table}`,
-      command: row.command, roles: row.roles, using: row.qual.replace(/\r\n?|\n/g, ' '), check: row.with_check };
+      command: row.command, roles: row.roles, usingSha256: row.qual === null ? null : sha256(row.qual),
+      checkSha256: row.with_check === null ? null : sha256(row.with_check) };
     const expectedCanonicalJson = canonicalJson(value).trimEnd();
     return { kind: 'policy', identity: value.identity, expectedCanonicalJson, expectedSha256: sha256(expectedCanonicalJson) };
   }).sort((a,b) => a.identity.localeCompare(b.identity));
@@ -3979,7 +3987,16 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
   const adapter = await loadAdapter(); const at = '2026-10-12T12:00:01.000Z';
   const databaseMatrix = b2DatabaseFunctionMatrix();
   const p = markManagedScopeTransitionPromoted(structuredClone(policy));
-  p.supabase.expected_remote_function_count = 1; p.supabase.managed_functions = ['content-safety-scan'];
+  const preFunctionNames = B2_AUTHORITY_EDGE_FUNCTION_SCOPE.map(item => item.name)
+    .filter(name => name !== 'process-scheduled-publications');
+  const functionRows = names => names.map((slug, index) => ({ slug, status: 'ACTIVE', version: index + 1,
+    verify_jwt: B2_AUTHORITY_EDGE_FUNCTION_SCOPE.find(item => item.name === slug).verifyJwt,
+    ezbr_sha256: sha256(`deployed:${slug}`) })).sort((left, right) => left.slug.localeCompare(right.slug));
+  const preFunctionRows = functionRows(preFunctionNames);
+  const postFunctionRows = functionRows(B2_AUTHORITY_EDGE_FUNCTION_SCOPE.map(item => item.name))
+    .map(row => ({ ...row, version: row.slug === 'process-scheduled-publications' ? 1 : row.version + 100 }));
+  p.supabase.expected_remote_function_count = preFunctionRows.length;
+  p.supabase.managed_functions = [...preFunctionNames].sort();
   const m = manifest(); m.baseline = { sha: p.baseline.sha };
   const runtimeClosure = buildPrivateRuntimeClosure({
     repositoryRoot: fileURLToPath(new URL('../', import.meta.url)),
@@ -3990,7 +4007,7 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
   m.compiler.sha256 = runtimeClosure.files.find(item => item.path === m.compiler.path).sha256;
   m.compiler.snapshot_adapter_sha256 = runtimeClosure.files.find(item => item.path === m.compiler.snapshot_adapter_path).sha256;
   const args = { phase: 'pre', policy: p, request: request(), manifest: m, token: 'synthetic',
-    fetchImpl: successfulFetchWithFunctionVersion([], 35), observedAt: at,
+    fetchImpl: successfulFetch([], { functions: preFunctionRows }), observedAt: at,
     adapterSourceSha256: m.compiler.snapshot_adapter_sha256 };
   const legacy = await adapter.captureProductionSnapshot({ ...args, observedAt: '2026-10-12T12:00:00.000Z' });
   for (const exception of p.security_advisor.exceptions) {
@@ -4009,43 +4026,48 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
   const migrationBytes = Buffer.from(gitSql(migrationPath), 'utf8');
   const migrationSha256 = sha256(migrationBytes);
   const migrationBlob = 'c'.repeat(40);
-  const c = { id: 'synthetic-b2', to_phase: 'web-control-centers-b2', baseline_sha: p.baseline.sha,
-    reviewed_source_sha: request().approvedSha, integration_base_sha: 'b'.repeat(40),
+  const syntheticFunctionSources = B2_AUTHORITY_EDGE_FUNCTION_SCOPE.map(item => {
+    const path = `supabase/functions/${item.name}/index.ts`;
+    const bytes = Buffer.from(`export default ${JSON.stringify(item.name)};\n`);
+    const sourceFiles = [{ path, sha256: sha256(bytes) }];
+    const config = { verify_jwt: item.verifyJwt };
+    return { item, path, bytes, config, sourceFiles,
+      sourceSha256: sha256(canonicalJson({ entrypoint: path, import_map: null, source_files: sourceFiles })),
+      configSha256: sha256(canonicalJson(config)) };
+  });
+  const c = { id: 'web-control-centers-b2-scheduled-publishing-v1', to_phase: 'web-control-centers-b2', baseline_sha: p.baseline.sha,
+    reviewed_source_sha: request().approvedSha, reviewed_source_tree_sha: 'd'.repeat(40), integration_base_sha: 'b'.repeat(40),
+    advisor_authorization_contract_sha256: B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256,
+    advisor_authorization_verifier_sha256: sha256(readFileSync(new URL('../scripts/nelyon-b2-authority-preparation.mjs', import.meta.url))),
+    advisor_authorization_tests_sha256: sha256(readFileSync(new URL('./nelyonB2AuthorityPreparation.test.mjs', import.meta.url))),
     productive_changes: [{ path: migrationPath, status: 'A', blob: migrationBlob,
-      sha256: migrationSha256, byte_length: migrationBytes.length }], functions: [],
-    function_inventory: { before: 1, after: 2 } };
-  const expectedCanonicalJson = '{"definitionSha256":"' + '1'.repeat(64) + '","forceRls":true,"identity":"private.PRIVATE_B2_CAPTURE_MARKER","owner":"PRIVATE_B2_CAPTURE_MARKER","rls":true}';
+      sha256: migrationSha256, byte_length: migrationBytes.length }],
+    functions: syntheticFunctionSources.map(({ item, sourceSha256, configSha256 }) => ({
+      name: item.name, verify_jwt: item.verifyJwt, source_sha256: sourceSha256, config_sha256: configSha256,
+    })),
+    function_inventory: { before: preFunctionRows.length, after: postFunctionRows.length } };
+  const successorCatalog = b2SyntheticCompleteSuccessorCatalog({ functionInventory: c.functions.map(item => ({
+    identity: item.name, verifyJwt: item.verify_jwt,
+    sourceSha256: item.source_sha256, configSha256: item.config_sha256,
+  })) });
+  const advisorOrigin = { repository: p.repository, transitionId: c.id,
+    reviewedSourceSha: c.reviewed_source_sha, reviewedSourceTreeSha: c.reviewed_source_tree_sha,
+    integrationBaseSha: c.integration_base_sha,
+    migration: { path: migrationPath, blob: migrationBlob, sha256: migrationSha256, byteLength: migrationBytes.length },
+    changedObjectIdentities: B2_ADVISOR_CHANGED_OBJECT_IDENTITIES,
+    contractSha256: c.advisor_authorization_contract_sha256,
+    verifierSha256: c.advisor_authorization_verifier_sha256, testsSha256: c.advisor_authorization_tests_sha256 };
   const authority = { schemaVersion: 1, authorityId: 'synthetic-b2', publicContractSha256: sha256(canonicalJson(c)), phase: c.to_phase,
     issuedFor: { baselineSha: c.baseline_sha, reviewedSourceSha: c.reviewed_source_sha, integrationBaseSha: c.integration_base_sha },
-    successorCatalog: { schemaVersion: 1, records: [{ kind: 'relation', identity: 'private.PRIVATE_B2_CAPTURE_MARKER', expectedCanonicalJson, expectedSha256: sha256(expectedCanonicalJson) }] },
-    securityAdvisor: { schemaVersion: 2, baselineSha256: legacy.cron_security.advisors.sha256, baselineItems: legacy.cron_security.advisors.items, records: [] },
+    successorCatalog,
+    securityAdvisor: computeB2AdvisorAuthorizations({ baselineItems: legacy.cron_security.advisors.items,
+      findings: [], successorCatalog, origin: advisorOrigin }),
     backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical', projectRefSha256: sha256(p.supabase.project_ref), evidenceSha256: sha256(canonicalJson(legacy.backup)),
       status: 'COMPLETED', insertedAt: legacy.backup.inserted_at, completedObservedAt: legacy.observed_at,
       expiresAt: new Date(Date.parse(legacy.backup.inserted_at) + 86_400_000).toISOString() },
     vaultEdgeParity: syntheticVaultEdgeParity(legacy.observed_at),
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: [c.to_phase], authorizationSha256: '5'.repeat(64),
       approvedAt: legacy.observed_at, expiresAt: '2026-10-13T11:00:00.000Z' } };
-  const scheduleRelations = [
-    'public.media_asset_links',
-    'public.media_assets',
-    'private.publication_schedule_attempts',
-    'private.publication_schedule_commands',
-    'private.publication_schedule_materializations',
-    'private.publication_schedule_policy',
-    'private.publication_schedules',
-  ].map(identity => {
-    const expected = canonicalJson({
-      definitionSha256: sha256(identity),
-      forceRls: true,
-      identity,
-      owner: 'postgres',
-      rls: true,
-    }).trimEnd();
-    return { kind: 'relation', identity, expectedCanonicalJson: expected, expectedSha256: sha256(expected) };
-  });
-  authority.successorCatalog.records.push(...databaseMatrix.records, ...scheduleRelations);
-  authority.successorCatalog.records.push(...b2SyntheticRelationAclRecords(authority.successorCatalog.records));
-  authority.successorCatalog.records.sort((a,b) => `${a.kind}\0${a.identity}` < `${b.kind}\0${b.identity}` ? -1 : 1);
   const authorityJson = JSON.stringify(authority);
   const d = { schema_version: 1, contract: c, public_contract_sha256: authority.publicContractSha256,
     private_authority: { required: true, schema_version: 1, authority_id: authority.authorityId, sha256: sha256(authorityJson) } };
@@ -4058,7 +4080,11 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
     publicContractSha256: authorityContext.publicContractSha256, expectedPrivateAuthoritySha256: authorityContext.privateAuthoritySha256, privateAuthorityRequired: true };
   m.resources.migrations = [{ path: migrationPath, version: '20261108061946', blob: migrationBlob,
     sha256: migrationSha256, byte_length: migrationBytes.length }];
-  m.resources.function_contracts = [];
+  m.resources.functions = c.functions.map(item => item.name);
+  m.resources.function_contracts = syntheticFunctionSources.map(({ item, path, sourceFiles, sourceSha256 }) => ({
+    name: item.name, verify_jwt: item.verifyJwt, entrypoint: path, import_map: null,
+    source_files: sourceFiles, source_changed: true, source_sha256: sourceSha256,
+  }));
   const preFetch = async (url, options) => {
     const query = options?.body ? JSON.parse(options.body).query : '';
     if (query === adapter.RPC_SECURITY_ATTESTATION_SQL) {
@@ -4071,7 +4097,7 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
     if (query?.includes('nelyon-b2-relation-acl-v1')) return jsonResponse(['public.media_asset_links', 'public.media_assets'].map(identity => ({
       identity, owner: 'postgres', rls: true, forceRls: true, acl: [{ grantee: 'postgres', privilege_type: 'SELECT', is_grantable: false }],
       access: { public: false, anon: false, authenticated: false, service_role: false } })), 201);
-    return successfulFetchWithFunctionVersion([], 35)(url, options);
+    return successfulFetch([], { functions: preFunctionRows })(url, options);
   };
   const pre = await adapter.captureProductionSnapshot({ ...args, authorityContext, requestedAt: at, fetchImpl: preFetch });
   for (const variant of ['metadata', 'native subclass']) await t.test(`native Response ${variant} preserves successful capture`, async () => {
@@ -4278,15 +4304,18 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
   assert.throws(() => adapter.verifyProductionPreSnapshot({ ...args, pre: changed, authorityContext, requestedAt: at }), { code: 'B2_SNAPSHOT_AUTHORITY_INVALID' });
   const reviewedTree = createTrustedB2ReviewedTree({
     approvedSha: m.identity.approved_sha,
-    files: [{ path: migrationPath, bytes: migrationBytes }],
-    functionConfigs: [],
+    files: [{ path: migrationPath, bytes: migrationBytes },
+      ...syntheticFunctionSources.map(item => ({ path: item.path, bytes: item.bytes }))],
+    functionConfigs: syntheticFunctionSources.map(item => ({ name: item.item.name, config: item.config })),
   });
   const compileSourceParity = (manifestValue, capturedAt) => compileB2SourceParity({
     authorityContext,
     manifest: manifestValue,
     descriptorBytes: Buffer.from(descriptorBytes, 'utf8'),
     reviewedTree,
-    deployedFunctionInventory: createTrustedB2DeployedFunctionInventory({ capturedAt, functions: [] }),
+    deployedFunctionInventory: createTrustedB2DeployedFunctionInventory({ capturedAt,
+      functions: syntheticFunctionSources.map(item => ({ name: item.item.name,
+        deployedSha256: postFunctionRows.find(row => row.slug === item.item.name).ezbr_sha256 })) }),
     capturedAt,
   });
   let postSourceParity;
@@ -4316,17 +4345,14 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
     fetchImpl: async (url, options) => {
       const query = options?.body ? JSON.parse(options.body).query : '';
       if (query?.includes('nelyon-b2-catalog-v1')) {
-        // Evaluate the fixed SQL identity array against a catalog that also has
-        // unchanged B1 and unrelated publication names and an extra overload.
-        const identities = [...query.match(/= any\(array\[([\s\S]+?)\]::text\[\]\)/)[1].matchAll(/'([^']+)'/g)].map(match => match[1]);
-        const extras = ['private.guard_publication_receipt_immutable_v1()', 'public.reconcile_creator_premium_publications_v1(integer)',
-          'public.claim_publication_schedules_v1(text)'].map(identity => ({ kind: 'function', value: { ...databaseMatrix.catalog[0].value, identity } }));
-        const selected = [...databaseMatrix.catalog, ...extras].filter(row => identities.includes(row.value.identity));
-        assert.equal(selected.length, databaseMatrix.catalog.length);
+        const selected = successorCatalog.records
+          .filter(record => ['function', 'relation', 'policy', 'trigger', 'index', 'cron_job'].includes(record.kind))
+          .map(record => ({ kind: record.kind, value: JSON.parse(record.expectedCanonicalJson) }));
         if (catalogMode === 'missing') selected.pop();
-        if (catalogMode === 'extra') selected.push(extras[0]);
-        const relations = postArgs.sourceParity.databaseRelations.map(({ acl: ignoredAcl, access: ignoredAccess, ...value }) => ({ kind: 'relation', value }));
-        return jsonResponse([...relations, ...selected], 201);
+        if (catalogMode === 'extra') selected.push({ kind: 'function', value: {
+          ...databaseMatrix.catalog[0].value, identity: 'public.claim_publication_schedules_v1(text)',
+        } });
+        return jsonResponse(selected, 201);
       }
       if (query === adapter.RPC_SECURITY_ATTESTATION_SQL) {
         const requested = JSON.parse(JSON.parse(options.body).parameters[0]);
@@ -4336,10 +4362,7 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
       if (query?.includes('nelyon-b2-relation-acl-v1')) {
         return jsonResponse(postArgs.sourceParity.databaseRelations.map(({ definitionSha256: ignored, ...row }) => row), 201);
       }
-      if (new URL(url).pathname.endsWith('/functions')) return jsonResponse([
-        { slug: 'content-safety-scan', status: 'ACTIVE', version: 36, verify_jwt: true, ezbr_sha256: '7'.repeat(64) },
-        { slug: 'process-scheduled-publications', status: 'ACTIVE', version: 1, verify_jwt: true, ezbr_sha256: '8'.repeat(64) },
-      ]);
+      if (new URL(url).pathname.endsWith('/functions')) return jsonResponse(postFunctionRows);
       return successfulFetchWithFunctionVersion([], 35, { cron: postCron })(url, options);
     } };
   let post;
@@ -4361,10 +4384,7 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
   }
   catalogMode = 'exact';
   const historical = await b2HistoricalCapture({ manifest: m, request: request(), contextArgs, policy: p, at,
-    deployedFunctionRows: [
-      { slug: 'content-safety-scan', status: 'ACTIVE', version: 36, verify_jwt: true, ezbr_sha256: '7'.repeat(64) },
-      { slug: 'process-scheduled-publications', status: 'ACTIVE', version: 1, verify_jwt: true, ezbr_sha256: '8'.repeat(64) },
-    ] });
+    deployedFunctionRows: postFunctionRows });
   const recoveryAt = '2026-10-14T12:00:01.000Z';
   const recoveryPolicy = structuredClone(p);
   // These synthetic RPC fixtures are already installed at the synthetic baseline.
@@ -5853,6 +5873,21 @@ test('postcheck advisor delta accepts only exact phase-approved fingerprints', a
     /REMOTE_POSTCHECK_FAILED/,
   );
   assert.throws(() => adapter.validateSecurityAdvisorDelta(pre, pre, [allowed]), /REMOTE_POSTCHECK_FAILED/);
+});
+
+test('B2 postrelease advisor verification rejects every delta even when private authority replaced it', async () => {
+  const adapter = await loadAdapter();
+  const pre = [{ fingerprint: '1'.repeat(64), level: 'WARN', resource_kind: 'existing' }];
+  const replaced = { fingerprint: '2'.repeat(64), level: 'WARN', resource_kind: 'replacement' };
+  assert.throws(
+    () => adapter.validateB2PostReleaseAdvisorDelta(pre, [...pre, replaced]),
+    /REMOTE_POSTCHECK_FAILED/,
+  );
+  assert.throws(
+    () => adapter.validateB2PostReleaseAdvisorDelta([...pre, replaced], pre),
+    /REMOTE_POSTCHECK_FAILED/,
+  );
+  assert.equal(adapter.validateB2PostReleaseAdvisorDelta(pre, pre), true);
 });
 
 test('F4 inventory selects the general finance facts contract only after its exact migration chain', async () => {

@@ -64,6 +64,41 @@ test('integrated Git source proves authority, database preflight and post parity
       assert.throws(()=>release.verifyB2IntegratedSource({...f,manifest:candidate}),{code:'B2_DESCRIPTOR_INVALID'});
     }
   });
+  await t.test('reviewed tree and advisor pins are recomputed from exact Git objects',()=>{
+    const originalHead=f.request.approvedSha;
+    const flip=value=>`${value.slice(0,-1)}${value.endsWith('0')?'1':'0'}`;
+    function commitCandidate(descriptorBytes=f.descriptorBytes, mutateFiles=()=>{}){
+      mutateFiles();
+      f.write('.github/nelyon-web-control-centers-b2-release-descriptor.json',descriptorBytes);
+      f.git(['add','.']);f.git(['commit','--quiet','-m','synthetic provenance bypass']);
+      const approvedSha=f.git(['rev-parse','HEAD']).toString().trim();
+      f.git(['update-ref','refs/remotes/origin/main',approvedSha]);
+      const request={...f.request,approvedSha,mainSha:approvedSha};
+      const evidence=release.compileLocalEvidence({cwd:f.cwd,policy:f.policy,request,generatedAt:f.manifest.generated_at});
+      const manifest=release.buildManifest({...evidence,policy:f.policy,request});
+      return {...f,descriptorBytes,manifest,request};
+    }
+    for (const key of ['reviewed_source_tree_sha','advisor_authorization_verifier_sha256',
+      'advisor_authorization_tests_sha256']) {
+      try {
+        const descriptor=JSON.parse(f.descriptorBytes);
+        descriptor.contract[key]=flip(descriptor.contract[key]);
+        descriptor.public_contract_sha256=hash(json(descriptor.contract));
+        const bytes=Buffer.from(`${JSON.stringify(descriptor)}\n`);
+        assert.throws(()=>release.verifyB2IntegratedSource(commitCandidate(bytes)),{code:'B2_DESCRIPTOR_INVALID'},key);
+      } finally {
+        f.git(['reset','--hard',originalHead]);f.git(['update-ref','refs/remotes/origin/main',originalHead]);
+      }
+    }
+    try {
+      const verifier='scripts/nelyon-b2-authority-preparation.mjs';
+      const drift=()=>f.write(verifier,Buffer.concat([fs.readFileSync(path.join(f.cwd,verifier)),Buffer.from('\n// one-bit-equivalent reviewed drift\n')]));
+      assert.throws(()=>release.verifyB2IntegratedSource(commitCandidate(f.descriptorBytes,drift)),
+        {code:'B2_DESCRIPTOR_INVALID'},'final runtime closure member must equal the reviewed verifier bytes');
+    } finally {
+      f.git(['reset','--hard',originalHead]);f.git(['update-ref','refs/remotes/origin/main',originalHead]);
+    }
+  });
   await t.test('working-tree and staged productive/config drift are rejected',()=>{
     for(const file of [migration.path,'supabase/config.toml']){
       const original=fs.readFileSync(path.join(f.cwd,file));
@@ -101,4 +136,16 @@ test('optional integrated source inspection rejects proxies without executing tr
   assert.throws(()=>parity.verifyB2DatabaseSourcePreflight(input));
   assert.throws(()=>parity.compileB2SourceParity(input));
   assert.equal(calls,0);
+});
+
+test('compiler derives eight function identities from committed Git-LF bytes and rejects a CRLF upload tree', t=>{
+  const f=fixture(t,{worktreeCrlf:true});
+  assert.deepEqual(f.evidence.functionContracts.map(item=>({
+    name:item.name,
+    source_sha256:item.source_sha256,
+  })),f.contracts.map(item=>({
+    name:item.name,
+    source_sha256:item.source_sha256,
+  })));
+  assert.throws(()=>release.verifyB2IntegratedSource(f),{code:'B2_DESCRIPTOR_INVALID'});
 });

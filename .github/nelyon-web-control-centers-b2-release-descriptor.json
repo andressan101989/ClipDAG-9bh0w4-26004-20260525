@@ -8,7 +8,11 @@
     "to_phase": "web-control-centers-b2",
     "baseline_sha": "612a90d087817f06e2c979665a63c054bbddcf18",
     "reviewed_source_sha": null,
+    "reviewed_source_tree_sha": null,
     "integration_base_sha": null,
+    "advisor_authorization_contract_sha256": null,
+    "advisor_authorization_verifier_sha256": null,
+    "advisor_authorization_tests_sha256": null,
     "approved_sha_ancestry": "verified_integration_base",
     "productive_changes": [
       {
@@ -118,7 +122,7 @@
     "private_authority_max_bytes": 2097152,
     "requires_separate_baseline_promotion": true
   },
-  "public_contract_sha256": "ad648a6442ea4ac799d84753a788751c1c9fed9a4156dfe4539d4a6a49b116cb",
+  "public_contract_sha256": "f37e87b506fc0340614c8b1c80fc62520669bd91aea1eb4182c6fd0f1fbb0ae2",
   "private_authority": {
     "required": true,
     "schema_version": 1,

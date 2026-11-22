@@ -329,7 +329,7 @@ test('provider configuration is step-scoped only to closed private runtime invoc
       const before = text.lastIndexOf('      - name: ', match.index);
       const after = text.indexOf('\n      - name: ', before + 1);
       const owningStep = text.slice(before, after === -1 ? text.length : after);
-      assert.match(owningStep, /- name: (?:Resolve protected private authority|Revalidate protected release|Preflight protected release|Stage exact protected B2 recovery source|Verify B2 Admin recovery gate)/);
+      assert.match(owningStep, /- name: (?:Issue exact immutable B2 private authority|Resolve protected private authority|Revalidate protected release|Preflight protected release|Stage exact protected B2 recovery source|Verify B2 Admin recovery gate)/);
       assert.match(owningStep, /nelyon-private-authority-cli\.mjs/);
       assert.doesNotMatch(owningStep, /npm ci|build:deployment|supabase\s+(?:db\s+push|functions\s+deploy)|versions (?:upload|deploy)|triggers deploy/);
     }

@@ -34,7 +34,7 @@ const projections = {
   function: { identity: 'private.synthetic()', execute: false, owner: MARKER,
     securityDefiner: true, searchPath: ['private'], definitionSha256: 'a'.repeat(64) },
   policy: { identity: 'private.synthetic.policy', relation: 'private.synthetic', command: 'SELECT',
-    roles: ['authenticated'], using: 'true', check: null },
+    roles: ['authenticated'], usingSha256: digest('true'), checkSha256: null },
   trigger: { identity: 'private.synthetic.trigger', relation: 'private.synthetic',
     functionIdentity: 'private.synthetic()', enabled: 'O', definitionSha256: 'a'.repeat(64) },
   index: { identity: 'private.synthetic_idx', relation: 'private.synthetic', valid: true,
@@ -162,7 +162,7 @@ function rejectedB2(text, expected = digest(typeof text === 'string' ? text : ''
   });
 }
 
-test('legacy B2 authority retains no Vault/Edge observation, and current parity binds both fixed targets', () => {
+test('legacy B2 authority may omit Vault/Edge evidence, while present evidence must use truthful schema v2', () => {
   const legacy = b2Authority();
   assert.equal(Object.hasOwn(parseB2PrivateAuthority(legacy, digest(legacy), EXPECTED_AT).authority, 'vaultEdgeParity'), false);
   const parity = syntheticVaultEdgeParity('2026-11-08T11:00:00.000Z');
@@ -172,6 +172,16 @@ test('legacy B2 authority retains no Vault/Edge observation, and current parity 
   assert.ok(Object.isFrozen(authority.vaultEdgeParity.edge));
   rejectedB2(current, digest(legacy));
   rejectedB2(current, digest(current), parity.expiresAt);
+  rejectedB2(b2Authority({ vaultEdgeParity: {
+    schemaVersion: 1,
+    projectRef: parity.projectRef,
+    functionName: parity.functionName,
+    vault: { secretName: parity.vault.secretName, revision: 'synthetic-vault-revision', secretVersion: 'synthetic-version' },
+    edge: { secretName: parity.edge.secretName, provisioningGeneration: 'synthetic-generation', secretVersion: 'synthetic-version' },
+    changeFreezeId: 'synthetic-freeze',
+    observedAt: parity.observedAt,
+    expiresAt: parity.expiresAt,
+  } }));
 });
 
 test('B2 Vault/Edge parity rejects incomplete, rotated, misbound, stale and value-bearing observations', () => {
@@ -180,15 +190,15 @@ test('B2 Vault/Edge parity rejects incomplete, rotated, misbound, stale and valu
     true,
     { ...parity, projectRef: 'other-project' },
     { ...parity, functionName: 'other-function' },
+    { ...parity, mechanism: 'other-mechanism' },
+    { ...parity, result: 'UNKNOWN' },
+    { ...parity, observationId: 'f'.repeat(63) },
     { ...parity, vault: { ...parity.vault, secretName: 'other_name' } },
     { ...parity, edge: { ...parity.edge, secretName: 'OTHER_NAME' } },
-    { ...parity, edge: { ...parity.edge, secretVersion: 'synthetic-rotated' } },
-    { ...parity, vault: { ...parity.vault, revision: '' } },
-    { ...parity, edge: { ...parity.edge, provisioningGeneration: '' } },
-    { ...parity, changeFreezeId: '' },
     { ...parity, observedAt: '2026-11-08T11:00:00.001Z' },
     { ...parity, expiresAt: '2026-11-08T13:00:00.001Z' },
     { ...parity, expiresAt: parity.observedAt },
+    { ...parity, value: MARKER },
     { ...parity, vault: { ...parity.vault, value: MARKER } },
     { ...parity, edge: { ...parity.edge, fingerprint: MARKER } },
   ]) rejectedB2(b2Authority({ vaultEdgeParity: invalid }));
@@ -359,7 +369,19 @@ for (const path of digestPaths) {
   }
 }
 
-for (const actions of [['add', 'remove'], ['replace', 'retain']]) {
+for (const action of ['add', 'remove']) {
+  test(`B2 Advisor rejects unsupported ${action} action`, () => {
+    const value = JSON.parse(b2Authority());
+    value.securityAdvisor.records[0].action = action;
+    if (action === 'add') {
+      value.securityAdvisor.baselineItems = [];
+      value.securityAdvisor.baselineSha256 = digest('[]\n');
+    }
+    rejectedB2(JSON.stringify(value));
+  });
+}
+
+for (const actions of [['replace', 'retain']]) {
   test(`B2 Advisor rejects one identity with conflicting ${actions.join('/')} actions`, () => {
     const value = JSON.parse(b2Authority());
     value.securityAdvisor.records = actions.map(action => ({ ...value.securityAdvisor.records[0], action }));
@@ -369,11 +391,14 @@ for (const actions of [['add', 'remove'], ['replace', 'retain']]) {
 
 test('B2 Advisor accepts sorted distinct identities and rejects ordering, duplicate and count violations', () => {
   const value = JSON.parse(b2Authority());
-  const a = { ...value.securityAdvisor.records[0], action: 'add' };
+  const a = { ...value.securityAdvisor.records[0] };
   const b = { ...a, identity: `advisor:${'d'.repeat(64)}` };
   replaceProjection(b, { ...advisorProjection, identity: b.identity, fingerprint: 'd'.repeat(64) });
-  value.securityAdvisor.baselineItems = [];
-  value.securityAdvisor.baselineSha256 = digest('[]\n');
+  value.securityAdvisor.baselineItems = [a, b].map(record => {
+    const projection = JSON.parse(record.expectedCanonicalJson);
+    return { fingerprint: projection.fingerprint, level: projection.severity, resource_kind: projection.type };
+  });
+  value.securityAdvisor.baselineSha256 = digest(compactCanonical(value.securityAdvisor.baselineItems) + '\n');
   value.securityAdvisor.records = [a, b];
   let text = JSON.stringify(value);
   assert.doesNotThrow(() => parseB2PrivateAuthority(text, digest(text), EXPECTED_AT));

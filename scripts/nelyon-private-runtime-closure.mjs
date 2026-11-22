@@ -23,11 +23,14 @@ const CLOSURE_MEMBERS = Object.freeze([
   'package-lock.json',
   'package.json',
   'scripts/nelyon-admin-production-release.mjs',
+  'scripts/nelyon-b2-authority-preparation.mjs',
   'scripts/nelyon-b2-explicit-connection.mjs',
+  'scripts/nelyon-b2-function-deployment-proof.mjs',
   'scripts/nelyon-b2-hermetic-workspace.mjs',
   'scripts/nelyon-b2-recovery-provenance.mjs',
   'scripts/nelyon-b2-source-parity.mjs',
   'scripts/nelyon-private-authority-cli.mjs',
+  'scripts/nelyon-private-authority-issuer.mjs',
   'scripts/nelyon-private-authority-provider.mjs',
   'scripts/nelyon-private-authority-runtime.mjs',
   'scripts/nelyon-private-authority.mjs',
@@ -35,6 +38,8 @@ const CLOSURE_MEMBERS = Object.freeze([
   'scripts/nelyon-production-release.mjs',
   'scripts/nelyon-production-snapshot-adapter.mjs',
   'scripts/nelyon-release-authority-context.mjs',
+  'scripts/prove-web-control-centers-b2-disposable.mjs',
+  'scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs',
   'shared/web-deployment/publicSupabaseBuildEnv.mjs',
 ]);
 

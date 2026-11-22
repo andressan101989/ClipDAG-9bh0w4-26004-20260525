@@ -15,6 +15,13 @@ import {
 import { createReleaseAuthorityContext, publicAuthorityReceipt, assertAuthorityReceiptMatch } from './nelyon-release-authority-context.mjs';
 import { assertB2CatalogSecurityCoverage } from './nelyon-b2-source-parity.mjs';
 import {
+  b2FunctionManifestSha256,
+  canonicalB2FunctionDeploymentProof,
+  resumeB2FunctionDeploymentAttempt,
+  verifyB2FunctionDeploymentProof,
+  verifyB2FunctionDeploymentAttempt,
+} from './nelyon-b2-function-deployment-proof.mjs';
+import {
   advisorExceptionsForPhase,
   F5_SECURITY_ADVISOR_RELATION_ADDITIONS,
   normalizedCronCommandSha256,
@@ -2515,7 +2522,9 @@ export function parseB2ReleaseDescriptor(descriptorBytes, expectedDescriptorSha2
     b2Exact(descriptor, ['schema_version', 'contract', 'public_contract_sha256', 'private_authority']);
     const c = descriptor.contract;
     b2Exact(c, ['id', 'state', 'release_ready', 'from_phase', 'to_phase', 'baseline_sha', 'reviewed_source_sha',
-      'integration_base_sha', 'approved_sha_ancestry', 'productive_changes', 'functions', 'function_inventory',
+      'reviewed_source_tree_sha', 'integration_base_sha', 'advisor_authorization_contract_sha256',
+      'advisor_authorization_verifier_sha256', 'advisor_authorization_tests_sha256',
+      'approved_sha_ancestry', 'productive_changes', 'functions', 'function_inventory',
       'managed_scope_transition', 'cron_activation', 'finance_invariants', 'private_authority_max_bytes',
       'requires_separate_baseline_promotion']);
     const approved = c.state === 'approved';
@@ -2529,8 +2538,12 @@ export function parseB2ReleaseDescriptor(descriptorBytes, expectedDescriptorSha2
       || c.private_authority_max_bytes !== 2 * 1024 * 1024
       || !b2Matches(descriptor.public_contract_sha256, B2_HEX64)
       || sha256Hex(canonicalJson(c)) !== descriptor.public_contract_sha256) b2Reject();
-    for (const key of ['reviewed_source_sha', 'integration_base_sha']) {
+    for (const key of ['reviewed_source_sha', 'reviewed_source_tree_sha', 'integration_base_sha']) {
       if (approved ? !b2Matches(c[key], SHA_PATTERN) : c[key] !== null) b2Reject();
+    }
+    for (const key of ['advisor_authorization_contract_sha256', 'advisor_authorization_verifier_sha256',
+      'advisor_authorization_tests_sha256']) {
+      if (approved ? !b2Matches(c[key], B2_HEX64) : c[key] !== null) b2Reject();
     }
     if (!Array.isArray(c.productive_changes) || c.productive_changes.length !== B2_PRODUCTIVE_PATHS.length) b2Reject();
     c.productive_changes.forEach((item, index) => {
@@ -2655,11 +2668,14 @@ const B2_RUNTIME_CLOSURE_PATHS = Object.freeze([
   'package-lock.json',
   'package.json',
   'scripts/nelyon-admin-production-release.mjs',
+  'scripts/nelyon-b2-authority-preparation.mjs',
   'scripts/nelyon-b2-explicit-connection.mjs',
+  'scripts/nelyon-b2-function-deployment-proof.mjs',
   'scripts/nelyon-b2-hermetic-workspace.mjs',
   'scripts/nelyon-b2-recovery-provenance.mjs',
   'scripts/nelyon-b2-source-parity.mjs',
   'scripts/nelyon-private-authority-cli.mjs',
+  'scripts/nelyon-private-authority-issuer.mjs',
   'scripts/nelyon-private-authority-provider.mjs',
   'scripts/nelyon-private-authority-runtime.mjs',
   'scripts/nelyon-private-authority.mjs',
@@ -2667,6 +2683,8 @@ const B2_RUNTIME_CLOSURE_PATHS = Object.freeze([
   'scripts/nelyon-production-release.mjs',
   'scripts/nelyon-production-snapshot-adapter.mjs',
   'scripts/nelyon-release-authority-context.mjs',
+  'scripts/prove-web-control-centers-b2-disposable.mjs',
+  'scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs',
   'shared/web-deployment/publicSupabaseBuildEnv.mjs',
 ]);
 const b2ClosureCanonical = value => {
@@ -2858,13 +2876,15 @@ function b2AuthorityReject() {
 export function verifyB2VaultEdgeParity(authorityContext, requestedAt) {
   publicAuthorityReceipt(authorityContext);
   const parity=authorityContext.privateAuthority.vaultEdgeParity;
-  b2Exact(parity,['schemaVersion','projectRef','functionName','vault','edge','changeFreezeId','observedAt','expiresAt']);
-  b2Exact(parity.vault,['secretName','revision','secretVersion']);
-  b2Exact(parity.edge,['secretName','provisioningGeneration','secretVersion']);
+  b2Exact(parity,['schemaVersion','projectRef','functionName','mechanism','result','observationId','vault','edge','observedAt','expiresAt']);
+  b2Exact(parity.vault,['secretName']);
+  b2Exact(parity.edge,['secretName']);
   const at=b2ProofTime(requestedAt);
-  if(parity.schemaVersion!==1||parity.projectRef!=='aewwdlvbwpczqyvkwvvj'
+  if(parity.schemaVersion!==2||parity.projectRef!=='aewwdlvbwpczqyvkwvvj'
     ||parity.functionName!=='process-scheduled-publications'||parity.vault.secretName!=='call_dispatch_secret'
-    ||parity.edge.secretName!=='CALL_DISPATCH_SECRET'||parity.vault.secretVersion!==parity.edge.secretVersion
+    ||parity.edge.secretName!=='CALL_DISPATCH_SECRET'
+    ||parity.mechanism!=='supabase-vault-edge-nonce-hmac-sha256-v1'||parity.result!=='MATCH'
+    ||!b2Matches(parity.observationId,B2_HEX64)
     ||at<b2ProofTime(parity.observedAt)||at>=b2ProofTime(parity.expiresAt))b2AuthorityReject();
 }
 
@@ -2917,7 +2937,8 @@ export function verifyB2PreflightAuthority({ manifest, authorityContext, request
 }
 
 // Full production authority retains mandatory live inventory validation.
-export function verifyB2ProtectedAuthority({ manifest, authorityContext, inventory, requestedAt }) {
+export function verifyB2ProtectedAuthority({ manifest, authorityContext, inventory, requestedAt,
+  functionDeploymentProof = null, functionRows = null }) {
   try {
     const proof = verifyB2PreflightAuthority({ manifest, authorityContext, requestedAt });
     if (!manifest?.resources?.web_control_centers_b2_transition) return proof;
@@ -2926,10 +2947,37 @@ export function verifyB2ProtectedAuthority({ manifest, authorityContext, invento
     const age = Date.parse(requestedAt) - Date.parse(inventory.capturedAt);
     if (inventory.schemaVersion !== 1 || inventory.complete !== true || !Number.isFinite(age) || age < 0 || age > 300_000
       || !Array.isArray(inventory.names) || inventory.names.some(name => typeof name !== 'string')
-      || new Set(inventory.names).size !== inventory.names.length
-      || inventory.names.length !== descriptor.contract.function_inventory.before
+      || new Set(inventory.names).size !== inventory.names.length) b2AuthorityReject();
+
+    const hasRecoveryProof = functionDeploymentProof !== null;
+    if (hasRecoveryProof !== (functionRows !== null)) b2AuthorityReject();
+    if (hasRecoveryProof) {
+      if (!Array.isArray(functionRows)) b2AuthorityReject();
+      const liveNames = functionRows.map(row => row?.name ?? row?.slug);
+      if (liveNames.some(name => typeof name !== 'string') || new Set(liveNames).size !== liveNames.length
+        || canonicalJson([...liveNames].sort()) !== canonicalJson([...inventory.names].sort())) b2AuthorityReject();
+      const contracts = descriptor.contract.functions;
+      const contractNames = new Set(contracts.map(item => item.name));
+      const selectedRows = functionRows.filter(row => contractNames.has(row?.name ?? row?.slug));
+      const schedulerPresent = selectedRows.some(row => (row?.name ?? row?.slug) === 'process-scheduled-publications');
+      if (selectedRows.length !== B2_FUNCTION_NAMES.length - (schedulerPresent ? 0 : 1)
+        || inventory.names.length !== descriptor.contract.function_inventory.before + (schedulerPresent ? 1 : 0)
+        || B2_FUNCTION_NAMES.filter(name => name !== 'process-scheduled-publications')
+          .some(name => !selectedRows.some(row => (row?.name ?? row?.slug) === name))) b2AuthorityReject();
+      const manifestSha256 = b2FunctionManifestSha256(contracts);
+      const attempt = verifyB2FunctionDeploymentAttempt({ proof: functionDeploymentProof,
+        manifest: contracts, manifestSha256 });
+      if (attempt.result === 'FUNCTIONS_EXECUTED') {
+        verifyB2FunctionDeploymentProof({ proof: attempt, manifest: contracts, manifestSha256, postRows: selectedRows });
+      } else {
+        resumeB2FunctionDeploymentAttempt({ proof: attempt, manifest: contracts, manifestSha256,
+          beforeRows: attempt.before, currentRows: selectedRows, capturedAt: requestedAt });
+      }
+    } else if (inventory.names.length !== descriptor.contract.function_inventory.before
       || inventory.names.includes('process-scheduled-publications')
-      || B2_FUNCTION_NAMES.filter(name => name !== 'process-scheduled-publications').some(name => !inventory.names.includes(name))) b2AuthorityReject();
+      || B2_FUNCTION_NAMES.filter(name => name !== 'process-scheduled-publications').some(name => !inventory.names.includes(name))) {
+      b2AuthorityReject();
+    }
 
     return proof;
   } catch { b2AuthorityReject(); }
@@ -4809,6 +4857,21 @@ function collectFunctionSources(directory, root, files = {}) {
   return files;
 }
 
+function collectCommittedFunctionSources(runGit, approvedSha) {
+  if (typeof runGit !== 'function' || !/^[0-9a-f]{40}$/.test(approvedSha ?? '')) b2Reject();
+  const listing = runGit(['ls-tree', '-r', '-z', '--name-only', approvedSha, '--', 'supabase/functions']);
+  if (!Buffer.isBuffer(listing)) b2Reject();
+  const paths = listing.toString('utf8').split('\0').filter(Boolean);
+  if (paths.length === 0 || new Set(paths).size !== paths.length) b2Reject();
+  const files = {};
+  for (const path of paths) {
+    const normalized = normalizeModulePath(path);
+    if (normalized !== path || !path.startsWith('supabase/functions/')) b2Reject();
+    files[path] = runGit(['show', `${approvedSha}:${path}`]);
+  }
+  return files;
+}
+
 const b2IntegratedSources = new WeakMap();
 
 function b2IntegratedJson(value) {
@@ -4856,6 +4919,20 @@ export function verifyB2IntegratedSource({ cwd, policy, request, manifest, descr
       || manifest.identity.run_id !== String(request.runId) || manifest.identity.run_attempt !== request.runAttempt
       || manifest.identity.release_id !== request.releaseId) b2Reject();
     const descriptor = parseB2ReleaseDescriptor(descriptorBytes, sha256Hex(descriptorBytes));
+    const reviewed = descriptor.contract.reviewed_source_sha;
+    const reviewedTree = git(['rev-parse', `${reviewed}^{tree}`]).toString('utf8').trim();
+    const advisorVerifierPath = 'scripts/nelyon-b2-authority-preparation.mjs';
+    const advisorTestsPath = 'tests/nelyonB2AuthorityPreparation.test.mjs';
+    const reviewedVerifierBytes = git(['show', `${reviewed}:${advisorVerifierPath}`]);
+    const reviewedTestsBytes = git(['show', `${reviewed}:${advisorTestsPath}`]);
+    if (reviewedTree !== descriptor.contract.reviewed_source_tree_sha
+      || sha256Hex(reviewedVerifierBytes) !== descriptor.contract.advisor_authorization_verifier_sha256
+      || sha256Hex(reviewedTestsBytes) !== descriptor.contract.advisor_authorization_tests_sha256
+      || !git(['show', `${head}:${advisorVerifierPath}`]).equals(reviewedVerifierBytes)
+      || !git(['show', `${head}:${advisorTestsPath}`]).equals(reviewedTestsBytes)) b2Reject();
+    const verifierClosureMembers = manifest.runtime_closure.files.filter(item => item.path === advisorVerifierPath);
+    if (verifierClosureMembers.length !== 1
+      || verifierClosureMembers[0].sha256 !== descriptor.contract.advisor_authorization_verifier_sha256) b2Reject();
     const evidence = compileLocalEvidence({ cwd, policy, request, generatedAt: manifest.generated_at });
     const rebuilt = buildManifest({ ...evidence, policy, request });
     if (canonicalJson(rebuilt) !== canonicalJson(manifest)) b2Reject();
@@ -4926,9 +5003,9 @@ export function compileLocalEvidence({ cwd, policy, request, generatedAt = new D
     changes: gitState.changes,
     baselineLatestMigration: policy.baseline.latest_migration,
   });
-  const graph = buildFunctionGraph(collectFunctionSources(join(cwd, 'supabase', 'functions'), cwd));
+  const graph = buildFunctionGraph(collectCommittedFunctionSources(runGit, request.approvedSha));
   const baselineConfig = runGit(['show', `${policy.baseline.sha}:supabase/config.toml`]);
-  const currentConfig = readFileSync(join(cwd, 'supabase', 'config.toml'), 'utf8');
+  const currentConfig = runGit(['show', `${request.approvedSha}:supabase/config.toml`]);
   const configBefore = parseFunctionConfig(baselineConfig);
   const configAfter = parseFunctionConfig(currentConfig);
   if (!isReadOnlyRecoveryMode(request.mode) && isB2Delta(gitState.changes)) {
@@ -5815,6 +5892,7 @@ export function verifyManifestBundle({ directory, expected }) {
 const RECOVERY_RELEASE_FILES = ['auto-deploy-evidence.json', 'bundle', 'remote-evidence.json', 'request.json'];
 const RECOVERY_GATE_FILES = [
   'protected-stage-proofs.json',
+  'function-deployment-proof.json',
   'gate-proof.json',
   'migration-dry-run.json',
   'postcheck-result.json',
@@ -5953,6 +6031,8 @@ function assertB2SourceArtifacts(verifiedSource, { run, artifacts, source } = {}
 // authentication remains mandatory when resolving their private authority.
 const B2_RECOVERY_CONTRACT_SCHEMA = {
   id: b2String, to_phase: b2String, baseline_sha: b2String, reviewed_source_sha: b2String, integration_base_sha: b2String,
+  'reviewed_source_tree_sha?': b2String, 'advisor_authorization_contract_sha256?': b2String,
+  'advisor_authorization_verifier_sha256?': b2String, 'advisor_authorization_tests_sha256?': b2String,
   'state?': b2String, 'release_ready?': b2Boolean, 'from_phase?': b2String, 'approved_sha_ancestry?': b2String,
   'productive_changes?': [{ path: b2String, status: b2String, blob: b2String, sha256: b2String, byte_length: b2Integer }],
   'functions?': [{ name: b2String, verify_jwt: b2Boolean, source_sha256: b2String, config_sha256: b2String }],
@@ -6039,13 +6119,32 @@ function verifyB2SourceProof({ source, run, manifest, observation, gateDirectory
     const text = candidateBytes.toString('utf8');
     const proofs = JSON.parse(text);
     if (canonicalJson(proofs) !== text || canonicalJson(proofs) !== canonicalJson(trustedProvenance.proofs)
-      || !Array.isArray(proofs) || proofs.length < 2 || proofs.length > 5) b2RecoveryReject();
+      || !Array.isArray(proofs) || proofs.length < 1 || proofs.length > 5) b2RecoveryReject();
+    const hasFunctionsProof=proofs.some(proof=>proof?.stage==='functions');
+    if(hasFunctionsProof){
+      const functionProofBytes=readFileSync(join(gateDirectory,'function-deployment-proof.json'));
+      if(!/^[0-9a-f]{64}$/.test(trustedProvenance.functionDeploymentProofSha256??'')
+        ||sha256Hex(functionProofBytes)!==trustedProvenance.functionDeploymentProofSha256)b2RecoveryReject();
+      const functionProof=JSON.parse(functionProofBytes.toString('utf8'));
+      if(canonicalB2FunctionDeploymentProof(functionProof)!==functionProofBytes.toString('utf8'))b2RecoveryReject();
+      const functionManifest=manifest.resources.web_control_centers_b2_transition.contract.functions;
+      const functionManifestSha256=b2FunctionManifestSha256(functionManifest);
+      const postRows=source.edge_functions.map(row=>({name:row.name,source_sha256:row.source_sha256,status:row.status,
+        verify_jwt:row.verify_jwt,version:row.version}));
+      const attempt=verifyB2FunctionDeploymentAttempt({proof:functionProof,manifest:functionManifest,manifestSha256:functionManifestSha256});
+      if(attempt.result==='FUNCTIONS_EXECUTED')verifyB2FunctionDeploymentProof({proof:attempt,manifest:functionManifest,
+        manifestSha256:functionManifestSha256,postRows});
+      else resumeB2FunctionDeploymentAttempt({proof:attempt,manifest:functionManifest,manifestSha256:functionManifestSha256,
+        beforeRows:attempt.before,currentRows:postRows,
+        capturedAt:new Date(Math.max(Date.parse(attempt.captured_at),Date.parse(attempt.in_flight?.captured_at??attempt.captured_at))+1).toISOString()});
+    }else if(trustedProvenance.functionDeploymentProofSha256!==null)b2RecoveryReject();
     const protectedSteps = trustedProvenance.protectedSteps;
     b2Exact(protectedSteps, ['runId', 'runAttempt', 'repository', 'workflow', 'approvedSha', 'steps']);
     if (protectedSteps.runId !== source.run_id || protectedSteps.runAttempt !== source.run_attempt
       || protectedSteps.repository !== source.repository || protectedSteps.workflow !== run.path
       || protectedSteps.approvedSha !== source.source_sha || !Array.isArray(protectedSteps.steps)) b2RecoveryReject();
-    const stages = ['migrations', 'functions'];
+    const stages = ['migrations'];
+    if(hasFunctionsProof)stages.push('functions');
     let prefixEnded = false;
     for (const [observed, stage] of [['upload', 'admin_upload'], ['promote', 'admin_promote'], ['routes', 'admin_route']]) {
       if (observation.admin_web?.[observed] === 'success') {
@@ -6324,6 +6423,24 @@ export function retainB2MigrationAttemptProof({trustedProofRoot,destinationDirec
     const existing=lstatSync(destination,{throwIfNoEntry:false});
     if(existing){if(!existing.isFile()||existing.isSymbolicLink()||existing.nlink!==1||!readFileSync(destination).equals(bytes))b2RecoveryReject();}
     else writeFileSync(destination,canonicalJson(proofs),{encoding:'utf8',flag:'wx',mode:0o600});
+    const functionSource=join(trustedProofRoot,'function-deployment-proof.json');
+    const functionStat=lstatSync(functionSource,{throwIfNoEntry:false});
+    if(proofs.some(proof=>proof.stage==='functions')){
+      if(!functionStat||!functionStat.isFile()||functionStat.isSymbolicLink()||functionStat.nlink!==1
+        ||functionStat.size<1||functionStat.size>2*1024*1024)b2RecoveryReject();
+      const functionBytes=readFileSync(functionSource);
+      const functionProof=JSON.parse(functionBytes.toString('utf8'));
+      if(canonicalB2FunctionDeploymentProof(functionProof)!==functionBytes.toString('utf8'))b2RecoveryReject();
+      const functionManifest=binding.contract?.functions;
+      verifyB2FunctionDeploymentAttempt({proof:functionProof,manifest:functionManifest,
+        manifestSha256:b2FunctionManifestSha256(functionManifest)});
+      const functionDestination=join(destinationDirectory,'function-deployment-proof.json');
+      b2ProofRoot(destinationDirectory,functionDestination);
+      const functionExisting=lstatSync(functionDestination,{throwIfNoEntry:false});
+      if(functionExisting){if(!functionExisting.isFile()||functionExisting.isSymbolicLink()
+        ||functionExisting.nlink!==1||!readFileSync(functionDestination).equals(functionBytes))b2RecoveryReject();}
+      else writeFileSync(functionDestination,functionBytes,{flag:'wx',mode:0o600});
+    }
     return true;
   }catch{b2RecoveryReject();}
 }
@@ -8783,6 +8900,12 @@ export async function runCli(argv, authorityContext, inventory, recoveryRuntime,
     const releaseRequest = JSON.parse(readFileSync(values.request, 'utf8'));
     validateRequest(releaseRequest, policy);
     const manifest = JSON.parse(readFileSync(values.manifest, 'utf8'));
+    if (manifest.resources?.web_control_centers_b2_transition && !values['function-deployment-proof']) {
+      throw new Error('missing --function-deployment-proof');
+    }
+    const functionDeploymentProof = manifest.resources?.web_control_centers_b2_transition
+      ? JSON.parse(readFileSync(values['function-deployment-proof'], 'utf8'))
+      : undefined;
     const beforeEvidence = JSON.parse(readFileSync(values['pre-snapshot'], 'utf8'));
     const afterEvidence = JSON.parse(readFileSync(values['post-snapshot'], 'utf8'));
     const adapterPath = join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs');
@@ -8795,6 +8918,7 @@ export async function runCli(argv, authorityContext, inventory, recoveryRuntime,
       adapterSourceSha256: sha256Hex(readFileSync(adapterPath)),
       authorityContext,
       requestedAt: runtime.now(),
+      functionDeploymentProof,
     });
     const beforeTransactions = new Map(beforeEvidence.finance.transactions.items.map(item => [item.id, item]));
     const beforeLedger = new Set(beforeEvidence.finance.ledger_entries.items.map(item => item.id));

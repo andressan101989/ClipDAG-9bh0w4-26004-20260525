@@ -6,7 +6,14 @@ import { createHash } from 'node:crypto';
 
 import { canonicalJson } from '../scripts/nelyon-production-release.mjs';
 import { createReleaseAuthorityContext } from '../scripts/nelyon-release-authority-context.mjs';
-import { b2DatabaseFunctionMatrix, b2SyntheticRelationAclRecords } from './fixtures/nelyonB2DatabaseFunctionMatrix.mjs';
+import { b2DatabaseFunctionMatrix } from './fixtures/nelyonB2DatabaseFunctionMatrix.mjs';
+import { b2SyntheticCompleteSuccessorCatalog } from './fixtures/nelyonB2CompleteAuthorityFixture.mjs';
+import {
+  B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256,
+  B2_ADVISOR_CHANGED_OBJECT_IDENTITIES,
+  B2_AUTHORITY_RELATION_SCOPE,
+  computeB2AdvisorAuthorizations,
+} from '../scripts/nelyon-b2-authority-preparation.mjs';
 import {
   assertTrustedB2SourceParity,
   compileB2SourceParity,
@@ -20,10 +27,13 @@ const AT = '2026-11-10T12:00:00.000Z';
 const SHA = 'a'.repeat(40);
 const BASELINE = 'b'.repeat(40);
 const INTEGRATION = 'c'.repeat(40);
+const TREE = 'd'.repeat(40);
 const MIGRATION_PATH = 'supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql';
 const FUNCTION_PATH = 'supabase/functions/process-scheduled-publications/index.ts';
 const migrationBytes = readFileSync(new URL(`../${MIGRATION_PATH}`, import.meta.url));
 const hash = value => createHash('sha256').update(value).digest('hex');
+const ADVISOR_VERIFIER_SHA256 = hash(readFileSync(new URL('../scripts/nelyon-b2-authority-preparation.mjs', import.meta.url)));
+const ADVISOR_TESTS_SHA256 = hash(readFileSync(new URL('./nelyonB2AuthorityPreparation.test.mjs', import.meta.url)));
 
 function compactCanonical(value) {
   const normalize = item => Array.isArray(item) ? item.map(normalize)
@@ -31,6 +41,17 @@ function compactCanonical(value) {
       ? Object.fromEntries(Object.keys(item).sort().map(key => [key, normalize(item[key])]))
       : item;
   return JSON.stringify(normalize(value));
+}
+
+function advisorOriginFor(contract) {
+  const migration = contract.productive_changes[0];
+  return { repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525', transitionId: contract.id,
+    reviewedSourceSha: SHA, reviewedSourceTreeSha: TREE, integrationBaseSha: INTEGRATION,
+    migration: { path: MIGRATION_PATH, blob: migration.blob, sha256: migration.sha256,
+      byteLength: migration.byte_length }, changedObjectIdentities: [...B2_ADVISOR_CHANGED_OBJECT_IDENTITIES],
+    contractSha256: contract.advisor_authorization_contract_sha256,
+    verifierSha256: contract.advisor_authorization_verifier_sha256,
+    testsSha256: contract.advisor_authorization_tests_sha256 };
 }
 
 function fixture(overrides = {}) {
@@ -45,62 +66,43 @@ function fixture(overrides = {}) {
   }));
   const functionConfig = { verify_jwt: false };
   const configSha256 = hash(canonicalJson(functionConfig));
-  const relationNames = [
-    'publication_schedule_attempts',
-    'publication_schedule_commands',
-    'publication_schedule_materializations',
-    'publication_schedule_policy',
-    'publication_schedules',
-  ];
-  const relationRecords = relationNames.map(name => {
-    const value = {
-      definitionSha256: hash(`private.${name}`),
-      forceRls: true,
-      identity: `private.${name}`,
-      owner: 'postgres',
-      rls: true,
-    };
-    const expectedCanonicalJson = compactCanonical(value);
-    return { kind: 'relation', identity: value.identity, expectedCanonicalJson,
-      expectedSha256: hash(expectedCanonicalJson) };
-  });
   const advisor = {
-    attestationSha256: '1'.repeat(64),
     fingerprint: '2'.repeat(64),
     identity: `advisor:${'2'.repeat(64)}`,
-    negativeEvidenceSha256: '3'.repeat(64),
-    objectIdentity: 'function:public.synthetic_rpc', objectSha256: '0'.repeat(64),
-    originSha256: '4'.repeat(64),
+    objectIdentity: 'function:public.create_carousel_post', objectSha256: '0'.repeat(64),
     severity: 'WARN',
     type: 'rls_disabled',
   };
-  const advisorJson = compactCanonical(advisor);
   const contract = {
     id: 'web-control-centers-b2-scheduled-publishing-v1',
     to_phase: 'web-control-centers-b2',
     baseline_sha: BASELINE,
     reviewed_source_sha: SHA,
+    reviewed_source_tree_sha: TREE,
     integration_base_sha: INTEGRATION,
-    productive_changes: [{ path: MIGRATION_PATH, sha256: hash(reviewedMigration) }],
+    advisor_authorization_contract_sha256: B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256,
+    advisor_authorization_verifier_sha256: ADVISOR_VERIFIER_SHA256,
+    advisor_authorization_tests_sha256: ADVISOR_TESTS_SHA256,
+    productive_changes: [{ path: MIGRATION_PATH, blob: 'e'.repeat(40), sha256: hash(reviewedMigration),
+      byte_length: reviewedMigration.length }],
     functions: [{ name: 'process-scheduled-publications', verify_jwt: false,
       source_sha256: sourceSha256, config_sha256: configSha256 }],
   };
   const publicContractSha256 = hash(canonicalJson(contract));
+  const successorCatalog = b2SyntheticCompleteSuccessorCatalog();
+  const securityAdvisor = structuredClone(computeB2AdvisorAuthorizations({
+    baselineItems: [{ fingerprint: advisor.fingerprint, level: advisor.severity, resource_kind: advisor.type }],
+    findings: [advisor], successorCatalog,
+    origin: advisorOriginFor(contract),
+  }));
   const authority = {
     schemaVersion: 1,
     authorityId: 'web-control-centers-b2-release-authority-v1',
     publicContractSha256,
     phase: contract.to_phase,
     issuedFor: { baselineSha: BASELINE, reviewedSourceSha: SHA, integrationBaseSha: INTEGRATION },
-    successorCatalog: { schemaVersion: 1, records: [...matrix.records, ...relationRecords, ...b2SyntheticRelationAclRecords(relationRecords)]
-      .sort((left, right) => {
-        const a = `${left.kind}\0${left.identity}`, b = `${right.kind}\0${right.identity}`;
-        return a < b ? -1 : a > b ? 1 : 0;
-      }) },
-    securityAdvisor: { schemaVersion: 2, baselineSha256: hash(compactCanonical([{ fingerprint: advisor.fingerprint, level: advisor.severity, resource_kind: advisor.type }]) + '\n'), baselineItems: [{ fingerprint: advisor.fingerprint, level: advisor.severity, resource_kind: advisor.type }], records: [{
-      action: 'replace', identity: advisor.identity, expectedCanonicalJson: advisorJson,
-      expectedSha256: hash(advisorJson),
-    }] },
+    successorCatalog,
+    securityAdvisor,
     backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical',
       projectRefSha256: '6'.repeat(64), evidenceSha256: '7'.repeat(64), status: 'COMPLETED',
       insertedAt: '2026-11-10T10:00:00.000Z', completedObservedAt: '2026-11-10T10:30:00.000Z', expiresAt: '2026-11-11T10:00:00.000Z' },
@@ -108,7 +110,7 @@ function fixture(overrides = {}) {
       authorizationSha256: '8'.repeat(64), approvedAt: '2026-11-10T11:00:00.000Z',
       expiresAt: '2026-11-11T11:00:00.000Z' },
   };
-  overrides.mutateAuthority?.(authority);
+  overrides.mutateAuthority?.(authority, contract);
   const authorityJson = JSON.stringify(authority);
   const descriptor = { schema_version: 1, contract, public_contract_sha256: publicContractSha256,
     private_authority: { required: true, schema_version: 1, authority_id: authority.authorityId,
@@ -137,7 +139,8 @@ function fixture(overrides = {}) {
     functions: [{ name: 'process-scheduled-publications', deployedSha256: '9'.repeat(64) }],
   });
   return { authorityContext, manifest, descriptorBytes, reviewedTree, deployedFunctionInventory,
-    matrix, advisor, relationNames };
+    matrix, advisor: JSON.parse(authority.securityAdvisor.records[0].expectedCanonicalJson),
+    relationNames: [...B2_AUTHORITY_RELATION_SCOPE] };
 }
 
 function compileFixture(f, overrides = {}) {
@@ -166,7 +169,7 @@ test('trusted compiler derives the complete source authority from exact reviewed
   assert.deepEqual(result.databaseFunctions, f.matrix.sourceRows);
   assert.equal(result.databaseFunctions.length, 31);
   assert.deepEqual(result.databaseRelations.map(row => row.identity),
-    f.relationNames.map(name => `private.${name}`).sort());
+    f.relationNames);
   for (const row of result.databaseRelations) {
     assert.deepEqual(row.access, { public: false, anon: false, authenticated: false, service_role: false });
     assert.equal(row.owner, 'postgres');
@@ -296,10 +299,37 @@ test('every current B2 protected host entry rejects missing ACL before fetch or 
   assert.equal(fetches, 0);
 });
 
-test('Advisor v2 retain is blocked for touched objects even across overloads, but replacement is explicit', () => {
+test('production source preflight rejects arbitrary Advisor claim digests', () => {
+  const f = fixture({ mutateAuthority(authority) {
+    const record = authority.securityAdvisor.records[0];
+    const value = JSON.parse(record.expectedCanonicalJson);
+    value.attestationSha256 = 'a'.repeat(64);
+    value.negativeEvidenceSha256 = 'b'.repeat(64);
+    value.originSha256 = 'c'.repeat(64);
+    record.expectedCanonicalJson = compactCanonical(value);
+    record.expectedSha256 = hash(record.expectedCanonicalJson);
+  } });
+  assert.throws(() => sourceParityModule.verifyB2DatabaseSourcePreflight({ authorityContext: f.authorityContext,
+    manifest: f.manifest, descriptorBytes: f.descriptorBytes, migrationBytes }),
+  { code: 'B2_SOURCE_PARITY_AUTHORITY_INVALID' });
+});
+
+test('production source preflight requires every exact catalog companion and Edge inventory row', () => {
+  for (const kind of ['policy', 'trigger', 'index', 'function_inventory']) {
+    const f = fixture({ mutateAuthority(authority) {
+      const index = authority.successorCatalog.records.findIndex(row => row.kind === kind);
+      authority.successorCatalog.records.splice(index, 1);
+    } });
+    assert.throws(() => sourceParityModule.verifyB2DatabaseSourcePreflight({ authorityContext: f.authorityContext,
+      manifest: f.manifest, descriptorBytes: f.descriptorBytes, migrationBytes }),
+    { code: 'B2_SOURCE_PARITY_AUTHORITY_INVALID' });
+  }
+});
+
+test('Advisor v2 retain is blocked for touched function and relation successor sets, but deterministic replacement is explicit', () => {
   for (const kind of ['function', 'relation']) {
     for (const action of ['retain', 'replace']) {
-      const f = fixture({ mutateAuthority(authority) {
+      const f = fixture({ mutateAuthority(authority, contract) {
         const target = authority.successorCatalog.records.find(row => row.kind === kind);
         const record = authority.securityAdvisor.records[0];
         const value = JSON.parse(record.expectedCanonicalJson);
@@ -307,9 +337,16 @@ test('Advisor v2 retain is blocked for touched objects even across overloads, bu
         if (action === 'retain') {
           delete value.attestationSha256; delete value.negativeEvidenceSha256; delete value.originSha256;
           value.baselineSha256 = authority.securityAdvisor.baselineSha256;
+          record.action = action; record.expectedCanonicalJson = compactCanonical(value);
+          record.expectedSha256 = hash(record.expectedCanonicalJson);
+        } else {
+          authority.securityAdvisor = structuredClone(computeB2AdvisorAuthorizations({
+            baselineItems: authority.securityAdvisor.baselineItems,
+            findings: [Object.fromEntries(['fingerprint', 'identity', 'objectIdentity', 'objectSha256', 'severity', 'type']
+              .map(key => [key, value[key]]))], successorCatalog: authority.successorCatalog,
+            origin: advisorOriginFor(contract),
+          }));
         }
-        record.action = action; record.expectedCanonicalJson = compactCanonical(value);
-        record.expectedSha256 = hash(record.expectedCanonicalJson);
       } });
       const preflight = () => sourceParityModule.verifyB2DatabaseSourcePreflight({ authorityContext: f.authorityContext,
         manifest: f.manifest, descriptorBytes: f.descriptorBytes, migrationBytes });

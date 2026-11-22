@@ -20,10 +20,18 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import {
+  assertB2CatalogSecurityCoverage,
   compileB2SourceParity,
   createTrustedB2DeployedFunctionInventory,
   createTrustedB2ReviewedTree,
 } from '../scripts/nelyon-b2-source-parity.mjs';
+import {
+  b2FunctionManifestSha256,
+  canonicalB2FunctionDeploymentProof,
+  createB2FunctionDeploymentAttempt,
+  markB2FunctionDeploymentIntent,
+  reconcileB2FunctionDeploymentTransition,
+} from '../scripts/nelyon-b2-function-deployment-proof.mjs';
 import * as privateCli from '../scripts/nelyon-private-authority-cli.mjs';
 import {
   bootstrapPrivateAuthorityRuntime,
@@ -32,13 +40,20 @@ import {
 } from '../scripts/nelyon-private-authority-runtime.mjs';
 import { buildPrivateRuntimeClosure } from '../scripts/nelyon-private-runtime-closure.mjs';
 import {
+  B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256,
+  B2_ADVISOR_CHANGED_OBJECT_IDENTITIES,
+  computeB2AdvisorAuthorizations,
+} from '../scripts/nelyon-b2-authority-preparation.mjs';
+import {
   canonicalJson,
   retainB2MigrationAttemptProof,
   parseB2ReleaseDescriptor,
   parseFunctionConfig,
   verifyAdminRecoveryBuildBinding,
   verifyB2RecoveryOperation,
+  verifyB2PreflightAuthority,
   verifyB2ProtectedAuthority,
+  verifyB2VaultEdgeParity,
   verifyPostcheckRecovery,
 } from '../scripts/nelyon-production-release.mjs';
 import {
@@ -54,10 +69,12 @@ import {
   verifyProductionSnapshotPair,
 } from '../scripts/nelyon-production-snapshot-adapter.mjs';
 import {
+  assertAuthorityReceiptMatch,
   createReleaseAuthorityContext,
   publicAuthorityReceipt,
 } from '../scripts/nelyon-release-authority-context.mjs';
-import { b2DatabaseFunctionMatrix, b2SyntheticRelationAclRecords } from './fixtures/nelyonB2DatabaseFunctionMatrix.mjs';
+import { b2DatabaseFunctionMatrix } from './fixtures/nelyonB2DatabaseFunctionMatrix.mjs';
+import { b2SyntheticCompleteSuccessorCatalog } from './fixtures/nelyonB2CompleteAuthorityFixture.mjs';
 import { b2AdminHistoricalFixture, b2ChainedCapture, b2HistoricalCapture } from './fixtures/nelyonB2HistoricalCapture.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -255,7 +272,87 @@ function deployedRows(policy, contract, installed) {
   return rows.sort((left, right) => left.slug.localeCompare(right.slug));
 }
 
-function baseManagementFetch({ policy, contract, phase, backupMode = 'source', parity = null, databaseMatrix = null, calls = [] }) {
+function completedFunctionDeploymentProof(contract, beforeRows, afterRows) {
+  const manifest = contract.functions;
+  const manifestSha256 = b2FunctionManifestSha256(manifest);
+  const names = new Set(manifest.map(item => item.name));
+  const before = beforeRows.filter(item => names.has(item.slug));
+  const final = afterRows.filter(item => names.has(item.slug));
+  const finalByName = new Map(final.map(item => [item.slug, item]));
+  const currentByName = new Map(before.map(item => [item.slug, structuredClone(item)]));
+  const at = offset => new Date(Date.parse(SOURCE_AT) - 60_000 + offset).toISOString();
+  let offset = 0;
+  let proof = createB2FunctionDeploymentAttempt({
+    manifest,
+    manifestSha256,
+    beforeRows: before,
+    capturedAt: at(offset),
+  });
+  for (const item of manifest) {
+    offset += 1_000;
+    proof = markB2FunctionDeploymentIntent({
+      proof,
+      manifest,
+      manifestSha256,
+      beforeRows: before,
+      functionName: item.name,
+      capturedAt: at(offset),
+    });
+    currentByName.set(item.name, structuredClone(finalByName.get(item.name)));
+    offset += 1_000;
+    proof = reconcileB2FunctionDeploymentTransition({
+      proof,
+      manifest,
+      manifestSha256,
+      beforeRows: before,
+      afterRows: [...currentByName.values()],
+      functionName: item.name,
+      commandSucceeded: true,
+      capturedAt: at(offset),
+    });
+  }
+  return proof;
+}
+
+function finalSlugUncertainFunctionDeploymentProof(contract, beforeRows, afterRows) {
+  const manifest = contract.functions;
+  const manifestSha256 = b2FunctionManifestSha256(manifest);
+  const names = new Set(manifest.map(item => item.name));
+  const before = beforeRows.filter(item => names.has(item.slug));
+  const final = afterRows.filter(item => names.has(item.slug));
+  const finalByName = new Map(final.map(item => [item.slug, item]));
+  const currentByName = new Map(before.map(item => [item.slug, structuredClone(item)]));
+  const at = offset => new Date(Date.parse(SOURCE_AT) - 60_000 + offset).toISOString();
+  let proof = createB2FunctionDeploymentAttempt({ manifest, manifestSha256, beforeRows: before, capturedAt: at(0) });
+  for (const [index, item] of manifest.entries()) {
+    proof = markB2FunctionDeploymentIntent({
+      proof,
+      manifest,
+      manifestSha256,
+      beforeRows: before,
+      functionName: item.name,
+      capturedAt: at((index * 2 + 1) * 1_000),
+    });
+    currentByName.set(item.name, structuredClone(finalByName.get(item.name)));
+    proof = reconcileB2FunctionDeploymentTransition({
+      proof,
+      manifest,
+      manifestSha256,
+      beforeRows: before,
+      afterRows: [...currentByName.values()],
+      functionName: item.name,
+      commandSucceeded: index < manifest.length - 1,
+      capturedAt: at((index * 2 + 2) * 1_000),
+    });
+  }
+  assert.equal(proof.result, 'INCOMPLETE');
+  assert.equal(proof.receipts.length, 7);
+  assert.equal(proof.in_flight?.name, manifest.at(-1).name);
+  return proof;
+}
+
+function baseManagementFetch({ policy, contract, phase, backupMode = 'source', parity = null,
+  successorCatalog = null, databaseMatrix = null, calls = [] }) {
   return async (input, options = {}) => {
     const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
     calls.push({ url, method: options.method ?? input?.method ?? 'GET', headers: options.headers ?? input?.headers });
@@ -291,11 +388,11 @@ function baseManagementFetch({ policy, contract, phase, backupMode = 'source', p
       if (query.includes('nelyon-premium-postcheck-state-v1')) return jsonResponse([{ snapshot: premiumState() }], 201);
       if (query.includes('nelyon-b2-catalog-v1')) {
         assert.ok(parity(), 'post/recovery catalog requires branded parity-derived fixture');
-        const identities = [...query.match(/= any\(array\[([\s\S]+?)\]::text\[\]\)/)[1]
-          .matchAll(/'([^']+)'/g)].map(match => match[1]);
-        const selected = databaseMatrix.catalog.filter(row => identities.includes(row.value.identity));
-        const relations = parity().databaseRelations.map(({ acl: ignoredAcl, access: ignoredAccess, ...value }) => ({ kind: 'relation', value }));
-        return jsonResponse([...relations, ...selected], 201);
+        const catalog = successorCatalog?.();
+        assert.ok(catalog, 'post/recovery catalog requires exact successor catalog fixture');
+        return jsonResponse(catalog.records
+          .filter(record => ['function', 'relation', 'policy', 'trigger', 'index', 'cron_job'].includes(record.kind))
+          .map(record => ({ kind: record.kind, value: JSON.parse(record.expectedCanonicalJson) })), 201);
       }
       if (query === RPC_SECURITY_ATTESTATION_SQL) {
         const requested = JSON.parse(queryRequest.parameters?.[0] ?? '[]');
@@ -449,7 +546,11 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
   contract.release_ready = true;
   contract.baseline_sha = policy.baseline.sha;
   contract.reviewed_source_sha = baseRequest().approvedSha;
+  contract.reviewed_source_tree_sha = 'c'.repeat(40);
   contract.integration_base_sha = 'b'.repeat(40);
+  contract.advisor_authorization_contract_sha256 = B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256;
+  contract.advisor_authorization_verifier_sha256 = sha256(readFileSync(join(ROOT, 'scripts', 'nelyon-b2-authority-preparation.mjs')));
+  contract.advisor_authorization_tests_sha256 = sha256(readFileSync(join(ROOT, 'tests', 'nelyonB2AuthorityPreparation.test.mjs')));
   contract.function_inventory = { before: policy.supabase.expected_remote_function_count,
     after: policy.supabase.expected_remote_function_count + 1 };
   const functionConfig = parseFunctionConfig(gitBytes('supabase/config.toml').toString('utf8'));
@@ -473,9 +574,10 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
   let phase = 'pre';
   let backupMode = 'source';
   let compiledParity = null;
+  let activeSuccessorCatalog = null;
   const databaseMatrix = b2DatabaseFunctionMatrix();
   const initialFetch = baseManagementFetch({ policy, contract, phase: () => phase, backupMode: () => backupMode,
-    parity: () => compiledParity, databaseMatrix });
+    parity: () => compiledParity, successorCatalog: () => activeSuccessorCatalog, databaseMatrix });
   const legacy = await captureProductionSnapshot({ phase: 'pre', policy, request: baseRequest(), manifest,
     token: 'synthetic-supabase-token', fetchImpl: initialFetch, observedAt: '2026-10-12T12:00:00.000Z',
     adapterSourceSha256: manifest.compiler.snapshot_adapter_sha256 });
@@ -506,10 +608,26 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     origin_main_sha: baseRequest().approvedSha };
 
   const privateMarker = 'PRIVATE_B2_E2E_AUTHORITY_MARKER';
-  const markerCanonical = canonicalJson({
-    definitionSha256: '1'.repeat(64), forceRls: true,
-    identity: 'private.PRIVATE_B2_E2E_AUTHORITY_MARKER', owner: privateMarker, rls: true,
-  }).trimEnd();
+  const migrationChange = contract.productive_changes.find(change => (
+    change.path === 'supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql'
+  ));
+  const successorCatalog = b2SyntheticCompleteSuccessorCatalog({ functionInventory: contract.functions.map(item => ({
+    identity: item.name, verifyJwt: item.verify_jwt,
+    sourceSha256: item.source_sha256, configSha256: item.config_sha256,
+  })) });
+  const advisorOrigin = {
+    repository: policy.repository,
+    transitionId: contract.id,
+    reviewedSourceSha: contract.reviewed_source_sha,
+    reviewedSourceTreeSha: contract.reviewed_source_tree_sha,
+    integrationBaseSha: contract.integration_base_sha,
+    migration: { path: migrationChange.path, blob: migrationChange.blob, sha256: migrationChange.sha256,
+      byteLength: migrationChange.byte_length },
+    changedObjectIdentities: B2_ADVISOR_CHANGED_OBJECT_IDENTITIES,
+    contractSha256: contract.advisor_authorization_contract_sha256,
+    verifierSha256: contract.advisor_authorization_verifier_sha256,
+    testsSha256: contract.advisor_authorization_tests_sha256,
+  };
   const authority = {
     schemaVersion: 1,
     authorityId: 'web-control-centers-b2-release-authority-v1',
@@ -517,9 +635,9 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     phase: contract.to_phase,
     issuedFor: { baselineSha: contract.baseline_sha, reviewedSourceSha: contract.reviewed_source_sha,
       integrationBaseSha: contract.integration_base_sha },
-    successorCatalog: { schemaVersion: 1, records: [{ kind: 'relation', identity: `private.${privateMarker}`,
-      expectedCanonicalJson: markerCanonical, expectedSha256: sha256(markerCanonical) }] },
-    securityAdvisor: { schemaVersion: 2, baselineSha256: legacy.cron_security.advisors.sha256, baselineItems: legacy.cron_security.advisors.items, records: [] },
+    successorCatalog,
+    securityAdvisor: computeB2AdvisorAuthorizations({ baselineItems: legacy.cron_security.advisors.items,
+      findings: [], successorCatalog, origin: advisorOrigin }),
     backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical',
       projectRefSha256: sha256(policy.supabase.project_ref), evidenceSha256: sha256(canonicalJson(legacy.backup)),
       status: 'COMPLETED', insertedAt: legacy.backup.inserted_at, completedObservedAt: legacy.observed_at,
@@ -529,33 +647,7 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
       authorizationSha256: '5'.repeat(64), approvedAt: legacy.observed_at,
       expiresAt: '2026-10-13T11:00:00.000Z' },
   };
-  const scheduleRelations = [
-    'public.media_asset_links',
-    'public.media_assets',
-    'private.publication_schedule_attempts',
-    'private.publication_schedule_commands',
-    'private.publication_schedule_materializations',
-    'private.publication_schedule_policy',
-    'private.publication_schedules',
-  ].map(identity => {
-    const expectedCanonicalJson = canonicalJson({ definitionSha256: sha256(identity), forceRls: true,
-      identity, owner: 'postgres', rls: true }).trimEnd();
-    return { kind: 'relation', identity, expectedCanonicalJson, expectedSha256: sha256(expectedCanonicalJson) };
-  });
-  const functionInventoryRecords = contract.functions.map(item => {
-    const expectedCanonicalJson = canonicalJson({ configSha256: item.config_sha256,
-      identity: item.name, sourceSha256: item.source_sha256, verifyJwt: item.verify_jwt }).trimEnd();
-    return { kind: 'function_inventory', identity: item.name, expectedCanonicalJson,
-      expectedSha256: sha256(expectedCanonicalJson) };
-  });
-  authority.successorCatalog.records.push(...databaseMatrix.records, ...scheduleRelations,
-    ...functionInventoryRecords);
-  authority.successorCatalog.records.push(...b2SyntheticRelationAclRecords(authority.successorCatalog.records));
-  authority.successorCatalog.records.sort((left, right) => {
-    const leftKey = `${left.kind}\0${left.identity}`;
-    const rightKey = `${right.kind}\0${right.identity}`;
-    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-  });
+  activeSuccessorCatalog = authority.successorCatalog;
   for (let index = 1; index < authority.successorCatalog.records.length; index += 1) {
     const previous = authority.successorCatalog.records[index - 1];
     const current = authority.successorCatalog.records[index];
@@ -574,10 +666,18 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     expectedPrivateAuthoritySha256: sha256(authorityBytes) };
   const expectedContext = createReleaseAuthorityContext(contextArgs);
   const expectedReceipt = publicAuthorityReceipt(expectedContext);
-  for (const privateMetadata of [authority.vaultEdgeParity.vault.revision, authority.vaultEdgeParity.edge.provisioningGeneration,
-    authority.vaultEdgeParity.changeFreezeId, authority.vaultEdgeParity.vault.secretVersion]) {
-    assert.equal(JSON.stringify(expectedReceipt).includes(privateMetadata), false);
+  assert.deepEqual(Object.keys(authority.vaultEdgeParity), [
+    'schemaVersion', 'projectRef', 'functionName', 'mechanism', 'result', 'observationId',
+    'vault', 'edge', 'observedAt', 'expiresAt',
+  ]);
+  assert.deepEqual(Object.keys(authority.vaultEdgeParity.vault), ['secretName']);
+  assert.deepEqual(Object.keys(authority.vaultEdgeParity.edge), ['secretName']);
+  for (const removedField of ['revision', 'secretVersion', 'provisioningGeneration', 'changeFreezeId']) {
+    assert.equal(Object.hasOwn(authority.vaultEdgeParity, removedField), false);
+    assert.equal(Object.hasOwn(authority.vaultEdgeParity.vault, removedField), false);
+    assert.equal(Object.hasOwn(authority.vaultEdgeParity.edge, removedField), false);
   }
+  assert.equal(JSON.stringify(expectedReceipt).includes(authority.vaultEdgeParity.observationId), false);
   manifest.resources.web_control_centers_b2_transition = { contract, descriptorSha256: sha256(descriptorBytes),
     publicContractSha256: authority.publicContractSha256, expectedPrivateAuthoritySha256: sha256(authorityBytes),
     privateAuthorityRequired: true };
@@ -643,7 +743,7 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
   assert.equal(compiledParity.manifestSha256, sha256(canonicalJson(manifest)));
   const calls = [];
   let managementFetch = baseManagementFetch({ policy, contract, phase: () => phase, backupMode: () => backupMode,
-    parity: () => compiledParity, databaseMatrix, calls });
+    parity: () => compiledParity, successorCatalog: () => activeSuccessorCatalog, databaseMatrix, calls });
   const currentFetch = async (input, options) => {
     const request = input instanceof Request ? input : null;
     const url = request?.url ?? String(input);
@@ -659,9 +759,87 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
   phase = 'authority';
   assert.doesNotThrow(() => parseB2ReleaseDescriptor(descriptorBytes, sha256(descriptorBytes)),
     'synthetic approved descriptor parses under the production schema');
+  assert.doesNotThrow(() => verifyB2VaultEdgeParity(expectedContext, SOURCE_AT),
+    'synthetic protected parity remains current');
+  assert.doesNotThrow(() => assertB2CatalogSecurityCoverage(expectedContext),
+    'synthetic protected catalog retains ACL companions');
+  assert.equal(manifest.baseline.sha, contract.baseline_sha);
+  assert.match(manifest.identity.approved_sha, /^[0-9a-f]{40}$/);
+  assert.deepEqual(manifest.resources.functions, [
+    'ai-handoff', 'cleanup-stale-media-uploads', 'content-safety-scan', 'create-media-upload',
+    'finalize-media-upload', 'get-media-url', 'process-scheduled-publications', 'video-semantic-index',
+  ]);
+  assert.equal(manifest.delta.productive_change_count, 5);
+  assert.deepEqual(manifest.delta.files.filter(item => item.path.startsWith('supabase/'))
+    .map(({ path, status, file_type }) => ({ path, status, type: file_type })),
+  contract.productive_changes.map(({ path, status }) => ({ path, status, type: 'file' })));
+  assert.equal(manifest.resources.migrations.length, 1);
+  for (const key of ['path', 'blob', 'sha256', 'byte_length']) {
+    assert.equal(manifest.resources.migrations[0][key], contract.productive_changes.at(-1)[key], key);
+  }
+  assert.equal(manifest.resources.function_contracts.length, contract.functions.length);
+  for (const [index, actual] of manifest.resources.function_contracts.entries()) {
+    const expected = contract.functions[index];
+    assert.equal(actual.name, expected.name, `${actual.name} name`);
+    assert.equal(actual.verify_jwt, expected.verify_jwt, `${actual.name} verify_jwt`);
+    assert.equal(actual.source_changed, true, `${actual.name} source_changed`);
+    assert.equal(actual.source_sha256, expected.source_sha256, `${actual.name} source_sha256`);
+    assert.equal(sha256(canonicalJson({ entrypoint: actual.entrypoint, import_map: actual.import_map,
+      source_files: actual.source_files })), actual.source_sha256, `${actual.name} canonical source`);
+    assert.deepEqual(Object.keys(actual).sort(), [
+      'entrypoint', 'import_map', 'name', 'source_changed', 'source_files', 'source_sha256', 'verify_jwt',
+    ]);
+  }
+  assert.equal(expectedReceipt.bindingSha256, sha256(canonicalJson({ schemaVersion: 1,
+    authorityId: descriptor.private_authority.authority_id, transitionId: contract.id,
+    baselineSha: contract.baseline_sha, reviewedSourceSha: contract.reviewed_source_sha,
+    publicContractSha256: authority.publicContractSha256, descriptorSha256: sha256(descriptorBytes),
+    privateAuthoritySha256: sha256(authorityBytes),
+  })));
+  assert.equal(expectedContext.descriptor.contract.state, 'approved');
+  const canonicalContextDescriptor = canonicalJson(expectedContext.descriptor);
+  assert.doesNotThrow(() => parseB2ReleaseDescriptor(canonicalContextDescriptor,
+    sha256(canonicalContextDescriptor)), 'canonical authenticated descriptor reparses');
+  assert.deepEqual(manifest.resources.web_control_centers_b2_transition, {
+    contract: expectedContext.descriptor.contract,
+    descriptorSha256: expectedContext.descriptorSha256,
+    publicContractSha256: expectedContext.descriptor.public_contract_sha256,
+    expectedPrivateAuthoritySha256: expectedContext.descriptor.private_authority.sha256,
+    privateAuthorityRequired: true,
+  });
+  assert.ok(Date.parse(SOURCE_AT) >= Date.parse(authority.backup.completedObservedAt));
+  assert.ok(Date.parse(SOURCE_AT) < Date.parse(authority.backup.expiresAt));
+  assert.ok(Date.parse(SOURCE_AT) >= Date.parse(authority.approval.approvedAt));
+  assert.ok(Date.parse(SOURCE_AT) < Date.parse(authority.approval.expiresAt));
+  assert.doesNotThrow(() => assertAuthorityReceiptMatch(expectedReceipt, {
+    ...expectedReceipt,
+    bindingSha256: expectedReceipt.bindingSha256,
+    descriptorSha256: manifest.resources.web_control_centers_b2_transition.descriptorSha256,
+    publicContractSha256: manifest.resources.web_control_centers_b2_transition.publicContractSha256,
+    privateAuthoritySha256: manifest.resources.web_control_centers_b2_transition.expectedPrivateAuthoritySha256,
+  }));
+  assert.doesNotThrow(() => verifyB2PreflightAuthority({ manifest, authorityContext: expectedContext,
+    requestedAt: SOURCE_AT }), 'synthetic protected preflight authority remains valid');
   assert.doesNotThrow(() => verifyB2ProtectedAuthority({ manifest, authorityContext: expectedContext,
     inventory: { schemaVersion: 1, complete: true, capturedAt: SOURCE_AT,
       names: deployedRows(policy, contract, false).map(item => item.slug) }, requestedAt: SOURCE_AT }));
+  {
+    const finalRows = deployedRows(policy, contract, true);
+    const pendingFinalProof = finalSlugUncertainFunctionDeploymentProof(
+      contract,
+      deployedRows(policy, contract, false),
+      finalRows,
+    );
+    assert.doesNotThrow(() => verifyB2ProtectedAuthority({
+      manifest,
+      authorityContext: expectedContext,
+      inventory: { schemaVersion: 1, complete: true, capturedAt: SOURCE_AT,
+        names: finalRows.map(item => item.slug) },
+      requestedAt: SOURCE_AT,
+      functionDeploymentProof: pendingFinalProof,
+      functionRows: finalRows,
+    }), 'authenticated final-slug recovery accepts only the exact eight-row live inventory');
+  }
   const host = privateCli.createPrivateAuthorityProductionHost({ publicInputs: currentPublicInputs,
     environment, fetchImpl: currentFetch, repositoryRoot: approvedRoot, recoveryRuntime: null });
   const runtime = createPrivateAuthorityRuntime({ bootstrapCapability, environment, fetchImpl: currentFetch,
@@ -748,6 +926,14 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     assert.equal(JSON.parse(readFileSync(applied.output)).result,'MIGRATIONS_EXECUTED');
     assert.equal(JSON.parse(readFileSync(join(migrationRoot,'protected-stage-proofs.json')))[0].stage,'migrations');
     assert.equal(mints,3);assert.equal(executions,3);
+    const blockedCheckpointPath=join(migrationRoot,'function-deployment-proof.json');
+    mkdirSync(blockedCheckpointPath);
+    const blockedCheckpoint=await invoke('deploy-functions','checkpoint-unavailable');
+    assert.notEqual(blockedCheckpoint.code,0);
+    assert.deepEqual(JSON.parse(readFileSync(join(migrationRoot,'protected-stage-proofs.json'))).map(item=>item.stage),
+      ['migrations'], 'functions stage must not publish before its durable checkpoint exists');
+    rmSync(blockedCheckpointPath,{recursive:true,force:false});
+    assert.equal(mints,3);assert.equal(executions,3);
     assert.notEqual((await invoke('apply-migrations','duplicate-apply')).code,0);assert.equal(mints,3);assert.equal(executions,3);
     const failureRoot=join(root,'failed-attempt'),failurePublic=join(failureRoot,'nelyon-private-authority-public'),failureGate=join(failureRoot,'gate-evidence');
     mkdirSync(failurePublic,{recursive:true});mkdirSync(failureGate);
@@ -761,6 +947,18 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     assert.equal(retained[0].stage,'migrations');assert.equal(Object.hasOwn(retained[0],'complete'),false);
     assert.equal(mints,5);assert.equal(executions,5);
 
+  });
+
+  const functionDeploymentProof = completedFunctionDeploymentProof(
+    contract,
+    deployedRows(policy, contract, false),
+    deployedRows(policy, contract, true),
+  );
+  const functionDeploymentProofPath = join(root, 'nelyon-private-authority-public',
+    'function-deployment-proof.json');
+  writeFileSync(functionDeploymentProofPath, canonicalB2FunctionDeploymentProof(functionDeploymentProof), {
+    encoding: 'utf8',
+    flag: 'wx',
   });
 
   await t.test('junction stage input cannot escape RUNNER_TEMP', async () => {
@@ -782,7 +980,7 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
   const post = JSON.parse(readFileSync(postPath));
   const postcheck = verifyProductionSnapshotPair({ pre, post, policy, request: releaseRequest, manifest,
     adapterSourceSha256: manifest.compiler.snapshot_adapter_sha256, authorityContext: runtimeContext,
-    requestedAt: SOURCE_AT });
+    functionDeploymentProof, requestedAt: SOURCE_AT });
   assert.deepEqual(postcheck.receipt, expectedReceipt);
   assert.ok(Object.values(postcheck.checks).every(value => value === true));
 
@@ -882,13 +1080,14 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     verifiedPostcheck = verifyProductionSnapshotPair({ pre: verifiedPre, post: verifiedPost,
       policy: verifiedPolicy, request: releaseRequest, manifest,
       adapterSourceSha256: manifest.compiler.snapshot_adapter_sha256, authorityContext: runtimeContext,
-      requestedAt: SOURCE_AT });
+      functionDeploymentProof, requestedAt: SOURCE_AT });
   }, 'the exact tracked-policy projection validates before controller dispatch');
   const controllerPostcheckPath = join(root, 'controller-postcheck.json');
   await assert.doesNotReject(verifiedController.execute(runtimeInvocation('postcheck', verifiedPaths, {
     manifest: join(paths.bundle, 'manifest.json'),
     preSnapshot: verifiedPrePath,
     postSnapshot: verifiedPostPath,
+    functionDeploymentProof: functionDeploymentProofPath,
     stageOutput: controllerPostcheckPath,
   })), 'postcheck through the production controller and protected release CLI');
   assert.deepEqual(JSON.parse(readFileSync(controllerPostcheckPath)), verifiedPostcheck);
@@ -949,7 +1148,7 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
   const exactHistoricalFile = relativePath => historicalFiles.get(relativePath) ?? null;
   const recoveryCalls = [];
   managementFetch = baseManagementFetch({ policy: recoveryPolicy, contract, phase: () => phase, backupMode: () => backupMode,
-    parity: () => compiledParity, databaseMatrix, calls: recoveryCalls });
+    parity: () => compiledParity, successorCatalog: () => activeSuccessorCatalog, databaseMatrix, calls: recoveryCalls });
   const recoveryFetch = async (input, options) => {
     const request = input instanceof Request ? input : null;
     const url = request?.url ?? String(input);
@@ -1129,11 +1328,15 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
         relation: 'public.media_asset_links',
         command: row.command,
         roles: row.roles,
-        using: row.qual.replace(/\r\n?|\n/g, ' '),
-        check: row.with_check?.replace(/\r\n?|\n/g, ' ') ?? null,
+        usingSha256: row.qual === null ? null : sha256(row.qual),
+        checkSha256: row.with_check === null ? null : sha256(row.with_check),
       }).trimEnd();
-      realAuthority.successorCatalog.records.push({ kind: 'policy', identity,
-        expectedCanonicalJson, expectedSha256: sha256(expectedCanonicalJson) });
+      const recordIndex = realAuthority.successorCatalog.records.findIndex(record => (
+        record.kind === 'policy' && record.identity === identity
+      ));
+      assert.notEqual(recordIndex, -1, `the complete successor catalog contains ${identity}`);
+      realAuthority.successorCatalog.records[recordIndex] = { kind: 'policy', identity,
+        expectedCanonicalJson, expectedSha256: sha256(expectedCanonicalJson) };
     }
     realAuthority.successorCatalog.records.sort((left, right) => {
       const leftKey = `${left.kind}\0${left.identity}`;

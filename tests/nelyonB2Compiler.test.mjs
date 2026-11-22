@@ -1,5 +1,5 @@
 import { syntheticVaultEdgeParity } from './fixtures/nelyonB2SyntheticVaultEdgeParity.mjs';
-import { b2SyntheticRelationAclRecords } from './fixtures/nelyonB2DatabaseFunctionMatrix.mjs';
+import { b2SyntheticCompleteSuccessorCatalog } from './fixtures/nelyonB2CompleteAuthorityFixture.mjs';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { readFileSync, readdirSync, mkdtempSync, writeFileSync, existsSync } from 'node:fs';
@@ -8,6 +8,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { buildPrivateRuntimeClosure } from '../scripts/nelyon-private-runtime-closure.mjs';
+import {
+  B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256,
+  B2_ADVISOR_CHANGED_OBJECT_IDENTITIES,
+  computeB2AdvisorAuthorizations,
+} from '../scripts/nelyon-b2-authority-preparation.mjs';
 import * as gate from '../scripts/nelyon-production-release.mjs';
 import { createReleaseAuthorityContext } from '../scripts/nelyon-release-authority-context.mjs';
 
@@ -38,24 +43,37 @@ function fixture(at = AT, backupLifetimeHours = 22, approvalLifetimeHours = 23) 
   const affectedFunctions = c.functions.map(f => f.name);
   const contracts = gate.buildFunctionContracts({ affectedFunctions, graph, configBefore, configAfter, changes });
   c.state = 'approved'; c.release_ready = true; c.cron_activation = true;
-  c.reviewed_source_sha = 'a'.repeat(40); c.integration_base_sha = 'b'.repeat(40);
+  c.reviewed_source_sha = 'a'.repeat(40); c.reviewed_source_tree_sha = 'c'.repeat(40);
+  c.integration_base_sha = 'b'.repeat(40);
+  c.advisor_authorization_contract_sha256 = B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256;
+  c.advisor_authorization_verifier_sha256 = hash(readFileSync(new URL('scripts/nelyon-b2-authority-preparation.mjs', root)));
+  c.advisor_authorization_tests_sha256 = hash(readFileSync(new URL('tests/nelyonB2AuthorityPreparation.test.mjs', root)));
   c.function_inventory = { before: 34, after: 35 };
   for (const f of c.functions) {
     f.source_sha256 = contracts.find(item => item.name === f.name).source_sha256;
     f.config_sha256 = hash(gate.canonicalJson(configAfter[f.name]));
   }
   descriptor.public_contract_sha256 = hash(gate.canonicalJson(c));
-  const expectedCanonicalJson = JSON.stringify({ definitionSha256: '1'.repeat(64), forceRls: true,
-    identity: 'private.synthetic', owner: MARKER, rls: true });
+  const successorCatalog = b2SyntheticCompleteSuccessorCatalog({ functionInventory: c.functions.map(item => ({
+    identity: item.name, verifyJwt: item.verify_jwt,
+    sourceSha256: item.source_sha256, configSha256: item.config_sha256,
+  })) });
+  const migration = c.productive_changes.find(change => change.path.endsWith('_scheduled_publishing.sql'));
+  const advisorOrigin = { repository: policy.repository, transitionId: c.id,
+    reviewedSourceSha: c.reviewed_source_sha, reviewedSourceTreeSha: c.reviewed_source_tree_sha,
+    integrationBaseSha: c.integration_base_sha,
+    migration: { path: migration.path, blob: migration.blob, sha256: migration.sha256, byteLength: migration.byte_length },
+    changedObjectIdentities: B2_ADVISOR_CHANGED_OBJECT_IDENTITIES,
+    contractSha256: c.advisor_authorization_contract_sha256,
+    verifierSha256: c.advisor_authorization_verifier_sha256, testsSha256: c.advisor_authorization_tests_sha256 };
   const authority = { schemaVersion: 1, authorityId: descriptor.private_authority.authority_id,
     publicContractSha256: descriptor.public_contract_sha256, phase: c.to_phase,
     issuedFor: { baselineSha: c.baseline_sha, reviewedSourceSha: c.reviewed_source_sha, integrationBaseSha: c.integration_base_sha },
-    successorCatalog: { schemaVersion: 1, records: [{ kind: 'relation', identity: 'private.synthetic', expectedCanonicalJson, expectedSha256: hash(expectedCanonicalJson) }] },
-    securityAdvisor: { schemaVersion: 2, baselineSha256: hash('[]\n'), baselineItems: [], records: [] },
+    successorCatalog,
+    securityAdvisor: computeB2AdvisorAuthorizations({ baselineItems: [], findings: [], successorCatalog, origin: advisorOrigin }),
     backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical', projectRefSha256: '3'.repeat(64), evidenceSha256: '4'.repeat(64), status: 'COMPLETED', insertedAt: new Date(Date.parse(at) - 7200000).toISOString(), completedObservedAt: new Date(Date.parse(at) - 5400000).toISOString(), expiresAt: new Date(Date.parse(at) + backupLifetimeHours * 3600000).toISOString() },
     vaultEdgeParity: syntheticVaultEdgeParity(new Date(Date.parse(at) - 3_600_000).toISOString()),
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: [c.to_phase], authorizationSha256: '5'.repeat(64), approvedAt: new Date(Date.parse(at) - 3600000).toISOString(), expiresAt: new Date(Date.parse(at) + approvalLifetimeHours * 3600000).toISOString() } };
-  authority.successorCatalog.records.push(...b2SyntheticRelationAclRecords(authority.successorCatalog.records));
   const authorityJson = JSON.stringify(authority);
   descriptor.private_authority.sha256 = hash(authorityJson);
   const descriptorBytes = JSON.stringify(descriptor);

@@ -1,9 +1,14 @@
-import { createHash } from 'node:crypto';
+import { Buffer } from 'node:buffer';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { publicAuthorityReceipt, assertAuthorityReceiptMatch } from './nelyon-release-authority-context.mjs';
 import { assertTrustedB2SourceParity, assertB2CatalogSecurityCoverage } from './nelyon-b2-source-parity.mjs';
+import {
+  b2FunctionManifestSha256,
+  verifyB2FunctionDeploymentProof,
+} from './nelyon-b2-function-deployment-proof.mjs';
 import { types } from 'node:util';
 // Deliberate function-only ESM edge: source provenance is minted solely by the
 // compiler's artifact verifier. Neither module invokes this edge at import time.
@@ -413,6 +418,105 @@ function b2AdvisorFacts(lint, actual) {
     type: actual.resource_kind, severity: actual.level, objectSha256: sha256(canonicalJson(stable.metadata)) };
 }
 
+const B2_EXISTING_EDGE_SCOPE = Object.freeze([
+  'ai-handoff',
+  'cleanup-stale-media-uploads',
+  'content-safety-scan',
+  'create-media-upload',
+  'finalize-media-upload',
+  'get-media-url',
+  'video-semantic-index',
+]);
+
+function verifyB2AuthorityFunctionInventory(inventory) {
+  exactKeys(inventory, ['schemaVersion', 'complete', 'count', 'items', 'sha256'], 'INVALID_AUTHORITY_OBSERVATION');
+  if (inventory.schemaVersion !== 1 || inventory.complete !== true || !Number.isSafeInteger(inventory.count)
+    || inventory.count < B2_EXISTING_EDGE_SCOPE.length || !Array.isArray(inventory.items)
+    || inventory.count !== inventory.items.length || !HASH_PATTERN.test(inventory.sha256 ?? '')) {
+    fail('INVALID_AUTHORITY_OBSERVATION', 'authority Edge function inventory is invalid');
+  }
+  const names = new Set();
+  let previous = '';
+  for (const item of inventory.items) {
+    exactKeys(item, ['slug', 'status', 'version', 'verify_jwt', 'ezbr_sha256'], 'INVALID_AUTHORITY_OBSERVATION');
+    if (typeof item.slug !== 'string' || item.slug.length === 0 || item.slug <= previous || names.has(item.slug)
+      || item.status !== 'ACTIVE' || !Number.isSafeInteger(item.version) || item.version < 1
+      || typeof item.verify_jwt !== 'boolean' || !HASH_PATTERN.test(item.ezbr_sha256 ?? '')) {
+      fail('INVALID_AUTHORITY_OBSERVATION', 'authority Edge function inventory row is invalid');
+    }
+    names.add(item.slug);
+    previous = item.slug;
+  }
+  if (names.has('process-scheduled-publications')
+    || B2_EXISTING_EDGE_SCOPE.some(name => !names.has(name))
+    || inventory.sha256 !== sha256(canonicalJson(inventory.items))) {
+    fail('INVALID_AUTHORITY_OBSERVATION', 'authority Edge function inventory is not the B2 prestate');
+  }
+  return inventory;
+}
+
+export function normalizeB2AuthorityFunctionInventory(body) {
+  const normalized = normalizeFunctions(body);
+  return verifyB2AuthorityFunctionInventory({ schemaVersion: 1, ...normalized });
+}
+
+function verifyB2AuthoritySecurityAdvisor(advisor) {
+  exactKeys(advisor, ['schemaVersion', 'baselineSha256', 'baselineItems', 'findings'], 'INVALID_AUTHORITY_OBSERVATION');
+  if (advisor.schemaVersion !== 1 || !HASH_PATTERN.test(advisor.baselineSha256 ?? '')
+    || !Array.isArray(advisor.baselineItems) || !Array.isArray(advisor.findings)
+    || advisor.baselineItems.length !== advisor.findings.length) {
+    fail('INVALID_AUTHORITY_OBSERVATION', 'authority Security Advisor evidence is invalid');
+  }
+  const items = new Map();
+  let previousFingerprint = '';
+  for (const item of advisor.baselineItems) {
+    exactKeys(item, ['fingerprint', 'level', 'resource_kind'], 'INVALID_AUTHORITY_OBSERVATION');
+    if (!HASH_PATTERN.test(item.fingerprint ?? '') || item.fingerprint <= previousFingerprint
+      || typeof item.level !== 'string' || item.level.length === 0
+      || typeof item.resource_kind !== 'string' || item.resource_kind.length === 0) {
+      fail('INVALID_AUTHORITY_OBSERVATION', 'authority Security Advisor baseline is invalid');
+    }
+    items.set(item.fingerprint, item);
+    previousFingerprint = item.fingerprint;
+  }
+  if (advisor.baselineSha256 !== sha256(canonicalJson(advisor.baselineItems))) {
+    fail('INVALID_AUTHORITY_OBSERVATION', 'authority Security Advisor baseline digest is invalid');
+  }
+  let previousIdentity = '';
+  for (const finding of advisor.findings) {
+    exactKeys(finding, [
+      'fingerprint', 'identity', 'objectIdentity', 'type', 'severity', 'objectSha256',
+    ], 'INVALID_AUTHORITY_OBSERVATION');
+    const item = items.get(finding.fingerprint);
+    if (!item || finding.identity !== `advisor:${finding.fingerprint}` || finding.identity <= previousIdentity
+      || !/^(?:auth:[A-Za-z0-9_-]+|(?:function|relation):[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)$/u
+        .test(finding.objectIdentity ?? '')
+      || finding.type !== item.resource_kind || finding.severity !== item.level
+      || !HASH_PATTERN.test(finding.objectSha256 ?? '')) {
+      fail('INVALID_AUTHORITY_OBSERVATION', 'authority Security Advisor finding is invalid');
+    }
+    previousIdentity = finding.identity;
+  }
+  return advisor;
+}
+
+export function normalizeB2AuthoritySecurityAdvisor(body) {
+  const normalized = normalizeSecurityAdvisors(body);
+  const findings = securityAdvisorFindings(body).map(lint => {
+    const stable = stableAdvisorValue(lint);
+    const fingerprint = sha256(canonicalJson(stable));
+    const actual = normalized.items.find(item => item.fingerprint === fingerprint);
+    if (!actual) fail('INVALID_AUTHORITY_OBSERVATION', 'authority Security Advisor finding is incomplete');
+    return b2AdvisorFacts(lint, actual);
+  }).sort((left, right) => left.identity.localeCompare(right.identity));
+  return verifyB2AuthoritySecurityAdvisor({
+    schemaVersion: 1,
+    baselineSha256: normalized.sha256,
+    baselineItems: normalized.items,
+    findings,
+  });
+}
+
 export function verifyB2AdvisorPrestate(body, authorityContext) {
   try {
     publicAuthorityReceipt(authorityContext);
@@ -471,7 +575,33 @@ const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const GET_TIMEOUT_MS = 15_000;
 const SQL_TIMEOUT_MS = 60_000;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
+const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
+const AUTHORITY_OBSERVATION_REPOSITORY = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
+const AUTHORITY_OBSERVATION_KIND = 'nelyon-b2-authority-observation-v1';
+const VAULT_EDGE_PARITY_MECHANISM = 'supabase-vault-edge-nonce-hmac-sha256-v1';
+const VAULT_EDGE_PARITY_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const REQUIRED_HEALTH_SERVICES = ['auth', 'db', 'pooler', 'realtime', 'rest', 'storage'];
+export const B2_VAULT_EDGE_PARITY_SQL = `with target as materialized (
+ select decrypted_secret
+ from vault.decrypted_secrets
+ where name='call_dispatch_secret'
+), aggregate as (
+ select pg_catalog.count(*) count,
+   case when pg_catalog.count(*)=1 then
+     pg_catalog.encode(extensions.hmac(
+       pg_catalog.decode($1,'hex'),
+       extensions.digest(pg_catalog.convert_to(pg_catalog.min(decrypted_secret),'UTF8'),'sha256'),
+       'sha256'
+     ),'hex')
+   else null end hmac_tag
+ from target
+)
+select pg_catalog.jsonb_build_object(
+ 'schema_version',1,
+ 'complete',count=1,
+ 'hmac_tag',hmac_tag
+) snapshot
+from aggregate`;
 // Exact reviewed migration identities, including overload signatures. Unchanged
 // B1, Marketplace and Premium functions retain their own existing guards.
 export const B2_DATABASE_FUNCTION_SCOPE = Object.freeze([
@@ -507,6 +637,15 @@ export const B2_DATABASE_FUNCTION_SCOPE = Object.freeze([
   'public.update_my_publication_draft_v1(uuid,bigint,uuid,text,text,text,jsonb,uuid[])',
   'public.wake_scheduled_publications_b2_v1()',
 ]);
+export const B2_DATABASE_RELATION_SCOPE = Object.freeze([
+  'private.publication_schedule_attempts',
+  'private.publication_schedule_commands',
+  'private.publication_schedule_materializations',
+  'private.publication_schedule_policy',
+  'private.publication_schedules',
+  'public.media_asset_links',
+  'public.media_assets',
+]);
 // Fixed catalog scope. No query text, object locator or SQL expression comes
 // from an authority envelope. Digests below cover PostgreSQL's canonical
 // definitions; function execute means the authenticated role's effective ACL.
@@ -516,7 +655,8 @@ scope as (select c.oid,n.nspname,c.relname,c.relowner,c.relrowsecurity,c.relforc
  from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
  cross join canonical_context
  where n.nspname in ('private','public') and c.relkind in ('r','p')
- and (c.relname like 'publication_schedule%' or c.relname in ('media_assets','media_asset_links'))),
+ and n.nspname||'.'||c.relname
+ = any(array[${B2_DATABASE_RELATION_SCOPE.map(identity => `'${identity}'`).join(',')}]::text[])),
 function_arguments as (
  select p.oid function_oid,args.ordinality,
  case when argument_type.typelem<>0 and argument_type.typlen=-1 then
@@ -557,7 +697,10 @@ records as (
  'relation',s.nspname||'.'||s.relname,'command',case p.polcmd when 'r' then 'SELECT' when 'a' then 'INSERT'
  when 'w' then 'UPDATE' when 'd' then 'DELETE' else 'ALL' end,
  'roles',(select jsonb_agg(case when r=0 then 'public' else pg_catalog.pg_get_userbyid(r) end order by r) from unnest(p.polroles) r),
- 'using',pg_catalog.pg_get_expr(p.polqual,p.polrelid),'check',pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid))
+ 'usingSha256',case when p.polqual is null then null else encode(sha256(convert_to(
+ pg_catalog.pg_get_expr(p.polqual,p.polrelid),'UTF8')),'hex') end,
+ 'checkSha256',case when p.polwithcheck is null then null else encode(sha256(convert_to(
+ pg_catalog.pg_get_expr(p.polwithcheck,p.polrelid),'UTF8')),'hex') end)
  from pg_catalog.pg_policy p join scope s on s.oid=p.polrelid
  union all select 'trigger',jsonb_build_object('identity',s.nspname||'.'||s.relname||'.'||t.tgname,
  'relation',s.nspname||'.'||s.relname,'functionIdentity',t.tgfoid::regprocedure::text,'enabled',t.tgenabled,
@@ -569,7 +712,7 @@ records as (
  from pg_catalog.pg_index i join scope s on s.oid=i.indrelid join pg_catalog.pg_class c on c.oid=i.indexrelid
  union all select 'cron_job',jsonb_build_object('identity',j.jobname,'schedule',j.schedule,
  'commandSha256',encode(sha256(convert_to(j.command,'UTF8')),'hex'),'database',j.database,'username',j.username,'active',j.active)
- from cron.job j where j.jobname like '%publication%'
+ from cron.job j where j.jobname='process-scheduled-publications-b2'
 ) select kind,value from records where 'nelyon-b2-catalog-v1'='nelyon-b2-catalog-v1' order by kind,value->>'identity'`;
 
 export const B2_RELATION_ACL_SQL = `select n.nspname||'.'||c.relname as identity,
@@ -584,7 +727,8 @@ export const B2_RELATION_ACL_SQL = `select n.nspname||'.'||c.relname as identity
  'service_role',pg_catalog.has_table_privilege('service_role',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')) as access
  from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
  where n.nspname in ('private','public') and c.relkind in ('r','p')
- and (c.relname like 'publication_schedule%' or c.relname in ('media_assets','media_asset_links'))
+ and n.nspname||'.'||c.relname
+ = any(array[${B2_DATABASE_RELATION_SCOPE.map(identity => `'${identity}'`).join(',')}]::text[])
  and 'nelyon-b2-relation-acl-v1'='nelyon-b2-relation-acl-v1' order by identity`;
 const RECONCILIATION_KEYS = [
   'account_balance_ledger_mismatch',
@@ -3775,8 +3919,9 @@ export function validateB2InstalledB1State(snapshot, transition, authorityContex
       const row = rows[0];
       if (row.schema !== 'public' || row.table !== 'media_asset_links' || row.permissive !== 'PERMISSIVE'
         || canonicalJson({ identity, relation: 'public.media_asset_links', command: row.command,
-          roles: row.roles, using: row.qual.replace(/\r\n?|\n/g, ' '),
-          check: row.with_check?.replace(/\r\n?|\n/g, ' ') ?? null }).trimEnd() !== record.expectedCanonicalJson) b2SnapshotReject();
+          roles: row.roles, usingSha256: row.qual === null ? null : sha256(Buffer.from(row.qual, 'utf8')),
+          checkSha256: row.with_check === null ? null : sha256(Buffer.from(row.with_check, 'utf8'))
+        }).trimEnd() !== record.expectedCanonicalJson) b2SnapshotReject();
     }
     // Only the three exact B2 replacements are restored for the predecessor
     // comparison. Every unaffected relation/helper/RPC/index/trigger remains
@@ -5737,8 +5882,22 @@ export function validateB2SchedulerEnrollment(before, after, contract) {
   return true;
 }
 
+export function verifyB2FunctionDeploymentPostcheck({ manifest, functionDeploymentProof, postRows }) {
+  const functionManifest = manifest?.resources?.web_control_centers_b2_transition?.contract?.functions;
+  const manifestSha256 = b2FunctionManifestSha256(functionManifest);
+  const names=new Set(functionManifest.map(row=>row.name));
+  const verified = verifyB2FunctionDeploymentProof({
+    proof: functionDeploymentProof,
+    manifest: functionManifest,
+    manifestSha256,
+    postRows:postRows.filter(row=>names.has(row.slug??row.name)),
+  });
+  return Object.freeze({ result: 'FUNCTION_DEPLOYMENT_PROOF_VERIFIED', count: verified.receipts.length });
+}
+
 export function verifyProductionSnapshotPair(options) { return b2Guard(options, verifyProductionSnapshotPairInternal); }
-function verifyProductionSnapshotPairInternal({ pre, post, policy, request, manifest, adapterSourceSha256, authorityContext, requestedAt = new Date().toISOString() }) {
+function verifyProductionSnapshotPairInternal({ pre, post, policy, request, manifest, adapterSourceSha256, authorityContext,
+  functionDeploymentProof, requestedAt = new Date().toISOString() }) {
   const b2 = isB2Snapshot(manifest, authorityContext);
   if (b2) {
     requireB2Captured(pre, 'pre_snapshot', { manifest, authorityContext, requestedAt, request, policy });
@@ -5946,6 +6105,11 @@ function verifyProductionSnapshotPairInternal({ pre, post, policy, request, mani
   }
   const beforeFunctions = new Map(pre.functions.items.map(item => [item.slug, item]));
   const afterFunctions = new Map(post.functions.items.map(item => [item.slug, item]));
+  if (b2) verifyB2FunctionDeploymentPostcheck({
+    manifest,
+    functionDeploymentProof,
+    postRows: post.functions.items,
+  });
   if (canonicalJson([...beforeFunctions.keys(), ...(b2 ? ['process-scheduled-publications'] : [])].sort()) !== canonicalJson([...afterFunctions.keys()].sort())) {
     fail('REMOTE_POSTCHECK_FAILED', 'remote function identity set changed');
   }
@@ -6002,14 +6166,10 @@ function verifyProductionSnapshotPairInternal({ pre, post, policy, request, mani
     ? storiesTransition?.security_advisor?.removed_findings
     : removedExceptionFingerprints;
   if (b2) {
-    const records = authorityContext.privateAuthority.securityAdvisor.records;
-    validateSecurityAdvisorDelta(pre.cron_security.advisors.items, post.cron_security.advisors.items,
-      records.filter(record => ['add', 'replace'].includes(record.action))
-        .map(record => ({ advisor_fingerprint: JSON.parse(record.expectedCanonicalJson).fingerprint })),
-      records.filter(record => record.action === 'remove').map(record => {
-        const value = JSON.parse(record.expectedCanonicalJson);
-        return { fingerprint: value.fingerprint, level: value.severity, resource_kind: value.type };
-      }));
+    validateB2PostReleaseAdvisorDelta(
+      pre.cron_security.advisors.items,
+      post.cron_security.advisors.items,
+    );
   } else validateSecurityAdvisorDelta(
     pre.cron_security.advisors.items, post.cron_security.advisors.items, introducedExceptions, allowedRemovedFindings,
   );
@@ -6215,7 +6375,7 @@ function nativeResponse(response) {
   }
   return response;
 }
-async function readJson(response, { expectedStatus, label }) {
+async function readJson(response, { expectedStatus, label, sensitive = false }) {
   const status = responseStatus.call(response);
   if (status !== expectedStatus) {
     if (status === 401 || status === 403) fail('REMOTE_READ_FAILED', `${label} HTTP ${status}`, 'TRANSPORT', 'ACCESS_DENIED');
@@ -6228,17 +6388,22 @@ async function readJson(response, { expectedStatus, label }) {
   const declared = Number(headerGet.call(headers, 'content-length'));
   if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) fail('REMOTE_RESPONSE_TOO_LARGE', `${label} response exceeds the limit`, 'RESPONSE_VALIDATION', 'INVALID');
   const bytes = new Uint8Array(await responseArrayBuffer.call(response));
-  if (bytes.byteLength > MAX_RESPONSE_BYTES) fail('REMOTE_RESPONSE_TOO_LARGE', `${label} response exceeds the limit`, 'RESPONSE_VALIDATION', 'INVALID');
-  let body;
   try {
-    body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-  } catch {
-    fail('REMOTE_READ_FAILED', `${label} returned malformed JSON`, 'RESPONSE_VALIDATION', 'INVALID');
+    if (bytes.byteLength > MAX_RESPONSE_BYTES) fail('REMOTE_RESPONSE_TOO_LARGE', `${label} response exceeds the limit`, 'RESPONSE_VALIDATION', 'INVALID');
+    let body;
+    try {
+      body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    } catch {
+      fail('REMOTE_READ_FAILED', `${label} returned malformed JSON`, 'RESPONSE_VALIDATION', 'INVALID');
+    }
+    return { body, responseSha256: sensitive ? undefined : sha256(bytes) };
+  } finally {
+    if (sensitive) bytes.fill(0);
   }
-  return { body, responseSha256: sha256(bytes) };
 }
 
-async function fixedRequest({ fetchImpl, token, path, method = 'GET', body, expectedStatus, timeoutMs, label }) {
+async function fixedRequest({ fetchImpl, token, path, method = 'GET', body, expectedStatus, timeoutMs, label,
+  sensitive = false }) {
   const url = new URL(path, API_ORIGIN);
   if (url.protocol !== 'https:' || url.hostname !== 'api.supabase.com' || url.origin !== API_ORIGIN) {
     fail('UNSAFE_REMOTE_ENDPOINT', 'remote endpoint is not the fixed Supabase Management API');
@@ -6258,8 +6423,8 @@ async function fixedRequest({ fetchImpl, token, path, method = 'GET', body, expe
       ...(body ? { body: JSON.stringify(body) } : {}),
     }));
     if (responseRedirected.call(response)) fail('UNSAFE_REMOTE_REDIRECT', `${label} redirected unexpectedly`, 'RESPONSE_VALIDATION', 'INVALID');
-    const parsed = await readJson(response, { expectedStatus, label });
-    return {
+    const parsed = await readJson(response, { expectedStatus, label, sensitive });
+    return sensitive ? { body: parsed.body } : {
       body: parsed.body,
       receipt: { method, path: `${url.pathname}${url.search}`, status: responseStatus.call(response), response_sha256: parsed.responseSha256 },
     };
@@ -6338,20 +6503,310 @@ export function selectRecentCompletedBackup(body, observedAt, backupPolicy) {
   if (!body || typeof body !== 'object' || Array.isArray(body) || !Array.isArray(body.backups)) {
     fail('INVALID_BACKUP', 'backup inventory is invalid');
   }
-  const eligible = body.backups
-    .filter(item => item?.status === backupPolicy?.required_status
-      && item?.is_physical_backup === backupPolicy?.require_physical
-      && Number.isFinite(Date.parse(item?.inserted_at)))
+  const ids = new Set();
+  const normalized = body.backups.map(item => {
+    exactKeys(item, ['id', 'inserted_at', 'is_physical_backup', 'status'], 'INVALID_BACKUP');
+    const inserted = Date.parse(item.inserted_at);
+    if (typeof item.id !== 'string' || item.id.length === 0 || ids.has(item.id)
+      || typeof item.inserted_at !== 'string' || !Number.isFinite(inserted)
+      || typeof item.is_physical_backup !== 'boolean' || typeof item.status !== 'string' || item.status.length === 0) {
+      fail('INVALID_BACKUP', 'backup inventory contains an invalid or duplicate row');
+    }
+    ids.add(item.id);
+    return {
+      id: item.id,
+      inserted_at: new Date(inserted).toISOString(),
+      is_physical_backup: item.is_physical_backup,
+      status: item.status,
+    };
+  });
+  const eligible = normalized
+    .filter(item => item.status === backupPolicy?.required_status
+      && item.is_physical_backup === backupPolicy?.require_physical)
     .sort((left, right) => Date.parse(right.inserted_at) - Date.parse(left.inserted_at));
   if (eligible.length === 0) fail('INVALID_BACKUP', 'no completed physical backup is available');
+  if (eligible.length > 1 && eligible[0].inserted_at === eligible[1].inserted_at) {
+    fail('INVALID_BACKUP', 'latest completed physical backup is ambiguous');
+  }
   const latest = eligible[0];
-  const normalized = {
-    id: String(latest.id ?? ''),
-    inserted_at: new Date(latest.inserted_at).toISOString(),
-    is_physical_backup: latest.is_physical_backup,
-    status: latest.status,
-  };
-  return validateNormalizedBackup(normalized, observedAt, backupPolicy);
+  return validateNormalizedBackup(latest, observedAt, backupPolicy);
+}
+
+function canonicalObservationTimestamp(value, code = 'INVALID_AUTHORITY_OBSERVATION') {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)
+    || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) {
+    fail(code, 'observation timestamp is invalid');
+  }
+  return Date.parse(value);
+}
+
+export function normalizeB2EdgeSecretDigestInventory(body) {
+  if (!Array.isArray(body) || body.length === 0) {
+    fail('INVALID_EDGE_SECRET_INVENTORY', 'Edge secret inventory is invalid');
+  }
+  const names = new Set();
+  let targetDigest = null;
+  let targetUpdatedAt = null;
+  try {
+    for (const row of body) {
+      let digest = null;
+      try {
+        const allowed = Object.prototype.hasOwnProperty.call(row ?? {}, 'updated_at')
+          ? ['name', 'value', 'updated_at'] : ['name', 'value'];
+        exactKeys(row, allowed, 'INVALID_EDGE_SECRET_INVENTORY');
+        if (typeof row.name !== 'string' || !/^[A-Za-z][A-Za-z0-9_]{0,127}$/u.test(row.name)
+          || names.has(row.name) || typeof row.value !== 'string' || !HASH_PATTERN.test(row.value)) {
+          fail('INVALID_EDGE_SECRET_INVENTORY', 'Edge secret inventory contains an invalid row');
+        }
+        names.add(row.name);
+        const updatedAt = Object.prototype.hasOwnProperty.call(row, 'updated_at') ? row.updated_at : null;
+        if (updatedAt !== null) canonicalObservationTimestamp(updatedAt, 'INVALID_EDGE_SECRET_INVENTORY');
+        digest = Buffer.from(row.value, 'hex');
+        if (row.name === 'CALL_DISPATCH_SECRET') {
+          targetDigest = digest;
+          targetUpdatedAt = updatedAt;
+          digest = null;
+        }
+      } finally {
+        digest?.fill(0);
+        if (row && typeof row === 'object' && typeof row.value === 'string') row.value = '';
+      }
+    }
+    if (!targetDigest) fail('INVALID_EDGE_SECRET_INVENTORY', 'required Edge secret is unavailable');
+    let disposed = false;
+    return Object.freeze({
+      targetName: 'CALL_DISPATCH_SECRET',
+      targetDigest,
+      targetUpdatedAt,
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        targetDigest.fill(0);
+      },
+    });
+  } catch (error) {
+    targetDigest?.fill(0);
+    throw error;
+  } finally {
+    for (const row of body) {
+      if (row && typeof row === 'object' && typeof row.value === 'string') row.value = '';
+    }
+  }
+}
+
+function sameEdgeSecretInventories(left, right) {
+  return left.targetName === right.targetName && left.targetUpdatedAt === right.targetUpdatedAt
+    && left.targetDigest.length === right.targetDigest.length
+    && timingSafeEqual(left.targetDigest, right.targetDigest);
+}
+
+function normalizeVaultParitySnapshot(body) {
+  try {
+    if (!Array.isArray(body) || body.length !== 1) {
+      fail('INVALID_VAULT_PARITY_OBSERVATION', 'Vault parity query did not return one row');
+    }
+    exactKeys(body[0], ['snapshot'], 'INVALID_VAULT_PARITY_OBSERVATION');
+    const snapshot = body[0].snapshot;
+    exactKeys(snapshot, ['schema_version', 'complete', 'hmac_tag'], 'INVALID_VAULT_PARITY_OBSERVATION');
+    if (snapshot.schema_version !== 1 || snapshot.complete !== true
+      || typeof snapshot.hmac_tag !== 'string' || !HASH_PATTERN.test(snapshot.hmac_tag)) {
+      fail('INVALID_VAULT_PARITY_OBSERVATION', 'Vault parity observation is incomplete');
+    }
+    return Buffer.from(snapshot.hmac_tag, 'hex');
+  } finally {
+    if (Array.isArray(body)) {
+      for (const row of body) {
+        if (row?.snapshot && typeof row.snapshot === 'object' && typeof row.snapshot.hmac_tag === 'string') {
+          row.snapshot.hmac_tag = '';
+        }
+      }
+    }
+  }
+}
+
+function authorityObservationUnsigned(observation) {
+  const { observationSha256: ignored, ...unsigned } = observation;
+  return unsigned;
+}
+
+export function verifyB2AuthorityObservation(observation) {
+  exactKeys(observation, [
+    'schemaVersion', 'kind', 'projectRef', 'repository', 'approvedSha', 'approvedTreeSha',
+    'startedAt', 'completedObservedAt', 'backup', 'functionInventory', 'securityAdvisor',
+    'vaultEdgeParity', 'observationSha256',
+  ], 'INVALID_AUTHORITY_OBSERVATION');
+  if (observation.schemaVersion !== 1 || observation.kind !== AUTHORITY_OBSERVATION_KIND
+    || observation.projectRef !== PRODUCTION_PROJECT_REF || observation.repository !== AUTHORITY_OBSERVATION_REPOSITORY
+    || !GIT_SHA_PATTERN.test(observation.approvedSha ?? '') || !GIT_SHA_PATTERN.test(observation.approvedTreeSha ?? '')
+    || !HASH_PATTERN.test(observation.observationSha256 ?? '')) {
+    fail('INVALID_AUTHORITY_OBSERVATION', 'authority observation identity is invalid');
+  }
+  const started = canonicalObservationTimestamp(observation.startedAt);
+  const completed = canonicalObservationTimestamp(observation.completedObservedAt);
+  if (completed < started) fail('INVALID_AUTHORITY_OBSERVATION', 'authority observation ordering is invalid');
+
+  verifyB2AuthorityFunctionInventory(observation.functionInventory);
+  verifyB2AuthoritySecurityAdvisor(observation.securityAdvisor);
+
+  const backup = observation.backup;
+  exactKeys(backup, [
+    'schemaVersion', 'provider', 'kind', 'projectRefSha256', 'evidenceSha256', 'status',
+    'insertedAt', 'completedObservedAt', 'expiresAt',
+  ], 'INVALID_AUTHORITY_OBSERVATION');
+  const inserted = canonicalObservationTimestamp(backup.insertedAt);
+  const backupObserved = canonicalObservationTimestamp(backup.completedObservedAt);
+  const backupExpires = canonicalObservationTimestamp(backup.expiresAt);
+  if (backup.schemaVersion !== 2 || backup.provider !== 'supabase' || backup.kind !== 'physical'
+    || backup.projectRefSha256 !== sha256(PRODUCTION_PROJECT_REF) || !HASH_PATTERN.test(backup.evidenceSha256 ?? '')
+    || backup.status !== 'COMPLETED' || inserted > backupObserved || backupObserved !== completed
+    || backupExpires <= backupObserved || backupExpires - inserted > 86_400_000) {
+    fail('INVALID_AUTHORITY_OBSERVATION', 'backup observation is invalid');
+  }
+
+  const parity = observation.vaultEdgeParity;
+  exactKeys(parity, [
+    'schemaVersion', 'projectRef', 'functionName', 'mechanism', 'result', 'observationId',
+    'vault', 'edge', 'observedAt', 'expiresAt',
+  ], 'INVALID_AUTHORITY_OBSERVATION');
+  exactKeys(parity.vault, ['secretName'], 'INVALID_AUTHORITY_OBSERVATION');
+  exactKeys(parity.edge, ['secretName'], 'INVALID_AUTHORITY_OBSERVATION');
+  const parityObserved = canonicalObservationTimestamp(parity.observedAt);
+  const parityExpires = canonicalObservationTimestamp(parity.expiresAt);
+  if (parity.schemaVersion !== 2 || parity.projectRef !== PRODUCTION_PROJECT_REF
+    || parity.functionName !== 'process-scheduled-publications'
+    || parity.mechanism !== VAULT_EDGE_PARITY_MECHANISM || parity.result !== 'MATCH'
+    || !HASH_PATTERN.test(parity.observationId ?? '')
+    || parity.vault.secretName !== 'call_dispatch_secret'
+    || parity.edge.secretName !== 'CALL_DISPATCH_SECRET'
+    || parityObserved !== completed || parityExpires <= parityObserved
+    || parityExpires - parityObserved > VAULT_EDGE_PARITY_MAX_AGE_MS) {
+    fail('INVALID_AUTHORITY_OBSERVATION', 'Vault/Edge parity observation is invalid');
+  }
+  const digest = sha256(canonicalJson(authorityObservationUnsigned(observation)));
+  if (digest !== observation.observationSha256) {
+    fail('INVALID_AUTHORITY_OBSERVATION', 'authority observation digest is invalid');
+  }
+  return observation;
+}
+
+export async function captureB2AuthorityObservation(options) {
+  const { approvedSha, approvedTreeSha, backupPolicy, fetchImpl, repository, token } = options ?? {};
+  const now = options?.now ?? (() => new Date().toISOString());
+  const randomBytesImpl = options?.randomBytesImpl ?? randomBytes;
+  if (typeof fetchImpl !== 'function' || typeof token !== 'string' || token.length < 1 || token.length > 2048
+    || repository !== AUTHORITY_OBSERVATION_REPOSITORY || !GIT_SHA_PATTERN.test(approvedSha ?? '')
+    || !GIT_SHA_PATTERN.test(approvedTreeSha ?? '') || typeof now !== 'function'
+    || typeof randomBytesImpl !== 'function' || !backupPolicy || backupPolicy.required_status !== 'COMPLETED'
+    || backupPolicy.require_physical !== true || !Number.isInteger(backupPolicy.max_age_seconds)
+    || backupPolicy.max_age_seconds < 1 || backupPolicy.max_age_seconds > 86_400) {
+    fail('INVALID_AUTHORITY_OBSERVATION', 'authority observation input is invalid');
+  }
+  assertReadOnlySql(B2_VAULT_EDGE_PARITY_SQL);
+  const startedAt = now();
+  canonicalObservationTimestamp(startedAt);
+  const base = `/v1/projects/${PRODUCTION_PROJECT_REF}`;
+  let nonce;
+  let expectedTag;
+  let vaultTag;
+  let before;
+  let after;
+  try {
+    const backupResponse = await fixedRequest({ fetchImpl, token, path: `${base}/database/backups`, expectedStatus: 200,
+      timeoutMs: GET_TIMEOUT_MS, label: 'database backups' });
+    const functionsResponse = await fixedRequest({ fetchImpl, token, path: `${base}/functions`, expectedStatus: 200,
+      timeoutMs: GET_TIMEOUT_MS, label: 'Edge function inventory' });
+    const advisorsResponse = await fixedRequest({ fetchImpl, token, path: `${base}/advisors/security`, expectedStatus: 200,
+      timeoutMs: GET_TIMEOUT_MS, label: 'Security Advisor inventory' });
+    const functionInventory = normalizeB2AuthorityFunctionInventory(functionsResponse.body);
+    const securityAdvisor = normalizeB2AuthoritySecurityAdvisor(advisorsResponse.body);
+    const beforeResponse = await fixedRequest({ fetchImpl, token, path: `${base}/secrets`, expectedStatus: 200,
+      timeoutMs: GET_TIMEOUT_MS, label: 'Edge secret inventory', sensitive: true });
+    before = normalizeB2EdgeSecretDigestInventory(beforeResponse.body);
+    const generated = randomBytesImpl(32);
+    if (!(generated instanceof Uint8Array)) {
+      fail('INVALID_AUTHORITY_OBSERVATION', 'authority observation nonce is invalid');
+    }
+    try {
+      if (generated.byteLength !== 32) {
+        fail('INVALID_AUTHORITY_OBSERVATION', 'authority observation nonce is invalid');
+      }
+      nonce = Buffer.from(generated);
+    } finally {
+      generated.fill(0);
+    }
+    const vaultResponse = await fixedRequest({ fetchImpl, token, path: `${base}/database/query/read-only`, method: 'POST',
+      body: { query: B2_VAULT_EDGE_PARITY_SQL, parameters: [nonce.toString('hex')] }, expectedStatus: 201,
+      timeoutMs: SQL_TIMEOUT_MS, label: 'Vault parity observation', sensitive: true });
+    vaultTag = normalizeVaultParitySnapshot(vaultResponse.body);
+    expectedTag = createHmac('sha256', before.targetDigest).update(nonce).digest();
+    if (vaultTag.length !== expectedTag.length || !timingSafeEqual(vaultTag, expectedTag)) {
+      fail('VAULT_EDGE_PARITY_MISMATCH', 'Vault and Edge secret observations do not match');
+    }
+    const afterResponse = await fixedRequest({ fetchImpl, token, path: `${base}/secrets`, expectedStatus: 200,
+      timeoutMs: GET_TIMEOUT_MS, label: 'Edge secret inventory', sensitive: true });
+    after = normalizeB2EdgeSecretDigestInventory(afterResponse.body);
+    if (!sameEdgeSecretInventories(before, after)) {
+      fail('VAULT_EDGE_PARITY_ROTATED', 'Edge secret inventory changed during observation');
+    }
+    const completedObservedAt = now();
+    const completedMillis = canonicalObservationTimestamp(completedObservedAt);
+    if (completedMillis < Date.parse(startedAt)) {
+      fail('INVALID_AUTHORITY_OBSERVATION', 'authority observation ordering is invalid');
+    }
+    const selected = selectRecentCompletedBackup(backupResponse.body, completedObservedAt, backupPolicy);
+    const backupExpiresAt = new Date(Date.parse(selected.inserted_at) + backupPolicy.max_age_seconds * 1000).toISOString();
+    if (Date.parse(backupExpiresAt) <= completedMillis) fail('STALE_BACKUP', 'latest completed physical backup is stale');
+    const backupEvidenceSha256 = sha256(canonicalJson({ projectRef: PRODUCTION_PROJECT_REF, backup: selected }));
+    const observationId = sha256(canonicalJson({
+      schemaVersion: 1, projectRef: PRODUCTION_PROJECT_REF, repository, approvedSha, approvedTreeSha,
+      startedAt, completedObservedAt, backupEvidenceSha256,
+      functionInventorySha256: functionInventory.sha256,
+      securityAdvisorSha256: securityAdvisor.baselineSha256,
+    }));
+    const unsigned = {
+      schemaVersion: 1,
+      kind: AUTHORITY_OBSERVATION_KIND,
+      projectRef: PRODUCTION_PROJECT_REF,
+      repository,
+      approvedSha,
+      approvedTreeSha,
+      startedAt,
+      completedObservedAt,
+      backup: {
+        schemaVersion: 2,
+        provider: 'supabase',
+        kind: 'physical',
+        projectRefSha256: sha256(PRODUCTION_PROJECT_REF),
+        evidenceSha256: backupEvidenceSha256,
+        status: 'COMPLETED',
+        insertedAt: selected.inserted_at,
+        completedObservedAt,
+        expiresAt: backupExpiresAt,
+      },
+      functionInventory,
+      securityAdvisor,
+      vaultEdgeParity: {
+        schemaVersion: 2,
+        projectRef: PRODUCTION_PROJECT_REF,
+        functionName: 'process-scheduled-publications',
+        mechanism: VAULT_EDGE_PARITY_MECHANISM,
+        result: 'MATCH',
+        observationId,
+        vault: { secretName: 'call_dispatch_secret' },
+        edge: { secretName: 'CALL_DISPATCH_SECRET' },
+        observedAt: completedObservedAt,
+        expiresAt: new Date(completedMillis + VAULT_EDGE_PARITY_MAX_AGE_MS).toISOString(),
+      },
+    };
+    const observation = { ...unsigned, observationSha256: sha256(canonicalJson(unsigned)) };
+    return verifyB2AuthorityObservation(observation);
+  } finally {
+    nonce?.fill(0);
+    expectedTag?.fill(0);
+    vaultTag?.fill(0);
+    before?.dispose();
+    after?.dispose();
+  }
 }
 
 function stableAdvisorMetadata(value) {
@@ -6880,6 +7335,10 @@ export function validateSecurityAdvisorDelta(preItems, postItems, allowedIntrodu
   return true;
 }
 
+export function validateB2PostReleaseAdvisorDelta(preItems, postItems) {
+  return validateSecurityAdvisorDelta(preItems, postItems, [], []);
+}
+
 function normalizeAcl(value, code) {
   if (!Array.isArray(value)) fail(code, 'ACL evidence must be an array');
   const items = value.map(item => {
@@ -7305,9 +7764,8 @@ export async function captureProductionSnapshot(options) {
       if (canonicalJson(normalizeSecurityAdvisors(advisors.body)) !== canonicalJson(evidence.cron_security.advisors)) b2SnapshotReject();
       evidence.authority_verification = verifyB2PrivateObservations({ authorityContext,
         manifest: historical?.manifest ?? manifest, requestedAt: historical?.requestedAt ?? requestedAt,
-        stage: phase === 'recovery' ? 'recovery' : 'post_snapshot', catalog: [...catalog.body.map(row => row.kind === 'policy'
-          ? { kind: row.kind, value: { ...row.value, using: row.value.using?.replace(/\r\n?|\n/g, ' ') ?? null,
-            check: row.value.check?.replace(/\r\n?|\n/g, ' ') ?? null } } : row), ...inventory, ...securityCatalog], advisors: b2FreshAdvisors(advisors.body, sourceParity.advisors),
+        stage: phase === 'recovery' ? 'recovery' : 'post_snapshot', catalog: [...catalog.body,
+          ...inventory, ...securityCatalog], advisors: b2FreshAdvisors(advisors.body, sourceParity.advisors),
         backupEvidenceSha256: historical ? authority.backup.evidenceSha256 : sha256(canonicalJson(evidence.backup)), financeVerified: true, sourceParityVerified: true });
     }
     const { evidence_sha256: ignored, ...unsigned } = evidence;

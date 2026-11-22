@@ -11,7 +11,10 @@ const RFC3339_MILLIS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const CATALOG_KINDS = new Set([
   'relation', 'relation_acl', 'function', 'function_acl', 'policy', 'trigger', 'index', 'cron_job', 'function_inventory',
 ]);
-const ADVISOR_ACTIONS = new Set(['retain', 'add', 'replace', 'remove']);
+// Current B2 may only retain an unchanged finding or replace its exact
+// attestation. Add/remove would change the reviewed Advisor inventory and must
+// be expressed by a separately reviewed authority contract, not this parser.
+const ADVISOR_ACTIONS = new Set(['retain', 'replace']);
 
 function reject() {
   const error = new Error('Private preparation input rejected');
@@ -120,10 +123,9 @@ function normalizeCanonical(value) {
 }
 
 const projectionText = value => boundedText(value, 1, 512);
-const projectionExpression = value => boundedText(value, 1, 16_384);
 const projectionDigest = value => { if (!matchesString(value, HEX_64)) reject(); };
 const projectionBoolean = value => { if (typeof value !== 'boolean') reject(); };
-const nullableExpression = value => { if (value !== null) projectionExpression(value); };
+const nullableDigest = value => { if (value !== null) projectionDigest(value); };
 const projectionTextArray = value => {
   if (!Array.isArray(value) || value.length > 64) reject();
   value.forEach(projectionText);
@@ -159,7 +161,7 @@ const CATALOG_PROJECTIONS = Object.freeze({
     securityDefiner: projectionBoolean, searchPath: projectionTextArray, definitionSha256: projectionDigest },
   policy: { identity: projectionText, relation: projectionText,
     command: oneOf(['ALL', 'SELECT', 'INSERT', 'UPDATE', 'DELETE']), roles: projectionTextArray,
-    using: nullableExpression, check: nullableExpression },
+    usingSha256: nullableDigest, checkSha256: nullableDigest },
   trigger: { identity: projectionText, relation: projectionText, functionIdentity: projectionText,
     enabled: oneOf(['O', 'D', 'R', 'A']), definitionSha256: projectionDigest },
   index: { identity: projectionText, relation: projectionText, valid: projectionBoolean,
@@ -239,12 +241,9 @@ function validateAdvisorRecords(records, baselineItems, baselineSha256) {
     const projection = JSON.parse(record.expectedCanonicalJson);
     if (record.identity !== `advisor:${projection.fingerprint}`) reject();
     const predecessor = baseline.get(projection.fingerprint);
-    if (record.action === 'add') {
-      if (predecessor) reject();
-    } else {
-      if (!predecessor || predecessor.level !== projection.severity || predecessor.resource_kind !== projection.type) reject();
-      covered.add(projection.fingerprint);
-    }
+    if (!predecessor || predecessor.level !== projection.severity
+      || predecessor.resource_kind !== projection.type) reject();
+    covered.add(projection.fingerprint);
     if (record.action === 'retain' && projection.baselineSha256 !== baselineSha256) reject();
     const identity = `${record.action}\u0000${record.identity}`;
     if (identities.has(record.identity) || (previous !== null && identity <= previous)) reject();
@@ -311,23 +310,20 @@ export function parseB2PrivateAuthority(authorityJson, expectedSha256, requested
     let parityObserved = null;
     if (hasVaultEdgeParity) {
       exactKeys(authority.vaultEdgeParity, [
-        'schemaVersion', 'projectRef', 'functionName', 'vault', 'edge',
-        'changeFreezeId', 'observedAt', 'expiresAt',
+        'schemaVersion', 'projectRef', 'functionName', 'mechanism', 'result',
+        'observationId', 'vault', 'edge', 'observedAt', 'expiresAt',
       ]);
-      exactKeys(authority.vaultEdgeParity.vault, ['secretName', 'revision', 'secretVersion']);
-      exactKeys(authority.vaultEdgeParity.edge, ['secretName', 'provisioningGeneration', 'secretVersion']);
+      exactKeys(authority.vaultEdgeParity.vault, ['secretName']);
+      exactKeys(authority.vaultEdgeParity.edge, ['secretName']);
       const parity = authority.vaultEdgeParity;
-      const opaque = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(value);
       parityObserved = timestamp(parity.observedAt);
       const parityExpires = timestamp(parity.expiresAt);
-      if (parity.schemaVersion !== 1 || parity.projectRef !== 'aewwdlvbwpczqyvkwvvj'
+      if (parity.schemaVersion !== 2 || parity.projectRef !== 'aewwdlvbwpczqyvkwvvj'
         || parity.functionName !== 'process-scheduled-publications'
+        || parity.mechanism !== 'supabase-vault-edge-nonce-hmac-sha256-v1'
+        || parity.result !== 'MATCH' || !matchesString(parity.observationId, HEX_64)
         || parity.vault.secretName !== 'call_dispatch_secret'
         || parity.edge.secretName !== 'CALL_DISPATCH_SECRET'
-        || ![parity.vault.revision, parity.vault.secretVersion,
-          parity.edge.provisioningGeneration, parity.edge.secretVersion,
-          parity.changeFreezeId].every(opaque)
-        || parity.vault.secretVersion !== parity.edge.secretVersion
         || parityExpires <= parityObserved || parityExpires - parityObserved > 7_200_000
         || parityObserved > requestedMillis || requestedMillis >= parityExpires) reject();
     }

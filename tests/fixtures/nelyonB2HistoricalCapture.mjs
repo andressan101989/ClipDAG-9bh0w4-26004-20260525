@@ -11,6 +11,20 @@ import {
 } from '../../scripts/nelyon-b2-recovery-provenance.mjs';
 import { parseB2PrivateAuthority } from '../../scripts/nelyon-private-authority.mjs';
 import { buildPrivateRuntimeClosure } from '../../scripts/nelyon-private-runtime-closure.mjs';
+import {
+  B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256,
+  B2_ADVISOR_CHANGED_OBJECT_IDENTITIES,
+  computeB2AdvisorAuthorizations,
+} from '../../scripts/nelyon-b2-authority-preparation.mjs';
+import { b2SyntheticCompleteSuccessorCatalog } from './nelyonB2CompleteAuthorityFixture.mjs';
+import {
+  b2FunctionManifestSha256,
+  canonicalB2FunctionDeploymentProof,
+  createB2FunctionDeploymentAttempt,
+  markB2FunctionDeploymentIntent,
+  reconcileB2FunctionDeploymentTransition,
+  verifyB2FunctionDeploymentProof,
+} from '../../scripts/nelyon-b2-function-deployment-proof.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const gitBlobHash = bytes => createHash('sha1').update(Buffer.from(`blob ${bytes.length}\0`, 'utf8')).update(bytes).digest('hex');
@@ -76,7 +90,14 @@ export async function b2HistoricalCapture({ manifest: inputManifest, request: in
   const paths = directories(); const digest = hash(release.canonicalJson(manifest));
   const { createReleaseAuthorityContext } = await import('../../scripts/nelyon-release-authority-context.mjs');
   const receipt = createReleaseAuthorityContext(contextArgs).receipt;
-  const proofs = ['migrations', 'functions', ...adminStages].map(stage => ({ runId: request.runId, runAttempt: request.runAttempt,
+  const functionManifest=manifest.resources.web_control_centers_b2_transition.contract.functions;
+  const exactB2FunctionNames = ['ai-handoff', 'cleanup-stale-media-uploads', 'content-safety-scan',
+    'create-media-upload', 'finalize-media-upload', 'get-media-url',
+    'process-scheduled-publications', 'video-semantic-index'];
+  const usesExactB2FunctionProof = Array.isArray(functionManifest)
+    && release.canonicalJson(functionManifest.map(item => item?.name)) === release.canonicalJson(exactB2FunctionNames);
+  const proofs = ['migrations', ...(usesExactB2FunctionProof ? ['functions'] : []), ...adminStages]
+    .map(stage => ({ runId: request.runId, runAttempt: request.runAttempt,
     releaseId: request.releaseId, approvedSha: request.approvedSha, manifestSha256: digest, stage, verifiedAt: proofAt, receipt }));
   const proofBytes = Buffer.from(release.canonicalJson(proofs), 'utf8');
   let gateArchive = storedZip('protected-stage-proofs.json', proofBytes);
@@ -94,7 +115,7 @@ export async function b2HistoricalCapture({ manifest: inputManifest, request: in
         return { name, source_sha256: ezbr_sha256, status, verify_jwt, version };
       }
       return { name, source_sha256: contract?.source_sha256 ?? '0'.repeat(64), status: 'ACTIVE',
-        verify_jwt: contract?.verify_jwt ?? true, version: 1 };
+        verify_jwt: contract?.verify_jwt ?? true, version: 2 };
     }),
     productive_resources: [...manifest.resources.migrations.map(item => `migration:${item.path.replace(/^.*\//, '').replace(/\.sql$/, '')}`),
       ...manifest.resources.functions.map(name => `function:${name}`)],
@@ -107,6 +128,30 @@ export async function b2HistoricalCapture({ manifest: inputManifest, request: in
     protected_stage_proof_sha256: hash(release.canonicalJson(proofs)), post_snapshot_status: 'success', postcheck_status: admin ? 'success' : 'failure',
     pre_snapshot_evidence_sha256: '3'.repeat(64), post_snapshot_evidence_sha256: '4'.repeat(64),
     runtime_closure_sha256: manifest.runtime_closure.closure_sha256 };
+  let functionProof = null;
+  if (usesExactB2FunctionProof) {
+    const functionManifestSha256=b2FunctionManifestSha256(functionManifest);
+    const finalRows=source.edge_functions.map(row=>({slug:row.name,ezbr_sha256:row.source_sha256,status:row.status,
+      verify_jwt:row.verify_jwt,version:row.version}));
+    const beforeRows=finalRows.filter(row=>row.slug!=='process-scheduled-publications').map(row=>({
+      ...row,version:row.version-1,ezbr_sha256:hash(`before:${row.slug}`),
+    }));
+    functionProof=createB2FunctionDeploymentAttempt({manifest:functionManifest,manifestSha256:functionManifestSha256,
+      beforeRows,capturedAt:new Date(Date.parse(proofAt)-17000).toISOString()});
+    let progressive=beforeRows.map(row=>({...row}));
+    for(const [index,contract] of functionManifest.entries()){
+      functionProof=markB2FunctionDeploymentIntent({proof:functionProof,manifest:functionManifest,
+        manifestSha256:functionManifestSha256,beforeRows,functionName:contract.name,
+        capturedAt:new Date(Date.parse(proofAt)-16000+(index*2000)).toISOString()});
+      const final=finalRows.find(row=>row.slug===contract.name);const existing=progressive.findIndex(row=>row.slug===contract.name);
+      if(existing===-1)progressive.push({...final});else progressive[existing]={...final};
+      functionProof=reconcileB2FunctionDeploymentTransition({proof:functionProof,manifest:functionManifest,
+        manifestSha256:functionManifestSha256,beforeRows,afterRows:progressive,functionName:contract.name,
+        commandSucceeded:true,capturedAt:new Date(Date.parse(proofAt)-15000+(index*2000)).toISOString()});
+    }
+    verifyB2FunctionDeploymentProof({proof:functionProof,manifest:functionManifest,
+      manifestSha256:functionManifestSha256,postRows:finalRows});
+  }
   const observation = { schema_version: 1, result: 'INCOMPLETE_OR_FAILED', steps: { pre_snapshot: 'success', pre_verification: 'success',
     migration_dry_run: 'success', migrations: 'success', functions: 'success', post_snapshot: 'success', postcheck: admin ? 'success' : 'failure' },
     pre_evidence_sha256: source.pre_snapshot_evidence_sha256, post_evidence_sha256: source.post_snapshot_evidence_sha256 };
@@ -124,7 +169,10 @@ export async function b2HistoricalCapture({ manifest: inputManifest, request: in
   }
   bundle(paths.release, manifest, request); write(join(paths.gate, 'release-observation.json'), observation);
   write(join(paths.gate, 'protected-stage-proofs.json'), proofs);
-  const gateNames = ['release-observation.json', 'protected-stage-proofs.json', ...(admin ? ['postcheck-result.json'] : [])];
+  if (functionProof) writeFileSync(join(paths.gate,'function-deployment-proof.json'),canonicalB2FunctionDeploymentProof(functionProof));
+  const gateNames = ['release-observation.json', 'protected-stage-proofs.json',
+    ...(functionProof ? ['function-deployment-proof.json'] : []),
+    ...(admin ? ['postcheck-result.json'] : [])];
   gateArchive = storedZipFiles(gateNames.map(name => [name, readFileSync(join(paths.gate, name))]));
   source.gate_artifact.digest = `sha256:${hash(gateArchive)}`;
   releaseArchive = storedZipFiles(['bundle/manifest.json', 'bundle/manifest.sha256', 'bundle/summary.md',
@@ -163,8 +211,10 @@ export async function b2HistoricalCapture({ manifest: inputManifest, request: in
     approvedSource = loadApprovedB2RecoverySource({ policyBytes, expectedPolicySha256: hash(policyBytes),
       runId: request.runId, runAttempt: request.runAttempt });
   } catch { throw new Error('synthetic approved-source fixture rejected'); }
+  const requestedPaths=[];
   const fetchImpl = async url => {
       const parsed = new URL(url);
+      requestedPaths.push(parsed.pathname);
       if (parsed.pathname.endsWith(`/actions/runs/${request.runId}/attempts/${request.runAttempt}`)) return fixtureResponse({ ...run, id: Number(run.id) });
       if (parsed.pathname.endsWith(`/actions/runs/${request.runId}/attempts/${request.runAttempt}/jobs`)) return fixtureResponse({ total_count: jobs.length, jobs });
       if (parsed.pathname.endsWith(`/actions/runs/${request.runId}/artifacts`)) return fixtureResponse({ total_count: artifacts.length, artifacts });
@@ -191,13 +241,15 @@ export async function b2HistoricalCapture({ manifest: inputManifest, request: in
   });
   let recoveryProvenance;
   try { recoveryProvenance = await github.loadExactAttempt({ approvedSource }); }
-  catch { throw new Error('synthetic exact-attempt fixture rejected'); }
+  catch (error) { throw new Error(`synthetic exact-attempt fixture rejected: ${error?.code ?? 'unknown'} after ${requestedPaths.at(-1)??'no request'}`); }
   const historicalRuntimeClosure = await github.loadHistoricalRuntimeClosure({ recoveryProvenance });
   let verifiedSource;
   try {
     verifiedSource = release.verifyRecoveryArtifactProvenance({ recoveryProvenance,
       releaseBundle: { directory: paths.release }, gateEvidence: { directory: paths.gate } });
-  } catch { throw new Error('synthetic release provenance fixture rejected'); }
+  } catch (error) {
+    throw new Error(`synthetic release provenance fixture rejected: ${error?.code ?? 'unknown'}`);
+  }
   let authorityContext = null;
   try {
     authorityContext = await release.resolveB2HistoricalAuthority({ verifiedSource, descriptorBytes: contextArgs.descriptorBytes,
@@ -215,7 +267,11 @@ export async function b2AdminHistoricalFixture({ adminStages = [], observedAdmin
   const policy = JSON.parse(readFileSync(new URL('../../.github/nelyon-production-release-policy.json', import.meta.url)));
   const descriptor = JSON.parse(readFileSync(new URL('../../.github/nelyon-web-control-centers-b2-release-descriptor.json', import.meta.url)));
   const c = descriptor.contract;
-  c.state = 'approved'; c.release_ready = true; c.reviewed_source_sha = reviewedSourceSha; c.integration_base_sha = 'b'.repeat(40);
+  c.state = 'approved'; c.release_ready = true; c.reviewed_source_sha = reviewedSourceSha;
+  c.reviewed_source_tree_sha = 'c'.repeat(40); c.integration_base_sha = 'b'.repeat(40);
+  c.advisor_authorization_contract_sha256 = B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256;
+  c.advisor_authorization_verifier_sha256 = hash(readFileSync(new URL('../../scripts/nelyon-b2-authority-preparation.mjs', import.meta.url)));
+  c.advisor_authorization_tests_sha256 = hash(readFileSync(new URL('../nelyonB2AuthorityPreparation.test.mjs', import.meta.url)));
   c.function_inventory = { before: 34, after: 35 };
   const contracts = c.functions.map(item => {
     const entrypoint = `supabase/functions/${item.name}/index.ts`, source_files = [{ path: entrypoint, sha256: '1'.repeat(64) }];
@@ -223,22 +279,28 @@ export async function b2AdminHistoricalFixture({ adminStages = [], observedAdmin
     return { name: item.name, verify_jwt: item.verify_jwt, entrypoint, import_map: null, source_files, source_changed: true, source_sha256: item.source_sha256 };
   });
   descriptor.public_contract_sha256 = hash(release.canonicalJson(c));
-  const value = { identity: 'private.synthetic', owner: 'postgres', rls: true, forceRls: true, definitionSha256: '3'.repeat(64) };
-  const canonical = release.canonicalJson(value).trimEnd();
+  const successorCatalog = b2SyntheticCompleteSuccessorCatalog({ functionInventory: c.functions.map(item => ({
+    identity: item.name, verifyJwt: item.verify_jwt,
+    sourceSha256: item.source_sha256, configSha256: item.config_sha256,
+  })) });
+  const migration = c.productive_changes.at(-1);
+  const advisorOrigin = { repository: policy.repository, transitionId: c.id,
+    reviewedSourceSha: c.reviewed_source_sha, reviewedSourceTreeSha: c.reviewed_source_tree_sha,
+    integrationBaseSha: c.integration_base_sha,
+    migration: { path: migration.path, blob: migration.blob, sha256: migration.sha256, byteLength: migration.byte_length },
+    changedObjectIdentities: B2_ADVISOR_CHANGED_OBJECT_IDENTITIES,
+    contractSha256: c.advisor_authorization_contract_sha256,
+    verifierSha256: c.advisor_authorization_verifier_sha256,
+    testsSha256: c.advisor_authorization_tests_sha256 };
   const authority = { schemaVersion: 1, authorityId: descriptor.private_authority.authority_id,
     publicContractSha256: descriptor.public_contract_sha256, phase: c.to_phase,
     issuedFor: { baselineSha: c.baseline_sha, reviewedSourceSha: c.reviewed_source_sha, integrationBaseSha: c.integration_base_sha },
-    successorCatalog: { schemaVersion: 1, records: [{ kind: 'relation', identity: value.identity, expectedCanonicalJson: canonical, expectedSha256: hash(canonical) }] },
-    securityAdvisor: { schemaVersion: 2, baselineSha256: hash('[]\n'), baselineItems: [], records: [] },
+    successorCatalog,
+    securityAdvisor: computeB2AdvisorAuthorizations({ baselineItems: [], findings: [], successorCatalog, origin: advisorOrigin }),
     backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical', projectRefSha256: hash(policy.supabase.project_ref), evidenceSha256: '6'.repeat(64), status: 'COMPLETED',
       insertedAt: '2026-11-08T10:00:00.000Z', completedObservedAt: '2026-11-08T10:30:00.000Z', expiresAt: '2026-11-09T10:00:00.000Z' },
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: [c.to_phase], authorizationSha256: '7'.repeat(64),
       approvedAt: '2026-11-08T11:00:00.000Z', expiresAt: '2026-11-09T11:00:00.000Z' } };
-  const relationAcl = release.canonicalJson({ identity: value.identity,
-    acl: [{ grantee: value.owner, privilege_type: 'SELECT', is_grantable: false }],
-    access: { public: false, anon: false, authenticated: false, service_role: false } }).trimEnd();
-  authority.successorCatalog.records.push({ kind: 'relation_acl', identity: value.identity,
-    expectedCanonicalJson: relationAcl, expectedSha256: hash(relationAcl) });
   const authorityJson = JSON.stringify(authority); descriptor.private_authority.sha256 = hash(authorityJson);
   const descriptorBytes = JSON.stringify(descriptor);
   const contextArgs = { descriptorBytes, expectedDescriptorSha256: hash(descriptorBytes), phase: c.to_phase,

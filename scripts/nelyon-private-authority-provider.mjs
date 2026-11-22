@@ -12,6 +12,7 @@ const MAX_MEMORY_BYTES = 16 * 1024 * 1024;
 const MAX_STREAM_CHUNKS = 16_384;
 const INVALID = Symbol('invalid');
 const UNAVAILABLE = Symbol('unavailable');
+const detailedR2Readers = new WeakMap();
 const byteLength = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'byteLength').get;
 const setBytes = Uint8Array.prototype.set;
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -21,6 +22,14 @@ function failure(reason) {
   const message = unavailable ? 'Private authority version unavailable' : 'Private authority provider rejected';
   const error = new Error(message);
   error.code = unavailable ? 'PRIVATE_AUTHORITY_VERSION_UNAVAILABLE' : 'PRIVATE_AUTHORITY_PROVIDER_INVALID';
+  error.stack = `Error: ${message}`;
+  return Object.freeze(error);
+}
+
+function publisherFailure() {
+  const message = 'Private authority publisher rejected';
+  const error = new Error(message);
+  error.code = 'PRIVATE_AUTHORITY_PUBLISHER_INVALID';
   error.stack = `Error: ${message}`;
   return Object.freeze(error);
 }
@@ -109,6 +118,12 @@ function contentLength(response) {
   return size;
 }
 
+function contentEtag(response) {
+  const etag = response.headers.get('etag');
+  if (typeof etag !== 'string' || !/^"[0-9a-f]{32}"$/.test(etag)) throw INVALID;
+  return etag;
+}
+
 // Cancellation must never wait for a remote error body or a misbehaving stream.
 function cancelBody(body) {
   try { Promise.resolve(body?.cancel()).catch(() => {}); } catch { /* sanitized by caller */ }
@@ -123,7 +138,7 @@ export function createR2PrivateAuthorityProvider(options) {
     const { accountId, bucket, accessKeyId, secretAccessKey, fetch: read, timeoutMs } = configuration(options);
     const signer = new AwsClient({ accessKeyId, secretAccessKey, service: 's3', region: 'auto', retries: 0 });
     const prefix = `https://${accountId}.r2.cloudflarestorage.com/${bucket}/internal/release-authority/v1/sha256/`;
-    return Object.freeze({ async getBySha256(digest) {
+    const readBySha256 = async (digest, detailed) => {
       let timer;
       let reader;
       let body;
@@ -158,12 +173,13 @@ export function createR2PrivateAuthorityProvider(options) {
           body = head.body;
           checkDeadline();
           const size = contentLength(head);
+          const etag = detailed ? contentEtag(head) : null;
           cancelBody(body);
           body = null;
           const get = await request('GET');
           body = get.body;
           checkDeadline();
-          if (contentLength(get) !== size || !body) throw INVALID;
+          if (contentLength(get) !== size || (detailed && contentEtag(get) !== etag) || !body) throw INVALID;
           reader = body.getReader();
           const bytes = Buffer.alloc(size);
           let received = 0;
@@ -189,7 +205,7 @@ export function createR2PrivateAuthorityProvider(options) {
           }
           if (received !== size || sha256(bytes) !== digest) throw INVALID;
           checkDeadline();
-          return bytes;
+          return detailed ? Object.freeze({ bytes, etag }) : bytes;
         };
         // One race for the entire operation: successful reads do not attach
         // additional reactions to a shared pending deadline promise.
@@ -203,6 +219,111 @@ export function createR2PrivateAuthorityProvider(options) {
           try { Promise.resolve(reader.cancel()).catch(() => {}); } catch { /* no remote diagnostics */ }
         } else cancelBody(body);
       }
-    } });
+    };
+    const provider = Object.freeze({ getBySha256(digest) { return readBySha256(digest, false); } });
+    detailedR2Readers.set(provider, digest => readBySha256(digest, true));
+    return provider;
   } catch (reason) { throw failure(reason); }
+}
+
+/** Create-only R2 publisher for a reviewed, content-addressed authority object.
+ *
+ * Publication is deliberately narrower than the read provider: one signed PUT
+ * with an If-None-Match precondition, followed by the existing exact HEAD+GET
+ * reader. A transport error after dispatch is never retried; exact readback is
+ * the only way to resolve that uncertain outcome. There is no list, overwrite,
+ * delete, alternate key or endpoint API at this boundary. */
+export function createR2PrivateAuthorityPublisher(options) {
+  try {
+    const { accountId, bucket, accessKeyId, secretAccessKey, fetch: write, timeoutMs } = configuration(options);
+    const signer = new AwsClient({ accessKeyId, secretAccessKey, service: 's3', region: 'auto', retries: 0 });
+    const prefix = `https://${accountId}.r2.cloudflarestorage.com/${bucket}/internal/release-authority/v1/sha256/`;
+    const verifier = createR2PrivateAuthorityProvider({
+      accountId, bucket, accessKeyId, secretAccessKey, fetch: write, timeoutMs,
+    });
+    const verifyDetailed = detailedR2Readers.get(verifier);
+    if (typeof verifyDetailed !== 'function') throw INVALID;
+
+    return Object.freeze({ async publishBySha256(digest, value) {
+      let timer;
+      const abort = new AbortController();
+      try {
+        checkDigest(digest);
+        const bytes = copyBytes(value);
+        if (sha256(bytes) !== digest) throw INVALID;
+
+        const signed = await signer.sign(`${prefix}${digest}.json`, {
+          method: 'PUT',
+          body: bytes,
+          signal: abort.signal,
+          redirect: 'error',
+          credentials: 'omit',
+          headers: {
+            'accept-encoding': 'identity',
+            'content-length': String(bytes.length),
+            'content-type': 'application/json',
+            'if-none-match': '*',
+          },
+        });
+
+        let dispatched = false;
+        let timedOut = false;
+        const put = (async () => {
+          dispatched = true;
+          return await write(signed);
+        })();
+        // If the transport ignores AbortSignal and completes after our timeout,
+        // discard its body. Its late status is never allowed to change the
+        // already-uncertain outcome or cause another PUT.
+        put.then(response => {
+          if (timedOut) {
+            try { cancelBody(response.body); } catch { /* no remote diagnostics */ }
+          }
+        }, () => {});
+
+        let disposition;
+        try {
+          const deadline = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              timedOut = true;
+              abort.abort();
+              reject(UNAVAILABLE);
+            }, timeoutMs);
+          });
+          const response = await Promise.race([put, deadline]);
+          clearTimeout(timer);
+          timer = undefined;
+          cancelBody(response.body);
+          if (response.status === 200) disposition = 'CREATED';
+          else if (response.status === 412) disposition = 'ALREADY_EXISTS';
+          else throw INVALID;
+        } catch (reason) {
+          if (reason === INVALID || !dispatched) throw INVALID;
+          disposition = 'UNCERTAIN_WRITE_VERIFIED';
+        } finally {
+          clearTimeout(timer);
+          abort.abort();
+        }
+
+        const { bytes: observed, etag } = await verifyDetailed(digest);
+        if (observed.length !== bytes.length || !observed.equals(bytes)) throw INVALID;
+        return Object.freeze({
+          schemaVersion: 1,
+          result: disposition,
+          sha256: digest,
+          byteLength: bytes.length,
+          key: `internal/release-authority/v1/sha256/${digest}.json`,
+          etag,
+          readback: 'HEAD_GET_EXACT',
+        });
+      } catch {
+        throw publisherFailure();
+      } finally {
+        clearTimeout(timer);
+        abort.abort();
+      }
+    } });
+  } catch {
+    throw publisherFailure();
+  }
 }
