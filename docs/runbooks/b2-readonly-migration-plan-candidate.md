@@ -1,5 +1,40 @@
 # B2 read-only migration plan candidate
 
+## B2-R5-C1 corrective checkpoint (supersedes the status section below)
+
+This checkpoint is local-only on `codex/web-control-centers-b2-r5-c1`. It is
+based on remote main `f92f8cbc6b2cdffc2e7688a95545d4b69bdbf56c` and the
+reviewed R2 candidate `231eb776ace92407ef7d0709c195b548bef5e59f`. The focal
+corrective payload is committed locally as
+`5799d6ddec49b11248e864c5d820e4ceb6eabd40`. No branch has been pushed, no PR
+has been opened, and no release or productive mutation has occurred.
+
+Node 24.21.0 is the validated runtime. Cron reconciliation no longer attempts
+to transfer `pg_cron` ownership and has been exercised against real pg_cron
+1.6.4 with the hosted-equivalent `postgres` role (`NOSUPERUSER`, `BYPASSRLS`).
+The protected release path now produces migration and Edge-function attempt
+proofs through the same private runtime and retains only the exact ordered
+public prefix. Historical Edge recovery binds the authenticated function
+bundle digest, version, status and JWT setting before any recovery mutation.
+
+New releases also require a private Vault/Edge parity attestation for the fixed
+`call_dispatch_secret` and `CALL_DISPATCH_SECRET` bindings. The attestation is
+checked after the protected provider read and before dispatch; historical
+recovery envelopes remain readable but cannot authorize a new operation. This
+repository contains only the contract and tests, not productive parity
+evidence or secret material.
+
+The 17-member local closure is regenerated from exact Git blob bytes with root
+`761024bab97ac8b96c71eaebabdbda626fe6edb47a1b803b0fb74ae3dbdc18e5`.
+The public descriptor remains `state=candidate`, `release_ready=false`, with
+null reviewed/integration/private-authority pins. B2 is not deployed: its SQL,
+Edge worker and cron remain pending. The next permitted action after final
+local tests and independent review is a separately authorized protected
+integration; authority issuance and production release remain separate gates.
+
+The earlier status and progress notes below are retained only as historical
+chronology and do not override this checkpoint.
+
 ## Current integration status
 
 The current deliverable is the isolated branch
