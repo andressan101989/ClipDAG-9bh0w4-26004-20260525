@@ -842,7 +842,7 @@ export function createB2RecoveryProvenanceLoader(options = {
         let adminFileDigests = null; let adminFiles = null;
         if (approved.admin) {
           const adminArchive = await request(config.fetchImpl, config.githubToken,
-            `${base}/actions/artifacts/${approved.admin.id}/zip`, MAX_ARCHIVE_BYTES, 'application/zip');
+            `${base}/actions/artifacts/${approved.admin.id}/zip`, MAX_ARCHIVE_BYTES, 'application/vnd.github+json');
           if (`sha256:${hash(adminArchive)}` !== approved.admin.digest) reject();
           const files = extractArchiveFiles(adminArchive, ADMIN_ARCHIVE_FILES);
           if (!files.has('admin-web-manifest.json') || !files.has('admin-web-manifest.sha256')) reject();
@@ -850,14 +850,14 @@ export function createB2RecoveryProvenanceLoader(options = {
           adminFiles = files;
         }
         const archive = await request(config.fetchImpl, config.githubToken,
-          `${base}/actions/artifacts/${source.gate_artifact.id}/zip`, MAX_ARCHIVE_BYTES, 'application/zip');
+          `${base}/actions/artifacts/${source.gate_artifact.id}/zip`, MAX_ARCHIVE_BYTES, 'application/vnd.github+json');
         if (`sha256:${hash(archive)}` !== source.gate_artifact.digest) reject();
         let gateFileDigests = null; let releaseFileDigests = null; let gateFiles = null; let releaseFiles = null;
         gateFiles = extractArchiveFiles(archive, GATE_ARCHIVE_FILES);
         if (!gateFiles.has('protected-stage-proofs.json') || !gateFiles.has('release-observation.json')) reject();
         gateFileDigests = deepFreeze(Object.fromEntries([...gateFiles].map(([name, bytes]) => [name, hash(bytes)])));
         const releaseArchive = await request(config.fetchImpl, config.githubToken,
-          `${base}/actions/artifacts/${source.release_artifact.id}/zip`, MAX_ARCHIVE_BYTES, 'application/zip');
+          `${base}/actions/artifacts/${source.release_artifact.id}/zip`, MAX_ARCHIVE_BYTES, 'application/vnd.github+json');
         if (`sha256:${hash(releaseArchive)}` !== source.release_artifact.digest) reject();
         const files = extractArchiveFiles(releaseArchive, RELEASE_ARCHIVE_FILES); releaseFiles = files;
         if (['bundle/manifest.json', 'bundle/manifest.sha256', 'bundle/summary.md', 'remote-evidence.json', 'request.json']
@@ -964,7 +964,7 @@ export function createB2RecoveryProvenanceLoader(options = {
           if (String(actual.id?.value) !== expected.id || actual.digest?.value !== expected.digest || actual.expired?.value !== false) reject();
           artifactMetadata.push({ ...expected, expired: false });
           const archive = await request(config.fetchImpl, config.githubToken,
-            `${base}/actions/artifacts/${expected.id}/zip`, MAX_ARCHIVE_BYTES, 'application/zip');
+            `${base}/actions/artifacts/${expected.id}/zip`, MAX_ARCHIVE_BYTES, 'application/vnd.github+json');
           if (`sha256:${hash(archive)}` !== expected.digest) reject();
           const extracted = extractArchiveFiles(archive, allowed);
           archiveFiles[kind] = extracted;

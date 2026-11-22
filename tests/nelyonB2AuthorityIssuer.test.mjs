@@ -1,14 +1,22 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
+import * as issuerModule from '../scripts/nelyon-private-authority-issuer.mjs';
+
 import {
+  classifyB2AuthorityIssuanceDescriptor,
   computeB2AuthorityPreissuance,
   createB2AuthorityIssuanceGithubObserver,
   issueB2PrivateAuthority,
   readTrustedB2AuthorityApproval,
   readTrustedB2AuthorityObservation,
+  verifyB2ApprovedDescriptorRenewalBoundary,
 } from '../scripts/nelyon-private-authority-issuer.mjs';
 import { canonicalJson } from '../scripts/nelyon-production-release.mjs';
 
@@ -137,7 +145,7 @@ function fixture({ duplicate = false, issueCreatedAt = '2026-11-22T10:02:00Z', s
   if (duplicate) history[50] = { ...history[50], display_title: releaseId };
   const calls = [];
   let repositoryReads = 0;
-  const fetchImpl = async input => {
+  const fetchImpl = async (input, init = {}) => {
     const url = new URL(input);
     calls.push(`${url.pathname}${url.search}`);
     if (url.pathname === `/repos/${REPOSITORY}`) {
@@ -161,6 +169,12 @@ function fixture({ duplicate = false, issueCreatedAt = '2026-11-22T10:02:00Z', s
         size_in_bytes: archive.length, digest: `sha256:${hash(archive)}`, expired: false,
         workflow_run: { id: Number(OBSERVATION_RUN), head_branch: 'main', head_sha: SHA } }] });
     if (url.pathname.endsWith(`/actions/artifacts/${ARTIFACT_ID}/zip`)) {
+      if (init.headers?.accept !== 'application/vnd.github+json') {
+        return new Response(JSON.stringify({ message: 'Unsupported Media Type' }), {
+          status: 415,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       return new Response(archive, { status: 200, headers: { 'content-type': 'application/zip',
         'content-length': String(archive.length) } });
     }
@@ -257,6 +271,115 @@ test('plain observation, approval and preparation objects cannot reach the immut
     issuedAt: '2026-11-22T10:03:00.000Z',
   }));
   assert.equal(writes, 0);
+});
+
+test('only an authentic issuance receipt can materialize the exact approved public descriptor', () => {
+  assert.equal(typeof issuerModule.readB2ApprovedDescriptorMaterialization, 'function');
+  assert.throws(() => issuerModule.readB2ApprovedDescriptorMaterialization(Object.freeze({
+    schemaVersion: 2,
+    kind: 'nelyon-b2-private-authority-issuance-receipt-v2',
+  })), error => {
+    assert.equal(String(error), 'Error: B2 authority issuance blocked');
+    return true;
+  });
+});
+
+test('approved descriptor bytes are fully parsed before immutable provider publication', () => {
+  const source = readFileSync(new URL('../scripts/nelyon-private-authority-issuer.mjs', import.meta.url), 'utf8');
+  const descriptorParse = source.indexOf('parseB2ReleaseDescriptor(descriptorBytes, descriptorSha256)');
+  const publication = source.indexOf('input.publisher.publishBySha256(authoritySha256, authorityBytes)');
+  assert.ok(descriptorParse >= 0 && publication > descriptorParse);
+});
+
+test('authority descriptor classifier accepts the initial candidate and an invariant approved renewal', () => {
+  const candidateBytes = readFileSync(new URL(
+    '../.github/nelyon-web-control-centers-b2-release-descriptor.json', import.meta.url));
+  const candidate = classifyB2AuthorityIssuanceDescriptor({ descriptorBytes: candidateBytes,
+    descriptorSha256: hash(candidateBytes), currentSha: SHA, currentTreeSha: TREE,
+    integrationBaseSha: '3'.repeat(40) });
+  assert.equal(candidate.mode, 'initial');
+  assert.equal(candidate.reviewedSourceSha, SHA);
+  assert.equal(candidate.reviewedSourceTreeSha, TREE);
+
+  const approvedDescriptor = JSON.parse(candidateBytes.toString('utf8'));
+  approvedDescriptor.contract.state = 'approved';
+  approvedDescriptor.contract.release_ready = true;
+  approvedDescriptor.contract.reviewed_source_sha = SHA;
+  approvedDescriptor.contract.reviewed_source_tree_sha = TREE;
+  approvedDescriptor.contract.integration_base_sha = '3'.repeat(40);
+  approvedDescriptor.contract.advisor_authorization_contract_sha256 = '4'.repeat(64);
+  approvedDescriptor.contract.advisor_authorization_verifier_sha256 = '5'.repeat(64);
+  approvedDescriptor.contract.advisor_authorization_tests_sha256 = '6'.repeat(64);
+  approvedDescriptor.contract.function_inventory = { before: 34, after: 35 };
+  approvedDescriptor.contract.functions = approvedDescriptor.contract.functions.map((entry, index) => ({
+    ...entry, source_sha256: String((index % 8) + 1).repeat(64),
+    config_sha256: String(((index + 1) % 8) + 1).repeat(64),
+  }));
+  approvedDescriptor.public_contract_sha256 = hash(Buffer.from(canonicalJson(approvedDescriptor.contract), 'utf8'));
+  approvedDescriptor.private_authority.sha256 = 'a'.repeat(64);
+  const approvedBytes = Buffer.from(`${JSON.stringify(approvedDescriptor, null, 2)}\n`, 'utf8');
+  const renewal = classifyB2AuthorityIssuanceDescriptor({ descriptorBytes: approvedBytes,
+    descriptorSha256: hash(approvedBytes), currentSha: 'b'.repeat(40), currentTreeSha: 'c'.repeat(40),
+    integrationBaseSha: '3'.repeat(40) });
+  assert.equal(renewal.mode, 'renewal');
+  assert.equal(renewal.reviewedSourceSha, SHA);
+  assert.equal(renewal.reviewedSourceTreeSha, TREE);
+  assert.equal(canonicalJson(renewal.descriptor.contract), canonicalJson(approvedDescriptor.contract));
+
+  const invalidApproved = structuredClone(approvedDescriptor);
+  invalidApproved.private_authority.sha256 = null;
+  const invalidApprovedBytes = Buffer.from(`${JSON.stringify(invalidApproved)}\n`, 'utf8');
+  assert.throws(() => classifyB2AuthorityIssuanceDescriptor({ descriptorBytes: invalidApprovedBytes,
+    descriptorSha256: hash(invalidApprovedBytes), currentSha: 'b'.repeat(40), currentTreeSha: 'c'.repeat(40),
+    integrationBaseSha: '3'.repeat(40) }));
+
+  const invalidCandidate = JSON.parse(candidateBytes.toString('utf8'));
+  invalidCandidate.private_authority.sha256 = 'd'.repeat(64);
+  const invalidCandidateBytes = Buffer.from(`${JSON.stringify(invalidCandidate)}\n`, 'utf8');
+  assert.throws(() => classifyB2AuthorityIssuanceDescriptor({ descriptorBytes: invalidCandidateBytes,
+    descriptorSha256: hash(invalidCandidateBytes), currentSha: SHA, currentTreeSha: TREE,
+    integrationBaseSha: '3'.repeat(40) }));
+});
+
+test('approved authority renewal permits only the descriptor metadata delta from reviewed source', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nelyon-b2-renewal-boundary-'));
+  const git = args => execFileSync('git', ['-C', root, '-c', 'user.name=Nelyon Test',
+    '-c', 'user.email=nelyon-test@example.invalid', ...args], { encoding: 'utf8' }).trim();
+  try {
+    git(['init']);
+    mkdirSync(path.join(root, '.github'), { recursive: true });
+    writeFileSync(path.join(root, '.github', 'nelyon-web-control-centers-b2-release-descriptor.json'),
+      '{"state":"candidate"}\n', 'utf8');
+    writeFileSync(path.join(root, 'reviewed.txt'), 'reviewed\n', 'utf8');
+    git(['add', '--', '.github/nelyon-web-control-centers-b2-release-descriptor.json', 'reviewed.txt']);
+    git(['commit', '-m', 'reviewed source']);
+    const reviewedSourceSha = git(['rev-parse', 'HEAD']);
+    const reviewedSourceTreeSha = git(['rev-parse', 'HEAD^{tree}']);
+    writeFileSync(path.join(root, '.github', 'nelyon-web-control-centers-b2-release-descriptor.json'),
+      '{"state":"approved"}\n', 'utf8');
+    git(['add', '--', '.github/nelyon-web-control-centers-b2-release-descriptor.json']);
+    git(['commit', '-m', 'authority metadata']);
+    const currentSha = git(['rev-parse', 'HEAD']);
+    const verified = verifyB2ApprovedDescriptorRenewalBoundary({ repositoryRoot: root, currentSha,
+      reviewedSourceSha, reviewedSourceTreeSha });
+    assert.deepEqual(verified, { schemaVersion: 1, result: 'B2_AUTHORITY_RENEWAL_BOUNDARY_VERIFIED' });
+    assert.throws(() => verifyB2ApprovedDescriptorRenewalBoundary({ repositoryRoot: root, currentSha,
+      reviewedSourceSha, reviewedSourceTreeSha: 'f'.repeat(40) }));
+
+    writeFileSync(path.join(root, 'reviewed.txt'), 'unexpected change\n', 'utf8');
+    git(['add', '--', 'reviewed.txt']);
+    git(['commit', '-m', 'unexpected source change']);
+    assert.throws(() => verifyB2ApprovedDescriptorRenewalBoundary({ repositoryRoot: root,
+      currentSha: git(['rev-parse', 'HEAD']), reviewedSourceSha, reviewedSourceTreeSha }));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('approved descriptor Git bytes are explicitly normalized to LF', () => {
+  const attributes = readFileSync(new URL('../.gitattributes', import.meta.url), 'utf8');
+  assert.match(attributes,
+    /^\.github\/nelyon-web-control-centers-b2-release-descriptor\.json text eol=lf$/mu);
 });
 
 test('authority issuer rejects accessors and coercible identifiers without evaluating them', async () => {

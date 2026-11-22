@@ -4224,14 +4224,16 @@ test('historical managed config parses exact function declarations', async () =>
   });
 });
 
-test('current B2 R2 candidate and direct worker change do not grant release authorization', async () => {
+test('current B2 descriptor and direct worker change do not grant protected release authorization', async () => {
   const { gate, policy } = await loadGateAndPolicy();
   const descriptorBytes = readFileSync(new URL('../.github/nelyon-web-control-centers-b2-release-descriptor.json', import.meta.url));
   const descriptor = gate.parseB2ReleaseDescriptor(descriptorBytes, gate.sha256Hex(descriptorBytes));
-  assert.equal(descriptor.contract.state, 'candidate');
-  assert.equal(descriptor.contract.release_ready, false);
+  const approved = descriptor.contract.state === 'approved';
+  assert.ok(['candidate', 'approved'].includes(descriptor.contract.state));
+  assert.equal(descriptor.contract.release_ready, approved);
   assert.equal(descriptor.contract.cron_activation, true);
-  assert.equal(descriptor.private_authority.sha256, null);
+  if (approved) assert.match(descriptor.private_authority.sha256, /^[0-9a-f]{64}$/u);
+  else assert.equal(descriptor.private_authority.sha256, null);
   // Approved public references alone never substitute for protected private authority.
   assert.throws(() => gate.compileB2PublicEvidence({
     descriptorBytes, expectedDescriptorSha256: gate.sha256Hex(descriptorBytes),

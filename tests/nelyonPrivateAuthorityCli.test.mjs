@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import * as fs from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -21,6 +22,8 @@ const {
   executeAuthorityIssuance,
   executeAuthorityObservation,
   runPrivateAuthorityCli,
+  writeB2AuthorityObservationMetadata,
+  writeB2AuthorityIssuanceMetadata,
 } = cliModule;
 const MARKER = 'PRIVATE_CLI_SYNTHETIC_MARKER';
 const COMMON = [
@@ -33,6 +36,8 @@ const OBSERVE = [
   '--policy', 'policy.json',
   '--approved-sha', 'a'.repeat(40),
   '--approved-tree', 'b'.repeat(40),
+  '--integration-base-sha', '109395035d13ba3db8d338dc3b2524191defe873',
+  '--preissuance-output', 'preissuance.json',
   '--verification-output', 'observation.json',
 ];
 const B2_INTEGRATION_BOUNDARY_SHA = '109395035d13ba3db8d338dc3b2524191defe873';
@@ -44,6 +49,7 @@ const ISSUE = [
   '--observation-run', '123456789',
   '--observation-sha256', 'd'.repeat(64),
   '--release-id', `b2-authority-${'e'.repeat(64)}`,
+  '--approved-descriptor-output', 'nelyon-web-control-centers-b2-release-descriptor.json',
   '--verification-output', 'receipt.json',
 ];
 const ACTIONS = [
@@ -346,7 +352,9 @@ test('authority-observe is a separate terminal flag plane with no current bundle
       policy: 'policy.json',
       approvedSha: 'a'.repeat(40),
       approvedTree: 'b'.repeat(40),
+      integrationBaseSha: B2_INTEGRATION_BOUNDARY_SHA,
     },
+    preissuanceOutput: 'preissuance.json',
     verificationOutput: 'observation.json',
   });
   for (const extra of [
@@ -355,6 +363,9 @@ test('authority-observe is a separate terminal flag plane with no current bundle
   ]) {
     assert.equal(await runPrivateAuthorityCli(['authority-observe', ...OBSERVE, ...extra], host), 2);
   }
+  const missingPreissuance = OBSERVE.filter((value, index) => value !== '--preissuance-output'
+    && OBSERVE[index - 1] !== '--preissuance-output');
+  assert.equal(await runPrivateAuthorityCli(['authority-observe', ...missingPreissuance], host), 2);
 });
 
 test('authority-issue is a separate terminal flag plane bound to source, observation and deterministic release id', async () => {
@@ -372,11 +383,18 @@ test('authority-issue is a separate terminal flag plane bound to source, observa
       observationRun: '123456789', observationSha256: 'd'.repeat(64),
       releaseId: `b2-authority-${'e'.repeat(64)}`,
     },
+    approvedDescriptorOutput: 'nelyon-web-control-centers-b2-release-descriptor.json',
     verificationOutput: 'receipt.json',
   });
   for (const extra of [['--request', 'request.json'], ['--bundle', 'bundle'], ['--authority', 'private.json']]) {
     assert.equal(await runPrivateAuthorityCli(['authority-issue', ...ISSUE, ...extra], host), 2);
   }
+  let executions = 0;
+  const missingDescriptorOutput = ISSUE.filter((value, index) => value !== '--approved-descriptor-output'
+    && ISSUE[index - 1] !== '--approved-descriptor-output');
+  const rejectingHost = trustedHost(async () => { executions += 1; throw new Error(MARKER); });
+  assert.equal(await runPrivateAuthorityCli(['authority-issue', ...missingDescriptorOutput], rejectingHost), 2);
+  assert.equal(executions, 0);
 });
 
 test('authority-issue rejects a caller-selected ancestor before GitHub or provider access', async () => {
@@ -394,6 +412,7 @@ test('authority-issue rejects a caller-selected ancestor before GitHub or provid
         observationSha256: 'd'.repeat(64), policy: 'policy.json',
         releaseId: `b2-authority-${'e'.repeat(64)}`,
       },
+      approvedDescriptorOutput: 'nelyon-web-control-centers-b2-release-descriptor.json',
       verificationOutput: 'receipt.json',
     },
     environment,
@@ -427,7 +446,73 @@ test('authority-issue production dispatch is terminal and precedes current descr
   assert.doesNotMatch(terminalBranch, /bootstrapPrivateAuthorityRuntime|createPrivateAuthorityRuntime|authorityContext/u);
 });
 
-test('production authority observation validates exact main identity and writes only verified sanitized bytes', async () => {
+test('authority issuance writes a canonical approved descriptor beside its sanitized receipt', () => {
+  const source = readFileSync(new URL('../scripts/nelyon-private-authority-cli.mjs', import.meta.url), 'utf8');
+  assert.match(source, /readB2ApprovedDescriptorMaterialization/u);
+  assert.match(source, /nelyon-web-control-centers-b2-release-descriptor\.json/u);
+  assert.match(source, /receipt\.descriptor\?\.sha256 !== issuedDescriptor\.sha256/u);
+  const descriptorWrite = source.indexOf('writeFileSync(descriptorFile');
+  const receiptWrite = source.indexOf('writeFileSync(receiptFile');
+  assert.ok(descriptorWrite >= 0 && receiptWrite > descriptorWrite);
+});
+
+test('authority issuance metadata publishes receipt last and removes every partial artifact on failure', () => {
+  assert.equal(typeof writeB2AuthorityIssuanceMetadata, 'function');
+  const root = mkdtempSync(path.join(tmpdir(), 'nelyon-authority-metadata-'));
+  const descriptorOutput = path.join(root, 'nelyon-web-control-centers-b2-release-descriptor.json');
+  const receiptOutput = path.join(root, 'receipt.json');
+  const input = Object.freeze({ descriptorOutput, receiptOutput,
+    descriptorJson: '{\n  "approved": true\n}\n', receiptJson: '{"verified":true}\n' });
+  try {
+    const operations = Object.freeze({
+      openSync: fs.openSync, writeFileSync: fs.writeFileSync, fsyncSync: fs.fsyncSync,
+      closeSync: fs.closeSync, renameSync(from, to) {
+        if (to === receiptOutput) throw new Error(MARKER);
+        return fs.renameSync(from, to);
+      },
+      unlinkSync: fs.unlinkSync,
+    });
+    assert.throws(() => writeB2AuthorityIssuanceMetadata(input, operations), new RegExp(MARKER));
+    assert.deepEqual(readdirSync(root), []);
+    writeB2AuthorityIssuanceMetadata(input);
+    assert.equal(readFileSync(descriptorOutput, 'utf8'), input.descriptorJson);
+    assert.equal(readFileSync(receiptOutput, 'utf8'), input.receiptJson);
+    assert.deepEqual(readdirSync(root).sort(), [
+      'nelyon-web-control-centers-b2-release-descriptor.json', 'receipt.json',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('authority observation metadata publishes observation last and removes every partial artifact on failure', () => {
+  assert.equal(typeof writeB2AuthorityObservationMetadata, 'function');
+  const root = mkdtempSync(path.join(tmpdir(), 'nelyon-authority-observation-metadata-'));
+  const preissuanceOutput = path.join(root, 'preissuance.json');
+  const observationOutput = path.join(root, 'observation.json');
+  const input = Object.freeze({ preissuanceOutput, observationOutput,
+    preissuanceJson: '{"kind":"preissuance"}\n', observationJson: '{"kind":"observation"}\n' });
+  try {
+    const operations = Object.freeze({
+      openSync: fs.openSync, writeFileSync: fs.writeFileSync, fsyncSync: fs.fsyncSync,
+      closeSync: fs.closeSync, renameSync(from, to) {
+        if (to === observationOutput) throw new Error(MARKER);
+        return fs.renameSync(from, to);
+      },
+      unlinkSync: fs.unlinkSync,
+    });
+    assert.throws(() => writeB2AuthorityObservationMetadata(input, operations), new RegExp(MARKER));
+    assert.deepEqual(readdirSync(root), []);
+    writeB2AuthorityObservationMetadata(input);
+    assert.equal(readFileSync(preissuanceOutput, 'utf8'), input.preissuanceJson);
+    assert.equal(readFileSync(observationOutput, 'utf8'), input.observationJson);
+    assert.deepEqual(readdirSync(root).sort(), ['observation.json', 'preissuance.json']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('production authority observation validates main identity and atomically writes observation plus public preissuance', async () => {
   const repositoryRoot = process.cwd();
   const approvedSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot, encoding: 'utf8' }).trim();
   const approvedTree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: repositoryRoot, encoding: 'utf8' }).trim();
@@ -435,6 +520,7 @@ test('production authority observation validates exact main identity and writes 
   const outputDirectory = path.join(runnerTemp, 'nelyon-b2-authority-observation');
   mkdirSync(outputDirectory, { mode: 0o700 });
   const output = path.join(outputDirectory, 'observation.json');
+  const preissuanceOutput = path.join(outputDirectory, 'preissuance.json');
   const wrongOutputDirectory = path.join(runnerTemp, 'wrong-authority-observation');
   mkdirSync(wrongOutputDirectory, { mode: 0o700 });
   const environment = Object.freeze({
@@ -442,6 +528,7 @@ test('production authority observation validates exact main identity and writes 
     GITHUB_EVENT_NAME: 'workflow_dispatch',
     GITHUB_REF: 'refs/heads/main',
     GITHUB_REPOSITORY: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+    GITHUB_RUN_ID: '123456789',
     GITHUB_SHA: approvedSha,
     GITHUB_TRIGGERING_ACTOR: 'andressan101989',
     GITHUB_WORKFLOW_REF: 'andressan101989/ClipDAG-9bh0w4-26004-20260525/.github/workflows/nelyon-production-release.yml@refs/heads/main',
@@ -451,6 +538,25 @@ test('production authority observation validates exact main identity and writes 
     SUPABASE_ACCESS_TOKEN: 'observer-token-canary',
   });
   const observation = Object.freeze({ schemaVersion: 1, kind: 'sanitized', observationSha256: 'c'.repeat(64) });
+  const preissuanceContract = Object.freeze({ schemaVersion: 1,
+    operation: 'web-control-centers-b2-authority-issue',
+    repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+    workflowPath: '.github/workflows/nelyon-production-release.yml', approvedSha,
+    approvedTreeSha: approvedTree, publicContractSha256: '1'.repeat(64),
+    manifestSha256: '2'.repeat(64), policySha256: '3'.repeat(64), baselineSha: '4'.repeat(40),
+    runtimeClosureSha256: '5'.repeat(64), observationSha256: observation.observationSha256 });
+  const preissuanceSha256 = sha256(`${canonicalJson(preissuanceContract)}\n`);
+  const preissuance = Object.freeze({ schemaVersion: 1,
+    kind: 'nelyon-b2-authority-preissuance-summary-v1',
+    source: Object.freeze({ sha: approvedSha, tree: approvedTree }),
+    integrationBaseSha: B2_INTEGRATION_BOUNDARY_SHA,
+    observation: Object.freeze({ sha256: observation.observationSha256,
+      completedObservedAt: '2026-11-22T10:01:00.000Z', expiresAt: '2026-11-22T12:01:00.000Z' }),
+    descriptor: Object.freeze({ path: '.github/nelyon-web-control-centers-b2-release-descriptor.json',
+      state: 'candidate', sha256: '6'.repeat(64) }),
+    functionInventory: Object.freeze({ before: 34, after: 35 }),
+    preissuance: Object.freeze({ contract: preissuanceContract, preissuanceSha256 }),
+    releaseId: `b2-authority-${preissuanceSha256}` });
   let captureOptions;
   try {
     let actionReads = 0;
@@ -458,7 +564,9 @@ test('production authority observation validates exact main identity and writes 
       action: { enumerable: true, get() { actionReads += 1; throw new Error(MARKER); } },
       inputs: { enumerable: true, value: Object.freeze({
         policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
+        integrationBaseSha: B2_INTEGRATION_BOUNDARY_SHA,
       }) },
+      preissuanceOutput: { enumerable: true, value: preissuanceOutput },
       verificationOutput: { enumerable: true, value: output },
     }));
     await assert.rejects(() => executeAuthorityObservation({
@@ -472,7 +580,8 @@ test('production authority observation validates exact main identity and writes 
     await assert.rejects(() => executeAuthorityObservation({
       invocation: Object.freeze({ action: 'authority-observe', inputs: Object.freeze({
         policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
-      }), verificationOutput: output, unexpected: true }),
+        integrationBaseSha: B2_INTEGRATION_BOUNDARY_SHA,
+      }), preissuanceOutput, verificationOutput: output, unexpected: true }),
       environment, repositoryRoot, fetchImpl: async () => { throw new Error(MARKER); },
       captureImpl: async () => { throw new Error(MARKER); }, verifyImpl: value => value, nodeVersion: '24.21.0',
       execFileSyncImpl(_command, args) {
@@ -485,12 +594,21 @@ test('production authority observation validates exact main identity and writes 
     const result = await executeAuthorityObservation({
       invocation: Object.freeze({ action: 'authority-observe', inputs: Object.freeze({
         policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
-      }), verificationOutput: output }),
+        integrationBaseSha: B2_INTEGRATION_BOUNDARY_SHA,
+      }), preissuanceOutput, verificationOutput: output }),
       environment,
       repositoryRoot,
       fetchImpl: async () => { throw new Error(MARKER); },
       captureImpl: async options => { captureOptions = options; return observation; },
       verifyImpl: value => { assert.equal(value, observation); return value; },
+      prepareImpl: value => {
+        assert.equal(value.observation, observation);
+        assert.equal(value.approvedSha, approvedSha);
+        assert.equal(value.approvedTreeSha, approvedTree);
+        assert.equal(value.repositoryRoot, repositoryRoot);
+        assert.equal(value.integrationBaseSha, B2_INTEGRATION_BOUNDARY_SHA);
+        return preissuance;
+      },
       nodeVersion: '24.21.0',
     });
     assert.deepEqual(result, { schemaVersion: 1, result: 'VERIFIED', releaseReady: false });
@@ -503,10 +621,18 @@ test('production authority observation validates exact main identity and writes 
     const retained = readFileSync(output, 'utf8');
     assert.equal(retained.includes('observer-token-canary'), false);
     assert.equal(JSON.parse(retained).observationSha256, observation.observationSha256);
+    const retainedPreissuance = JSON.parse(readFileSync(preissuanceOutput, 'utf8'));
+    assert.equal(retainedPreissuance.releaseId, preissuance.releaseId);
+    assert.deepEqual(retainedPreissuance.preissuance, preissuance.preissuance);
+    assert.deepEqual(retainedPreissuance.observation, {
+      runId: '123456789', runAttempt: 1, ...preissuance.observation,
+    });
     await assert.rejects(() => executeAuthorityObservation({
       invocation: Object.freeze({ action: 'authority-observe', inputs: Object.freeze({
         policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
-      }), verificationOutput: path.join(wrongOutputDirectory, 'observation.json') }),
+        integrationBaseSha: B2_INTEGRATION_BOUNDARY_SHA,
+      }), preissuanceOutput: path.join(wrongOutputDirectory, 'preissuance.json'),
+      verificationOutput: path.join(wrongOutputDirectory, 'observation.json') }),
       environment, repositoryRoot, fetchImpl: async () => { throw new Error(MARKER); },
       captureImpl: async () => observation, verifyImpl: value => value, nodeVersion: '24.21.0',
     }));
@@ -522,7 +648,8 @@ test('production authority observation validates exact main identity and writes 
       await assert.rejects(() => executeAuthorityObservation({
         invocation: Object.freeze({ action: 'authority-observe', inputs: Object.freeze({
           policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
-        }), verificationOutput: output }),
+          integrationBaseSha: B2_INTEGRATION_BOUNDARY_SHA,
+        }), preissuanceOutput, verificationOutput: output }),
         environment: Object.freeze({ ...environment, [name]: value }), repositoryRoot,
         fetchImpl: async () => { throw new Error(MARKER); }, captureImpl: async () => observation,
         verifyImpl: candidate => candidate, nodeVersion: '24.21.0',
@@ -531,14 +658,16 @@ test('production authority observation validates exact main identity and writes 
     await assert.rejects(() => executeAuthorityObservation({
       invocation: Object.freeze({ action: 'authority-observe', inputs: Object.freeze({
         policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
-      }), verificationOutput: output }),
+        integrationBaseSha: B2_INTEGRATION_BOUNDARY_SHA,
+      }), preissuanceOutput, verificationOutput: output }),
       environment, repositoryRoot, fetchImpl: async () => { throw new Error(MARKER); },
       captureImpl: async () => observation, verifyImpl: value => value, nodeVersion: '24.20.0',
     }));
     await assert.rejects(() => executeAuthorityObservation({
       invocation: Object.freeze({ action: 'authority-observe', inputs: Object.freeze({
         policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
-      }), verificationOutput: output }),
+        integrationBaseSha: B2_INTEGRATION_BOUNDARY_SHA,
+      }), preissuanceOutput, verificationOutput: output }),
       environment: Object.freeze({ ...environment, GITHUB_ACTOR: 'not-owner' }), repositoryRoot,
       fetchImpl: async () => { throw new Error(MARKER); }, captureImpl: async () => observation,
       verifyImpl: value => value, nodeVersion: '24.21.0',

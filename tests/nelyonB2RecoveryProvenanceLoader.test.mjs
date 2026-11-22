@@ -333,6 +333,10 @@ function fakeGithub(fixture, { paginate = false } = {}) {
     assert.equal(init?.method, 'GET');
     assert.equal(init?.headers?.authorization, `Bearer ${TOKEN}`);
     const parsed = new URL(url);
+    if (parsed.pathname.endsWith('/zip')
+      && init?.headers?.accept !== 'application/vnd.github+json') {
+      return response({ message: 'Unsupported Media Type' }, 415);
+    }
     if (parsed.pathname.endsWith(`/actions/runs/${RUN_ID}/attempts/${ATTEMPT}`)) return response(fixture.run);
     if (parsed.pathname.endsWith(`/actions/runs/${RUN_ID}/attempts/${ATTEMPT}/jobs`)) {
       const page = Number(parsed.searchParams.get('page'));
@@ -427,6 +431,17 @@ test('separate exact-attempt authorization binds real policy and mints the exist
     { code: 'B2_RECOVERY_PROVENANCE_INVALID' });
 });
 
+test('recovery archive downloads negotiate the GitHub REST media type before receiving ZIP bytes', async () => {
+  const fixture = makeFixture();
+  const github = fakeGithub(fixture);
+  await loader(github.fetchImpl).loadExactAttempt({ approvedSource: approved(fixture) });
+  const archiveCalls = github.calls.filter(call => new URL(call.url).pathname.endsWith('/zip'));
+  assert.equal(archiveCalls.length, 2);
+  for (const call of archiveCalls) {
+    assert.equal(call.init?.headers?.accept, 'application/vnd.github+json');
+  }
+});
+
 test('separate Admin authorization pins the exact unexpired Admin artifact', async () => {
   const fixture = makeFixture();
   const policyBytes = readFileSync(new URL('../.github/nelyon-production-release-policy.json', import.meta.url));
@@ -439,7 +454,9 @@ test('separate Admin authorization pins the exact unexpired Admin artifact', asy
     expectedAuthorizationSha256: sha256(bytes), policyBytes, expectedPolicySha256: sha256(policyBytes),
     runId: RUN_ID, runAttempt: ATTEMPT });
   fixture.artifacts.push({ ...admin, id: Number(admin.id), expired: false });
-  await loader(fakeGithub(fixture).fetchImpl).loadExactAttempt({ approvedSource: source });
+  const github = fakeGithub(fixture);
+  await loader(github.fetchImpl).loadExactAttempt({ approvedSource: source });
+  assert.equal(github.calls.filter(call => new URL(call.url).pathname.endsWith('/zip')).length, 3);
   const validArchive = fixture.adminArchive;
   fixture.adminArchive = Buffer.from('tampered');
   await assertRejected(loader(fakeGithub(fixture).fetchImpl).loadExactAttempt({ approvedSource: source }));

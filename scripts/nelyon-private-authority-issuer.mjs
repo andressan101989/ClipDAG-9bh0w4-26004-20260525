@@ -9,6 +9,7 @@ import {
   buildFunctionContracts,
   buildFunctionGraph,
   canonicalJson,
+  parseB2ReleaseDescriptor,
   parseFunctionConfig,
 } from './nelyon-production-release.mjs';
 import { verifyB2AuthorityObservation } from './nelyon-production-snapshot-adapter.mjs';
@@ -31,6 +32,7 @@ const REPOSITORY = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
 const WORKFLOW = '.github/workflows/nelyon-production-release.yml';
 const OWNER = 'andressan101989';
 const API_ORIGIN = 'https://api.github.com';
+const DESCRIPTOR_PATH = '.github/nelyon-web-control-centers-b2-release-descriptor.json';
 export const B2_AUTHORITY_INTEGRATION_BASE_SHA = '109395035d13ba3db8d338dc3b2524191defe873';
 const HEX64 = /^[0-9a-f]{64}$/u;
 const SHA40 = /^[0-9a-f]{40}$/u;
@@ -42,6 +44,7 @@ const PAGE_SIZE = 100;
 const observationCapabilities = new WeakMap();
 const approvalCapabilities = new WeakMap();
 const preparationCapabilities = new WeakMap();
+const issuanceCapabilities = new WeakMap();
 
 function reject() {
   const error = new Error('B2 authority issuance blocked');
@@ -333,7 +336,7 @@ export function createB2AuthorityIssuanceGithubObserver(options) {
         || artifact.workflow_run?.id !== Number(runId) || artifact.workflow_run?.head_branch !== 'main'
         || artifact.workflow_run?.head_sha !== input.approvedSha) reject();
       const archive = await request(fetchImpl, token, `${base}/actions/artifacts/${artifactId}/zip`,
-        MAX_ARCHIVE_BYTES, 'application/zip');
+        MAX_ARCHIVE_BYTES, 'application/vnd.github+json');
       if (archive.length !== artifact.size_in_bytes || `sha256:${digest(archive)}` !== artifact.digest) reject();
       const observationBytes = extractObservation(archive);
       const observation = parseJson(observationBytes);
@@ -451,17 +454,6 @@ function gitBlob(root, sha, path) {
   return bytes;
 }
 
-function parseExactJsonBytes(bytes) {
-  const value = parseJson(bytes);
-  if (!Buffer.from(JSON.stringify(value), 'utf8').equals(bytes)
-    && !Buffer.from(`${JSON.stringify(value)}\n`, 'utf8').equals(bytes)) {
-    // Reviewed repository JSON may be formatted. Duplicate keys were already
-    // rejected; values remain bound by the Git blob and byte digest.
-    return value;
-  }
-  return value;
-}
-
 function reviewedFunctionFiles(root, sha) {
   const listing = git(root, ['ls-tree', '-r', '-z', '--name-only', sha, '--', 'supabase/functions']);
   const paths = listing.toString('utf8').split('\0').filter(Boolean);
@@ -508,59 +500,92 @@ function advisorOrigin(contract) {
   };
 }
 
-/** Build the complete approved public contract and private inputs from exact
- * Git blobs plus branded provider/proof capabilities. Nothing is written. */
-export function prepareB2AuthorityIssuance(input) {
-  exact(input, ['repositoryRoot', 'approvedSha', 'approvedTreeSha', 'integrationBaseSha', 'observation']);
-  const observationState = capabilityState(observationCapabilities, input.observation);
+/** Classify the exact public descriptor without granting authority. Initial
+ * issuance starts from a candidate; renewal starts from an already approved
+ * descriptor and preserves its reviewed-source identity. */
+export function classifyB2AuthorityIssuanceDescriptor(input) {
+  exact(input, ['descriptorBytes', 'descriptorSha256', 'currentSha', 'currentTreeSha', 'integrationBaseSha']);
+  if (!Buffer.isBuffer(input.descriptorBytes) || !HEX64.test(input.descriptorSha256)
+    || !SHA40.test(input.currentSha) || !SHA40.test(input.currentTreeSha)
+    || !SHA40.test(input.integrationBaseSha)) reject();
+  const descriptor = parseB2ReleaseDescriptor(input.descriptorBytes, input.descriptorSha256);
+  if (descriptor.contract.state === 'candidate') {
+    return Object.freeze({ schemaVersion: 1, mode: 'initial', descriptor,
+      reviewedSourceSha: input.currentSha, reviewedSourceTreeSha: input.currentTreeSha });
+  }
+  if (descriptor.contract.state !== 'approved'
+    || descriptor.contract.integration_base_sha !== input.integrationBaseSha) reject();
+  return Object.freeze({ schemaVersion: 1, mode: 'renewal', descriptor,
+    reviewedSourceSha: descriptor.contract.reviewed_source_sha,
+    reviewedSourceTreeSha: descriptor.contract.reviewed_source_tree_sha });
+}
+
+/** An approved descriptor may be renewed only while the current branch differs
+ * from its reviewed source by that descriptor itself. This prevents metadata
+ * renewal from silently approving new source or release logic. */
+export function verifyB2ApprovedDescriptorRenewalBoundary(input) {
+  exact(input, ['repositoryRoot', 'currentSha', 'reviewedSourceSha', 'reviewedSourceTreeSha']);
+  if (typeof input.repositoryRoot !== 'string' || !SHA40.test(input.currentSha)
+    || !SHA40.test(input.reviewedSourceSha) || !SHA40.test(input.reviewedSourceTreeSha)) reject();
+  let root;
+  try { root = realpathSync(input.repositoryRoot); } catch { reject(); }
+  if (gitText(root, ['rev-parse', 'HEAD']).trim() !== input.currentSha
+    || gitText(root, ['rev-parse', `${input.reviewedSourceSha}^{tree}`]).trim() !== input.reviewedSourceTreeSha
+    || gitText(root, ['merge-base', input.reviewedSourceSha, input.currentSha]).trim() !== input.reviewedSourceSha) {
+    reject();
+  }
+  const changed = gitText(root, ['diff', '--name-only', '-z', input.reviewedSourceSha, input.currentSha, '--'])
+    .split('\0').filter(Boolean);
+  if (changed.length !== 1 || changed[0] !== DESCRIPTOR_PATH) reject();
+  return Object.freeze({ schemaVersion: 1, result: 'B2_AUTHORITY_RENEWAL_BOUNDARY_VERIFIED' });
+}
+
+/** Build the deterministic public half of an issuance from exact Git blobs and
+ * a previously verified observation. This performs no provider write and no
+ * private successor-catalog proof. */
+function buildB2AuthorityPublicPreparation(input, observation) {
+  exact(input, ['repositoryRoot', 'approvedSha', 'approvedTreeSha', 'integrationBaseSha']);
   if (!SHA40.test(input.approvedSha) || !SHA40.test(input.approvedTreeSha)
     || input.integrationBaseSha !== B2_AUTHORITY_INTEGRATION_BASE_SHA
-    || observationState.observation.approvedSha !== input.approvedSha
-    || observationState.observation.approvedTreeSha !== input.approvedTreeSha) reject();
+    || observation.approvedSha !== input.approvedSha
+    || observation.approvedTreeSha !== input.approvedTreeSha) reject();
   let root;
   try { root = realpathSync(input.repositoryRoot); } catch { reject(); }
   if (gitText(root, ['rev-parse', 'HEAD']).trim() !== input.approvedSha
     || gitText(root, ['rev-parse', 'HEAD^{tree}']).trim() !== input.approvedTreeSha
     || gitText(root, ['merge-base', input.integrationBaseSha, input.approvedSha]).trim() !== input.integrationBaseSha) reject();
 
-  const descriptorPath = '.github/nelyon-web-control-centers-b2-release-descriptor.json';
-  const candidate = parseExactJsonBytes(gitBlob(root, input.approvedSha, descriptorPath));
-  exact(candidate, ['schema_version', 'contract', 'public_contract_sha256', 'private_authority']);
-  exact(candidate.private_authority, ['required', 'schema_version', 'authority_id', 'sha256']);
-  exact(candidate.contract, [
-    'advisor_authorization_contract_sha256', 'advisor_authorization_tests_sha256',
-    'advisor_authorization_verifier_sha256', 'approved_sha_ancestry', 'baseline_sha',
-    'cron_activation', 'finance_invariants', 'from_phase', 'function_inventory', 'functions', 'id',
-    'integration_base_sha', 'managed_scope_transition', 'private_authority_max_bytes',
-    'productive_changes', 'release_ready', 'requires_separate_baseline_promotion',
-    'reviewed_source_sha', 'reviewed_source_tree_sha', 'state', 'to_phase',
-  ]);
+  const descriptorBytes = gitBlob(root, input.approvedSha, DESCRIPTOR_PATH);
+  const classified = classifyB2AuthorityIssuanceDescriptor({ descriptorBytes,
+    descriptorSha256: digest(descriptorBytes), currentSha: input.approvedSha,
+    currentTreeSha: input.approvedTreeSha, integrationBaseSha: input.integrationBaseSha });
+  const candidate = classified.descriptor;
+  const originalContract = structuredClone(candidate.contract);
   const contract = structuredClone(candidate.contract);
-  if (candidate.schema_version !== 1 || contract.id !== 'web-control-centers-b2-scheduled-publishing-v1'
-    || contract.state !== 'candidate' || contract.release_ready !== false
-    || !HEX64.test(candidate.public_contract_sha256)
-    || candidate.public_contract_sha256 !== digest(Buffer.from(canonicalJson(candidate.contract), 'utf8'))
-    || candidate.private_authority?.required !== true || candidate.private_authority?.schema_version !== 1
-    || candidate.private_authority?.authority_id !== 'web-control-centers-b2-release-authority-v1'
-    || candidate.private_authority?.sha256 !== null || !Array.isArray(contract.productive_changes)
-    || contract.productive_changes.length !== 5 || !Array.isArray(contract.functions)
-    || contract.functions.length !== B2_AUTHORITY_EDGE_FUNCTION_SCOPE.length) reject();
-  contract.productive_changes = contract.productive_changes.map(value => exactReviewedChange(root, input.approvedSha, value));
-  contract.state = 'approved';
-  contract.release_ready = true;
-  contract.reviewed_source_sha = input.approvedSha;
-  contract.reviewed_source_tree_sha = input.approvedTreeSha;
-  contract.integration_base_sha = input.integrationBaseSha;
+  const reviewedSourceSha = classified.reviewedSourceSha;
+  if (classified.mode === 'renewal') {
+    verifyB2ApprovedDescriptorRenewalBoundary({ repositoryRoot: root, currentSha: input.approvedSha,
+      reviewedSourceSha, reviewedSourceTreeSha: classified.reviewedSourceTreeSha });
+  }
+  contract.productive_changes = contract.productive_changes.map(value =>
+    exactReviewedChange(root, reviewedSourceSha, value));
+  if (classified.mode === 'initial') {
+    contract.state = 'approved';
+    contract.release_ready = true;
+    contract.reviewed_source_sha = input.approvedSha;
+    contract.reviewed_source_tree_sha = input.approvedTreeSha;
+    contract.integration_base_sha = input.integrationBaseSha;
+  }
   contract.advisor_authorization_contract_sha256 = B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256;
-  contract.advisor_authorization_verifier_sha256 = digest(gitBlob(root, input.approvedSha,
+  contract.advisor_authorization_verifier_sha256 = digest(gitBlob(root, reviewedSourceSha,
     'scripts/nelyon-b2-authority-preparation.mjs'));
-  contract.advisor_authorization_tests_sha256 = digest(gitBlob(root, input.approvedSha,
+  contract.advisor_authorization_tests_sha256 = digest(gitBlob(root, reviewedSourceSha,
     'tests/nelyonB2AuthorityPreparation.test.mjs'));
-  contract.function_inventory = { before: observationState.observation.functionInventory.count,
-    after: observationState.observation.functionInventory.count + 1 };
-  const configAfter = parseFunctionConfig(gitBlob(root, input.approvedSha, 'supabase/config.toml').toString('utf8'));
+  contract.function_inventory = { before: observation.functionInventory.count,
+    after: observation.functionInventory.count + 1 };
+  const configAfter = parseFunctionConfig(gitBlob(root, reviewedSourceSha, 'supabase/config.toml').toString('utf8'));
   const configBefore = parseFunctionConfig(gitBlob(root, contract.baseline_sha, 'supabase/config.toml').toString('utf8'));
-  const graph = buildFunctionGraph(reviewedFunctionFiles(root, input.approvedSha));
+  const graph = buildFunctionGraph(reviewedFunctionFiles(root, reviewedSourceSha));
   const affected = contract.functions.map(item => item.name);
   if (canonicalJson(affected) !== canonicalJson(B2_AUTHORITY_EDGE_FUNCTION_SCOPE.map(item => item.name))) reject();
   const functionContracts = buildFunctionContracts({ affectedFunctions: affected, graph, configBefore, configAfter,
@@ -573,20 +598,11 @@ export function prepareB2AuthorityIssuance(input) {
     row.config_sha256 = digest(Buffer.from(canonicalJson(configAfter[row.name]), 'utf8'));
   }
   const publicContractSha256 = digest(Buffer.from(canonicalJson(contract), 'utf8'));
+  if (classified.mode === 'renewal'
+    && (canonicalJson(contract) !== canonicalJson(originalContract)
+      || publicContractSha256 !== candidate.public_contract_sha256)) reject();
   const functionInventory = contract.functions.map(row => ({ identity: row.name, verifyJwt: row.verify_jwt,
     sourceSha256: row.source_sha256, configSha256: row.config_sha256 }));
-  const proofs = runB2ReviewedAuthorityEvidenceProofs();
-  const successorCatalog = normalizeB2SuccessorCatalogFromDisposableEvidence({ ...proofs, functionInventory });
-  if (successorCatalog.records.length !== 113) reject();
-  const origin = advisorOrigin(contract);
-  const securityAdvisor = computeB2AdvisorAuthorizations({
-    baselineItems: observationState.observation.securityAdvisor.baselineItems,
-    findings: observationState.observation.securityAdvisor.findings,
-    successorCatalog,
-    origin,
-  });
-  if (!verifyB2AdvisorAuthorizationClaims({ securityAdvisor, successorCatalog, origin })) reject();
-
   const closureFiles = privateRuntimeClosureMemberPaths().map(path => ({ path,
     bytes: gitBlob(root, input.approvedSha, path) }));
   const closure = buildPrivateRuntimeClosureFromExactBytes({ files: closureFiles });
@@ -603,13 +619,37 @@ export function prepareB2AuthorityIssuance(input) {
     approvedSha: input.approvedSha, approvedTreeSha: input.approvedTreeSha, publicContractSha256,
     manifestSha256, policySha256, baselineSha: contract.baseline_sha,
     runtimeClosureSha256: closure.closure_sha256,
-    observationSha256: observationState.observation.observationSha256 });
+    observationSha256: observation.observationSha256 });
   const releaseId = `b2-authority-${preissuance.preissuanceSha256}`;
+  return Object.freeze({ descriptor: { ...candidate, contract, public_contract_sha256: publicContractSha256 },
+    descriptorInputSha256: digest(descriptorBytes), descriptorInputState: candidate.contract.state,
+    contract, publicContractSha256, functionInventory, preissuance, releaseId,
+    manifestSha256, policySha256, runtimeClosureSha256: closure.closure_sha256 });
+}
+
+/** Build the complete approved public contract and private inputs from exact
+ * Git blobs plus branded provider/proof capabilities. Nothing is written. */
+export function prepareB2AuthorityIssuance(input) {
+  exact(input, ['repositoryRoot', 'approvedSha', 'approvedTreeSha', 'integrationBaseSha', 'observation']);
+  const observationState = capabilityState(observationCapabilities, input.observation);
+  const publicState = buildB2AuthorityPublicPreparation({ repositoryRoot: input.repositoryRoot,
+    approvedSha: input.approvedSha, approvedTreeSha: input.approvedTreeSha,
+    integrationBaseSha: input.integrationBaseSha }, observationState.observation);
+  const proofs = runB2ReviewedAuthorityEvidenceProofs();
+  const successorCatalog = normalizeB2SuccessorCatalogFromDisposableEvidence({
+    ...proofs, functionInventory: publicState.functionInventory });
+  if (successorCatalog.records.length !== 113) reject();
+  const origin = advisorOrigin(publicState.contract);
+  const securityAdvisor = computeB2AdvisorAuthorizations({
+    baselineItems: observationState.observation.securityAdvisor.baselineItems,
+    findings: observationState.observation.securityAdvisor.findings,
+    successorCatalog,
+    origin,
+  });
+  if (!verifyB2AdvisorAuthorizationClaims({ securityAdvisor, successorCatalog, origin })) reject();
   const capability = Object.freeze({ schemaVersion: 1, result: 'B2_AUTHORITY_PREPARED' });
   preparationCapabilities.set(capability, Object.freeze({ observationCapability: input.observation,
-    descriptor: { ...candidate, contract, public_contract_sha256: publicContractSha256 },
-    contract, publicContractSha256, successorCatalog, securityAdvisor, preissuance, releaseId,
-    manifestSha256, policySha256, runtimeClosureSha256: closure.closure_sha256 }));
+    ...publicState, successorCatalog, securityAdvisor }));
   return capability;
 }
 
@@ -620,6 +660,41 @@ export function readB2AuthorityPreparationSummary(capability) {
     policySha256: state.policySha256, runtimeClosureSha256: state.runtimeClosureSha256,
     functionInventory: Object.freeze({ before: state.contract.function_inventory.before,
       after: state.contract.function_inventory.after }), successorCatalogCount: state.successorCatalog.records.length });
+}
+
+/** Compute the public pre-issuance identity during the protected observation
+ * job. The verified observation is never promoted to an issuance capability;
+ * authority_issue must independently authenticate its completed artifact and
+ * recompute the same identity before accepting owner approval. */
+export function prepareB2AuthorityPreissuanceFromVerifiedObservation(input) {
+  exact(input, ['repositoryRoot', 'approvedSha', 'approvedTreeSha', 'integrationBaseSha', 'observation']);
+  const observation = verifyB2AuthorityObservation(input.observation);
+  if (observation.approvedSha !== input.approvedSha
+    || observation.approvedTreeSha !== input.approvedTreeSha) reject();
+  const prepared = buildB2AuthorityPublicPreparation({ repositoryRoot: input.repositoryRoot,
+    approvedSha: input.approvedSha, approvedTreeSha: input.approvedTreeSha,
+    integrationBaseSha: input.integrationBaseSha }, observation);
+  const expiresAt = new Date(Math.min(Date.parse(observation.backup.expiresAt),
+    Date.parse(observation.vaultEdgeParity.expiresAt))).toISOString();
+  return Object.freeze({ schemaVersion: 1, kind: 'nelyon-b2-authority-preissuance-summary-v1',
+    source: Object.freeze({ sha: input.approvedSha, tree: input.approvedTreeSha }),
+    integrationBaseSha: input.integrationBaseSha,
+    observation: Object.freeze({ sha256: observation.observationSha256,
+      completedObservedAt: observation.completedObservedAt, expiresAt }),
+    descriptor: Object.freeze({ path: DESCRIPTOR_PATH, state: prepared.descriptorInputState,
+      sha256: prepared.descriptorInputSha256 }),
+    releaseId: prepared.releaseId, preissuance: prepared.preissuance,
+    functionInventory: Object.freeze({ before: prepared.contract.function_inventory.before,
+      after: prepared.contract.function_inventory.after }) });
+}
+
+/** Return the exact public descriptor generated by an authentic issuance in
+ * this process. A plain or reconstructed receipt cannot mint these bytes. */
+export function readB2ApprovedDescriptorMaterialization(receipt) {
+  const state = capabilityState(issuanceCapabilities, receipt);
+  return Object.freeze({ schemaVersion: 1, kind: 'nelyon-b2-approved-descriptor-materialization-v1',
+    path: state.path, sha256: state.sha256, byteLength: state.byteLength,
+    descriptorJson: state.descriptorJson });
 }
 
 /** Assemble, validate and publish the exact strict private envelope. The only
@@ -653,6 +728,18 @@ export async function issueB2PrivateAuthority(input) {
   const authorityBytes = Buffer.from(JSON.stringify(authority), 'utf8');
   const authoritySha256 = digest(authorityBytes);
   parseB2PrivateAuthority(authorityBytes.toString('utf8'), authoritySha256, input.issuedAt);
+  const approvedDescriptor = structuredClone(prepared.descriptor);
+  approvedDescriptor.private_authority = { ...approvedDescriptor.private_authority, sha256: authoritySha256 };
+  const descriptorJson = `${JSON.stringify(approvedDescriptor, null, 2)}\n`;
+  const descriptorBytes = Buffer.from(descriptorJson, 'utf8');
+  const descriptorSha256 = digest(descriptorBytes);
+  const parsedDescriptor = parseB2ReleaseDescriptor(descriptorBytes, descriptorSha256);
+  if (descriptorBytes.length > 128 * 1024 || parsedDescriptor.contract.state !== 'approved'
+    || parsedDescriptor.contract.release_ready !== true
+    || parsedDescriptor.contract.reviewed_source_sha !== prepared.contract.reviewed_source_sha
+    || parsedDescriptor.contract.reviewed_source_tree_sha !== prepared.contract.reviewed_source_tree_sha
+    || parsedDescriptor.public_contract_sha256 !== prepared.publicContractSha256
+    || parsedDescriptor.private_authority.sha256 !== authoritySha256) reject();
   let publication;
   try { publication = await input.publisher.publishBySha256(authoritySha256, authorityBytes); }
   catch { reject(); }
@@ -665,13 +752,15 @@ export async function issueB2PrivateAuthority(input) {
   const etag = publication.etag;
   if (key !== `internal/release-authority/v1/sha256/${authoritySha256}.json`
     || typeof etag !== 'string' || !/^"[0-9a-f]{32}"$/u.test(etag)) reject();
-  return Object.freeze({
-    schemaVersion: 1,
-    kind: 'nelyon-b2-private-authority-issuance-receipt-v1',
+  const receipt = Object.freeze({
+    schemaVersion: 2,
+    kind: 'nelyon-b2-private-authority-issuance-receipt-v2',
     repository: REPOSITORY,
     workflowPath: WORKFLOW,
     source: Object.freeze({ sha: prepared.contract.reviewed_source_sha,
       tree: prepared.contract.reviewed_source_tree_sha }),
+    integratedSource: Object.freeze({ sha: observed.observation.approvedSha,
+      tree: observed.observation.approvedTreeSha }),
     observation: Object.freeze({ runId: observed.runId, runAttempt: observed.runAttempt, jobId: observed.jobId,
       artifactId: observed.artifact.id, artifactDigest: observed.artifact.digest,
       artifactBytes: observed.artifact.bytes, observationSha256: observed.observation.observationSha256,
@@ -680,9 +769,15 @@ export async function issueB2PrivateAuthority(input) {
       actor: approved.actor, triggeringActor: approved.triggeringActor,
       authorizationSha256: approved.approval.authorizationSha256 }),
     preissuanceSha256: prepared.preissuance.preissuanceSha256,
+    publicContractSha256: prepared.publicContractSha256,
     authoritySha256,
+    descriptor: Object.freeze({ schemaVersion: 1, path: DESCRIPTOR_PATH,
+      serialization: 'json-pretty-2-lf-v1', sha256: descriptorSha256, byteLength: descriptorBytes.length }),
     r2: Object.freeze({ key, etag, readback: publication.readback, disposition: publication.result }),
     issuedAt: input.issuedAt,
     expiresAt: approved.approval.expiresAt,
   });
+  issuanceCapabilities.set(receipt, Object.freeze({ descriptorJson, path: DESCRIPTOR_PATH,
+    sha256: descriptorSha256, byteLength: descriptorBytes.length }));
+  return receipt;
 }
