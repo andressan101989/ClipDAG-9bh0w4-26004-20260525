@@ -103,7 +103,7 @@ const ACTION_INPUT_KEYS = Object.freeze({
   'pre-snapshot': [...COMMON_INPUT_KEYS, 'snapshotOutput'],
   'verify-pre-snapshot': [...COMMON_INPUT_KEYS, 'manifest', 'preSnapshot', 'stageOutput'],
   'post-snapshot': [...COMMON_INPUT_KEYS, 'preSnapshot', 'snapshotOutput'],
-  postcheck: [...COMMON_INPUT_KEYS, 'manifest', 'preSnapshot', 'postSnapshot', 'stageOutput'],
+  postcheck: [...COMMON_INPUT_KEYS, 'manifest', 'preSnapshot', 'postSnapshot', 'functionDeploymentProof', 'stageOutput'],
   'verify-recovery-source': [...COMMON_INPUT_KEYS, 'recoverySourceRun', 'run', 'artifacts',
     'releaseBundle', 'gateEvidence', 'stageOutput'],
   'recovery-authority-proof': [...COMMON_INPUT_KEYS, 'recoverySourceRun', 'run', 'artifacts', 'releaseBundle', 'gateEvidence'],

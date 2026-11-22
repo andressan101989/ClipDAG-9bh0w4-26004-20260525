@@ -4,6 +4,13 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { parseB2PrivateAuthority } from '../scripts/nelyon-private-authority.mjs';
+import {
+  B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256,
+  B2_ADVISOR_CHANGED_OBJECT_IDENTITIES,
+  computeB2AdvisorAuthorizations,
+} from '../scripts/nelyon-b2-authority-preparation.mjs';
+import { b2SyntheticCompleteSuccessorCatalog } from './fixtures/nelyonB2CompleteAuthorityFixture.mjs';
+import { readFileSync } from 'node:fs';
 
 const canonical = value => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item)
   ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
@@ -60,12 +67,12 @@ test('Advisor v2 rejects old or mixed schemas instead of falling back', () => {
   const old = authority(); old.securityAdvisor.schemaVersion = 1; rejected(old);
   const mixed = authority(); delete mixed.securityAdvisor.baselineItems; rejected(mixed);
 });
-test('Advisor v2 requires explicit remove plus add when fingerprint changes', () => {
+test('Advisor v2 rejects remove/add churn when a fingerprint changes', () => {
   const value = authority('remove');
   const next = { ...facts, fingerprint: 'e'.repeat(64), identity: `advisor:${'e'.repeat(64)}` };
   value.securityAdvisor.records.push(record('add', { ...next, ...claims }));
   value.securityAdvisor.records.sort((a, b) => a.action.localeCompare(b.action) || a.identity.localeCompare(b.identity));
-  assert.doesNotThrow(() => parse(value));
+  rejected(value);
   value.securityAdvisor.records = [record('replace', { ...next, ...claims })]; rejected(value);
 });
 
@@ -76,15 +83,36 @@ function observedFixture(mutate = () => {}) {
     metadata: { schema: 'public', name: 'synthetic_rpc', arguments: '', language: 'sql', security_definer: true } };
   const fp = hash(canonical({ ...lint, cache_key: 'synthetic_function_warning_public_synthetic_rpc_' }) + '\n');
   const value = authority();
-  value.securityAdvisor.baselineItems = [{ fingerprint: fp, level: 'WARN', resource_kind: lint.name }];
-  value.securityAdvisor.baselineSha256 = hash(canonical(value.securityAdvisor.baselineItems) + '\n');
   const projection = { fingerprint: fp, identity: `advisor:${fp}`, objectIdentity: 'function:public.synthetic_rpc',
-    type: lint.name, severity: 'WARN', objectSha256: hash(canonical(lint.metadata) + '\n'), baselineSha256: value.securityAdvisor.baselineSha256 };
-  value.securityAdvisor.records = [record('retain', projection)];
-  const acl = { identity: 'public.synthetic', acl: [{ grantee: 'postgres', privilege_type: 'SELECT', is_grantable: false }], access: { public: false, anon: false, authenticated: false, service_role: false } };
-  value.successorCatalog.records.push({ kind: 'relation_acl', identity: acl.identity, expectedCanonicalJson: canonical(acl), expectedSha256: hash(canonical(acl)) });
-  mutate(value, projection);
-  const contract = { id: 'synthetic-v2', to_phase: value.phase, baseline_sha: 'a'.repeat(40), reviewed_source_sha: 'b'.repeat(40), integration_base_sha: 'c'.repeat(40) };
+    type: lint.name, severity: 'WARN', objectSha256: hash(canonical(lint.metadata) + '\n') };
+  const successorCatalog = b2SyntheticCompleteSuccessorCatalog();
+  value.successorCatalog = successorCatalog;
+  const contract = { id: 'web-control-centers-b2-scheduled-publishing-v1', to_phase: value.phase,
+    baseline_sha: 'a'.repeat(40), reviewed_source_sha: 'b'.repeat(40), reviewed_source_tree_sha: 'd'.repeat(40),
+    integration_base_sha: 'c'.repeat(40),
+    advisor_authorization_contract_sha256: B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256,
+    advisor_authorization_verifier_sha256: hash(readFileSync(new URL('../scripts/nelyon-b2-authority-preparation.mjs', import.meta.url))),
+    advisor_authorization_tests_sha256: hash(readFileSync(new URL('./nelyonB2AuthorityPreparation.test.mjs', import.meta.url))),
+    productive_changes: [{ path: 'supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql',
+      blob: 'e'.repeat(40), sha256: 'f'.repeat(64), byte_length: 1 }] };
+  const origin = { repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525', transitionId: contract.id,
+    reviewedSourceSha: contract.reviewed_source_sha, reviewedSourceTreeSha: contract.reviewed_source_tree_sha,
+    integrationBaseSha: contract.integration_base_sha,
+    migration: { path: contract.productive_changes[0].path, blob: contract.productive_changes[0].blob,
+      sha256: contract.productive_changes[0].sha256, byteLength: contract.productive_changes[0].byte_length },
+    changedObjectIdentities: B2_ADVISOR_CHANGED_OBJECT_IDENTITIES,
+    contractSha256: contract.advisor_authorization_contract_sha256,
+    verifierSha256: contract.advisor_authorization_verifier_sha256,
+    testsSha256: contract.advisor_authorization_tests_sha256 };
+  value.securityAdvisor = structuredClone(computeB2AdvisorAuthorizations({
+    baselineItems: [{ fingerprint: fp, level: 'WARN', resource_kind: lint.name }],
+    findings: [projection], successorCatalog, origin,
+  }));
+  const mutableProjection = JSON.parse(value.securityAdvisor.records[0].expectedCanonicalJson);
+  mutate(value, mutableProjection);
+  if (canonical(mutableProjection) !== value.securityAdvisor.records[0].expectedCanonicalJson) {
+    value.securityAdvisor.records = [record('retain', mutableProjection)];
+  }
   value.publicContractSha256 = hash(canonical(contract) + '\n');
   const authorityJson = JSON.stringify(value);
   const descriptorBytes = JSON.stringify({ schema_version: 1, contract, public_contract_sha256: value.publicContractSha256,

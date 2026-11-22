@@ -29,7 +29,7 @@ const WRANGLER_VERSION = '4.135.0';
 const AWS_VERSION = '1.0.20';
 const AWS_INTEGRITY = 'sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==';
 const AWS_RESOLVED = 'https://registry.npmjs.org/aws4fetch/-/aws4fetch-1.0.20.tgz';
-const EXPECTED_CLOSURE_SHA256 = '57b700b8576ab8e622c8ef9c439d0609409b09662481331478f29e65f6ca2e4f';
+const EXPECTED_CLOSURE_SHA256 = 'af1729530c2b2ab158507927cf9d0650aa5052da5b78d44a4627038d0cbf1fa8';
 const MARKER = 'SYNTHETIC_RUNTIME_CLOSURE_PRIVATE_MARKER';
 
 const MEMBERS = Object.freeze([
@@ -37,11 +37,14 @@ const MEMBERS = Object.freeze([
   'package-lock.json',
   'package.json',
   'scripts/nelyon-admin-production-release.mjs',
+  'scripts/nelyon-b2-authority-preparation.mjs',
   'scripts/nelyon-b2-explicit-connection.mjs',
+  'scripts/nelyon-b2-function-deployment-proof.mjs',
   'scripts/nelyon-b2-hermetic-workspace.mjs',
   'scripts/nelyon-b2-recovery-provenance.mjs',
   'scripts/nelyon-b2-source-parity.mjs',
   'scripts/nelyon-private-authority-cli.mjs',
+  'scripts/nelyon-private-authority-issuer.mjs',
   'scripts/nelyon-private-authority-provider.mjs',
   'scripts/nelyon-private-authority-runtime.mjs',
   'scripts/nelyon-private-authority.mjs',
@@ -49,6 +52,8 @@ const MEMBERS = Object.freeze([
   'scripts/nelyon-production-release.mjs',
   'scripts/nelyon-production-snapshot-adapter.mjs',
   'scripts/nelyon-release-authority-context.mjs',
+  'scripts/prove-web-control-centers-b2-disposable.mjs',
+  'scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs',
   'shared/web-deployment/publicSupabaseBuildEnv.mjs',
 ]);
 
@@ -152,7 +157,7 @@ function verifiedOptions(files, manifestClosure = buildClosure({
   };
 }
 
-test('builds the exact sorted 17-member canonical closure from exact bytes', () => {
+test('builds the exact sorted 22-member canonical closure from exact bytes', () => {
   const files = fixtureFiles();
   const calls = [];
   const actual = buildClosure({ repositoryRoot: ROOT, readFile: fixtureReader(files, calls) });

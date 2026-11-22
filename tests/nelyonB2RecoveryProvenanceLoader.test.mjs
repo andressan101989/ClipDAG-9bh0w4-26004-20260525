@@ -9,6 +9,7 @@ import {
   assertTrustedB2RecoveryProvenance,
   createB2RecoveryProvenanceLoader,
   loadApprovedB2RecoverySource,
+  readTrustedB2RecoveryFunctionDeploymentProof,
   readTrustedB2RecoveryProvenance,
   readTrustedB2HistoricalRuntimeClosure,
   readTrustedB2HistoricalDescriptorBytes,
@@ -17,6 +18,14 @@ import {
   buildPrivateRuntimeClosureFromExactBytes,
   privateRuntimeClosureMemberPaths,
 } from '../scripts/nelyon-private-runtime-closure.mjs';
+import {
+  b2FunctionManifestSha256,
+  canonicalB2FunctionDeploymentProof,
+  createB2FunctionDeploymentNotStarted,
+  createB2FunctionDeploymentAttempt,
+  markB2FunctionDeploymentIntent,
+  reconcileB2FunctionDeploymentTransition,
+} from '../scripts/nelyon-b2-function-deployment-proof.mjs';
 
 const REPOSITORY = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
 const WORKFLOW = '.github/workflows/nelyon-production-release.yml';
@@ -30,6 +39,87 @@ const MANIFEST_SHA = 'b'.repeat(64);
 const CLOSURE_SHA = 'c'.repeat(64);
 const HEX = character => character.repeat(64);
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+const FUNCTION_NAMES = Object.freeze([
+  'ai-handoff',
+  'cleanup-stale-media-uploads',
+  'content-safety-scan',
+  'create-media-upload',
+  'finalize-media-upload',
+  'get-media-url',
+  'process-scheduled-publications',
+  'video-semantic-index',
+]);
+const FUNCTION_VERIFY_JWT = Object.freeze([false, false, true, true, true, true, false, true]);
+const FUNCTION_MANIFEST = Object.freeze(FUNCTION_NAMES.map((name, index) => Object.freeze({
+  name,
+  verify_jwt: FUNCTION_VERIFY_JWT[index],
+  source_sha256: sha256(`fixture-source:${name}`),
+  config_sha256: sha256(`fixture-config:${name}`),
+})));
+
+function functionFixture(scenario = 'complete') {
+  const manifestSha256 = b2FunctionManifestSha256(FUNCTION_MANIFEST);
+  const beforeRows = FUNCTION_NAMES.filter(name => name !== 'process-scheduled-publications').map((name, index) => ({
+    name,
+    status: 'ACTIVE',
+    verify_jwt: FUNCTION_VERIFY_JWT[FUNCTION_NAMES.indexOf(name)],
+    version: index + 10,
+    source_sha256: sha256(`provider-before:${name}`),
+  }));
+  const finalRows = FUNCTION_NAMES.map((name, index) => ({
+    name,
+    status: 'ACTIVE',
+    verify_jwt: FUNCTION_VERIFY_JWT[index],
+    version: name === 'process-scheduled-publications' ? 1 : beforeRows.find(row => row.name === name).version + 1,
+    source_sha256: sha256(`provider-after:${name}`),
+  }));
+  if (scenario === 'not-started') {
+    return {
+      finalRows: beforeRows,
+      proof: createB2FunctionDeploymentNotStarted({
+        manifest: FUNCTION_MANIFEST,
+        manifestSha256,
+        capturedAt: '2026-11-08T11:59:00.000Z',
+      }),
+    };
+  }
+  let proof = createB2FunctionDeploymentAttempt({
+    manifest: FUNCTION_MANIFEST,
+    manifestSha256,
+    beforeRows,
+    capturedAt: '2026-11-08T11:59:00.000Z',
+  });
+  let currentRows = beforeRows.map(row => ({ ...row }));
+  for (const [index, contract] of FUNCTION_MANIFEST.entries()) {
+    proof = markB2FunctionDeploymentIntent({
+      proof,
+      manifest: FUNCTION_MANIFEST,
+      manifestSha256,
+      beforeRows,
+      functionName: contract.name,
+      capturedAt: new Date(Date.parse('2026-11-08T11:59:00.000Z') + ((index * 2 + 1) * 1000)).toISOString(),
+    });
+    const final = finalRows.find(row => row.name === contract.name);
+    const existing = currentRows.findIndex(row => row.name === contract.name);
+    if (existing < 0) currentRows.push({ ...final });
+    else currentRows[existing] = { ...final };
+    if (scenario === 'readback-failure' && index === 3) break;
+    const commandSucceeded = !((scenario === 'partial-timeout' && index === 3)
+      || (scenario === 'final-slug-recovery' && index === FUNCTION_MANIFEST.length - 1));
+    proof = reconcileB2FunctionDeploymentTransition({
+      proof,
+      manifest: FUNCTION_MANIFEST,
+      manifestSha256,
+      beforeRows,
+      afterRows: currentRows,
+      functionName: contract.name,
+      commandSucceeded,
+      capturedAt: new Date(Date.parse('2026-11-08T11:59:00.000Z') + ((index * 2 + 2) * 1000)).toISOString(),
+    });
+    if (!commandSucceeded) break;
+  }
+  return { finalRows: currentRows, proof };
+}
 
 function canonical(value) {
   const normalize = item => Array.isArray(item)
@@ -131,18 +221,32 @@ function baseProofs() {
   }));
 }
 
-function makeFixture({ mutateProofs, mutateSource, mutateRun, mutateJobs, mutateArtifacts, mutateArchive } = {}) {
+function makeFixture({
+  mutateProofs,
+  mutateSource,
+  mutateRun,
+  mutateJobs,
+  mutateArtifacts,
+  mutateArchive,
+  functionScenario = 'complete',
+} = {}) {
   const proofs = baseProofs();
   mutateProofs?.(proofs);
   const proofBytes = Buffer.from(canonical(proofs));
+  const functions = functionFixture(functionScenario);
+  const functionProofBytes = Buffer.from(canonicalB2FunctionDeploymentProof(functions.proof));
   let archive = storedZip([
     ['protected-stage-proofs.json', proofBytes],
+    ['function-deployment-proof.json', functionProofBytes],
     ['gate-proof.json', Buffer.from('{}\n')],
     ['release-observation.json', Buffer.from('{}\n')],
   ]);
   if (mutateArchive) archive = mutateArchive(Buffer.from(archive));
 
-  const releaseArchive = storedZip([['bundle/manifest.json', '{}\n'], ['bundle/manifest.sha256', HEX('1')],
+  const releaseManifest = { resources: { web_control_centers_b2_transition: { contract: {
+    functions: FUNCTION_MANIFEST,
+  } } } };
+  const releaseArchive = storedZip([['bundle/manifest.json', canonical(releaseManifest)], ['bundle/manifest.sha256', HEX('1')],
     ['bundle/summary.md', 'fixture'], ['request.json', '{}\n'], ['remote-evidence.json', '{}\n']]);
   const source = {
     run_id: RUN_ID,
@@ -169,8 +273,9 @@ function makeFixture({ mutateProofs, mutateSource, mutateRun, mutateJobs, mutate
     expected_migrations: [{ blob: 'f'.repeat(40), name: '20261108120000_web_control_centers_b2_scheduled_publishing' }],
     expected_migration_count: 367,
     expected_latest_migration: '20261108120000_web_control_centers_b2_scheduled_publishing',
-    edge_functions: [{ name: 'scheduled-publication-runner', source_sha256: HEX('a'), status: 'ACTIVE', verify_jwt: false, version: 1 }],
-    productive_resources: ['migration:20261108120000_web_control_centers_b2_scheduled_publishing', 'function:scheduled-publication-runner'],
+    edge_functions: functions.finalRows,
+    productive_resources: ['migration:20261108120000_web_control_centers_b2_scheduled_publishing',
+      ...functions.finalRows.map(row => `function:${row.name}`)],
     premium_relation_security_sha256: HEX('b'),
     premium_legacy: { content_count: 9, pending_review_count: 0, deleted_count: 5 },
     protected_stage_proof_sha256: sha256(proofBytes),
@@ -557,12 +662,18 @@ test('exact attempt uses bounded pagination, authenticates archive/proof bytes a
     protectedStageProofSha256: fixture.source.protected_stage_proof_sha256,
     protectedStepCount: 2,
     sourceRuntimeClosureSha256: CLOSURE_SHA,
+    functionDeploymentProofSha256: readTrustedB2RecoveryProvenance(result).functionDeploymentProofSha256,
   });
   assert.doesNotMatch(JSON.stringify(result), /verifiedAt|receipt|test-token|startedAt|completedAt/);
   const state = readTrustedB2RecoveryProvenance(result);
   assert.equal(sha256(state.proofBytes), fixture.source.protected_stage_proof_sha256);
   assert.deepEqual(state.protectedSteps.steps.map(item => item.name), ['B2 protected migrations', 'B2 protected functions']);
   assert.deepEqual(state.proofs, fixture.proofs);
+  const functionProof = readTrustedB2RecoveryFunctionDeploymentProof(result);
+  assert.equal(functionProof.result, 'FUNCTIONS_EXECUTED');
+  assert.equal(functionProof.receipts.length, 8);
+  functionProof.receipts[0].name = 'caller-mutation';
+  assert.notEqual(readTrustedB2RecoveryFunctionDeploymentProof(result).receipts[0].name, 'caller-mutation');
   assert(Object.isFrozen(state.protectedSteps));
   assert.equal(transport.calls.filter(item => item.url.includes('/jobs?')).length, 2);
   assert.equal(transport.calls.filter(item => item.url.includes('/artifacts?')).length, 2);
@@ -586,6 +697,24 @@ test('actual-sized deploy job admits more than 100 bounded steps while retaining
   assert.deepEqual(readTrustedB2RecoveryProvenance(result).protectedSteps.steps.map(item => item.name),
     ['B2 protected migrations', 'B2 protected functions']);
 });
+
+for (const [scenario, expected] of [
+  ['not-started', { result: 'NOT_STARTED', receipts: 0, disposition: null }],
+  ['partial-timeout', { result: 'INCOMPLETE', receipts: 3, disposition: 'CHANGED_AFTER_FAILED_COMMAND' }],
+  ['readback-failure', { result: 'INCOMPLETE', receipts: 3, disposition: 'DISPATCH_INTENT' }],
+  ['final-slug-recovery', { result: 'INCOMPLETE', receipts: 7, disposition: 'CHANGED_AFTER_FAILED_COMMAND' }],
+]) {
+  test(`authenticated recovery archive accepts the recoverable ${scenario} function checkpoint`, async () => {
+    const fixture = makeFixture({ functionScenario: scenario });
+    const result = await loader(fakeGithub(fixture).fetchImpl).loadExactAttempt({
+      approvedSource: approved(fixture),
+    });
+    const proof = readTrustedB2RecoveryFunctionDeploymentProof(result);
+    assert.equal(proof.result, expected.result);
+    assert.equal(proof.receipts.length, expected.receipts);
+    assert.equal(proof.in_flight?.disposition ?? null, expected.disposition);
+  });
+}
 
 test('candidate provenance fields are rejected before transport', async () => {
   const fixture = makeFixture();
@@ -710,6 +839,7 @@ test('the documented exact 500-record bound succeeds without requesting page six
       return response({ total_count: 500, artifacts });
     }
     if (parsed.pathname.endsWith('/actions/artifacts/7101/zip')) return response(fixture.archive);
+    if (parsed.pathname.endsWith('/actions/artifacts/7102/zip')) return response(fixture.releaseArchive);
     return response({ message: 'not found' }, 404);
   };
   const result = await loader(fetchImpl).loadExactAttempt({ approvedSource: approved(fixture) });

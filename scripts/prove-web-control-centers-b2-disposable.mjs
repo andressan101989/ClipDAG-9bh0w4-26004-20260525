@@ -4,27 +4,65 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createServer } from 'node:net';
-import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
-import { join, resolve, dirname, basename } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, posix, resolve, win32 } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { proveB2PostgresSourceParity } from '../tests/fixtures/nelyonB2PostgresSourceParityProof.mjs';
 
 import {
   B2_CATALOG_SQL,
   B2_DATABASE_FUNCTION_SCOPE,
+  B2_DATABASE_RELATION_SCOPE,
   B2_RELATION_ACL_SQL,
   RPC_SECURITY_ATTESTATION_SQL,
 } from './nelyon-production-snapshot-adapter.mjs';
 
 const repo = resolve(import.meta.dirname, '..');
-const scratch = 'D:/CodexTemp/web-control-centers-b2/task1c';
-const pgBin = 'D:/CodexTemp/postgres-17.11-disposable/pgsql/bin';
-mkdirSync(scratch, { recursive: true });
-const environment = { ...process.env, TEMP: scratch, TMP: scratch, npm_config_cache: join(scratch, 'npm-cache') };
+const expectedImageId = 'sha256:80d7b27c3e8d77cfa7226eee9508671796da214781ff15a35b3670d7ad5ee453';
+const image = `public.ecr.aws/supabase/postgres@${expectedImageId}`;
+const pullPolicy = process.env.NELYON_B2_REVIEWED_PROOF === '1' ? 'always' : 'never';
+const dockerMode = process.argv.includes('--authority-evidence') || process.env.NELYON_B2_PROOF_RUNTIME === 'docker';
+const expectedDockerBin = process.platform === 'linux' ? '/usr/bin/docker'
+  : process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : null;
+const dockerBin = dockerMode ? (process.env.NELYON_B2_DOCKER_BIN ?? expectedDockerBin) : null;
+if (dockerMode) {
+  const dockerPath = process.platform === 'win32' ? win32 : posix;
+  assert.ok(expectedDockerBin, `unsupported Docker proof platform: ${process.platform}`);
+  assert.equal(dockerBin, expectedDockerBin, 'Docker proof executable must be the fixed platform path');
+  assert.equal(dockerPath.isAbsolute(dockerBin), true, 'Docker proof executable must be absolute');
+  assert.equal(dockerPath.normalize(dockerBin), dockerBin, 'Docker proof executable must be normalized');
+  assert.equal(dockerPath.basename(dockerBin), process.platform === 'win32' ? 'docker.exe' : 'docker');
+  const dockerStat = lstatSync(dockerBin);
+  assert.equal(dockerStat.isFile(), true, 'Docker proof executable must be a regular file');
+  assert.equal(dockerStat.isSymbolicLink(), false, 'Docker proof executable must not be a symlink');
+  assert.equal(realpathSync(dockerBin), dockerBin, 'Docker proof executable realpath must be exact');
+  if (process.platform === 'linux') {
+    assert.equal(dockerStat.uid, 0, 'Docker proof executable must be root-owned');
+    assert.equal(dockerStat.mode & 0o022, 0, 'Docker proof executable must not be group/world-writable');
+  }
+}
+const scratchParent = process.env.NELYON_B2_PROOF_TMP ? resolve(process.env.NELYON_B2_PROOF_TMP) : resolve(tmpdir());
+mkdirSync(scratchParent, { recursive: true });
+const scratch = mkdtempSync(join(scratchParent, 'nelyon-b2-proof-'));
+const pgBin = process.env.NELYON_B2_PG_BIN ? resolve(process.env.NELYON_B2_PG_BIN) : null;
+const inheritedEnvironment = Object.fromEntries(['COMSPEC', 'HOME', 'LANG', 'LC_ALL', 'LOCALAPPDATA', 'PATH', 'PATHEXT',
+  'PROGRAMDATA', 'SystemRoot', 'TEMP', 'TMP', 'TMPDIR', 'TZ', 'USERPROFILE', 'WINDIR']
+  .flatMap(key => typeof process.env[key] === 'string' ? [[key, process.env[key]]] : []));
+const environment = { ...inheritedEnvironment, TEMP: scratch, TMP: scratch };
 for (const key of Object.keys(environment)) if (/^PG/i.test(key)) delete environment[key];
 Object.assign(environment, { PGHOST: '127.0.0.1', PGHOSTADDR: '127.0.0.1', PGCONNECT_TIMEOUT: '3', PGSSLMODE: 'disable', PGOPTIONS: '-c statement_timeout=15000 -c lock_timeout=10000 -c idle_in_transaction_session_timeout=30000' });
 const read = name => readFileSync(join(repo, name), 'utf8');
+const canonicalValue = value => {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (value !== null && typeof value === 'object') return Object.fromEntries(
+    Object.keys(value).sort().map(key => [key, canonicalValue(value[key])]),
+  );
+  return value;
+};
+const canonicalJson = value => JSON.stringify(canonicalValue(value));
+const sha256 = value => createHash('sha256').update(value).digest('hex');
 const owner = '11111111-1111-4111-8111-111111111111';
 const otherOwner = '22222222-2222-4222-8222-222222222222';
 const restrictedOwner = '99999999-9999-4999-8999-999999999999';
@@ -39,6 +77,11 @@ function extractFunction(source, signature) {
   const end = tail.indexOf(opening[1], opening.index + opening[0].length);
   assert.ok(end >= 0);
   return tail.slice(0, tail.indexOf(';', end + opening[1].length) + 1);
+}
+function extractTrigger(source, name) {
+  const match = new RegExp(`create\\s+trigger\\s+${name}\\b[\\s\\S]*?;`, 'i').exec(source);
+  assert.ok(match, `canonical trigger must remain available: ${name}`);
+  return match[0];
 }
 const publishers = read('supabase/migrations/20260726106000_serialize_media_asset_linking_and_deletion.sql');
 const replacements = {
@@ -60,23 +103,43 @@ await new Promise((accept, reject) => { listener.once('error', reject); listener
 const port = listener.address().port;
 await new Promise(accept => listener.close(accept));
 const cluster = mkdtempSync(join(scratch, 'concurrency-proof-'));
-assert.match(resolve(cluster),/^D:/i);
 assert.equal(dirname(resolve(cluster)),resolve(scratch));
 assert.ok(basename(cluster).startsWith('concurrency-proof-'));
+const container = `nelyon-b2-catalog-${process.pid}-${randomUUID().slice(0, 8)}`;
+const dockerCluster = '/tmp/nelyon-b2-data';
+const dockerSocket = '/tmp/nelyon-b2-socket';
 const proofStarted=Date.now();
 let started = false;
 let stopped = false;
+let imageId = null;
+let imageMetadata = null;
 let failure;
 let checks = 0;
+const localExecutable = tool => join(pgBin, process.platform === 'win32' ? `${tool}.exe` : tool);
+function host(command, args, input, allowFailure = false, timeout = 30_000) {
+  const result = spawnSync(command, args, {
+    input, encoding: 'utf8', windowsHide: true, env: environment, timeout,
+    stdio: 'pipe', maxBuffer: 128 * 1024 * 1024,
+  });
+  if (!allowFailure) assert.equal(result.status, 0, `${command}: ${result.error?.message ?? ''}\n${result.stderr ?? ''}`);
+  return result;
+}
 function invoke(tool, args, input, allowFailure = false) {
-  const result = spawnSync(join(pgBin, `${tool}.exe`), args, {
+  if (dockerMode) {
+    assert.ok(['initdb', 'pg_ctl', 'psql', 'createdb'].includes(tool), `unsupported Docker PostgreSQL tool: ${tool}`);
+    return host(dockerBin, ['exec', '--user', 'postgres', ...(input === undefined ? [] : ['-i']), container, tool, ...args],
+      input, allowFailure, tool === 'initdb' ? 180_000 : 30_000);
+  }
+  assert.ok(pgBin, 'NELYON_B2_PG_BIN is required outside reviewed Docker authority mode');
+  const result = spawnSync(localExecutable(tool), args, {
     input, encoding: 'utf8', windowsHide: true, env: environment, timeout: tool === 'initdb' ? 180_000 : 30_000,
     stdio: tool === 'pg_ctl' ? 'ignore' : 'pipe',
   });
   if (!allowFailure) assert.equal(result.status, 0, `${tool}: ${result.error?.message ?? ''}\n${result.stderr ?? ''}`);
   return result;
 }
-const connection = ['-X', '--no-password', '-qAt', '-h', '127.0.0.1', '-p', String(port), '-U', 'postgres', '-d', 'b2concurrency', '-v', 'ON_ERROR_STOP=1'];
+const connection = ['-X', '--no-password', '-qAt', ...(dockerMode ? ['-h', dockerSocket] : ['-h', '127.0.0.1', '-p', String(port)]),
+  '-U', 'postgres', '-d', 'b2concurrency', '-v', 'ON_ERROR_STOP=1'];
 const sql = (source, allowFailure = false) => invoke('psql', connection, source, allowFailure);
 const scalar = source => sql(source).stdout.trim();
 const asUser = (source, actor = owner, allowFailure = false, zone = 'UTC') => sql(`begin; set local role authenticated; set local timezone='${zone}'; select pg_catalog.set_config('request.jwt.claim.sub','${actor}',true); ${source}; commit;`, allowFailure);
@@ -98,7 +161,9 @@ const sessions = new Set();
 class Session {
   constructor(name) {
     this.name=name; this.out=''; this.err=''; this.closed=false;
-    this.child=spawn(join(pgBin,'psql.exe'),connection,{windowsHide:true,env:environment,stdio:['pipe','pipe','pipe']});
+    this.child=dockerMode
+      ? spawn(dockerBin,['exec','--user','postgres','-i',container,'psql',...connection],{windowsHide:true,env:environment,stdio:['pipe','pipe','pipe']})
+      : spawn(localExecutable('psql'),connection,{windowsHide:true,env:environment,stdio:['pipe','pipe','pipe']});
     sessions.add(this);
     this.child.stdout.setEncoding('utf8'); this.child.stderr.setEncoding('utf8');
     this.child.stdout.on('data',x=>{this.out+=x;this.check?.();});
@@ -158,15 +223,7 @@ async function race(label,aSql,bSql,{aRole='authenticated',bRole='authenticated'
   }finally{await a.close();await b.close();}
 }
 
-const B2_QUERY_RELATIONS = Object.freeze([
-  'private.publication_schedule_attempts',
-  'private.publication_schedule_commands',
-  'private.publication_schedule_materializations',
-  'private.publication_schedule_policy',
-  'private.publication_schedules',
-  'public.media_asset_links',
-  'public.media_assets',
-]);
+const B2_QUERY_RELATIONS = B2_DATABASE_RELATION_SCOPE;
 const B2_PRIVATE_QUERY_RELATIONS = Object.freeze(B2_QUERY_RELATIONS.filter(identity => identity.startsWith('private.')));
 const SYNTHETIC_CRON_JOB = Object.freeze({
   identity: 'synthetic-publication-query-proof',
@@ -313,11 +370,23 @@ $b2_relation_acl_query$;
   }
   qeq(new Set(observedFunctionIdentities).size, 31, 'function query contains no duplicate identity');
   qeq([...observedFunctionIdentities].sort(), [...B2_DATABASE_FUNCTION_SCOPE].sort(), 'function query contains no missing or extra identity');
+  const functionSecurityRows = functionRows.map(row => ({
+    identity: `${row.schema}.${row.name}(${row.argument_types.join(',').replaceAll(' ', '')})`,
+    owner: row.owner,
+    securityDefiner: row.security_definer,
+    searchPath: row.search_path,
+    definitionSha256: sha256(row.definition),
+    acl: row.acl,
+    execute: row.execute,
+  })).sort((left, right) => left.identity < right.identity ? -1 : left.identity > right.identity ? 1 : 0);
+  qeq(functionSecurityRows.length, 31, 'function security projection preserves every exact identity once');
+  qeq(functionSecurityRows.map(row => row.identity), [...B2_DATABASE_FUNCTION_SCOPE].sort(),
+    'function security projection is exact, complete, and deterministically sorted');
 
   const catalogShapes = Object.freeze({
     relation: ['identity', 'rls', 'forceRls', 'owner', 'definitionSha256'],
     function: ['identity', 'execute', 'owner', 'securityDefiner', 'searchPath', 'definitionSha256'],
-    policy: ['identity', 'relation', 'command', 'roles', 'using', 'check'],
+    policy: ['identity', 'relation', 'command', 'roles', 'usingSha256', 'checkSha256'],
     trigger: ['identity', 'relation', 'functionIdentity', 'enabled', 'definitionSha256'],
     index: ['identity', 'relation', 'valid', 'ready', 'unique', 'definitionSha256'],
     cron_job: ['identity', 'schedule', 'commandSha256', 'database', 'username', 'active'],
@@ -343,8 +412,8 @@ $b2_relation_acl_query$;
       stringValue(row.value.relation, `${label}.value.relation`);
       q(['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'ALL'].includes(row.value.command), `${label}.value.command is recognized`);
       stringArray(row.value.roles, `${label}.value.roles`, false);
-      q(row.value.using === null || typeof row.value.using === 'string', `${label}.value.using is nullable text`);
-      q(row.value.check === null || typeof row.value.check === 'string', `${label}.value.check is nullable text`);
+      q(row.value.usingSha256 === null || /^[0-9a-f]{64}$/.test(row.value.usingSha256), `${label}.value.usingSha256 is nullable SHA-256`);
+      q(row.value.checkSha256 === null || /^[0-9a-f]{64}$/.test(row.value.checkSha256), `${label}.value.checkSha256 is nullable SHA-256`);
     } else if (row.kind === 'trigger') {
       stringValue(row.value.relation, `${label}.value.relation`); stringValue(row.value.functionIdentity, `${label}.value.functionIdentity`);
       q(['O', 'D', 'R', 'A'].includes(row.value.enabled), `${label}.value.enabled is a trigger mode`);
@@ -362,21 +431,38 @@ $b2_relation_acl_query$;
   qeq(new Set(seenCatalogIdentities).size, catalogRows.length, 'catalog query contains no duplicate kind and identity');
   qeq([...catalogIdentities.keys()].filter(kind => catalogIdentities.get(kind).length > 0).sort(), Object.keys(catalogShapes).sort(), 'catalog query returns every closed kind');
   qeq([...catalogIdentities.get('function')].sort(), [...B2_DATABASE_FUNCTION_SCOPE].sort(), 'catalog function identities are exact and complete');
+  const catalogFunctions = new Map(catalogRows.filter(row => row.kind === 'function')
+    .map(row => [row.value.identity, row.value]));
+  for (const row of functionSecurityRows) {
+    const catalogFunction = catalogFunctions.get(row.identity);
+    qeq(catalogFunction && {
+      identity: catalogFunction.identity,
+      owner: catalogFunction.owner,
+      securityDefiner: catalogFunction.securityDefiner,
+      searchPath: catalogFunction.searchPath,
+      definitionSha256: catalogFunction.definitionSha256,
+      execute: catalogFunction.execute,
+    }, {
+      identity: row.identity,
+      owner: row.owner,
+      securityDefiner: row.securityDefiner,
+      searchPath: row.searchPath,
+      definitionSha256: row.definitionSha256,
+      execute: row.execute.authenticated,
+    }, `function security projection matches catalog digest and security fields: ${row.identity}`);
+  }
   qeq([...catalogIdentities.get('relation')].sort(), [...B2_QUERY_RELATIONS].sort(), 'catalog relation identities are exact and complete');
   for (const kind of ['policy', 'trigger', 'index']) {
     qeq([...catalogIdentities.get(kind)].sort(), expectedCatalogIdentities(kind), `catalog ${kind} identities match independent pg_catalog enumeration`);
   }
-  qeq([...catalogIdentities.get('cron_job')].sort(), [B2_CRON_JOB.identity,SYNTHETIC_CRON_JOB.identity].sort(),
-    'catalog contains the versioned B2 cron and the inert synthetic identity');
-  const syntheticCronRow = catalogRows.find(row => row.kind === 'cron_job' && row.value.identity===SYNTHETIC_CRON_JOB.identity).value;
-  qeq(syntheticCronRow, {
-    identity: SYNTHETIC_CRON_JOB.identity,
-    schedule: SYNTHETIC_CRON_JOB.schedule,
-    commandSha256: createHash('sha256').update(SYNTHETIC_CRON_JOB.command).digest('hex'),
-    database: SYNTHETIC_CRON_JOB.database,
-    username: SYNTHETIC_CRON_JOB.username,
-    active: false,
-  }, 'synthetic cron row is inert and has the exact query projection');
+  q(catalogIdentities.get('trigger').includes('public.media_assets.media_assets_guard_ready_identity'),
+    'catalog includes the canonical production media identity trigger');
+  q(catalogIdentities.get('trigger').every(identity => !/(?:^|\\.)proof_|synthetic/i.test(identity)),
+    'catalog excludes proof and synthetic trigger identities');
+  qeq([...catalogIdentities.get('cron_job')], [B2_CRON_JOB.identity],
+    'catalog contains only the exact versioned B2 cron identity');
+  qeq(catalogRows.some(row => row.kind === 'cron_job' && row.value.identity === SYNTHETIC_CRON_JOB.identity), false,
+    'unrelated inert publication cron remains outside the authority scope');
   const b2CronRow = catalogRows.find(row => row.kind === 'cron_job' && row.value.identity===B2_CRON_JOB.identity).value;
   qeq(b2CronRow, {
     identity: B2_CRON_JOB.identity,
@@ -416,16 +502,65 @@ $b2_relation_acl_query$;
   qeq([...observedRelationIdentities].sort(), [...catalogIdentities.get('relation')].sort(), 'catalog and ACL relation identities are identical');
 
   console.log('B2_POSTGRES_QUERY_PROOF_PASS '+JSON.stringify({ checks: queryChecks, functions: functionRows.length,
-    catalogRows: catalogRows.length, relations: relationRows.length, syntheticCron:true, pgCronExtension:false }));
+    catalogRows: catalogRows.length, relations: relationRows.length, syntheticCronExcluded:true, pgCronExtension:false }));
+  if (process.argv.includes('--authority-evidence')) {
+    const core = {
+      schemaVersion: 1,
+      kind: 'nelyon-b2-postgres-catalog-evidence-v1',
+      result: 'VERIFIED',
+      mintEligibility: 'CATALOG_COMPONENT_ONLY',
+      provenance: {
+        image,
+        imageId,
+        imageRepoDigest: image,
+        imageOs: imageMetadata.Os,
+        imageArchitecture: imageMetadata.Architecture,
+        imagePlatform: 'linux/amd64',
+        postgresMajor: 17,
+        database: 'b2concurrency',
+        migrationSha256: sha256(read('supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql')),
+        catalogSqlSha256: sha256(B2_CATALOG_SQL),
+        rpcSecuritySqlSha256: sha256(RPC_SECURITY_ATTESTATION_SQL),
+        relationAclSqlSha256: sha256(B2_RELATION_ACL_SQL),
+        syntheticCronAuthorityExcluded: true,
+        pgCronExtension: false,
+      },
+      catalogRows: catalogRows.filter(row => row.kind !== 'cron_job'),
+      functionSecurityRows,
+      relationAclRows: relationRows,
+    };
+    console.log(`B2_POSTGRES_CATALOG_CAPABILITY ${canonicalJson({
+      ...core,
+      capabilitySha256: sha256(canonicalJson(core)),
+    })}`);
+  }
   if (process.argv.includes('--source-parity-proof')) proveB2PostgresSourceParity(defaultPathRows);
 }
 try {
-  invoke('initdb', ['-D', cluster, '-U', 'postgres', '-A', 'trust', '--no-locale', '--encoding=UTF8', '--no-sync']);
-  started = true;
-  // Disposable behavior proof only: fsync is disabled to avoid host-wide disk
-  // stalls on cleanup. This does not claim power-loss durability verification.
-  invoke('pg_ctl', ['-D', cluster, '-l', join(cluster, 'server.log'), '-o', `-h 127.0.0.1 -p ${port} -c fsync=off -c synchronous_commit=off -c full_page_writes=off`, '-w', '-t', '30', 'start']);
-  invoke('createdb', ['-h', '127.0.0.1', '-p', String(port), '-U', 'postgres', 'b2concurrency']);
+  if (dockerMode) {
+    host(dockerBin, ['run', `--pull=${pullPolicy}`, '--platform', 'linux/amd64', '--network', 'none', '--name', container,
+      '--entrypoint', 'sleep', '-d', image, 'infinity'], undefined, false, 5 * 60_000);
+    started = true;
+    imageMetadata = JSON.parse(host(dockerBin, ['image', 'inspect', '--format', '{{json .}}', image]).stdout);
+    imageId = imageMetadata.Id;
+    assert.equal(imageId, expectedImageId, 'reviewed catalog image bytes must match the pinned digest exactly');
+    assert.equal(imageMetadata.Os, 'linux', 'reviewed catalog image OS must be exact');
+    assert.equal(imageMetadata.Architecture, 'amd64', 'reviewed catalog image architecture must be exact');
+    assert.equal(Array.isArray(imageMetadata.RepoDigests), true, 'reviewed catalog image must expose RepoDigests');
+    assert.equal(imageMetadata.RepoDigests.includes(image), true, 'reviewed catalog RepoDigests must contain the exact pinned ref');
+    invoke('initdb', ['-D', dockerCluster, '-U', 'postgres', '-A', 'trust', '--no-locale', '--encoding=UTF8', '--no-sync']);
+    host(dockerBin, ['exec', '--user', 'postgres', container, 'mkdir', '-p', dockerSocket]);
+    invoke('pg_ctl', ['-D', dockerCluster, '-l', `${dockerCluster}/server.log`, '-o',
+      `-h '' -k ${dockerSocket} -c fsync=off -c synchronous_commit=off -c full_page_writes=off`, '-w', '-t', '30', 'start']);
+    invoke('createdb', ['-h', dockerSocket, '-U', 'postgres', 'b2concurrency']);
+  } else {
+    invoke('initdb', ['-D', cluster, '-U', 'postgres', '-A', 'trust', '--no-locale', '--encoding=UTF8', '--no-sync']);
+    started = true;
+    // Disposable behavior proof only: fsync is disabled to avoid host-wide disk
+    // stalls on cleanup. This does not claim power-loss durability verification.
+    invoke('pg_ctl', ['-D', cluster, '-l', join(cluster, 'server.log'), '-o', `-h 127.0.0.1 -p ${port} -c fsync=off -c synchronous_commit=off -c full_page_writes=off`, '-w', '-t', '30', 'start']);
+    invoke('createdb', ['-h', '127.0.0.1', '-p', String(port), '-U', 'postgres', 'b2concurrency']);
+  }
   eq(scalar('show server_version_num').slice(0,2),'17','PostgreSQL 17 required');
   sql(setup);
   sql(read('supabase/migrations/20261102065812_web_control_centers_b1_publication_drafts.sql'));
@@ -434,7 +569,9 @@ try {
   const c1=read('supabase/migrations/20261023141630_creator_premium_media_lifecycle_c1.sql');
   sql(extractFunction(c1,'create or replace function private.guard_ready_media_asset_identity()'));
   sql(extractFunction(c1,'create or replace function private.guard_media_asset_link_lifecycle_v1()'));
-  sql('create trigger proof_identity before update on public.media_assets for each row execute function private.guard_ready_media_asset_identity(); create trigger media_asset_links_guard_lifecycle_c1 before insert or update on public.media_asset_links for each row execute function private.guard_media_asset_link_lifecycle_v1()');
+  const canonicalMediaIdentity = read('supabase/migrations/20260916045152_canonical_media_ready_identity_immutability_v1.sql');
+  sql(`${extractTrigger(canonicalMediaIdentity, 'media_assets_guard_ready_identity')}
+    create trigger media_asset_links_guard_lifecycle_c1 before insert or update on public.media_asset_links for each row execute function private.guard_media_asset_link_lifecycle_v1();`);
   const b1Oids=scalar("select string_agg(p.oid::text,',') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public'");
   const b1Catalog=scalar("select md5(string_agg(concat_ws('|',p.oid,p.proowner,p.proacl,p.provolatile,p.prosecdef,p.proconfig,pg_get_function_arguments(p.oid),pg_get_function_result(p.oid)),'' order by p.oid)) from pg_proc p where p.oid in ("+b1Oids+")");
   sql(read('tests/fixtures/web-control-centers-b2-cron-stubs.sql'));
@@ -1005,10 +1142,14 @@ try {
 } catch(error){failure=error;console.error(error);}
 finally {
   for(const session of sessions) { session.child.stdin.end('rollback;\n'); session.child.kill(); await session.done; }
-  if(started){invoke('pg_ctl',['-D',cluster,'-w','-t','30','-m','fast','stop'],undefined,true);stopped=invoke('pg_ctl',['-D',cluster,'status'],undefined,true).status===3;}
+  if(started){
+    if(dockerMode){invoke('pg_ctl',['-D',dockerCluster,'-w','-t','30','-m','fast','stop'],undefined,true);host(dockerBin,['rm','-f',container],undefined,true);stopped=host(dockerBin,['inspect',container],undefined,true).status!==0;}
+    else{invoke('pg_ctl',['-D',cluster,'-w','-t','30','-m','fast','stop'],undefined,true);stopped=invoke('pg_ctl',['-D',cluster,'status'],undefined,true).status===3;}
+  }
   assert.ok(stopped||!started,'disposable server did not stop');
   assert.equal(dirname(resolve(cluster)),resolve(scratch));assert.ok(basename(cluster).startsWith('concurrency-proof-'));
   rmSync(cluster,{recursive:true,maxRetries:10,retryDelay:100});
+  rmSync(scratch,{recursive:true,maxRetries:10,retryDelay:100});
   console.log(`CLEANUP ${JSON.stringify({serverStopped:stopped,directoryRemoved:!existsSync(cluster)})}`);
 }
 if(failure)throw failure;

@@ -4,6 +4,12 @@ import { types } from 'node:util';
 
 import { publicAuthorityReceipt } from './nelyon-release-authority-context.mjs';
 import { assertB2IntegratedSource } from './nelyon-production-release.mjs';
+import {
+  B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256,
+  B2_ADVISOR_CHANGED_OBJECT_IDENTITIES,
+  B2_AUTHORITY_RELATION_SCOPE,
+  verifyB2AdvisorAuthorizationClaims,
+} from './nelyon-b2-authority-preparation.mjs';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const SHA40 = /^[0-9a-f]{40}$/;
@@ -296,12 +302,12 @@ function compileDatabaseRelations(migrationBytes, authority) {
         || compactCanonical(row.acl) !== compactCanonical(privateAcl))) reject();
     return row;
   }).sort((left, right) => left.identity.localeCompare(right.identity));
-  if (PRIVATE_RELATIONS.some(identity => !rows.some(row => row.identity === identity))) reject();
+  if (canonicalJson(rows.map(row => row.identity)) !== canonicalJson(B2_AUTHORITY_RELATION_SCOPE)) reject();
   return rows;
 }
 
 function compileAdvisors(authority) {
-  return authority.securityAdvisor.records.filter(record => record.action !== 'remove').map(record => {
+  return authority.securityAdvisor.records.map(record => {
     let value;
     try { value = JSON.parse(record.expectedCanonicalJson); } catch { reject(); }
     const claimKeys = record.action === 'retain' ? ['baselineSha256']
@@ -314,6 +320,24 @@ function compileAdvisors(authority) {
     return { action: record.action, fingerprint: value.fingerprint, objectIdentity: value.objectIdentity,
       ...Object.fromEntries(claimKeys.map(key => [key, value[key]])) };
   }).sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+}
+
+function advisorOrigin(authorityContext) {
+  const contract = authorityContext.descriptor.contract;
+  const migration = contract.productive_changes?.find(item => item.path === MIGRATION_PATH);
+  if (!migration || contract.advisor_authorization_contract_sha256 !== B2_ADVISOR_AUTHORIZATION_CONTRACT_SHA256) reject();
+  return {
+    repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+    transitionId: contract.id,
+    reviewedSourceSha: contract.reviewed_source_sha,
+    reviewedSourceTreeSha: contract.reviewed_source_tree_sha,
+    integrationBaseSha: contract.integration_base_sha,
+    migration: { path: migration.path, blob: migration.blob, sha256: migration.sha256, byteLength: migration.byte_length },
+    changedObjectIdentities: [...B2_ADVISOR_CHANGED_OBJECT_IDENTITIES],
+    contractSha256: contract.advisor_authorization_contract_sha256,
+    verifierSha256: contract.advisor_authorization_verifier_sha256,
+    testsSha256: contract.advisor_authorization_tests_sha256,
+  };
 }
 
 // Pre-mutation source check, independent of any deployed successor inventory.
@@ -347,6 +371,11 @@ export function verifyB2DatabaseSourcePreflight(input) {
 export function assertB2CatalogSecurityCoverage(authorityContext) {
   try {
     publicAuthorityReceipt(authorityContext);
+    verifyB2AdvisorAuthorizationClaims({
+      securityAdvisor: authorityContext.privateAuthority.securityAdvisor,
+      successorCatalog: authorityContext.privateAuthority.successorCatalog,
+      origin: advisorOrigin(authorityContext),
+    });
     const records = authorityContext.privateAuthority.successorCatalog.records;
     for (const kind of ['function', 'relation']) {
       const identities = records.filter(row => row.kind === kind).map(row => row.identity).sort();

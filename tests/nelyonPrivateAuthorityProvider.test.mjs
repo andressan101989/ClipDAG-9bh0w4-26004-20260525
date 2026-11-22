@@ -17,10 +17,16 @@ const r2 = (...args) => {
   assert.equal(typeof providerModule.createR2PrivateAuthorityProvider, 'function', 'R2 provider exists');
   return providerModule.createR2PrivateAuthorityProvider(...args);
 };
+const r2Publisher = (...args) => {
+  assert.equal(typeof providerModule.createR2PrivateAuthorityPublisher, 'function', 'R2 publisher exists');
+  return providerModule.createR2PrivateAuthorityPublisher(...args);
+};
 const MARKER = 'SYNTHETIC_PROVIDER_PRIVATE_MARKER';
 const BYTES = Buffer.from(`{"synthetic":"${MARKER}"}`);
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const SHA = digest(BYTES);
+const ETAG = `"${'e'.repeat(32)}"`;
+const KEY = `internal/release-authority/v1/sha256/${SHA}.json`;
 const LIMIT = 2 * 1024 * 1024;
 const config = fetch => ({ accountId: 'a'.repeat(32), bucket: 'synthetic-authority',
   accessKeyId: `synthetic-${MARKER}`, secretAccessKey: MARKER, fetch, timeoutMs: 200 });
@@ -37,6 +43,12 @@ function clean(error, code = 'PRIVATE_AUTHORITY_PROVIDER_INVALID') {
 const rejected = (operation, code) => assert.rejects(operation, error => clean(error, code));
 const response = (bytes = BYTES, length = bytes.length) => new Response(bytes, {
   headers: { 'content-length': String(length) },
+});
+const publisherHead = (etag = ETAG) => new Response(null, {
+  headers: { 'content-length': String(BYTES.length), etag },
+});
+const publisherGet = (bytes = BYTES, etag = ETAG) => new Response(bytes, {
+  headers: { 'content-length': String(bytes.length), etag },
 });
 function fakeReader(overrides = {}) {
   const calls = [];
@@ -270,4 +282,121 @@ test('late HEAD response after timeout is cancelled and cannot trigger GET', asy
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(cancelled, true);
   assert.deepEqual(calls, ['HEAD']);
+});
+
+test('R2 publisher performs one conditional PUT and exact readback at the digest key', async () => {
+  const calls = [];
+  let cancelled = false;
+  const fetch = async request => {
+    calls.push(request);
+    if (request.method === 'PUT') return new Response(new ReadableStream({ cancel() { cancelled = true; } }), { status: 200 });
+    if (request.method === 'HEAD') return publisherHead();
+    if (request.method === 'GET') return publisherGet();
+    assert.fail('unexpected publisher method');
+  };
+  const result = await r2Publisher(config(fetch)).publishBySha256(SHA, BYTES);
+  assert.deepEqual(result, { schemaVersion: 1, result: 'CREATED', sha256: SHA, byteLength: BYTES.length,
+    key: KEY, etag: ETAG, readback: 'HEAD_GET_EXACT' });
+  assert.deepEqual(calls.map(request => request.method), ['PUT', 'HEAD', 'GET']);
+  assert.equal(cancelled, true);
+  const put = calls[0];
+  assert.equal(new URL(put.url).pathname,
+    `/synthetic-authority/internal/release-authority/v1/sha256/${SHA}.json`);
+  assert.equal(put.headers.get('if-none-match'), '*');
+  assert.equal(put.headers.get('content-type'), 'application/json');
+  assert.equal(put.headers.get('content-length'), String(BYTES.length));
+  assert.deepEqual(Buffer.from(await put.arrayBuffer()), BYTES);
+  assert.deepEqual(Object.keys(r2Publisher(config(fetch))), ['publishBySha256']);
+});
+
+test('R2 publisher accepts 412 only after exact existing-byte readback', async () => {
+  const calls = [];
+  const fetch = async request => {
+    calls.push(request);
+    if (request.method === 'PUT') return new Response(MARKER, { status: 412 });
+    if (request.method === 'HEAD') return publisherHead();
+    if (request.method === 'GET') return publisherGet();
+    assert.fail('unexpected publisher method');
+  };
+  assert.deepEqual(await r2Publisher(config(fetch)).publishBySha256(SHA, BYTES), {
+    schemaVersion: 1, result: 'ALREADY_EXISTS', sha256: SHA, byteLength: BYTES.length,
+    key: KEY, etag: ETAG, readback: 'HEAD_GET_EXACT',
+  });
+  assert.deepEqual(calls.map(request => request.method), ['PUT', 'HEAD', 'GET']);
+});
+
+test('R2 publisher resolves uncertain PUT transport only by exact readback without retry', async () => {
+  const calls = [];
+  const fetch = async request => {
+    calls.push(request);
+    if (request.method === 'PUT') throw new Error(MARKER);
+    if (request.method === 'HEAD') return publisherHead();
+    if (request.method === 'GET') return publisherGet();
+    assert.fail('unexpected publisher method');
+  };
+  assert.deepEqual(await r2Publisher(config(fetch)).publishBySha256(SHA, BYTES), {
+    schemaVersion: 1, result: 'UNCERTAIN_WRITE_VERIFIED', sha256: SHA, byteLength: BYTES.length,
+    key: KEY, etag: ETAG, readback: 'HEAD_GET_EXACT',
+  });
+  assert.deepEqual(calls.map(request => request.method), ['PUT', 'HEAD', 'GET']);
+});
+
+test('R2 publisher resolves a timed-out PUT only by exact readback and cancels a late body', async () => {
+  const calls = [];
+  let finishPut;
+  let cancelled = false;
+  const fetch = request => {
+    calls.push(request);
+    if (request.method === 'PUT') {
+      return new Promise(resolve => {
+        finishPut = () => resolve(new Response(new ReadableStream({ cancel() { cancelled = true; } }), { status: 200 }));
+      });
+    }
+    if (request.method === 'HEAD') return Promise.resolve(publisherHead());
+    if (request.method === 'GET') return Promise.resolve(publisherGet());
+    assert.fail('unexpected publisher method');
+  };
+  assert.deepEqual(await r2Publisher({ ...config(fetch), timeoutMs: 15 }).publishBySha256(SHA, BYTES), {
+    schemaVersion: 1, result: 'UNCERTAIN_WRITE_VERIFIED', sha256: SHA, byteLength: BYTES.length,
+    key: KEY, etag: ETAG, readback: 'HEAD_GET_EXACT',
+  });
+  assert.deepEqual(calls.map(request => request.method), ['PUT', 'HEAD', 'GET']);
+  finishPut();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(cancelled, true);
+});
+
+test('R2 publisher fails closed on wrong digest, non-precondition status or readback mismatch', async () => {
+  let calls = [];
+  await rejected(() => r2Publisher(config(async request => { calls.push(request); return new Response(null, { status: 403 }); }))
+    .publishBySha256(SHA, BYTES), 'PRIVATE_AUTHORITY_PUBLISHER_INVALID');
+  assert.deepEqual(calls.map(request => request.method), ['PUT']);
+  calls = [];
+  await rejected(() => r2Publisher(config(async request => {
+    calls.push(request);
+    if (request.method === 'PUT') return new Response(null, { status: 200 });
+    if (request.method === 'HEAD') return publisherHead();
+    return publisherGet(Buffer.alloc(BYTES.length, 65));
+  })).publishBySha256(SHA, BYTES), 'PRIVATE_AUTHORITY_PUBLISHER_INVALID');
+  assert.deepEqual(calls.map(request => request.method), ['PUT', 'HEAD', 'GET']);
+  calls = [];
+  await rejected(() => r2Publisher(config(async request => {
+    calls.push(request);
+    if (request.method === 'PUT') return new Response(null, { status: 200 });
+    if (request.method === 'HEAD') return new Response(null, { headers: { 'content-length': String(BYTES.length) } });
+    return publisherGet();
+  })).publishBySha256(SHA, BYTES), 'PRIVATE_AUTHORITY_PUBLISHER_INVALID');
+  assert.deepEqual(calls.map(request => request.method), ['PUT', 'HEAD']);
+  calls = [];
+  await rejected(() => r2Publisher(config(async request => {
+    calls.push(request);
+    if (request.method === 'PUT') return new Response(null, { status: 200 });
+    if (request.method === 'HEAD') return publisherHead();
+    return publisherGet(BYTES, `"${'f'.repeat(32)}"`);
+  })).publishBySha256(SHA, BYTES), 'PRIVATE_AUTHORITY_PUBLISHER_INVALID');
+  assert.deepEqual(calls.map(request => request.method), ['PUT', 'HEAD', 'GET']);
+  calls = [];
+  await rejected(() => r2Publisher(config(async request => { calls.push(request); return response(); }))
+    .publishBySha256('0'.repeat(64), BYTES), 'PRIVATE_AUTHORITY_PUBLISHER_INVALID');
+  assert.equal(calls.length, 0);
 });

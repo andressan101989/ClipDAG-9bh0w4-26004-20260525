@@ -1,5 +1,5 @@
 name: Nelyon controlled production release
-run-name: ${{ toJSON(inputs.preflight_only) == 'true' && 'Nelyon read-only B2 diagnostic' || 'Nelyon production release' }} | ${{ inputs.mode }} | ${{ inputs.release_id }}
+run-name: ${{ inputs.mode == 'authority_issue' && inputs.release_id || format('{0} | {1} | {2}', inputs.mode == 'authority_observe' && 'Nelyon B2 authority observation' || (toJSON(inputs.preflight_only) == 'true' && 'Nelyon read-only B2 diagnostic' || 'Nelyon production release'), inputs.mode, inputs.release_id) }}
 
 on:
   workflow_dispatch:
@@ -21,6 +21,8 @@ on:
         required: true
         type: choice
         options:
+          - authority_observe
+          - authority_issue
           - plan_only
           - gate_proof
           - release
@@ -35,6 +37,18 @@ on:
         description: Exact source run ID, only for an explicit recovery mode
         required: false
         type: string
+      authority_observation_run_id:
+        description: Exact successful authority observation run ID, only for authority_issue
+        required: false
+        type: string
+      authority_observation_sha256:
+        description: Exact authenticated authority observation SHA-256, only for authority_issue
+        required: false
+        type: string
+      authority_integration_base_sha:
+        description: Exact reviewed B2 integration-base SHA, only for authority_issue
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -46,8 +60,486 @@ env:
   NELYON_WRANGLER: apps/admin-web/node_modules/.bin/wrangler
 
 jobs:
+  authority-observation:
+    name: Observe fresh B2 backup and Vault/Edge parity
+    if: ${{ inputs.mode == 'authority_observe' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: production
+    permissions:
+      contents: read
+    concurrency:
+      group: nelyon-supabase-production
+      cancel-in-progress: false
+    steps:
+      - name: Checkout exact approved SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.approved_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.21.0'
+
+      - name: Validate exact read-only authority observation invocation
+        id: authority_observation_identity
+        env:
+          INPUT_APPROVED_SHA: ${{ inputs.approved_sha }}
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_RELEASE_ID: ${{ inputs.release_id }}
+          INPUT_SCOPE_CONFIRMATION: ${{ inputs.scope_confirmation }}
+          INPUT_PREFLIGHT_ONLY: ${{ toJSON(inputs.preflight_only) }}
+          INPUT_RECOVERY_SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          OBSERVED_REPOSITORY: ${{ github.repository }}
+          OBSERVED_REF: ${{ github.ref }}
+          OBSERVED_SHA: ${{ github.sha }}
+          OBSERVED_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+          import path from 'node:path';
+          const repository = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
+          const workflowRef = `${repository}/.github/workflows/nelyon-production-release.yml@refs/heads/main`;
+          if (process.versions.node !== '24.21.0'
+            || process.env.INPUT_MODE !== 'authority_observe'
+            || process.env.INPUT_SCOPE_CONFIRMATION !== 'AUTHORITY_OBSERVE_READ_ONLY'
+            || process.env.INPUT_PREFLIGHT_ONLY !== 'false'
+            || (process.env.INPUT_RECOVERY_SOURCE_RUN_ID ?? '') !== ''
+            || process.env.OBSERVED_REPOSITORY !== repository
+            || process.env.OBSERVED_REF !== 'refs/heads/main'
+            || process.env.OBSERVED_WORKFLOW_REF !== workflowRef
+            || process.env.GITHUB_ACTOR !== 'andressan101989'
+            || process.env.GITHUB_TRIGGERING_ACTOR !== 'andressan101989'
+            || !/^[0-9a-f]{40}$/.test(process.env.INPUT_APPROVED_SHA ?? '')
+            || process.env.OBSERVED_SHA !== process.env.INPUT_APPROVED_SHA
+            || !/^[A-Za-z0-9._:-]{1,128}$/.test(process.env.INPUT_RELEASE_ID ?? '')) {
+            throw new Error('Authority observation invocation rejected');
+          }
+          const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+          if (head !== process.env.INPUT_APPROVED_SHA || !/^[0-9a-f]{40}$/.test(tree)) {
+            throw new Error('Authority observation source identity rejected');
+          }
+          const policy = JSON.parse(readFileSync('.github/nelyon-production-release-policy.json', 'utf8'));
+          if (policy.owner !== 'andressan101989' || policy.repository !== repository) {
+            throw new Error('Authority observation policy rejected');
+          }
+          const scratch = path.join(process.env.RUNNER_TEMP, 'nelyon-b2-authority-observation');
+          mkdirSync(scratch, { recursive: false, mode: 0o700 });
+          appendFileSync(process.env.GITHUB_OUTPUT, `approved_tree=${tree}\n`);
+          NODE
+
+      - name: Verify protected private runtime closure before observation
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          // NELYON_AUTHORITY_OBSERVE_RUNTIME_BOOTSTRAP_BEGIN
+          const { createHash, timingSafeEqual } = require('node:crypto');
+          const { lstatSync, readFileSync, realpathSync } = require('node:fs');
+          const path = require('node:path');
+
+          const members = Object.freeze([
+            '.github/workflows/nelyon-production-release.yml',
+            'package-lock.json',
+            'package.json',
+            'scripts/nelyon-admin-production-release.mjs',
+            'scripts/nelyon-b2-authority-preparation.mjs',
+            'scripts/nelyon-b2-explicit-connection.mjs',
+            'scripts/nelyon-b2-function-deployment-proof.mjs',
+            'scripts/nelyon-b2-hermetic-workspace.mjs',
+            'scripts/nelyon-b2-recovery-provenance.mjs',
+            'scripts/nelyon-b2-source-parity.mjs',
+            'scripts/nelyon-private-authority-cli.mjs',
+            'scripts/nelyon-private-authority-issuer.mjs',
+            'scripts/nelyon-private-authority-provider.mjs',
+            'scripts/nelyon-private-authority-runtime.mjs',
+            'scripts/nelyon-private-authority.mjs',
+            'scripts/nelyon-private-runtime-closure.mjs',
+            'scripts/nelyon-production-release.mjs',
+            'scripts/nelyon-production-snapshot-adapter.mjs',
+            'scripts/nelyon-release-authority-context.mjs',
+            'scripts/prove-web-control-centers-b2-disposable.mjs',
+            'scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs',
+            'shared/web-deployment/publicSupabaseBuildEnv.mjs',
+          ]);
+          const nodeVersion = '24.21.0';
+          const setupNodeAction = '949feb2413d6458794dcd2491c4babbbce0c15c1';
+          const supabaseSetupAction = '45a513f8c64c0bc8e0e3dfe572b5c95be85f6359';
+          const wranglerVersion = '4.135.0';
+          const awsVersion = '1.0.20';
+          const awsResolved = 'https://registry.npmjs.org/aws4fetch/-/aws4fetch-1.0.20.tgz';
+          const awsIntegrity = 'sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==';
+          const reject = () => { throw new Error('private runtime closure rejected'); };
+          const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+          const canonicalJson = value => {
+            if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+            if (value !== null && typeof value === 'object') {
+              return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+            }
+            return JSON.stringify(value);
+          };
+          const equalDigest = (left, right) => /^[0-9a-f]{64}$/.test(left ?? '')
+            && /^[0-9a-f]{64}$/.test(right ?? '')
+            && timingSafeEqual(Buffer.from(left, 'ascii'), Buffer.from(right, 'ascii'));
+          const root = path.resolve(process.cwd());
+          if (realpathSync(root) !== root || lstatSync(root).isSymbolicLink() || process.versions.node !== nodeVersion) reject();
+          let totalBytes = 0;
+          const files = members.map(member => {
+            const absolute = path.resolve(root, ...member.split('/'));
+            const relative = path.relative(root, absolute);
+            if (relative !== member.split('/').join(path.sep)) reject();
+            let current = root;
+            for (const segment of member.split('/')) {
+              current = path.join(current, segment);
+              if (lstatSync(current).isSymbolicLink()) reject();
+            }
+            const stat = lstatSync(absolute);
+            if (!stat.isFile() || realpathSync(absolute) !== absolute || stat.size > 8 * 1024 * 1024) reject();
+            totalBytes += stat.size;
+            if (totalBytes > 64 * 1024 * 1024) reject();
+            return { path: member, sha256: sha256(readFileSync(absolute)) };
+          });
+          const workflow = readFileSync(path.join(root, '.github/workflows/nelyon-production-release.yml'), 'utf8');
+          const actionPins = (source, expression, expected) => {
+            const values = [...source.matchAll(expression)].map(match => match[1]);
+            if (values.length < 1 || values.some(value => value !== expected)) reject();
+          };
+          actionPins(workflow, /actions\/setup-node@([0-9a-f]{40})/g, setupNodeAction);
+          actionPins(workflow, /supabase\/setup-cli@([0-9a-f]{40})/g, supabaseSetupAction);
+          const nodePins = workflow.split(/\r?\n/).flatMap(line => {
+            const match = line.match(/^\s+node-version:\s*['"]?([^'"\s]+)['"]?\s*$/);
+            return match ? [match[1]] : [];
+          });
+          if (nodePins.length < 1 || nodePins.some(value => value !== nodeVersion)) reject();
+          const wranglerNeedle = ['test "$("$NELYON_WRANGLER" ', '--version)" = ', `'${wranglerVersion}'`].join('');
+          if (!workflow.includes(wranglerNeedle)) reject();
+          const adminSource = readFileSync(path.join(root, 'scripts/nelyon-admin-production-release.mjs'), 'utf8');
+          const wranglerPins = [...adminSource.matchAll(/const\s+WRANGLER_VERSION\s*=\s*['"]([^'"]+)['"]/g)].map(match => match[1]);
+          if (wranglerPins.length !== 1 || wranglerPins[0] !== wranglerVersion) reject();
+          const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+          const packageLock = JSON.parse(readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+          const lockedRoot = packageLock.packages?.['']?.dependencies?.aws4fetch;
+          const lockedPackage = packageLock.packages?.['node_modules/aws4fetch'];
+          if (packageJson.dependencies?.aws4fetch !== awsVersion || lockedRoot !== awsVersion
+            || lockedPackage?.version !== awsVersion || lockedPackage?.resolved !== awsResolved
+            || lockedPackage?.integrity !== awsIntegrity) reject();
+          const withoutDigest = {
+            schema_version: 1,
+            identity: 'nelyon-b2-private-release-runtime-v1',
+            algorithm: 'sha256',
+            files,
+            runtime: { node: nodeVersion, setup_node_action: setupNodeAction },
+            dependencies: [{ name: 'aws4fetch', version: awsVersion, integrity: awsIntegrity, lock_path: 'node_modules/aws4fetch' }],
+            operation_tools: { wrangler: wranglerVersion, supabase_setup_action: supabaseSetupAction },
+          };
+          const closure = { ...withoutDigest, closure_sha256: sha256(Buffer.from(canonicalJson(withoutDigest))) };
+          if (!equalDigest(closure.closure_sha256, process.env.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256)) reject();
+          // NELYON_AUTHORITY_OBSERVE_RUNTIME_BOOTSTRAP_END
+          NODE
+
+      - name: Capture one sanitized B2 authority observation
+        id: authority_observation_capture
+        env:
+          NELYON_APPROVED_SHA: ${{ inputs.approved_sha }}
+          NELYON_APPROVED_TREE: ${{ steps.authority_observation_identity.outputs.approved_tree }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs authority-observe \
+            --policy "$NELYON_POLICY" \
+            --approved-sha "$NELYON_APPROVED_SHA" \
+            --approved-tree "$NELYON_APPROVED_TREE" \
+            --verification-output "$RUNNER_TEMP/nelyon-b2-authority-observation/observation.json"
+
+      - name: Upload sanitized authority observation
+        id: authority_observation_upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nelyon-b2-authority-observation-${{ github.run_id }}
+          path: ${{ runner.temp }}/nelyon-b2-authority-observation/observation.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Clean authority observation scratch
+        id: authority_observation_cleanup
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/nelyon-b2-authority-observation"
+          test ! -e "$RUNNER_TEMP/nelyon-b2-authority-observation"
+
+      - name: Require complete read-only authority observation
+        if: ${{ always() }}
+        env:
+          AUTHORITY_OBSERVATION_RESULTS: ${{ steps.authority_observation_identity.outcome }}|${{ steps.authority_observation_capture.outcome }}|${{ steps.authority_observation_upload.outcome }}|${{ steps.authority_observation_cleanup.outcome }}
+        run: test "$AUTHORITY_OBSERVATION_RESULTS" = 'success|success|success|success'
+
+  authority-issue:
+    name: Issue immutable B2 private authority
+    if: ${{ inputs.mode == 'authority_issue' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+    concurrency:
+      group: nelyon-supabase-production
+      cancel-in-progress: false
+    steps:
+      - name: Checkout exact approved SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.approved_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.21.0'
+
+      - name: Validate exact owner authority issuance invocation
+        id: authority_issue_identity
+        env:
+          INPUT_APPROVED_SHA: ${{ inputs.approved_sha }}
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_RELEASE_ID: ${{ inputs.release_id }}
+          INPUT_SCOPE_CONFIRMATION: ${{ inputs.scope_confirmation }}
+          INPUT_PREFLIGHT_ONLY: ${{ toJSON(inputs.preflight_only) }}
+          INPUT_RECOVERY_SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
+          INPUT_AUTHORITY_OBSERVATION_RUN_ID: ${{ inputs.authority_observation_run_id }}
+          INPUT_AUTHORITY_OBSERVATION_SHA256: ${{ inputs.authority_observation_sha256 }}
+          INPUT_AUTHORITY_INTEGRATION_BASE_SHA: ${{ inputs.authority_integration_base_sha }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          OBSERVED_REPOSITORY: ${{ github.repository }}
+          OBSERVED_REF: ${{ github.ref }}
+          OBSERVED_SHA: ${{ github.sha }}
+          OBSERVED_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+          import path from 'node:path';
+          const repository = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
+          const workflowRef = `${repository}/.github/workflows/nelyon-production-release.yml@refs/heads/main`;
+          if (process.versions.node !== '24.21.0'
+            || process.env.INPUT_MODE !== 'authority_issue'
+            || process.env.INPUT_SCOPE_CONFIRMATION !== 'AUTHORITY_ISSUE_APPROVED'
+            || process.env.INPUT_PREFLIGHT_ONLY !== 'false'
+            || (process.env.INPUT_RECOVERY_SOURCE_RUN_ID ?? '') !== ''
+            || process.env.OBSERVED_REPOSITORY !== repository
+            || process.env.OBSERVED_REF !== 'refs/heads/main'
+            || process.env.OBSERVED_WORKFLOW_REF !== workflowRef
+            || process.env.GITHUB_ACTOR !== 'andressan101989'
+            || process.env.GITHUB_TRIGGERING_ACTOR !== 'andressan101989'
+            || process.env.GITHUB_RUN_ATTEMPT !== '1'
+            || !/^[0-9a-f]{40}$/.test(process.env.INPUT_APPROVED_SHA ?? '')
+            || process.env.OBSERVED_SHA !== process.env.INPUT_APPROVED_SHA
+            || !/^b2-authority-[0-9a-f]{64}$/.test(process.env.INPUT_RELEASE_ID ?? '')
+            || !/^[1-9][0-9]*$/.test(process.env.INPUT_AUTHORITY_OBSERVATION_RUN_ID ?? '')
+            || !/^[0-9a-f]{64}$/.test(process.env.INPUT_AUTHORITY_OBSERVATION_SHA256 ?? '')
+            || process.env.INPUT_AUTHORITY_INTEGRATION_BASE_SHA !== '109395035d13ba3db8d338dc3b2524191defe873') {
+            throw new Error('Authority issuance invocation rejected');
+          }
+          const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+          if (head !== process.env.INPUT_APPROVED_SHA || !/^[0-9a-f]{40}$/.test(tree)) {
+            throw new Error('Authority issuance source identity rejected');
+          }
+          const policy = JSON.parse(readFileSync('.github/nelyon-production-release-policy.json', 'utf8'));
+          if (policy.owner !== 'andressan101989' || policy.repository !== repository
+            || policy.supabase?.project_ref !== 'aewwdlvbwpczqyvkwvvj') {
+            throw new Error('Authority issuance policy rejected');
+          }
+          const scratch = path.join(process.env.RUNNER_TEMP, 'nelyon-b2-authority-issue');
+          mkdirSync(scratch, { recursive: false, mode: 0o700 });
+          appendFileSync(process.env.GITHUB_OUTPUT, `approved_tree=${tree}\n`);
+          NODE
+
+      - name: Verify protected private runtime closure before issuance
+        env:
+          NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          // NELYON_AUTHORITY_ISSUE_RUNTIME_BOOTSTRAP_BEGIN
+          const { createHash, timingSafeEqual } = require('node:crypto');
+          const { lstatSync, readFileSync, realpathSync } = require('node:fs');
+          const path = require('node:path');
+
+          const members = Object.freeze([
+            '.github/workflows/nelyon-production-release.yml',
+            'package-lock.json',
+            'package.json',
+            'scripts/nelyon-admin-production-release.mjs',
+            'scripts/nelyon-b2-authority-preparation.mjs',
+            'scripts/nelyon-b2-explicit-connection.mjs',
+            'scripts/nelyon-b2-function-deployment-proof.mjs',
+            'scripts/nelyon-b2-hermetic-workspace.mjs',
+            'scripts/nelyon-b2-recovery-provenance.mjs',
+            'scripts/nelyon-b2-source-parity.mjs',
+            'scripts/nelyon-private-authority-cli.mjs',
+            'scripts/nelyon-private-authority-issuer.mjs',
+            'scripts/nelyon-private-authority-provider.mjs',
+            'scripts/nelyon-private-authority-runtime.mjs',
+            'scripts/nelyon-private-authority.mjs',
+            'scripts/nelyon-private-runtime-closure.mjs',
+            'scripts/nelyon-production-release.mjs',
+            'scripts/nelyon-production-snapshot-adapter.mjs',
+            'scripts/nelyon-release-authority-context.mjs',
+            'scripts/prove-web-control-centers-b2-disposable.mjs',
+            'scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs',
+            'shared/web-deployment/publicSupabaseBuildEnv.mjs',
+          ]);
+          const nodeVersion = '24.21.0';
+          const setupNodeAction = '949feb2413d6458794dcd2491c4babbbce0c15c1';
+          const supabaseSetupAction = '45a513f8c64c0bc8e0e3dfe572b5c95be85f6359';
+          const wranglerVersion = '4.135.0';
+          const awsVersion = '1.0.20';
+          const awsResolved = 'https://registry.npmjs.org/aws4fetch/-/aws4fetch-1.0.20.tgz';
+          const awsIntegrity = 'sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==';
+          const reject = () => { throw new Error('private runtime closure rejected'); };
+          const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+          const canonicalJson = value => {
+            if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+            if (value !== null && typeof value === 'object') {
+              return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+            }
+            return JSON.stringify(value);
+          };
+          const equalDigest = (left, right) => /^[0-9a-f]{64}$/.test(left ?? '')
+            && /^[0-9a-f]{64}$/.test(right ?? '')
+            && timingSafeEqual(Buffer.from(left, 'ascii'), Buffer.from(right, 'ascii'));
+          const root = path.resolve(process.cwd());
+          if (realpathSync(root) !== root || lstatSync(root).isSymbolicLink() || process.versions.node !== nodeVersion) reject();
+          let totalBytes = 0;
+          const files = members.map(member => {
+            const absolute = path.resolve(root, ...member.split('/'));
+            const relative = path.relative(root, absolute);
+            if (relative !== member.split('/').join(path.sep)) reject();
+            let current = root;
+            for (const segment of member.split('/')) {
+              current = path.join(current, segment);
+              if (lstatSync(current).isSymbolicLink()) reject();
+            }
+            const stat = lstatSync(absolute);
+            if (!stat.isFile() || realpathSync(absolute) !== absolute || stat.size > 32 * 1024 * 1024) reject();
+            totalBytes += stat.size;
+            if (totalBytes > 96 * 1024 * 1024) reject();
+            return { path: member, sha256: sha256(readFileSync(absolute)) };
+          });
+          const workflow = readFileSync(path.join(root, '.github/workflows/nelyon-production-release.yml'), 'utf8');
+          const actionPins = (source, expression, expected) => {
+            const values = [...source.matchAll(expression)].map(match => match[1]);
+            if (values.length < 1 || values.some(value => value !== expected)) reject();
+          };
+          actionPins(workflow, /actions\/setup-node@([0-9a-f]{40})/g, setupNodeAction);
+          actionPins(workflow, /supabase\/setup-cli@([0-9a-f]{40})/g, supabaseSetupAction);
+          const nodePins = workflow.split(/\r?\n/).flatMap(line => {
+            const match = line.match(/^\s+node-version:\s*['"]?([^'"\s]+)['"]?\s*$/);
+            return match ? [match[1]] : [];
+          });
+          if (nodePins.length < 1 || nodePins.some(value => value !== nodeVersion)) reject();
+          const wranglerNeedle = ['test "$("$NELYON_WRANGLER" ', '--version)" = ', `'${wranglerVersion}'`].join('');
+          if (!workflow.includes(wranglerNeedle)) reject();
+          const adminSource = readFileSync(path.join(root, 'scripts/nelyon-admin-production-release.mjs'), 'utf8');
+          const wranglerPins = [...adminSource.matchAll(/const\s+WRANGLER_VERSION\s*=\s*['"]([^'"]+)['"]/g)].map(match => match[1]);
+          if (wranglerPins.length !== 1 || wranglerPins[0] !== wranglerVersion) reject();
+          const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+          const packageLock = JSON.parse(readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+          const lockedRoot = packageLock.packages?.['']?.dependencies?.aws4fetch;
+          const lockedPackage = packageLock.packages?.['node_modules/aws4fetch'];
+          if (packageJson.dependencies?.aws4fetch !== awsVersion || lockedRoot !== awsVersion
+            || lockedPackage?.version !== awsVersion || lockedPackage?.resolved !== awsResolved
+            || lockedPackage?.integrity !== awsIntegrity) reject();
+          const withoutDigest = {
+            schema_version: 1,
+            identity: 'nelyon-b2-private-release-runtime-v1',
+            algorithm: 'sha256',
+            files,
+            runtime: { node: nodeVersion, setup_node_action: setupNodeAction },
+            dependencies: [{ name: 'aws4fetch', version: awsVersion, integrity: awsIntegrity, lock_path: 'node_modules/aws4fetch' }],
+            operation_tools: { wrangler: wranglerVersion, supabase_setup_action: supabaseSetupAction },
+          };
+          const closure = { ...withoutDigest, closure_sha256: sha256(Buffer.from(canonicalJson(withoutDigest))) };
+          if (!equalDigest(closure.closure_sha256, process.env.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256)) reject();
+          // NELYON_AUTHORITY_ISSUE_RUNTIME_BOOTSTRAP_END
+          NODE
+
+      - name: Issue exact immutable B2 private authority
+        id: authority_issue_publish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NELYON_APPROVED_SHA: ${{ inputs.approved_sha }}
+          NELYON_APPROVED_TREE: ${{ steps.authority_issue_identity.outputs.approved_tree }}
+          NELYON_B2_DOCKER_BIN: /usr/bin/docker
+          NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_BUCKET: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_BUCKET }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { lstatSync, realpathSync } from 'node:fs';
+          const docker = process.env.NELYON_B2_DOCKER_BIN;
+          const stat = lstatSync(docker);
+          if (docker !== '/usr/bin/docker' || !stat.isFile() || stat.isSymbolicLink()
+            || realpathSync(docker) !== docker || stat.uid !== 0 || (stat.mode & 0o022) !== 0) {
+            throw new Error('Protected Docker executable rejected');
+          }
+          NODE
+          node scripts/nelyon-private-authority-cli.mjs authority-issue \
+            --policy "$NELYON_POLICY" \
+            --approved-sha "$NELYON_APPROVED_SHA" \
+            --approved-tree "$NELYON_APPROVED_TREE" \
+            --integration-base-sha "${{ inputs.authority_integration_base_sha }}" \
+            --observation-run "${{ inputs.authority_observation_run_id }}" \
+            --observation-sha256 "${{ inputs.authority_observation_sha256 }}" \
+            --release-id "${{ inputs.release_id }}" \
+            --verification-output "$RUNNER_TEMP/nelyon-b2-authority-issue/receipt.json"
+
+      - name: Upload sanitized authority issuance receipt
+        id: authority_issue_upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nelyon-b2-authority-issuance-${{ github.run_id }}
+          path: ${{ runner.temp }}/nelyon-b2-authority-issue/receipt.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Clean authority issuance scratch
+        id: authority_issue_cleanup
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/nelyon-b2-authority-issue"
+          test ! -e "$RUNNER_TEMP/nelyon-b2-authority-issue"
+
+      - name: Require complete immutable authority issuance
+        if: ${{ always() }}
+        env:
+          AUTHORITY_ISSUE_RESULTS: ${{ steps.authority_issue_identity.outcome }}|${{ steps.authority_issue_publish.outcome }}|${{ steps.authority_issue_upload.outcome }}|${{ steps.authority_issue_cleanup.outcome }}
+        run: test "$AUTHORITY_ISSUE_RESULTS" = 'success|success|success|success'
+
   plan:
     name: Build immutable release plan
+    if: ${{ inputs.mode != 'authority_observe' && inputs.mode != 'authority_issue' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -398,11 +890,14 @@ jobs:
             'package-lock.json',
             'package.json',
             'scripts/nelyon-admin-production-release.mjs',
+            'scripts/nelyon-b2-authority-preparation.mjs',
             'scripts/nelyon-b2-explicit-connection.mjs',
+            'scripts/nelyon-b2-function-deployment-proof.mjs',
             'scripts/nelyon-b2-hermetic-workspace.mjs',
             'scripts/nelyon-b2-recovery-provenance.mjs',
             'scripts/nelyon-b2-source-parity.mjs',
             'scripts/nelyon-private-authority-cli.mjs',
+            'scripts/nelyon-private-authority-issuer.mjs',
             'scripts/nelyon-private-authority-provider.mjs',
             'scripts/nelyon-private-authority-runtime.mjs',
             'scripts/nelyon-private-authority.mjs',
@@ -410,6 +905,8 @@ jobs:
             'scripts/nelyon-production-release.mjs',
             'scripts/nelyon-production-snapshot-adapter.mjs',
             'scripts/nelyon-release-authority-context.mjs',
+            'scripts/prove-web-control-centers-b2-disposable.mjs',
+            'scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs',
             'shared/web-deployment/publicSupabaseBuildEnv.mjs',
           ]);
           const nodeVersion = '24.21.0';
@@ -2647,6 +3144,7 @@ jobs:
             --manifest release-artifact/bundle/manifest.json \
             --pre-snapshot "$RUNNER_TEMP/nelyon-private-authority-public/production-pre.json" \
             --post-snapshot "$RUNNER_TEMP/nelyon-private-authority-public/production-post.json" \
+            --function-deployment-proof "$RUNNER_TEMP/nelyon-private-authority-public/function-deployment-proof.json" \
             --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/postcheck-result.json"
 
       - name: Clean private authority scratch after postcheck
@@ -3897,6 +4395,7 @@ jobs:
             gate-evidence/pre-snapshot-verification.json
             gate-evidence/migration-dry-run.json
             gate-evidence/protected-stage-proofs.json
+            gate-evidence/function-deployment-proof.json
             gate-evidence/pre-migration-revalidation.json
             gate-evidence/pre-function-revalidation.json
             gate-evidence/postcheck-result.json

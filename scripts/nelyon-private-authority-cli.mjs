@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { Buffer } from 'node:buffer';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { types } from 'node:util';
@@ -22,7 +22,11 @@ import {
 } from './nelyon-b2-source-parity.mjs';
 import { createHermeticMigrationWorkspace, readApprovedMigrationFiles } from './nelyon-b2-hermetic-workspace.mjs';
 import { createB2Executor, createB2HttpAdapter, runB2ProtectedDryRun, runB2ProtectedFunctions, runB2ProtectedMigration } from './nelyon-b2-explicit-connection.mjs';
-import { readTrustedB2HistoricalDescriptorBytes } from './nelyon-b2-recovery-provenance.mjs';
+import { canonicalB2FunctionDeploymentProof } from './nelyon-b2-function-deployment-proof.mjs';
+import {
+  readTrustedB2HistoricalDescriptorBytes,
+  readTrustedB2RecoveryFunctionDeploymentProof,
+} from './nelyon-b2-recovery-provenance.mjs';
 import {
   canonicalJson,
   b2HistoricalSnapshotBinding,
@@ -40,13 +44,25 @@ import {
   verifyPendingB2RecoveryAuthority,
 } from './nelyon-production-release.mjs';
 import {
+  captureB2AuthorityObservation,
   captureProductionSnapshot,
+  verifyB2AuthorityObservation,
   verifyProductionPreSnapshot,
   verifyProductionRecoverySnapshot,
   verifyProductionSnapshotPair,
 } from './nelyon-production-snapshot-adapter.mjs';
+import {
+  B2_AUTHORITY_INTEGRATION_BASE_SHA,
+  createB2AuthorityIssuanceGithubObserver,
+  issueB2PrivateAuthority,
+  prepareB2AuthorityIssuance,
+  readB2AuthorityPreparationSummary,
+} from './nelyon-private-authority-issuer.mjs';
+import { createR2PrivateAuthorityPublisher } from './nelyon-private-authority-provider.mjs';
 
 const ACTIONS = new Set([
+  'authority-observe',
+  'authority-issue',
   'authority-proof',
   'preflight-release',
   'authorize-refresh',
@@ -74,10 +90,45 @@ const ACTIONS = new Set([
   'postcheck-admin-recovery',
   'verify-admin-recovery-cloudflare-prestate',
 ]);
+let functionProofCheckpointSequence = 0;
+export function writeFunctionProofCheckpoint(target, proof) {
+  const temporary = `${target}.tmp-${process.pid}-${++functionProofCheckpointSequence}`;
+  let descriptor;
+  try {
+    descriptor = openSync(temporary, 'wx', 0o600);
+    writeFileSync(descriptor, canonicalB2FunctionDeploymentProof(proof), { encoding: 'utf8' });
+    fsyncSync(descriptor);
+    closeSync(descriptor); descriptor = undefined;
+    renameSync(temporary, target);
+    if (process.platform !== 'win32') {
+      const directory = openSync(path.dirname(target), 'r');
+      try { fsyncSync(directory); } finally { closeSync(directory); }
+    }
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    try { unlinkSync(temporary); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  }
+}
 const COMMON_FLAGS = Object.freeze({
   '--policy': 'policy',
   '--request': 'request',
   '--bundle': 'bundle',
+  '--verification-output': 'verificationOutput',
+});
+const AUTHORITY_OBSERVE_FLAGS = Object.freeze({
+  '--policy': 'policy',
+  '--approved-sha': 'approvedSha',
+  '--approved-tree': 'approvedTree',
+  '--verification-output': 'verificationOutput',
+});
+const AUTHORITY_ISSUE_FLAGS = Object.freeze({
+  '--policy': 'policy',
+  '--approved-sha': 'approvedSha',
+  '--approved-tree': 'approvedTree',
+  '--integration-base-sha': 'integrationBaseSha',
+  '--observation-run': 'observationRun',
+  '--observation-sha256': 'observationSha256',
+  '--release-id': 'releaseId',
   '--verification-output': 'verificationOutput',
 });
 const CHAIN_FLAGS = Object.freeze({ '--chain-run': 'chainRun', '--chain-artifacts': 'chainArtifacts',
@@ -104,7 +155,7 @@ const ACTION_ADDITIONAL_FLAGS = Object.freeze({
   'verify-pre-snapshot': { '--manifest': 'manifest', '--pre-snapshot': 'preSnapshot', '--stage-output': 'stageOutput' },
   'post-snapshot': { '--pre-snapshot': 'preSnapshot', '--snapshot-output': 'snapshotOutput' },
   postcheck: { '--manifest': 'manifest', '--pre-snapshot': 'preSnapshot', '--post-snapshot': 'postSnapshot',
-    '--stage-output': 'stageOutput' },
+    '--function-deployment-proof': 'functionDeploymentProof', '--stage-output': 'stageOutput' },
   'verify-recovery-source': { '--recovery-source-run': 'recoverySourceRun', '--run': 'run',
     '--artifacts': 'artifacts', '--release-bundle': 'releaseBundle', '--gate-evidence': 'gateEvidence',
     '--stage-output': 'stageOutput' },
@@ -192,7 +243,11 @@ function text(value) {
 function parse(argv) {
   const values = arrayData(argv);
   if (values.length < 1 || !ACTIONS.has(values[0])) throw new Error('invalid');
-  const requiredFlags = { ...COMMON_FLAGS, ...ACTION_ADDITIONAL_FLAGS[values[0]] };
+  const requiredFlags = values[0] === 'authority-observe'
+    ? AUTHORITY_OBSERVE_FLAGS
+    : values[0] === 'authority-issue'
+      ? AUTHORITY_ISSUE_FLAGS
+    : { ...COMMON_FLAGS, ...ACTION_ADDITIONAL_FLAGS[values[0]] };
   const flags = Object.freeze({ ...requiredFlags, ...(CHAIN_ACTIONS.has(values[0]) ? CHAIN_FLAGS : {}) });
   const required = Object.keys(requiredFlags);
   const parsed = new Map();
@@ -551,7 +606,8 @@ function releaseArgs(action, inputs) {
     case 'verify-pre-snapshot': return ['verify-pre-snapshot', ...common, '--manifest', inputs.manifest,
       '--pre-snapshot', inputs.preSnapshot, '--output', inputs.stageOutput];
     case 'postcheck': return ['postcheck', ...common, '--manifest', inputs.manifest,
-      '--pre-snapshot', inputs.preSnapshot, '--post-snapshot', inputs.postSnapshot, '--output', inputs.stageOutput];
+      '--pre-snapshot', inputs.preSnapshot, '--post-snapshot', inputs.postSnapshot,
+      '--function-deployment-proof', inputs.functionDeploymentProof, '--output', inputs.stageOutput];
     case 'verify-recovery-source': return ['verify-recovery-source', '--policy', inputs.policy,
       '--recovery-source-run', inputs.recoverySourceRun, '--run', inputs.run, '--artifacts', inputs.artifacts,
       '--release-bundle', inputs.releaseBundle, '--gate-evidence', inputs.gateEvidence, '--output', inputs.stageOutput];
@@ -677,12 +733,20 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
           const capturedAt=clock();
           const currentRows=await deployedFunctionRows(environment,fetchImpl);
           const inventory=inventoryFromRows(currentRows,capturedAt);
-          const guardedClock=()=>{const at=clock();verifyB2ProtectedAuthority({manifest,authorityContext,inventory,requestedAt:at});
+          const recoveryFunctionProof=recoveryRuntime
+            ? readTrustedB2RecoveryFunctionDeploymentProof(recoveryRuntime.recoveryProvenance)
+            : null;
+          const guardedClock=()=>{const at=clock();verifyB2ProtectedAuthority({manifest,authorityContext,inventory,requestedAt:at,
+            ...(recoveryFunctionProof?{functionDeploymentProof:recoveryFunctionProof,functionRows:currentRows}:{})});
             verifyProductionPreSnapshot({pre,policy,request,manifest,authorityContext,
               adapterSourceSha256:manifest.compiler.snapshot_adapter_sha256,requestedAt:at});return at;};
           guardedClock();
           const operation={request,manifest,policy,authorityContext,currentGate,backup:pre.backup,repositoryRoot,
             trustedProofRoot,proofPath:path.join(trustedProofRoot,'protected-stage-proofs.json')};
+          const functionProofPath=path.join(trustedProofRoot,'function-deployment-proof.json');
+          const approvedFunctionNames=new Set(manifest.resources.web_control_centers_b2_transition.contract.functions.map(row=>row.name));
+          const approvedFunctionRows=()=>deployedFunctionRows(environment,fetchImpl)
+            .then(rows=>rows.filter(row=>approvedFunctionNames.has(row.slug??row.name)));
           const home=realpathSync(environmentText(environment,'RUNNER_TEMP',/^.{1,4096}$/u));
           const token=environmentText(environment,'SUPABASE_ACCESS_TOKEN',/^[\x21-\x7e]{1,2048}$/u);
           const execute=specification=>new Promise((resolve,reject)=>{
@@ -697,8 +761,14 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
               windowsHide:true,timeout:120000,maxBuffer:1048576,encoding:'utf8'},error=>error?reject(new Error('blocked')):resolve({exitCode:0}));
           });
           const result=await runB2ProtectedFunctions({operation,now:guardedClock,connection:{projectRef:policy.supabase.project_ref,
-            binaryPath:binary,repositoryRoot,token,execute,verifyFunction:functionName=>verifyFunctionContractAtRepository({manifest,functionName,repositoryRoot})}});
-          writeFileSync(output,canonicalJson({schema_version:1,result:'FUNCTIONS_EXECUTED',manifest_sha256:sha256Hex(canonicalJson(manifest)),complete:result.complete,count:result.count}),{encoding:'utf8',flag:'wx'});
+            binaryPath:binary,repositoryRoot,token,execute,
+            initialFunctionProof:recoveryFunctionProof,
+            readFunctionRows:approvedFunctionRows,
+            recordFunctionAttempt:proof=>writeFunctionProofCheckpoint(functionProofPath,proof),
+            verifyFunction:functionName=>verifyFunctionContractAtRepository({manifest,functionName,repositoryRoot})}});
+          const proofBytes=Buffer.from(canonicalB2FunctionDeploymentProof(result.proof));
+          writeFileSync(output,canonicalJson({schema_version:1,result:'FUNCTIONS_EXECUTED',manifest_sha256:sha256Hex(canonicalJson(manifest)),
+            complete:result.complete,count:result.count,function_deployment_proof_sha256:sha256Hex(proofBytes)}),{encoding:'utf8',flag:'wx'});
           return receipt;
         }
         const workspace = createHermeticMigrationWorkspace({parent, binaryPath:inputs.binaryPath, binarySha256, files});
@@ -743,6 +813,7 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
         'postcheck-recovery', 'verify-admin-recovery-source', 'verify-admin-recovery-postcheck-chain',
         'postcheck-admin-recovery', 'verify-admin-recovery-cloudflare-prestate'].includes(action)) {
         if (inputs.stageOutput) safeStageOutput(environment, inputs.stageOutput);
+        if (action === 'postcheck') safeStageInput(environment, inputs.functionDeploymentProof);
         if (['verify-b2-recovery-gate', 'verify-b2-admin-recovery-gate'].includes(action)) safeStageInput(environment, inputs.revalidated);
         if (['revalidate-b2-admin-recovery', 'verify-b2-admin-recovery-gate'].includes(action) && !protectedB2Admin) {
           throw new Error('blocked');
@@ -797,7 +868,10 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
         const sourceParity = currentSourceParity({ authorityContext, descriptorBytes: publicInputs.descriptorBytes,
           manifest, repositoryRoot, functionRows: rows, capturedAt: now, integratedSource });
         const post = await captureProductionSnapshot({ ...common, phase: 'post', sourceParity });
-        verifyProductionSnapshotPair({ ...common, pre, post });
+        const proofPath=path.join(realpathSync(environmentText(environment,'RUNNER_TEMP',/^.{1,4096}$/u)),
+          'nelyon-private-authority-public','function-deployment-proof.json');
+        const functionDeploymentProof=jsonBytes(boundedRead(proofPath,2*1024*1024));
+        verifyProductionSnapshotPair({ ...common, pre, post, functionDeploymentProof });
         writeFileSync(output, `${JSON.stringify(post)}\n`, { encoding: 'utf8', flag: 'wx' });
         return post.authority_verification;
       }
@@ -820,9 +894,190 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
   });
 }
 
+export async function executeAuthorityObservation({ invocation, environment, fetchImpl, repositoryRoot,
+  captureImpl = captureB2AuthorityObservation, verifyImpl = verifyB2AuthorityObservation,
+  nodeVersion = process.versions.node, execFileSyncImpl = execFileSync }) {
+  const expectedRepository = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
+  const expectedWorkflowRef = `${expectedRepository}/.github/workflows/nelyon-production-release.yml@refs/heads/main`;
+  if (!invocation || typeof invocation !== 'object' || Array.isArray(invocation) || types.isProxy(invocation)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(invocation))
+    || Object.getOwnPropertySymbols(invocation).length !== 0 || typeof repositoryRoot !== 'string'
+    || typeof fetchImpl !== 'function' || typeof captureImpl !== 'function' || typeof verifyImpl !== 'function'
+    || typeof execFileSyncImpl !== 'function' || nodeVersion !== '24.21.0') throw new Error('blocked');
+  const invocationDescriptors = Object.getOwnPropertyDescriptors(invocation);
+  if (JSON.stringify(Object.keys(invocationDescriptors).sort())
+      !== JSON.stringify(['action', 'inputs', 'verificationOutput'])
+    || Object.values(invocationDescriptors).some(descriptor => !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable)
+    || invocationDescriptors.action.value !== 'authority-observe') throw new Error('blocked');
+  const inputs = invocationDescriptors.inputs.value;
+  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs) || types.isProxy(inputs)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(inputs))
+    || Object.getOwnPropertySymbols(inputs).length !== 0) throw new Error('blocked');
+  const descriptors = Object.getOwnPropertyDescriptors(inputs);
+  if (JSON.stringify(Object.keys(descriptors).sort()) !== JSON.stringify(['approvedSha', 'approvedTree', 'policy'])
+    || Object.values(descriptors).some(descriptor => !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable)) {
+    throw new Error('blocked');
+  }
+  const approvedSha = descriptors.approvedSha.value;
+  const approvedTreeSha = descriptors.approvedTree.value;
+  if (!/^[0-9a-f]{40}$/u.test(approvedSha) || !/^[0-9a-f]{40}$/u.test(approvedTreeSha)
+    || environmentText(environment, 'GITHUB_EVENT_NAME', /^workflow_dispatch$/u) !== 'workflow_dispatch'
+    || environmentText(environment, 'GITHUB_REPOSITORY', /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u) !== expectedRepository
+    || environmentText(environment, 'GITHUB_REF', /^refs\/heads\/main$/u) !== 'refs/heads/main'
+    || environmentText(environment, 'GITHUB_WORKFLOW_REF', /^.{1,1024}$/u) !== expectedWorkflowRef
+    || environmentText(environment, 'GITHUB_ACTOR', /^[A-Za-z0-9-]{1,39}$/u) !== 'andressan101989'
+    || environmentText(environment, 'GITHUB_TRIGGERING_ACTOR', /^[A-Za-z0-9-]{1,39}$/u) !== 'andressan101989'
+    || environmentText(environment, 'GITHUB_SHA', /^[0-9a-f]{40}$/u) !== approvedSha
+    || environmentText(environment, 'NELYON_APPROVED_SHA', /^[0-9a-f]{40}$/u) !== approvedSha
+    || environmentText(environment, 'NELYON_APPROVED_TREE', /^[0-9a-f]{40}$/u) !== approvedTreeSha) {
+    throw new Error('blocked');
+  }
+  const root = realpathSync(repositoryRoot);
+  const head = execFileSyncImpl('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const tree = execFileSyncImpl('git', ['-C', root, 'rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+  if (head !== approvedSha || tree !== approvedTreeSha) throw new Error('blocked');
+  const expectedPolicy = path.join(root, '.github', 'nelyon-production-release-policy.json');
+  const declaredPolicy = path.resolve(descriptors.policy.value);
+  const policyStat = lstatSync(declaredPolicy, { throwIfNoEntry: false });
+  if (declaredPolicy !== expectedPolicy || !policyStat || !policyStat.isFile() || policyStat.isSymbolicLink()
+    || realpathSync(declaredPolicy) !== expectedPolicy) throw new Error('blocked');
+  const policy = jsonBytes(boundedRead(declaredPolicy, 2 * 1024 * 1024));
+  validatePolicy(policy);
+  if (policy.owner !== 'andressan101989' || policy.repository !== expectedRepository
+    || policy.supabase?.project_ref !== 'aewwdlvbwpczqyvkwvvj'
+    || canonicalJson(policy.supabase?.backup) !== canonicalJson({
+      max_age_seconds: 86_400, require_physical: true, required_status: 'COMPLETED',
+    })) throw new Error('blocked');
+  const output = safeStageOutput(environment, invocationDescriptors.verificationOutput.value);
+  const expectedOutput = path.join(realpathSync(environmentText(environment, 'RUNNER_TEMP', /^.{1,4096}$/u)),
+    'nelyon-b2-authority-observation', 'observation.json');
+  if (output !== expectedOutput) throw new Error('blocked');
+  const observation = await captureImpl({
+    approvedSha,
+    approvedTreeSha,
+    backupPolicy: policy.supabase.backup,
+    fetchImpl,
+    repository: expectedRepository,
+    token: environmentText(environment, 'SUPABASE_ACCESS_TOKEN', /^[\x21-\x7e]{1,2048}$/u),
+  });
+  const verified = verifyImpl(observation);
+  let descriptor;
+  try {
+    descriptor = openSync(output, 'wx', 0o600);
+    writeFileSync(descriptor, `${canonicalJson(verified)}\n`, { encoding: 'utf8' });
+    fsyncSync(descriptor);
+    closeSync(descriptor); descriptor = undefined;
+    if (process.platform !== 'win32') {
+      const directory = openSync(path.dirname(output), 'r');
+      try { fsyncSync(directory); } finally { closeSync(directory); }
+    }
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+  return SUCCESS;
+}
+
+export async function executeAuthorityIssuance({ invocation, environment, fetchImpl, repositoryRoot,
+  now = () => new Date().toISOString() }) {
+  const expectedRepository = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
+  const expectedWorkflow = '.github/workflows/nelyon-production-release.yml';
+  const expectedWorkflowRef = `${expectedRepository}/${expectedWorkflow}@refs/heads/main`;
+  if (!invocation || typeof invocation !== 'object' || Array.isArray(invocation) || types.isProxy(invocation)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(invocation))
+    || Object.getOwnPropertySymbols(invocation).length !== 0 || typeof repositoryRoot !== 'string'
+    || typeof fetchImpl !== 'function' || typeof now !== 'function' || process.versions.node !== '24.21.0') {
+    throw new Error('blocked');
+  }
+  const invocationDescriptors = Object.getOwnPropertyDescriptors(invocation);
+  if (JSON.stringify(Object.keys(invocationDescriptors).sort())
+      !== JSON.stringify(['action', 'inputs', 'verificationOutput'])
+    || Object.values(invocationDescriptors).some(descriptor => !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable)
+    || invocationDescriptors.action.value !== 'authority-issue') throw new Error('blocked');
+  const inputs = invocationDescriptors.inputs.value;
+  const expectedInputs = ['approvedSha', 'approvedTree', 'integrationBaseSha', 'observationRun',
+    'observationSha256', 'policy', 'releaseId'];
+  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs) || types.isProxy(inputs)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(inputs))
+    || JSON.stringify(Object.keys(inputs).sort()) !== JSON.stringify(expectedInputs)) throw new Error('blocked');
+  const approvedSha = inputs.approvedSha;
+  const approvedTreeSha = inputs.approvedTree;
+  if (!/^[0-9a-f]{40}$/u.test(approvedSha) || !/^[0-9a-f]{40}$/u.test(approvedTreeSha)
+    || inputs.integrationBaseSha !== B2_AUTHORITY_INTEGRATION_BASE_SHA
+    || !/^[1-9][0-9]*$/u.test(inputs.observationRun)
+    || !/^[0-9a-f]{64}$/u.test(inputs.observationSha256)
+    || !/^b2-authority-[0-9a-f]{64}$/u.test(inputs.releaseId)
+    || environmentText(environment, 'GITHUB_EVENT_NAME', /^workflow_dispatch$/u) !== 'workflow_dispatch'
+    || environmentText(environment, 'GITHUB_REPOSITORY', /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u) !== expectedRepository
+    || environmentText(environment, 'GITHUB_REF', /^refs\/heads\/main$/u) !== 'refs/heads/main'
+    || environmentText(environment, 'GITHUB_WORKFLOW_REF', /^.{1,1024}$/u) !== expectedWorkflowRef
+    || environmentText(environment, 'GITHUB_ACTOR', /^[A-Za-z0-9-]{1,39}$/u) !== 'andressan101989'
+    || environmentText(environment, 'GITHUB_TRIGGERING_ACTOR', /^[A-Za-z0-9-]{1,39}$/u) !== 'andressan101989'
+    || environmentText(environment, 'GITHUB_SHA', /^[0-9a-f]{40}$/u) !== approvedSha
+    || environmentText(environment, 'NELYON_APPROVED_SHA', /^[0-9a-f]{40}$/u) !== approvedSha
+    || environmentText(environment, 'NELYON_APPROVED_TREE', /^[0-9a-f]{40}$/u) !== approvedTreeSha
+    || environmentText(environment, 'GITHUB_RUN_ATTEMPT', /^1$/u) !== '1') throw new Error('blocked');
+  const runId = environmentText(environment, 'GITHUB_RUN_ID', /^[1-9][0-9]*$/u);
+  const root = realpathSync(repositoryRoot);
+  if (execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() !== approvedSha
+    || execFileSync('git', ['-C', root, 'rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim() !== approvedTreeSha) {
+    throw new Error('blocked');
+  }
+  const expectedPolicy = path.join(root, '.github', 'nelyon-production-release-policy.json');
+  if (path.resolve(inputs.policy) !== expectedPolicy || realpathSync(path.resolve(inputs.policy)) !== expectedPolicy) {
+    throw new Error('blocked');
+  }
+  const policy = jsonBytes(boundedRead(expectedPolicy, 2 * 1024 * 1024));
+  validatePolicy(policy);
+  if (policy.owner !== 'andressan101989' || policy.repository !== expectedRepository) throw new Error('blocked');
+  const output = safeStageOutput(environment, invocationDescriptors.verificationOutput.value);
+  const expectedOutput = path.join(realpathSync(environmentText(environment, 'RUNNER_TEMP', /^.{1,4096}$/u)),
+    'nelyon-b2-authority-issue', 'receipt.json');
+  if (output !== expectedOutput) throw new Error('blocked');
+
+  const observer = createB2AuthorityIssuanceGithubObserver({ fetchImpl,
+    githubToken: environmentText(environment, 'GITHUB_TOKEN', /^[\x21-\x7e]{1,2048}$/u),
+    repository: expectedRepository, workflowPath: expectedWorkflow, apiOrigin: 'https://api.github.com' });
+  const observation = await observer.authenticateObservation({ runId: inputs.observationRun, runAttempt: 1,
+    approvedSha, approvedTreeSha, expectedObservationSha256: inputs.observationSha256 });
+  const preparation = prepareB2AuthorityIssuance({ repositoryRoot: root, approvedSha, approvedTreeSha,
+    integrationBaseSha: B2_AUTHORITY_INTEGRATION_BASE_SHA, observation });
+  const summary = readB2AuthorityPreparationSummary(preparation);
+  if (summary.releaseId !== inputs.releaseId || summary.preissuanceSha256 !== inputs.releaseId.slice('b2-authority-'.length)) {
+    throw new Error('blocked');
+  }
+  const approval = await observer.authenticateOwnerApproval({ runId, runAttempt: 1, approvedSha,
+    approvedTreeSha, releaseId: inputs.releaseId, preissuanceSha256: summary.preissuanceSha256, observation });
+  if (environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_PROVIDER', /^r2$/u) !== 'r2') throw new Error('blocked');
+  const publisher = createR2PrivateAuthorityPublisher({
+    accountId: environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID', /^[0-9a-f]{32}$/u),
+    bucket: environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_R2_BUCKET', /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u),
+    accessKeyId: environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID', /^[\x21-\x7e]{1,512}$/u),
+    secretAccessKey: environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY', /^[\x21-\x7e]{1,512}$/u),
+    fetch: fetchImpl,
+    timeoutMs: 10_000,
+  });
+  const receipt = await issueB2PrivateAuthority({ preparation, observation, approval, publisher, issuedAt: now() });
+  let descriptor;
+  try {
+    descriptor = openSync(output, 'wx', 0o600);
+    writeFileSync(descriptor, `${canonicalJson(receipt)}\n`, { encoding: 'utf8' });
+    fsyncSync(descriptor);
+    closeSync(descriptor); descriptor = undefined;
+  } finally { if (descriptor !== undefined) closeSync(descriptor); }
+  return SUCCESS;
+}
+
 const productionHost = Object.freeze({
   async execute(invocation) {
     const repositoryRoot = process.cwd();
+    if (invocation.action === 'authority-observe') {
+      return executeAuthorityObservation({ invocation, environment: copyProductionEnvironment(process.env),
+        fetchImpl: globalThis.fetch, repositoryRoot });
+    }
+    if (invocation.action === 'authority-issue') {
+      return executeAuthorityIssuance({ invocation, environment: copyProductionEnvironment(process.env),
+        fetchImpl: globalThis.fetch, repositoryRoot });
+    }
     const publicInputs = loadProductionPublicInputs(invocation.inputs, repositoryRoot);
     assertProductionInvocationIdentity(publicInputs, process.env);
     let manifest;

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { createReleaseAuthorityContext, publicAuthorityReceipt } from '../scripts/nelyon-release-authority-context.mjs';
 import { syntheticVaultEdgeParity } from './fixtures/nelyonB2SyntheticVaultEdgeParity.mjs';
@@ -13,6 +17,8 @@ const {
   adminRecoveryRequiresProtectedB2Runtime,
   assertProductionInvocationIdentity,
   createPrivateAuthorityProductionHost,
+  executeAuthorityIssuance,
+  executeAuthorityObservation,
   runPrivateAuthorityCli,
 } = cliModule;
 const MARKER = 'PRIVATE_CLI_SYNTHETIC_MARKER';
@@ -22,7 +28,26 @@ const COMMON = [
   '--bundle', 'bundle',
   '--verification-output', 'verification.json',
 ];
+const OBSERVE = [
+  '--policy', 'policy.json',
+  '--approved-sha', 'a'.repeat(40),
+  '--approved-tree', 'b'.repeat(40),
+  '--verification-output', 'observation.json',
+];
+const B2_INTEGRATION_BOUNDARY_SHA = '109395035d13ba3db8d338dc3b2524191defe873';
+const ISSUE = [
+  '--policy', 'policy.json',
+  '--approved-sha', 'a'.repeat(40),
+  '--approved-tree', 'b'.repeat(40),
+  '--integration-base-sha', B2_INTEGRATION_BOUNDARY_SHA,
+  '--observation-run', '123456789',
+  '--observation-sha256', 'd'.repeat(64),
+  '--release-id', `b2-authority-${'e'.repeat(64)}`,
+  '--verification-output', 'receipt.json',
+];
 const ACTIONS = [
+  'authority-observe',
+  'authority-issue',
   'authority-proof',
   'preflight-release',
   'authorize-refresh',
@@ -84,7 +109,7 @@ const EXTRA = {
   'verify-pre-snapshot': ['--manifest', 'manifest.json', '--pre-snapshot', 'pre.json', '--stage-output', 'stage.json'],
   'post-snapshot': ['--pre-snapshot', 'pre.json', '--snapshot-output', 'snapshot.json'],
   postcheck: ['--manifest', 'manifest.json', '--pre-snapshot', 'pre.json', '--post-snapshot', 'post.json',
-    '--stage-output', 'stage.json'],
+    '--function-deployment-proof', 'function-deployment-proof.json', '--stage-output', 'stage.json'],
   'verify-recovery-source': ['--recovery-source-run', '123', '--run', 'run.json', '--artifacts', 'artifacts.json',
     '--release-bundle', 'release-bundle', '--gate-evidence', 'gate-evidence', '--stage-output', 'stage.json'],
   'recovery-authority-proof': ['--recovery-source-run', '123', '--run', 'run.json', '--artifacts', 'artifacts.json',
@@ -299,10 +324,227 @@ test('every runtime action is a closed enum and reaches only the trusted execute
     return Object.freeze({ schemaVersion: 1, result: 'VERIFIED', releaseReady: false });
   });
   for (const action of ACTIONS) {
-    const code = await runPrivateAuthorityCli([action, ...COMMON, ...EXTRA[action]], host);
+    const args = action === 'authority-observe' ? OBSERVE
+      : action === 'authority-issue' ? ISSUE : [...COMMON, ...EXTRA[action]];
+    const code = await runPrivateAuthorityCli([action, ...args], host);
     assert.equal(code, 0, action);
   }
   assert.deepEqual(seen, ACTIONS);
+});
+
+test('authority-observe is a separate terminal flag plane with no current bundle or request', async () => {
+  let observed;
+  const host = trustedHost(async invocation => {
+    observed = invocation;
+    return Object.freeze({ schemaVersion: 1, result: 'VERIFIED', releaseReady: false });
+  });
+  assert.equal(await runPrivateAuthorityCli(['authority-observe', ...OBSERVE], host), 0);
+  assert.deepEqual(observed, {
+    action: 'authority-observe',
+    inputs: {
+      policy: 'policy.json',
+      approvedSha: 'a'.repeat(40),
+      approvedTree: 'b'.repeat(40),
+    },
+    verificationOutput: 'observation.json',
+  });
+  for (const extra of [
+    ['--request', 'request.json'], ['--bundle', 'bundle'], ['--recovery-source-run', '1'],
+    ['--current-gate', 'gate.json'], ['--authority', 'private.json'],
+  ]) {
+    assert.equal(await runPrivateAuthorityCli(['authority-observe', ...OBSERVE, ...extra], host), 2);
+  }
+});
+
+test('authority-issue is a separate terminal flag plane bound to source, observation and deterministic release id', async () => {
+  let observed;
+  const host = trustedHost(async invocation => {
+    observed = invocation;
+    return Object.freeze({ schemaVersion: 1, result: 'VERIFIED', releaseReady: false });
+  });
+  assert.equal(await runPrivateAuthorityCli(['authority-issue', ...ISSUE], host), 0);
+  assert.deepEqual(observed, {
+    action: 'authority-issue',
+    inputs: {
+      policy: 'policy.json', approvedSha: 'a'.repeat(40), approvedTree: 'b'.repeat(40),
+      integrationBaseSha: B2_INTEGRATION_BOUNDARY_SHA,
+      observationRun: '123456789', observationSha256: 'd'.repeat(64),
+      releaseId: `b2-authority-${'e'.repeat(64)}`,
+    },
+    verificationOutput: 'receipt.json',
+  });
+  for (const extra of [['--request', 'request.json'], ['--bundle', 'bundle'], ['--authority', 'private.json']]) {
+    assert.equal(await runPrivateAuthorityCli(['authority-issue', ...ISSUE, ...extra], host), 2);
+  }
+});
+
+test('authority-issue rejects a caller-selected ancestor before GitHub or provider access', async () => {
+  let fetches = 0;
+  let environmentReads = 0;
+  const environment = new Proxy({}, {
+    getOwnPropertyDescriptor() { environmentReads += 1; return undefined; },
+  });
+  await assert.rejects(() => executeAuthorityIssuance({
+    invocation: {
+      action: 'authority-issue',
+      inputs: {
+        approvedSha: 'a'.repeat(40), approvedTree: 'b'.repeat(40),
+        integrationBaseSha: 'c'.repeat(40), observationRun: '123456789',
+        observationSha256: 'd'.repeat(64), policy: 'policy.json',
+        releaseId: `b2-authority-${'e'.repeat(64)}`,
+      },
+      verificationOutput: 'receipt.json',
+    },
+    environment,
+    fetchImpl: async () => { fetches += 1; throw new Error('must not run'); },
+    repositoryRoot: process.cwd(),
+  }));
+  assert.notEqual('c'.repeat(40), B2_INTEGRATION_BOUNDARY_SHA);
+  assert.equal(environmentReads, 0);
+  assert.equal(fetches, 0);
+});
+
+test('authority-observe production dispatch terminates before bundle, descriptor, or current-authority loading', () => {
+  const source = readFileSync(new URL('../scripts/nelyon-private-authority-cli.mjs', import.meta.url), 'utf8');
+  const hostStart = source.indexOf('const productionHost = Object.freeze({');
+  const observerBranch = source.indexOf("if (invocation.action === 'authority-observe')", hostStart);
+  const publicInputLoad = source.indexOf('const publicInputs = loadProductionPublicInputs', hostStart);
+  assert.ok(hostStart >= 0 && observerBranch > hostStart && publicInputLoad > observerBranch);
+  const terminalBranch = source.slice(observerBranch, publicInputLoad);
+  assert.match(terminalBranch, /return executeAuthorityObservation/u);
+  assert.doesNotMatch(terminalBranch, /bootstrapPrivateAuthorityRuntime|createPrivateAuthorityRuntime|descriptor|authorityContext/u);
+});
+
+test('authority-issue production dispatch is terminal and precedes current descriptor/authority loading', () => {
+  const source = readFileSync(new URL('../scripts/nelyon-private-authority-cli.mjs', import.meta.url), 'utf8');
+  const hostStart = source.indexOf('const productionHost = Object.freeze({');
+  const issuerBranch = source.indexOf("if (invocation.action === 'authority-issue')", hostStart);
+  const publicInputLoad = source.indexOf('const publicInputs = loadProductionPublicInputs', hostStart);
+  assert.ok(hostStart >= 0 && issuerBranch > hostStart && publicInputLoad > issuerBranch);
+  const terminalBranch = source.slice(issuerBranch, publicInputLoad);
+  assert.match(terminalBranch, /return executeAuthorityIssuance/u);
+  assert.doesNotMatch(terminalBranch, /bootstrapPrivateAuthorityRuntime|createPrivateAuthorityRuntime|authorityContext/u);
+});
+
+test('production authority observation validates exact main identity and writes only verified sanitized bytes', async () => {
+  const repositoryRoot = process.cwd();
+  const approvedSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot, encoding: 'utf8' }).trim();
+  const approvedTree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: repositoryRoot, encoding: 'utf8' }).trim();
+  const runnerTemp = mkdtempSync(path.join(tmpdir(), 'nelyon-observe-cli-'));
+  const outputDirectory = path.join(runnerTemp, 'nelyon-b2-authority-observation');
+  mkdirSync(outputDirectory, { mode: 0o700 });
+  const output = path.join(outputDirectory, 'observation.json');
+  const wrongOutputDirectory = path.join(runnerTemp, 'wrong-authority-observation');
+  mkdirSync(wrongOutputDirectory, { mode: 0o700 });
+  const environment = Object.freeze({
+    GITHUB_ACTOR: 'andressan101989',
+    GITHUB_EVENT_NAME: 'workflow_dispatch',
+    GITHUB_REF: 'refs/heads/main',
+    GITHUB_REPOSITORY: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+    GITHUB_SHA: approvedSha,
+    GITHUB_TRIGGERING_ACTOR: 'andressan101989',
+    GITHUB_WORKFLOW_REF: 'andressan101989/ClipDAG-9bh0w4-26004-20260525/.github/workflows/nelyon-production-release.yml@refs/heads/main',
+    NELYON_APPROVED_SHA: approvedSha,
+    NELYON_APPROVED_TREE: approvedTree,
+    RUNNER_TEMP: runnerTemp,
+    SUPABASE_ACCESS_TOKEN: 'observer-token-canary',
+  });
+  const observation = Object.freeze({ schemaVersion: 1, kind: 'sanitized', observationSha256: 'c'.repeat(64) });
+  let captureOptions;
+  try {
+    let actionReads = 0;
+    const accessorInvocation = Object.freeze(Object.defineProperties({}, {
+      action: { enumerable: true, get() { actionReads += 1; throw new Error(MARKER); } },
+      inputs: { enumerable: true, value: Object.freeze({
+        policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
+      }) },
+      verificationOutput: { enumerable: true, value: output },
+    }));
+    await assert.rejects(() => executeAuthorityObservation({
+      invocation: accessorInvocation, environment, repositoryRoot,
+      fetchImpl: async () => { throw new Error(MARKER); }, captureImpl: async () => observation,
+      verifyImpl: value => value, nodeVersion: '24.21.0',
+    }));
+    assert.equal(actionReads, 0);
+
+    let gitCalls = 0;
+    await assert.rejects(() => executeAuthorityObservation({
+      invocation: Object.freeze({ action: 'authority-observe', inputs: Object.freeze({
+        policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
+      }), verificationOutput: output, unexpected: true }),
+      environment, repositoryRoot, fetchImpl: async () => { throw new Error(MARKER); },
+      captureImpl: async () => { throw new Error(MARKER); }, verifyImpl: value => value, nodeVersion: '24.21.0',
+      execFileSyncImpl(_command, args) {
+        gitCalls += 1;
+        return `${args.at(-1) === 'HEAD' ? approvedSha : approvedTree}\n`;
+      },
+    }));
+    assert.equal(gitCalls, 0);
+
+    const result = await executeAuthorityObservation({
+      invocation: Object.freeze({ action: 'authority-observe', inputs: Object.freeze({
+        policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
+      }), verificationOutput: output }),
+      environment,
+      repositoryRoot,
+      fetchImpl: async () => { throw new Error(MARKER); },
+      captureImpl: async options => { captureOptions = options; return observation; },
+      verifyImpl: value => { assert.equal(value, observation); return value; },
+      nodeVersion: '24.21.0',
+    });
+    assert.deepEqual(result, { schemaVersion: 1, result: 'VERIFIED', releaseReady: false });
+    assert.deepEqual(Object.keys(captureOptions).sort(), [
+      'approvedSha', 'approvedTreeSha', 'backupPolicy', 'fetchImpl', 'repository', 'token',
+    ]);
+    assert.equal(captureOptions.token, 'observer-token-canary');
+    assert.equal(captureOptions.approvedSha, approvedSha);
+    assert.equal(captureOptions.approvedTreeSha, approvedTree);
+    const retained = readFileSync(output, 'utf8');
+    assert.equal(retained.includes('observer-token-canary'), false);
+    assert.equal(JSON.parse(retained).observationSha256, observation.observationSha256);
+    await assert.rejects(() => executeAuthorityObservation({
+      invocation: Object.freeze({ action: 'authority-observe', inputs: Object.freeze({
+        policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
+      }), verificationOutput: path.join(wrongOutputDirectory, 'observation.json') }),
+      environment, repositoryRoot, fetchImpl: async () => { throw new Error(MARKER); },
+      captureImpl: async () => observation, verifyImpl: value => value, nodeVersion: '24.21.0',
+    }));
+    for (const [name, value] of [
+      ['GITHUB_EVENT_NAME', 'push'],
+      ['GITHUB_REPOSITORY', 'andressan101989/not-nelyon'],
+      ['GITHUB_REF', 'refs/heads/feature'],
+      ['GITHUB_WORKFLOW_REF', 'andressan101989/ClipDAG-9bh0w4-26004-20260525/.github/workflows/other.yml@refs/heads/main'],
+      ['GITHUB_TRIGGERING_ACTOR', 'not-owner'],
+      ['GITHUB_SHA', 'd'.repeat(40)],
+      ['NELYON_APPROVED_TREE', 'e'.repeat(40)],
+    ]) {
+      await assert.rejects(() => executeAuthorityObservation({
+        invocation: Object.freeze({ action: 'authority-observe', inputs: Object.freeze({
+          policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
+        }), verificationOutput: output }),
+        environment: Object.freeze({ ...environment, [name]: value }), repositoryRoot,
+        fetchImpl: async () => { throw new Error(MARKER); }, captureImpl: async () => observation,
+        verifyImpl: candidate => candidate, nodeVersion: '24.21.0',
+      }), name);
+    }
+    await assert.rejects(() => executeAuthorityObservation({
+      invocation: Object.freeze({ action: 'authority-observe', inputs: Object.freeze({
+        policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
+      }), verificationOutput: output }),
+      environment, repositoryRoot, fetchImpl: async () => { throw new Error(MARKER); },
+      captureImpl: async () => observation, verifyImpl: value => value, nodeVersion: '24.20.0',
+    }));
+    await assert.rejects(() => executeAuthorityObservation({
+      invocation: Object.freeze({ action: 'authority-observe', inputs: Object.freeze({
+        policy: path.join(repositoryRoot, '.github', 'nelyon-production-release-policy.json'), approvedSha, approvedTree,
+      }), verificationOutput: output }),
+      environment: Object.freeze({ ...environment, GITHUB_ACTOR: 'not-owner' }), repositoryRoot,
+      fetchImpl: async () => { throw new Error(MARKER); }, captureImpl: async () => observation,
+      verifyImpl: value => value, nodeVersion: '24.21.0',
+    }));
+  } finally {
+    rmSync(runnerTemp, { recursive: true, force: true });
+  }
 });
 
 test('unknown actions, duplicate/unknown flags, passthrough and private authority inputs fail before execute', async () => {

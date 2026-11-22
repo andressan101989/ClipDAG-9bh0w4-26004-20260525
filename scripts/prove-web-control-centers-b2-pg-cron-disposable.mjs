@@ -1,11 +1,30 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { posix, resolve, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const repository = resolve(import.meta.dirname, '..');
-const image = 'public.ecr.aws/supabase/postgres:17.6.1.143';
+const expectedImageId = 'sha256:80d7b27c3e8d77cfa7226eee9508671796da214781ff15a35b3670d7ad5ee453';
+const image = `public.ecr.aws/supabase/postgres@${expectedImageId}`;
+const pullPolicy = process.env.NELYON_B2_REVIEWED_PROOF === '1' ? 'always' : 'never';
+const expectedDockerBin = process.platform === 'linux' ? '/usr/bin/docker'
+  : process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : null;
+const dockerBin = process.env.NELYON_B2_DOCKER_BIN ?? expectedDockerBin;
+const dockerPath = process.platform === 'win32' ? win32 : posix;
+assert.ok(expectedDockerBin, `unsupported Docker proof platform: ${process.platform}`);
+assert.equal(dockerBin, expectedDockerBin, 'Docker proof executable must be the fixed platform path');
+assert.equal(dockerPath.isAbsolute(dockerBin), true, 'Docker proof executable must be absolute');
+assert.equal(dockerPath.normalize(dockerBin), dockerBin, 'Docker proof executable must be normalized');
+assert.equal(dockerPath.basename(dockerBin), process.platform === 'win32' ? 'docker.exe' : 'docker');
+const dockerStat = lstatSync(dockerBin);
+assert.equal(dockerStat.isFile(), true, 'Docker proof executable must be a regular file');
+assert.equal(dockerStat.isSymbolicLink(), false, 'Docker proof executable must not be a symlink');
+assert.equal(realpathSync(dockerBin), dockerBin, 'Docker proof executable realpath must be exact');
+if (process.platform === 'linux') {
+  assert.equal(dockerStat.uid, 0, 'Docker proof executable must be root-owned');
+  assert.equal(dockerStat.mode & 0o022, 0, 'Docker proof executable must not be group/world-writable');
+}
 const container = `nelyon-b2-r5-c1-pgcron-${process.pid}-${randomUUID().slice(0, 8)}`;
 const migration = readFileSync(resolve(repository, 'supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql'), 'utf8');
 const activation = migration.match(/do \$activation\$[\s\S]*?\$activation\$;/i)?.[0];
@@ -26,7 +45,7 @@ const run = (command, args, options = {}) => {
   return result;
 };
 
-const docker = (args, options) => run('docker', args, options);
+const docker = (args, options) => run(dockerBin, args, options);
 const psql = (source, options = {}) => docker([
   'exec', '-i', container, 'psql', '-X', '-qAt', '-U', 'supabase_admin', '-d', 'postgres',
   '-v', 'ON_ERROR_STOP=1', '--set', 'VERBOSITY=verbose',
@@ -39,6 +58,15 @@ const scalar = source => psql(source).stdout.trim().split(/\r?\n/).at(-1);
 const asRole = (role, source, options = {}) => psql(`set role ${role};\n${source}\nreset role;`, options);
 const canonicalShape = () => scalar("select count(*)||':'||min(schedule)||':'||min(command)||':'||min(database)||':'||min(username)||':'||bool_and(active) from cron.job where jobname='process-scheduled-publications-b2'");
 const expectedCanonicalShape = '1:* * * * *:select public.wake_scheduled_publications_b2_v1():postgres:postgres:true';
+const canonicalValue = value => {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (value !== null && typeof value === 'object') return Object.fromEntries(
+    Object.keys(value).sort().map(key => [key, canonicalValue(value[key])]),
+  );
+  return value;
+};
+const canonicalJson = value => JSON.stringify(canonicalValue(value));
+const sha256 = value => createHash('sha256').update(value).digest('hex');
 
 let started = false;
 let checks = 0;
@@ -49,7 +77,7 @@ const equal = (actual, expected, message) => {
 
 try {
   docker([
-    'run', '--pull=never', '--network', 'none', '--name', container,
+    'run', `--pull=${pullPolicy}`, '--platform', 'linux/amd64', '--network', 'none', '--name', container,
     '-e', 'POSTGRES_HOST_AUTH_METHOD=trust', '-d', image,
     '-c', 'shared_preload_libraries=pg_cron', '-c', 'cron.database_name=postgres',
     '-c', 'cron.launch_active_jobs=off',
@@ -63,6 +91,13 @@ try {
     await new Promise(resolveDelay => setTimeout(resolveDelay, 500));
   }
   equal(docker(['inspect', '--format', '{{.State.Health.Status}}', container]).stdout.trim(), 'healthy', 'disposable Supabase Postgres must become healthy');
+  const imageMetadata = JSON.parse(docker(['image', 'inspect', '--format', '{{json .}}', image]).stdout);
+  const imageId = imageMetadata.Id;
+  assert.equal(imageId, expectedImageId, 'reviewed pg_cron image bytes must match the pinned digest exactly');
+  assert.equal(imageMetadata.Os, 'linux', 'reviewed pg_cron image OS must be exact');
+  assert.equal(imageMetadata.Architecture, 'amd64', 'reviewed pg_cron image architecture must be exact');
+  assert.equal(Array.isArray(imageMetadata.RepoDigests), true, 'reviewed pg_cron image must expose RepoDigests');
+  assert.equal(imageMetadata.RepoDigests.includes(image), true, 'reviewed pg_cron RepoDigests must contain the exact pinned ref');
 
   psql(`
     create extension if not exists pg_cron;
@@ -123,7 +158,48 @@ try {
   assert.ok(Number(duplicateId) > 0);
   checks += 5;
 
-  console.log(`B2_REAL_PG_CRON_PASS ${JSON.stringify({ image, pgCron: '1.6.4', role: 'postgres:NOSUPERUSER:BYPASSRLS', checks })}`);
+  console.log(`B2_REAL_PG_CRON_PASS ${JSON.stringify({ image, imageId, pgCron: '1.6.4', role: 'postgres:NOSUPERUSER:BYPASSRLS', checks })}`);
+  if (process.argv.includes('--authority-evidence')) {
+    const core = {
+      schemaVersion: 1,
+      kind: 'nelyon-b2-real-pg-cron-evidence-v1',
+      result: 'VERIFIED',
+      mintEligibility: 'PRODUCTION_CRON_COMPONENT',
+      provenance: {
+        image,
+        imageId,
+        imageRepoDigest: image,
+        imageOs: imageMetadata.Os,
+        imageArchitecture: imageMetadata.Architecture,
+        imagePlatform: 'linux/amd64',
+        pgCronVersion: '1.6.4',
+        effectiveRole: 'postgres',
+        roleSuperuser: false,
+        roleBypassRls: true,
+        migrationSha256: sha256(migration),
+        activationSha256: sha256(activation),
+        databaseNormalization: {
+          schemaVersion: 1,
+          contract: 'supabase-hosted-primary-database-v1',
+          observed: 'postgres',
+          normalized: 'postgres',
+          exact: true,
+        },
+      },
+      cronRecord: {
+        identity: 'process-scheduled-publications-b2',
+        schedule: '* * * * *',
+        commandSha256: sha256('select public.wake_scheduled_publications_b2_v1()'),
+        database: 'postgres',
+        username: 'postgres',
+        active: true,
+      },
+    };
+    console.log(`B2_REAL_PG_CRON_CAPABILITY ${canonicalJson({
+      ...core,
+      capabilitySha256: sha256(canonicalJson(core)),
+    })}`);
+  }
 } finally {
   if (started) {
     const removed = docker(['rm', '-f', '-v', container], { allowFailure: true, timeout: 30_000 });

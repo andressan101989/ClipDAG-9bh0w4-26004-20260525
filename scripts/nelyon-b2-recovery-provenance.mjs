@@ -7,6 +7,13 @@ import {
   buildPrivateRuntimeClosureFromExactBytes,
   privateRuntimeClosureMemberPaths,
 } from './nelyon-private-runtime-closure.mjs';
+import {
+  b2FunctionManifestSha256,
+  canonicalB2FunctionDeploymentProof,
+  resumeB2FunctionDeploymentAttempt,
+  verifyB2FunctionDeploymentAttempt,
+  verifyB2FunctionDeploymentProof,
+} from './nelyon-b2-function-deployment-proof.mjs';
 
 const REPOSITORY = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
 const WORKFLOW = '.github/workflows/nelyon-production-release.yml';
@@ -552,6 +559,7 @@ const ADMIN_ARCHIVE_FILES = Object.freeze([
 const RELEASE_ARCHIVE_FILES = Object.freeze(['auto-deploy-evidence.json', 'remote-evidence.json', 'request.json',
   'bundle/manifest.json', 'bundle/manifest.sha256', 'bundle/summary.md']);
 const GATE_ARCHIVE_FILES = Object.freeze(['protected-stage-proofs.json', 'gate-proof.json', 'migration-dry-run.json',
+  'function-deployment-proof.json',
   'postcheck-result.json', 'pre-function-revalidation.json', 'pre-migration-revalidation.json',
   'pre-snapshot-verification.json', 'revalidation.json', 'release-observation.json']);
 const CHAIN_RECOVERY_FILES = Object.freeze(['postcheck-recovery-result.json', 'production-recovery.json', 'verified-source.json']);
@@ -638,7 +646,7 @@ function validateProofs(proofBytes, source) {
   if (canonical(parsed.value) !== parsed.source) reject();
   const values = arrayValues(parsed.value, 5);
   const expectedStages = ['migrations', 'functions', 'admin_upload', 'admin_promote', 'admin_route'];
-  if (values.length < 2 || values.length > expectedStages.length) reject();
+  if (values.length < 1 || values.length > expectedStages.length) reject();
   return Object.freeze(values.map((value, index) => {
     const proof = exact(value, ['runId', 'runAttempt', 'releaseId', 'approvedSha', 'manifestSha256', 'stage', 'verifiedAt', 'receipt']);
     if (proof.runId !== source.run_id || proof.runAttempt !== source.run_attempt
@@ -716,6 +724,7 @@ export function readTrustedB2RecoveryProvenance(value) {
     proofs: state.proofs,
     expectedProofSha256: state.source.protected_stage_proof_sha256,
     proofBytes: Buffer.from(state.proofBytes),
+    functionDeploymentProofSha256: state.functionDeploymentProofSha256,
     sourceRuntimeClosureSha256: state.source.runtime_closure_sha256,
     authorizationSha256: state.authorizationSha256,
     policySha256: state.policySha256,
@@ -724,6 +733,13 @@ export function readTrustedB2RecoveryProvenance(value) {
     releaseFileDigests: state.releaseFileDigests,
     gateFileDigests: state.gateFileDigests,
   });
+}
+
+/** Return only the already authenticated Edge deployment checkpoint. The
+ * caller receives a detached copy so recovery cannot mutate provenance state. */
+export function readTrustedB2RecoveryFunctionDeploymentProof(value) {
+  const state = provenanceState(value);
+  return state.functionDeploymentProof === null ? null : structuredClone(state.functionDeploymentProof);
 }
 
 export function readTrustedB2ChainProvenance(value, recoveryProvenance) {
@@ -837,21 +853,47 @@ export function createB2RecoveryProvenanceLoader(options = {
           `${base}/actions/artifacts/${source.gate_artifact.id}/zip`, MAX_ARCHIVE_BYTES, 'application/zip');
         if (`sha256:${hash(archive)}` !== source.gate_artifact.digest) reject();
         let gateFileDigests = null; let releaseFileDigests = null; let gateFiles = null; let releaseFiles = null;
-        if (approved.authorizationSha256) {
-          gateFiles = extractArchiveFiles(archive, GATE_ARCHIVE_FILES);
-          if (!gateFiles.has('protected-stage-proofs.json') || !gateFiles.has('release-observation.json')) reject();
-          gateFileDigests = deepFreeze(Object.fromEntries([...gateFiles].map(([name, bytes]) => [name, hash(bytes)])));
-          const releaseArchive = await request(config.fetchImpl, config.githubToken,
-            `${base}/actions/artifacts/${source.release_artifact.id}/zip`, MAX_ARCHIVE_BYTES, 'application/zip');
-          if (`sha256:${hash(releaseArchive)}` !== source.release_artifact.digest) reject();
-          const files = extractArchiveFiles(releaseArchive, RELEASE_ARCHIVE_FILES); releaseFiles = files;
-          if (['bundle/manifest.json', 'bundle/manifest.sha256', 'bundle/summary.md', 'remote-evidence.json', 'request.json']
-            .some(name => !files.has(name))) reject();
-          releaseFileDigests = deepFreeze(Object.fromEntries([...files].map(([name, bytes]) => [name, hash(bytes)])));
-        }
+        gateFiles = extractArchiveFiles(archive, GATE_ARCHIVE_FILES);
+        if (!gateFiles.has('protected-stage-proofs.json') || !gateFiles.has('release-observation.json')) reject();
+        gateFileDigests = deepFreeze(Object.fromEntries([...gateFiles].map(([name, bytes]) => [name, hash(bytes)])));
+        const releaseArchive = await request(config.fetchImpl, config.githubToken,
+          `${base}/actions/artifacts/${source.release_artifact.id}/zip`, MAX_ARCHIVE_BYTES, 'application/zip');
+        if (`sha256:${hash(releaseArchive)}` !== source.release_artifact.digest) reject();
+        const files = extractArchiveFiles(releaseArchive, RELEASE_ARCHIVE_FILES); releaseFiles = files;
+        if (['bundle/manifest.json', 'bundle/manifest.sha256', 'bundle/summary.md', 'remote-evidence.json', 'request.json']
+          .some(name => !files.has(name))) reject();
+        releaseFileDigests = deepFreeze(Object.fromEntries([...files].map(([name, bytes]) => [name, hash(bytes)])));
         const proofBytes = extractProofBytes(archive);
         const proofs = validateProofs(proofBytes, source);
         const protectedSteps = validateProtectedSteps(jobs, source, proofs);
+        const functionDeploymentProofSha256 = proofs.some(proof => proof.stage === 'functions')
+          ? gateFileDigests?.['function-deployment-proof.json'] ?? null
+          : null;
+        let functionDeploymentProof = null;
+        if (proofs.some(proof => proof.stage === 'functions')) {
+          if (!functionDeploymentProofSha256 || !gateFiles?.has('function-deployment-proof.json')
+            || !releaseFiles?.has('bundle/manifest.json')) reject();
+          const manifestParsed = parseJsonBytes(releaseFiles.get('bundle/manifest.json'));
+          if (canonical(manifestParsed.value) !== manifestParsed.source) reject();
+          const resources = ownData(manifestParsed.value).resources?.value;
+          const transition = ownData(ownData(resources).web_control_centers_b2_transition?.value);
+          const contract = ownData(transition.contract?.value);
+          const functionManifest = arrayValues(contract.functions?.value, 8).map(item => copyJson(item));
+          const functionBytes = gateFiles.get('function-deployment-proof.json');
+          const functionParsed = parseJsonBytes(functionBytes);
+          if (canonicalB2FunctionDeploymentProof(functionParsed.value) !== functionParsed.source) reject();
+          const functionManifestSha256=b2FunctionManifestSha256(functionManifest);
+          const postRows=source.edge_functions.map(row => ({ name: row.name, source_sha256: row.source_sha256,
+            status: row.status, verify_jwt: row.verify_jwt, version: row.version }));
+          const attempt=verifyB2FunctionDeploymentAttempt({proof:functionParsed.value,manifest:functionManifest,
+            manifestSha256:functionManifestSha256});
+          if(attempt.result==='FUNCTIONS_EXECUTED')verifyB2FunctionDeploymentProof({proof:attempt,manifest:functionManifest,
+            manifestSha256:functionManifestSha256,postRows});
+          else resumeB2FunctionDeploymentAttempt({proof:attempt,manifest:functionManifest,
+            manifestSha256:functionManifestSha256,beforeRows:attempt.before,currentRows:postRows,
+            capturedAt:new Date(Math.max(Date.parse(attempt.captured_at),Date.parse(attempt.in_flight?.captured_at??attempt.captured_at))+1).toISOString()});
+          functionDeploymentProof = structuredClone(attempt);
+        }
         const output = deepFreeze({
           schemaVersion: 1,
           result: 'EXACT_ATTEMPT_VERIFIED',
@@ -864,6 +906,7 @@ export function createB2RecoveryProvenanceLoader(options = {
           protectedStageProofSha256: source.protected_stage_proof_sha256,
           protectedStepCount: protectedSteps.steps.length,
           sourceRuntimeClosureSha256: source.runtime_closure_sha256,
+          functionDeploymentProofSha256,
         });
         provenances.set(output, {
           source,
@@ -872,6 +915,8 @@ export function createB2RecoveryProvenanceLoader(options = {
           protectedSteps,
           proofs,
           proofBytes: Buffer.from(proofBytes),
+          functionDeploymentProofSha256,
+          functionDeploymentProof,
           authorizationSha256: approved.authorizationSha256 ?? null,
           policySha256: approved.policySha256,
           adminArtifact: approved.admin ?? null,

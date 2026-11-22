@@ -2,6 +2,16 @@ import { execFile } from 'node:child_process';
 import { Buffer } from 'node:buffer';
 import { verifyHermeticMigrationWorkspace, verifyHermeticMigrationManifest, verifyHermeticGitSource } from './nelyon-b2-hermetic-workspace.mjs';
 import { verifyMigrationDryRun, executeB2ProtectedMutation, verifyB2ProtectedReleaseMutation } from './nelyon-production-release.mjs';
+import {
+  beginB2FunctionDeploymentAttempt,
+  b2FunctionManifestSha256,
+  createB2FunctionDeploymentNotStarted,
+  markB2FunctionDeploymentIntent,
+  reconcileB2FunctionDeploymentTransition,
+  resumeB2FunctionDeploymentAttempt,
+  verifyB2FunctionDeploymentAttempt,
+  verifyB2FunctionDeploymentProof,
+} from './nelyon-b2-function-deployment-proof.mjs';
 
 // Integration candidate only. Intentionally has no default network/process adapters
 // and no command-line entry point. Must NOT be wired into a workflow until the
@@ -166,6 +176,141 @@ export async function runB2ProtectedDryRun({operation,connection,now=()=>new Dat
  revalidate();return result;
 }
 
+function functionDeploymentFail() {
+  const error = new Error('B2_FUNCTION_DEPLOYMENT_FAILED');
+  error.code = 'B2_FUNCTION_DEPLOYMENT_FAILED';
+  throw error;
+}
+
+const PROOF_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
+
+function proofTimestampFloor(proof) {
+  if (proof === null) return Number.NEGATIVE_INFINITY;
+  const values = [proof.captured_at,
+    ...(proof.receipts ?? []).map(receipt => receipt.captured_at),
+    ...(proof.in_flight ? [proof.in_flight.captured_at] : [])];
+  const times = values.map(value => Date.parse(value));
+  if (values.some(value => typeof value !== 'string' || !PROOF_TIMESTAMP_PATTERN.test(value))
+    || times.some(value => !Number.isFinite(value))) functionDeploymentFail();
+  return Math.max(...times);
+}
+
+function createMonotonicProofClock(now, initialProof = null) {
+  let floor = proofTimestampFloor(initialProof);
+  return () => {
+    const observedAt = now();
+    if (typeof observedAt !== 'string' || !PROOF_TIMESTAMP_PATTERN.test(observedAt)
+      || new Date(Date.parse(observedAt)).toISOString() !== observedAt) functionDeploymentFail();
+    const observed = Date.parse(observedAt);
+    const next = Math.max(observed, floor + 1);
+    floor = next;
+    return new Date(next).toISOString();
+  };
+}
+
+export async function executeB2FunctionDeploymentBatch({
+  manifest,
+  manifestSha256,
+  beforeRows,
+  now,
+  verifyFunction,
+  deploy,
+  readRows,
+  recordAttempt,
+  revalidate,
+  initialProof = null,
+}) {
+  if (!Array.isArray(manifest) || typeof manifestSha256 !== 'string'
+    || (beforeRows !== undefined && !Array.isArray(beforeRows)) || typeof now !== 'function'
+    || ![verifyFunction, deploy, readRows, recordAttempt, revalidate].every(value => typeof value === 'function')) {
+    functionDeploymentFail();
+  }
+  let proof;
+  try {
+    let latestRows;
+    if (initialProof === null) {
+      const proofNow = createMonotonicProofClock(now);
+      proof = createB2FunctionDeploymentNotStarted({
+        manifest,
+        manifestSha256,
+        capturedAt: proofNow(),
+      });
+      await recordAttempt(proof);
+    } else {
+      proof = verifyB2FunctionDeploymentAttempt({ proof: initialProof, manifest, manifestSha256 });
+    }
+    const proofNow = createMonotonicProofClock(now, proof);
+    if (proof.result === 'FUNCTIONS_EXECUTED') {
+      latestRows = await readRows();
+      return verifyB2FunctionDeploymentProof({ proof, manifest, manifestSha256, postRows: latestRows });
+    }
+    if (proof.result === 'NOT_STARTED') {
+      latestRows = beforeRows ?? await readRows();
+      proof = beginB2FunctionDeploymentAttempt({
+        proof,
+        manifest,
+        manifestSha256,
+        beforeRows: latestRows,
+        capturedAt: proofNow(),
+      });
+    } else {
+      latestRows = await readRows();
+      proof = resumeB2FunctionDeploymentAttempt({
+        proof,
+        manifest,
+        manifestSha256,
+        beforeRows: proof.before,
+        currentRows: latestRows,
+        capturedAt: proofNow(),
+      });
+    }
+    await recordAttempt(proof);
+    const originalRows = proof.before;
+    for (const contract of manifest.slice(proof.receipts.length)) {
+      revalidate({ completedNames: proof.receipts.map(receipt => receipt.name), proof });
+      const verified = verifyFunction(contract.name);
+      if (verified?.result !== 'FUNCTION_CONTRACT_VERIFIED'
+        || verified.functions?.length !== 1
+        || verified.functions[0]?.name !== contract.name) functionDeploymentFail();
+
+      proof = markB2FunctionDeploymentIntent({
+        proof,
+        manifest,
+        manifestSha256,
+        beforeRows: originalRows,
+        functionName: contract.name,
+        capturedAt: proofNow(),
+      });
+      await recordAttempt(proof);
+      let commandSucceeded = false;
+      try {
+        const result = await deploy(contract.name);
+        commandSucceeded = result?.exitCode === 0;
+      } catch {
+        commandSucceeded = false;
+      }
+      latestRows = await readRows();
+      proof = reconcileB2FunctionDeploymentTransition({
+        proof,
+        manifest,
+        manifestSha256,
+        beforeRows: originalRows,
+        afterRows: latestRows,
+        functionName: contract.name,
+        commandSucceeded,
+        capturedAt: proofNow(),
+      });
+      await recordAttempt(proof);
+      if (!commandSucceeded) functionDeploymentFail();
+      revalidate({ completedNames: proof.receipts.map(receipt => receipt.name), proof });
+    }
+    return verifyB2FunctionDeploymentProof({ proof, manifest, manifestSha256, postRows: latestRows });
+  } catch (error) {
+    if (error?.code === 'B2_FUNCTION_DEPLOYMENT_FAILED') throw error;
+    functionDeploymentFail();
+  }
+}
+
 /** Protected Edge mutation boundary. The caller supplies the already pinned
  * absolute CLI and a closed executor; no shell command or candidate argument
  * can enter this path. One proof covers the exact manifest-ordered batch. */
@@ -173,24 +318,28 @@ export async function runB2ProtectedFunctions({operation,connection,now=()=>new 
   if(operation?.request?.mode!=='release'||typeof now!=='function'
     ||connection?.projectRef!==PROJECT||typeof connection.binaryPath!=='string'
     ||typeof connection.repositoryRoot!=='string'||typeof connection.token!=='string'||!connection.token
-    ||![connection.verifyFunction,connection.execute].every(fn=>typeof fn==='function'))fail();
+    ||![connection.verifyFunction,connection.execute,connection.readFunctionRows,
+      connection.recordFunctionAttempt].every(fn=>typeof fn==='function'))fail();
   const functions=operation.manifest?.resources?.functions;
-  if(!Array.isArray(functions)||functions.length<1||new Set(functions).size!==functions.length
-    ||functions.some(name=>typeof name!=='string'||!/^[a-z0-9][a-z0-9-]{0,62}$/.test(name)))fail();
+  const contracts=operation.manifest?.resources?.web_control_centers_b2_transition?.contract?.functions;
+  if(!Array.isArray(functions)||!Array.isArray(contracts)||functions.length!==contracts.length
+    ||functions.some((name,index)=>name!==contracts[index]?.name))fail();
   const revalidate=()=>verifyB2ProtectedReleaseMutation({...operation,requestedAt:now()});
   revalidate();
+  const manifestSha256=b2FunctionManifestSha256(contracts);
+  const initialProof=connection.initialFunctionProof??createB2FunctionDeploymentNotStarted({
+    manifest:contracts,manifestSha256,capturedAt:now(),
+  });
+  const preparedProof=verifyB2FunctionDeploymentAttempt({proof:initialProof,manifest:contracts,manifestSha256});
+  await connection.recordFunctionAttempt(preparedProof);
+  let result;
   await executeB2ProtectedMutation({...operation,requestedAt:now(),stage:'functions',mutate:async()=>{
-    for(const functionName of functions){
-      revalidate();
-      const verified=connection.verifyFunction(functionName);
-      if(verified?.result!=='FUNCTION_CONTRACT_VERIFIED'||verified.functions?.length!==1
-        ||verified.functions[0]?.name!==functionName)fail();
-      revalidate();
-      const result=await connection.execute({executable:connection.binaryPath,cwd:connection.repositoryRoot,
+    result=await executeB2FunctionDeploymentBatch({manifest:contracts,manifestSha256,
+      now,verifyFunction:connection.verifyFunction,initialProof:preparedProof,
+      readRows:connection.readFunctionRows,recordAttempt:connection.recordFunctionAttempt,
+      revalidate:()=>revalidate(),deploy:functionName=>connection.execute({executable:connection.binaryPath,cwd:connection.repositoryRoot,
         args:['functions','deploy',functionName,'--project-ref',PROJECT,'--use-api'],
-        env:{SUPABASE_ACCESS_TOKEN:connection.token},shell:false,timeoutMs:120000,maxBuffer:1048576});
-      if(result?.exitCode!==0)fail();
-    }
+        env:{SUPABASE_ACCESS_TOKEN:connection.token},shell:false,timeoutMs:120000,maxBuffer:1048576})});
   }});
-  return {complete:true,count:functions.length};
+  return {complete:true,count:functions.length,proof:result};
 }

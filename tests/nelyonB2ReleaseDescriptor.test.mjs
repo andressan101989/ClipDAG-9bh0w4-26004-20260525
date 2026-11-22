@@ -17,6 +17,8 @@ const names = ['ai-handoff', 'cleanup-stale-media-uploads', 'content-safety-scan
   'create-media-upload', 'finalize-media-upload', 'get-media-url',
   'process-scheduled-publications', 'video-semantic-index'];
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+const advisorVerifierSha256 = hash(readFileSync(new URL('../scripts/nelyon-b2-authority-preparation.mjs', import.meta.url)));
+const advisorTestsSha256 = hash(readFileSync(new URL('./nelyonB2AuthorityPreparation.test.mjs', import.meta.url)));
 // Frozen historical public candidate from 15197130.
 // Parser compatibility tests must not silently change with the live R2 candidate.
 const candidateFixture = new URL('./fixtures/nelyonB2CandidateDescriptor.json', import.meta.url);
@@ -50,6 +52,10 @@ test('closed B2 candidate binds public contract and defers protected facts', () 
   assert.deepEqual(value.contract.functions.map(item => item.name), names);
   assert.equal(value.contract.functions.find(item => item.name === names[6]).verify_jwt, false);
   assert.equal(value.contract.cron_activation, false);
+  assert.equal(value.contract.reviewed_source_tree_sha, null);
+  assert.equal(value.contract.advisor_authorization_contract_sha256, null);
+  assert.equal(value.contract.advisor_authorization_verifier_sha256, null);
+  assert.equal(value.contract.advisor_authorization_tests_sha256, null);
   assert.deepEqual(value.contract.function_inventory, { before: null, after: null });
   assert.ok(value.contract.functions.every(item => item.source_sha256 === null && item.config_sha256 === null));
   assert.equal(value.private_authority.required, true);
@@ -123,7 +129,11 @@ test('approved state requires all final bindings and protected inventory counts'
     value.contract.state = 'approved'; value.contract.release_ready = true;
     value.contract.cron_activation = true;
     value.contract.reviewed_source_sha = 'a'.repeat(40);
+    value.contract.reviewed_source_tree_sha = 'f'.repeat(40);
     value.contract.integration_base_sha = 'b'.repeat(40);
+    value.contract.advisor_authorization_contract_sha256 = '1'.repeat(64);
+    value.contract.advisor_authorization_verifier_sha256 = advisorVerifierSha256;
+    value.contract.advisor_authorization_tests_sha256 = advisorTestsSha256;
     value.contract.function_inventory = { before: 40, after: 41 };
     value.contract.functions.forEach(item => { item.source_sha256 = 'c'.repeat(64); item.config_sha256 = 'd'.repeat(64); });
     value.private_authority.sha256 = 'e'.repeat(64);
@@ -138,7 +148,11 @@ test('approved state requires all final bindings and protected inventory counts'
     d => { d.contract.functions[0].source_sha256 = null; },
     d => { d.contract.functions[0].config_sha256 = null; },
     d => { d.contract.reviewed_source_sha = null; },
+    d => { d.contract.reviewed_source_tree_sha = null; },
     d => { d.contract.integration_base_sha = null; },
+    d => { d.contract.advisor_authorization_contract_sha256 = null; },
+    d => { d.contract.advisor_authorization_verifier_sha256 = null; },
+    d => { d.contract.advisor_authorization_tests_sha256 = null; },
     d => { d.contract.cron_activation = false; },
   ]) {
     const changed = JSON.parse(approved); mutate(changed);
@@ -188,10 +202,34 @@ test('descriptor digests and source bindings reject arrays instead of coercing t
       value.contract.state = 'approved'; value.contract.release_ready = true;
       value.contract.cron_activation = true;
       value.contract.reviewed_source_sha = 'a'.repeat(40); value.contract.integration_base_sha = 'b'.repeat(40);
+      value.contract.reviewed_source_tree_sha = 'f'.repeat(40);
+      value.contract.advisor_authorization_contract_sha256 = '1'.repeat(64);
+      value.contract.advisor_authorization_verifier_sha256 = advisorVerifierSha256;
+      value.contract.advisor_authorization_tests_sha256 = advisorTestsSha256;
       value.contract.function_inventory = { before: 40, after: 41 };
       value.contract.functions.forEach(item => { item.source_sha256 = 'c'.repeat(64); item.config_sha256 = 'd'.repeat(64); });
       value.private_authority.sha256 = 'e'.repeat(64);
       mutate(value);
+    })));
+  }
+});
+
+test('approved advisor authorization pins reject non-scalar substitutions', () => {
+  for (const key of ['reviewed_source_tree_sha', 'advisor_authorization_contract_sha256',
+    'advisor_authorization_verifier_sha256', 'advisor_authorization_tests_sha256']) {
+    denied(() => parse(rewritten(value => {
+      value.contract.state = 'approved'; value.contract.release_ready = true;
+      value.contract.cron_activation = true;
+      value.contract.reviewed_source_sha = 'a'.repeat(40);
+      value.contract.reviewed_source_tree_sha = 'f'.repeat(40);
+      value.contract.integration_base_sha = 'b'.repeat(40);
+      value.contract.advisor_authorization_contract_sha256 = '1'.repeat(64);
+      value.contract.advisor_authorization_verifier_sha256 = advisorVerifierSha256;
+      value.contract.advisor_authorization_tests_sha256 = advisorTestsSha256;
+      value.contract.function_inventory = { before: 40, after: 41 };
+      value.contract.functions.forEach(item => { item.source_sha256 = 'c'.repeat(64); item.config_sha256 = 'd'.repeat(64); });
+      value.private_authority.sha256 = 'e'.repeat(64);
+      value.contract[key] = [value.contract[key]];
     })));
   }
 });

@@ -5,6 +5,8 @@ import { readFileSync } from 'node:fs';
 import {
   B2_CATALOG_SQL,
   B2_DATABASE_FUNCTION_SCOPE,
+  B2_DATABASE_RELATION_SCOPE,
+  B2_RELATION_ACL_SQL,
   RPC_SECURITY_ATTESTATION_SQL,
 } from '../scripts/nelyon-production-snapshot-adapter.mjs';
 
@@ -21,6 +23,16 @@ test('B2 function identity SQL is independent of the session search path', () =>
   }
   assert.doesNotMatch(B2_CATALOG_SQL, /oidvectortypes/i);
   assert.doesNotMatch(RPC_SECURITY_ATTESTATION_SQL, /pg_get_function_identity_arguments/i);
+  for (const query of [B2_CATALOG_SQL, B2_RELATION_ACL_SQL]) {
+    assert.doesNotMatch(query, /publication_schedule%|relname\s+like|jobname\s+like/i,
+      'B2 relation and cron authority must never be wildcard-scoped');
+    for (const identity of B2_DATABASE_RELATION_SCOPE) assert.match(query, new RegExp(identity.replace('.', '\\.')));
+  }
+  assert.match(B2_CATALOG_SQL, /j\.jobname\s*=\s*'process-scheduled-publications-b2'/i);
+  assert.match(B2_CATALOG_SQL, /'usingSha256'.*sha256\(convert_to\(\s*pg_catalog\.pg_get_expr\(p\.polqual,p\.polrelid\),'UTF8'\)\)/is);
+  assert.match(B2_CATALOG_SQL, /'checkSha256'.*sha256\(convert_to\(\s*pg_catalog\.pg_get_expr\(p\.polwithcheck,p\.polrelid\),'UTF8'\)\)/is);
+  assert.equal(B2_DATABASE_RELATION_SCOPE.length, 7);
+  assert.equal(new Set(B2_DATABASE_RELATION_SCOPE).size, 7);
 });
 
 test('B2 disposable proof executes the three real adapter queries after an inert synthetic cron fixture', () => {
@@ -60,7 +72,7 @@ test('B2 disposable proof executes the three real adapter queries after an inert
   assert.match(proof, /tableAclPrivileges\s*=\s*new Set\(\[[^\]]*'MAINTAIN'[^\]]*\]\)/,
     'PostgreSQL 17 owner ACL shape includes the MAINTAIN table privilege');
   assert.match(proof, /B2_POSTGRES_QUERY_PROOF_PASS/);
-  assert.match(proof, /syntheticCron:true/);
+  assert.match(proof, /syntheticCronExcluded:true/);
   assert.match(proof, /pgCronExtension:false/);
   assert.match(proof, /CLEANUP[\s\S]*?serverStopped[\s\S]*?directoryRemoved/);
 });
