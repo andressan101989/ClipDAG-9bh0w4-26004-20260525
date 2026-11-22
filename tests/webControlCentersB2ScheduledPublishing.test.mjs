@@ -6,13 +6,16 @@ import { spawnSync } from 'node:child_process';
 const migrations = 'supabase/migrations';
 const suffix = '_web_control_centers_b2_scheduled_publishing.sql';
 
-test('B2 public release descriptor remains a candidate requiring protected authority', async () => {
+test('B2 public release descriptor remains state-consistent and requires protected authority', async () => {
   const { parseB2ReleaseDescriptor, sha256Hex } = await import('../scripts/nelyon-production-release.mjs');
   const bytes = readFileSync(new URL('../.github/nelyon-web-control-centers-b2-release-descriptor.json', import.meta.url));
   const descriptor = parseB2ReleaseDescriptor(bytes, sha256Hex(bytes));
-  assert.equal(descriptor.contract.release_ready, false);
+  const approved = descriptor.contract.state === 'approved';
+  assert.ok(['candidate', 'approved'].includes(descriptor.contract.state));
+  assert.equal(descriptor.contract.release_ready, approved);
   assert.equal(descriptor.private_authority.required, true);
-  assert.equal(descriptor.private_authority.sha256, null);
+  if (approved) assert.match(descriptor.private_authority.sha256, /^[0-9a-f]{64}$/u);
+  else assert.equal(descriptor.private_authority.sha256, null);
   assert.equal(descriptor.contract.cron_activation, true);
 });
 

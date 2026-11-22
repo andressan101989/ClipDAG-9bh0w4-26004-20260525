@@ -1,5 +1,41 @@
 # B2 read-only migration plan candidate
 
+## B2-FINAL authority recovery checkpoint (supersedes every status below)
+
+The current corrective branch is `codex/b2-final-artifact-download-r1`, based
+on integrated main `44c59ef8380e52ca99b7ed0acda43eeb1fff81c7`. Its purpose is
+limited to the protected authority/recovery chain: GitHub artifact ZIP downloads
+use the GitHub REST media type, migration and Edge proof retention remains
+fail-closed, and an issuance run materializes the exact approved descriptor
+beside its sanitized receipt. B2 is still not deployed at this checkpoint.
+
+`authority_observe` remains the sole read-only observation mode. It emits two
+separate one-file artifacts: the authenticated `observation.json` and a
+sanitized `preissuance.json` containing the deterministic release identifier.
+The preissuance summary grants no authority. `authority_issue` independently
+downloads and authenticates the observation, recomputes the same contract,
+runs the private proofs, authenticates the post-observation owner approval,
+and only then may publish content-addressed authority bytes.
+
+Authority renewal is supported from an approved descriptor when the current
+main differs from the reviewed source only by that descriptor. Every renewal
+requires a fresh backup/parity observation and a new owner approval; no expired
+observation, approval, receipt or private authority is reusable. The descriptor
+is normalized as an LF Git blob, and metadata integration must compare staged
+Git bytes to the exact issuer artifact rather than a Windows working-tree copy.
+
+The final corrective SHA, runtime-closure pin and production authority are not
+known until this branch passes its final tests/review and is merged. After that
+merge the required order is: update/read back the closure pin, execute a fresh
+`authority_observe`, obtain explicit owner approval bound to the new SHA and
+preissuance, execute `authority_issue`, integrate the exact descriptor-only
+metadata PR, update protected pins, then run `plan_only`, `gate_proof` and
+`release HIGH`. Production SQL, Edge deployment, cron activation, baseline
+promotion and any final no-drift claim remain prohibited before those gates.
+
+The chronology below is retained for provenance only and does not override this
+checkpoint.
+
 ## B2-R5-C1 corrective checkpoint (supersedes the status section below)
 
 This checkpoint is local-only on `codex/web-control-centers-b2-r5-c1`. It is

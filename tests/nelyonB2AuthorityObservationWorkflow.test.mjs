@@ -54,7 +54,7 @@ test('authority issuance is an isolated terminal owner-dispatch path with protec
   assert.doesNotMatch(issuer, /needs:\s*\[?plan/u);
 });
 
-test('authority issuer verifies closure before scoped credentials and retains only a one-day sanitized receipt', () => {
+test('authority issuer verifies closure before scoped credentials and retains only one-day sanitized release metadata', () => {
   const issuer = job('authority-issue', 'plan');
   const closureStart = issuer.indexOf('- name: Verify protected private runtime closure before issuance');
   const installStart = issuer.indexOf('- name: Install exact private runtime dependency without scripts before issuance');
@@ -76,9 +76,22 @@ test('authority issuer verifies closure before scoped credentials and retains on
   assert.match(credentialScope, /NELYON_B2_DOCKER_BIN:\s*\/usr\/bin\/docker/u);
   assert.match(credentialScope, /realpathSync\(docker\) !== docker[\s\S]*stat\.uid !== 0[\s\S]*stat\.mode & 0o022/u);
   assert.match(issuer, /name:\s*nelyon-b2-authority-issuance-\$\{\{ github\.run_id \}\}/u);
+  assert.match(issuer, /--approved-descriptor-output "\$RUNNER_TEMP\/nelyon-b2-authority-issue\/nelyon-web-control-centers-b2-release-descriptor\.json"/u);
+  const uploadStart = issuer.indexOf('- name: Upload sanitized authority issuance metadata');
+  const cleanupStart = issuer.indexOf('- name: Clean authority issuance scratch');
+  const upload = issuer.slice(uploadStart, cleanupStart);
+  assert.ok(uploadStart >= 0 && cleanupStart > uploadStart);
+  const uploadPaths = [...upload.matchAll(/^\s{12}(\$\{\{ runner\.temp \}\}\/nelyon-b2-authority-issue\/[^\r\n]+)$/gmu)]
+    .map(match => match[1]);
+  assert.deepEqual(uploadPaths, [
+    '${{ runner.temp }}/nelyon-b2-authority-issue/receipt.json',
+    '${{ runner.temp }}/nelyon-b2-authority-issue/nelyon-web-control-centers-b2-release-descriptor.json',
+  ]);
+  assert.match(issuer, /if-no-files-found:\s*error/u);
   assert.match(issuer, /retention-days:\s*1/u);
   assert.match(issuer, /rm -rf "\$RUNNER_TEMP\/nelyon-b2-authority-issue"/u);
-  assert.match(issuer, /if:\s*\$\{\{ always\(\) \}\}/u);
+  const cleanup = issuer.slice(cleanupStart, issuer.indexOf('- name: Require complete immutable authority issuance'));
+  assert.match(cleanup, /if:\s*\$\{\{ always\(\) \}\}/u);
 });
 
 test('authority observation has the protected read-only environment and one scoped Supabase token', () => {
@@ -130,11 +143,30 @@ test('authority observation validates exact invocation before capture and retain
   assert.match(observer, /GITHUB_ACTOR/u);
   assert.match(observer, /GITHUB_TRIGGERING_ACTOR/u);
   assert.match(observer, /refs\/heads\/main/u);
-  assert.match(observer, /authority-observe[\s\S]*--policy[\s\S]*--approved-sha[\s\S]*--approved-tree[\s\S]*--verification-output/u);
+  assert.match(observer, /INPUT_AUTHORITY_INTEGRATION_BASE_SHA[\s\S]*109395035d13ba3db8d338dc3b2524191defe873/u);
+  assert.match(observer, /authority-observe[\s\S]*--policy[\s\S]*--approved-sha[\s\S]*--approved-tree[\s\S]*--integration-base-sha[\s\S]*--preissuance-output[\s\S]*--verification-output/u);
   assert.match(observer, /actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9/u);
-  assert.match(observer, /retention-days:\s*1/u);
-  assert.match(observer, /if-no-files-found:\s*error/u);
+  const observationUploadStart = observer.indexOf('- name: Upload sanitized authority observation');
+  const preissuanceUploadStart = observer.indexOf('- name: Upload sanitized authority preissuance');
+  const cleanupStart = observer.indexOf('- name: Clean authority observation scratch');
+  assert.ok(observationUploadStart >= 0 && preissuanceUploadStart > observationUploadStart
+    && cleanupStart > preissuanceUploadStart);
+  const observationUpload = observer.slice(observationUploadStart, preissuanceUploadStart);
+  const preissuanceUpload = observer.slice(preissuanceUploadStart, cleanupStart);
+  assert.match(observationUpload, /name:\s*nelyon-b2-authority-observation-\$\{\{ github\.run_id \}\}/u);
+  assert.match(observationUpload, /path:\s*\$\{\{ runner\.temp \}\}\/nelyon-b2-authority-observation\/observation\.json/u);
+  assert.doesNotMatch(observationUpload, /preissuance\.json/u);
+  assert.match(preissuanceUpload, /name:\s*nelyon-b2-authority-preissuance-\$\{\{ github\.run_id \}\}/u);
+  assert.match(preissuanceUpload, /path:\s*\$\{\{ runner\.temp \}\}\/nelyon-b2-authority-observation\/preissuance\.json/u);
+  assert.doesNotMatch(preissuanceUpload, /observation\.json/u);
+  for (const upload of [observationUpload, preissuanceUpload]) {
+    assert.match(upload, /retention-days:\s*1/u);
+    assert.match(upload, /if-no-files-found:\s*error/u);
+    assert.match(upload, /compression-level:\s*0/u);
+  }
   assert.match(observer, /if:\s*\$\{\{ always\(\) \}\}/u);
   assert.match(observer, /rm -rf "\$RUNNER_TEMP\/nelyon-b2-authority-observation"/u);
-  assert.match(observer, /AUTHORITY_OBSERVATION_RESULTS/u);
+  assert.match(observer, /AUTHORITY_OBSERVATION_RESULTS:[\s\S]*authority_observation_upload\.outcome[\s\S]*authority_preissuance_upload\.outcome[\s\S]*authority_observation_cleanup\.outcome/u);
+  assert.match(observer, /success\|success\|success\|success\|success/u);
+  assert.doesNotMatch(workflow, /authority_prepare/u);
 });

@@ -57,6 +57,8 @@ import {
   createB2AuthorityIssuanceGithubObserver,
   issueB2PrivateAuthority,
   prepareB2AuthorityIssuance,
+  prepareB2AuthorityPreissuanceFromVerifiedObservation,
+  readB2ApprovedDescriptorMaterialization,
   readB2AuthorityPreparationSummary,
 } from './nelyon-private-authority-issuer.mjs';
 import { createR2PrivateAuthorityPublisher } from './nelyon-private-authority-provider.mjs';
@@ -92,6 +94,8 @@ const ACTIONS = new Set([
   'verify-admin-recovery-cloudflare-prestate',
 ]);
 let functionProofCheckpointSequence = 0;
+let authorityIssuanceMetadataSequence = 0;
+let authorityObservationMetadataSequence = 0;
 export function writeFunctionProofCheckpoint(target, proof) {
   const temporary = `${target}.tmp-${process.pid}-${++functionProofCheckpointSequence}`;
   let descriptor;
@@ -110,6 +114,168 @@ export function writeFunctionProofCheckpoint(target, proof) {
     try { unlinkSync(temporary); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
   }
 }
+
+const AUTHORITY_ISSUANCE_FILE_OPERATIONS = Object.freeze({
+  openSync, writeFileSync, fsyncSync, closeSync, renameSync, unlinkSync,
+});
+
+function trustedAuthorityIssuanceFileOperations(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || types.isProxy(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error('blocked');
+  const keys = ['closeSync', 'fsyncSync', 'openSync', 'renameSync', 'unlinkSync', 'writeFileSync'];
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (JSON.stringify(Object.keys(descriptors).sort()) !== JSON.stringify(keys)) throw new Error('blocked');
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable
+      || typeof descriptor.value !== 'function' || types.isProxy(descriptor.value)) throw new Error('blocked');
+  }
+  return value;
+}
+
+/** Persist the exact public descriptor and sanitized receipt as one committed
+ * pair. The receipt is renamed last and is the only completion marker. */
+export function writeB2AuthorityIssuanceMetadata(input, operations = AUTHORITY_ISSUANCE_FILE_OPERATIONS) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || types.isProxy(input)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) throw new Error('blocked');
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  if (JSON.stringify(Object.keys(descriptors).sort())
+      !== JSON.stringify(['descriptorJson', 'descriptorOutput', 'receiptJson', 'receiptOutput'])
+    || Object.values(descriptors).some(descriptor => !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable)) {
+    throw new Error('blocked');
+  }
+  const descriptorOutput = descriptors.descriptorOutput.value;
+  const receiptOutput = descriptors.receiptOutput.value;
+  const descriptorJson = descriptors.descriptorJson.value;
+  const receiptJson = descriptors.receiptJson.value;
+  if (![descriptorOutput, receiptOutput].every(value => typeof value === 'string' && path.isAbsolute(value))
+    || path.dirname(descriptorOutput) !== path.dirname(receiptOutput)
+    || path.basename(descriptorOutput) !== 'nelyon-web-control-centers-b2-release-descriptor.json'
+    || path.basename(receiptOutput) !== 'receipt.json'
+    || ![descriptorJson, receiptJson].every(value => typeof value === 'string' && value.endsWith('\n')
+      && Buffer.byteLength(value, 'utf8') >= 3 && Buffer.byteLength(value, 'utf8') <= 2 * 1024 * 1024
+      && !value.includes('\0'))
+    || lstatSync(descriptorOutput, { throwIfNoEntry: false })
+    || lstatSync(receiptOutput, { throwIfNoEntry: false })) throw new Error('blocked');
+  const parent = path.dirname(descriptorOutput);
+  const parentStat = lstatSync(parent);
+  if (!parentStat.isDirectory() || parentStat.isSymbolicLink() || realpathSync(parent) !== parent) throw new Error('blocked');
+  const fileOperations = trustedAuthorityIssuanceFileOperations(operations);
+  const suffix = `.tmp-${process.pid}-${++authorityIssuanceMetadataSequence}`;
+  const descriptorTemporary = `${descriptorOutput}${suffix}`;
+  const receiptTemporary = `${receiptOutput}${suffix}`;
+  let descriptorFile;
+  let receiptFile;
+  let descriptorFinal = false;
+  let receiptFinal = false;
+  let completed = false;
+  let primaryError;
+  try {
+    descriptorFile = fileOperations.openSync(descriptorTemporary, 'wx', 0o600);
+    receiptFile = fileOperations.openSync(receiptTemporary, 'wx', 0o600);
+    fileOperations.writeFileSync(descriptorFile, descriptorJson, { encoding: 'utf8' });
+    fileOperations.fsyncSync(descriptorFile);
+    fileOperations.closeSync(descriptorFile); descriptorFile = undefined;
+    fileOperations.writeFileSync(receiptFile, receiptJson, { encoding: 'utf8' });
+    fileOperations.fsyncSync(receiptFile);
+    fileOperations.closeSync(receiptFile); receiptFile = undefined;
+    fileOperations.renameSync(descriptorTemporary, descriptorOutput); descriptorFinal = true;
+    fileOperations.renameSync(receiptTemporary, receiptOutput); receiptFinal = true;
+    if (process.platform !== 'win32') {
+      const directory = fileOperations.openSync(parent, 'r');
+      try { fileOperations.fsyncSync(directory); } finally { fileOperations.closeSync(directory); }
+    }
+    completed = true;
+  } catch (error) {
+    primaryError = error;
+  }
+  const cleanupErrors = [];
+  const cleanup = operation => {
+    try { operation(); } catch (error) { if (error?.code !== 'ENOENT') cleanupErrors.push(error); }
+  };
+  if (descriptorFile !== undefined) cleanup(() => fileOperations.closeSync(descriptorFile));
+  if (receiptFile !== undefined) cleanup(() => fileOperations.closeSync(receiptFile));
+  cleanup(() => fileOperations.unlinkSync(descriptorTemporary));
+  cleanup(() => fileOperations.unlinkSync(receiptTemporary));
+  if (!completed) {
+    if (receiptFinal) cleanup(() => fileOperations.unlinkSync(receiptOutput));
+    if (descriptorFinal) cleanup(() => fileOperations.unlinkSync(descriptorOutput));
+  }
+  if (primaryError) throw primaryError;
+  if (cleanupErrors.length > 0) throw cleanupErrors[0];
+}
+
+/** Persist the sanitized preissuance summary and observation as one committed
+ * pair. Observation is renamed last and is the completion marker. */
+export function writeB2AuthorityObservationMetadata(input, operations = AUTHORITY_ISSUANCE_FILE_OPERATIONS) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || types.isProxy(input)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) throw new Error('blocked');
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  if (JSON.stringify(Object.keys(descriptors).sort())
+      !== JSON.stringify(['observationJson', 'observationOutput', 'preissuanceJson', 'preissuanceOutput'])
+    || Object.values(descriptors).some(descriptor => !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable)) {
+    throw new Error('blocked');
+  }
+  const observationOutput = descriptors.observationOutput.value;
+  const preissuanceOutput = descriptors.preissuanceOutput.value;
+  const observationJson = descriptors.observationJson.value;
+  const preissuanceJson = descriptors.preissuanceJson.value;
+  if (![observationOutput, preissuanceOutput].every(value => typeof value === 'string' && path.isAbsolute(value))
+    || path.dirname(observationOutput) !== path.dirname(preissuanceOutput)
+    || path.basename(observationOutput) !== 'observation.json'
+    || path.basename(preissuanceOutput) !== 'preissuance.json'
+    || ![observationJson, preissuanceJson].every(value => typeof value === 'string' && value.endsWith('\n')
+      && Buffer.byteLength(value, 'utf8') >= 3 && Buffer.byteLength(value, 'utf8') <= 2 * 1024 * 1024
+      && !value.includes('\0'))
+    || lstatSync(observationOutput, { throwIfNoEntry: false })
+    || lstatSync(preissuanceOutput, { throwIfNoEntry: false })) throw new Error('blocked');
+  const parent = path.dirname(observationOutput);
+  const parentStat = lstatSync(parent);
+  if (!parentStat.isDirectory() || parentStat.isSymbolicLink() || realpathSync(parent) !== parent) throw new Error('blocked');
+  const fileOperations = trustedAuthorityIssuanceFileOperations(operations);
+  const suffix = `.tmp-${process.pid}-${++authorityObservationMetadataSequence}`;
+  const observationTemporary = `${observationOutput}${suffix}`;
+  const preissuanceTemporary = `${preissuanceOutput}${suffix}`;
+  let observationFile;
+  let preissuanceFile;
+  let observationFinal = false;
+  let preissuanceFinal = false;
+  let completed = false;
+  let primaryError;
+  try {
+    preissuanceFile = fileOperations.openSync(preissuanceTemporary, 'wx', 0o600);
+    observationFile = fileOperations.openSync(observationTemporary, 'wx', 0o600);
+    fileOperations.writeFileSync(preissuanceFile, preissuanceJson, { encoding: 'utf8' });
+    fileOperations.fsyncSync(preissuanceFile);
+    fileOperations.closeSync(preissuanceFile); preissuanceFile = undefined;
+    fileOperations.writeFileSync(observationFile, observationJson, { encoding: 'utf8' });
+    fileOperations.fsyncSync(observationFile);
+    fileOperations.closeSync(observationFile); observationFile = undefined;
+    fileOperations.renameSync(preissuanceTemporary, preissuanceOutput); preissuanceFinal = true;
+    fileOperations.renameSync(observationTemporary, observationOutput); observationFinal = true;
+    if (process.platform !== 'win32') {
+      const directory = fileOperations.openSync(parent, 'r');
+      try { fileOperations.fsyncSync(directory); } finally { fileOperations.closeSync(directory); }
+    }
+    completed = true;
+  } catch (error) {
+    primaryError = error;
+  }
+  const cleanupErrors = [];
+  const cleanup = operation => {
+    try { operation(); } catch (error) { if (error?.code !== 'ENOENT') cleanupErrors.push(error); }
+  };
+  if (preissuanceFile !== undefined) cleanup(() => fileOperations.closeSync(preissuanceFile));
+  if (observationFile !== undefined) cleanup(() => fileOperations.closeSync(observationFile));
+  cleanup(() => fileOperations.unlinkSync(preissuanceTemporary));
+  cleanup(() => fileOperations.unlinkSync(observationTemporary));
+  if (!completed) {
+    if (observationFinal) cleanup(() => fileOperations.unlinkSync(observationOutput));
+    if (preissuanceFinal) cleanup(() => fileOperations.unlinkSync(preissuanceOutput));
+  }
+  if (primaryError) throw primaryError;
+  if (cleanupErrors.length > 0) throw cleanupErrors[0];
+}
 const COMMON_FLAGS = Object.freeze({
   '--policy': 'policy',
   '--request': 'request',
@@ -120,6 +286,8 @@ const AUTHORITY_OBSERVE_FLAGS = Object.freeze({
   '--policy': 'policy',
   '--approved-sha': 'approvedSha',
   '--approved-tree': 'approvedTree',
+  '--integration-base-sha': 'integrationBaseSha',
+  '--preissuance-output': 'preissuanceOutput',
   '--verification-output': 'verificationOutput',
 });
 const AUTHORITY_ISSUE_FLAGS = Object.freeze({
@@ -130,6 +298,7 @@ const AUTHORITY_ISSUE_FLAGS = Object.freeze({
   '--observation-run': 'observationRun',
   '--observation-sha256': 'observationSha256',
   '--release-id': 'releaseId',
+  '--approved-descriptor-output': 'approvedDescriptorOutput',
   '--verification-output': 'verificationOutput',
 });
 const CHAIN_FLAGS = Object.freeze({ '--chain-run': 'chainRun', '--chain-artifacts': 'chainArtifacts',
@@ -264,13 +433,20 @@ function parse(argv) {
     && Object.keys(CHAIN_FLAGS).some(flag => !parsed.has(flag))) throw new Error('invalid');
   const inputs = {};
   for (const [flag, key] of Object.entries(flags)) {
-    if (key !== 'verificationOutput' && parsed.has(flag)) inputs[key] = parsed.get(flag);
+    if (!['verificationOutput', 'approvedDescriptorOutput', 'preissuanceOutput'].includes(key) && parsed.has(flag)) {
+      inputs[key] = parsed.get(flag);
+    }
   }
-  return Object.freeze({
+  const invocation = {
     action: values[0],
     inputs: Object.freeze(inputs),
     verificationOutput: parsed.get('--verification-output'),
-  });
+  };
+  if (values[0] === 'authority-issue') {
+    invocation.approvedDescriptorOutput = parsed.get('--approved-descriptor-output');
+  }
+  if (values[0] === 'authority-observe') invocation.preissuanceOutput = parsed.get('--preissuance-output');
+  return Object.freeze(invocation);
 }
 
 function trustedHost(value) {
@@ -895,8 +1071,66 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
   });
 }
 
+export function materializeB2AuthorityPreissuanceArtifact(summary, runId) {
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary) || types.isProxy(summary)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(summary))
+    || Object.getOwnPropertySymbols(summary).length !== 0
+    || JSON.stringify(Object.keys(summary).sort()) !== JSON.stringify([
+      'descriptor', 'functionInventory', 'integrationBaseSha', 'kind', 'observation',
+      'preissuance', 'releaseId', 'schemaVersion', 'source',
+    ])) throw new Error('blocked');
+  const exactObject = (value, keys) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || types.isProxy(value)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(value))
+      || Object.getOwnPropertySymbols(value).length !== 0
+      || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...keys].sort())) throw new Error('blocked');
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (Object.values(descriptors).some(item => !Object.hasOwn(item, 'value') || !item.enumerable)) throw new Error('blocked');
+    return value;
+  };
+  const source = exactObject(summary.source, ['sha', 'tree']);
+  const observation = exactObject(summary.observation, ['sha256', 'completedObservedAt', 'expiresAt']);
+  const descriptor = exactObject(summary.descriptor, ['path', 'state', 'sha256']);
+  const functionInventory = exactObject(summary.functionInventory, ['before', 'after']);
+  const preissuance = exactObject(summary.preissuance, ['contract', 'preissuanceSha256']);
+  const contract = exactObject(preissuance.contract, [
+    'schemaVersion', 'operation', 'repository', 'workflowPath', 'approvedSha', 'approvedTreeSha',
+    'publicContractSha256', 'manifestSha256', 'policySha256', 'baselineSha',
+    'runtimeClosureSha256', 'observationSha256',
+  ]);
+  const sha40 = /^[0-9a-f]{40}$/u;
+  const hex64 = /^[0-9a-f]{64}$/u;
+  const instant = value => typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)
+    && new Date(value).toISOString() === value;
+  if (summary.schemaVersion !== 1 || summary.kind !== 'nelyon-b2-authority-preissuance-summary-v1'
+    || typeof runId !== 'string' || !/^[1-9][0-9]*$/u.test(runId) || !Number.isSafeInteger(Number(runId))
+    || !sha40.test(source.sha) || !sha40.test(source.tree)
+    || summary.integrationBaseSha !== B2_AUTHORITY_INTEGRATION_BASE_SHA
+    || descriptor.path !== '.github/nelyon-web-control-centers-b2-release-descriptor.json'
+    || !['candidate', 'approved'].includes(descriptor.state) || !hex64.test(descriptor.sha256)
+    || !hex64.test(observation.sha256) || !instant(observation.completedObservedAt)
+    || !instant(observation.expiresAt) || Date.parse(observation.expiresAt) <= Date.parse(observation.completedObservedAt)
+    || !Number.isSafeInteger(functionInventory.before) || functionInventory.before < 1
+    || functionInventory.after !== functionInventory.before + 1
+    || contract.schemaVersion !== 1 || contract.operation !== 'web-control-centers-b2-authority-issue'
+    || contract.repository !== 'andressan101989/ClipDAG-9bh0w4-26004-20260525'
+    || contract.workflowPath !== '.github/workflows/nelyon-production-release.yml'
+    || contract.approvedSha !== source.sha || contract.approvedTreeSha !== source.tree
+    || contract.observationSha256 !== observation.sha256 || !sha40.test(contract.baselineSha)
+    || [contract.publicContractSha256, contract.manifestSha256, contract.policySha256,
+      contract.runtimeClosureSha256, preissuance.preissuanceSha256].some(value => !hex64.test(value))
+    || sha256Hex(`${canonicalJson(contract)}\n`) !== preissuance.preissuanceSha256
+    || summary.releaseId !== `b2-authority-${preissuance.preissuanceSha256}`) throw new Error('blocked');
+  return Object.freeze({ schemaVersion: 1, kind: summary.kind, source,
+    integrationBaseSha: summary.integrationBaseSha,
+    observation: Object.freeze({ runId, runAttempt: 1, ...observation }),
+    descriptor, functionInventory, preissuance, releaseId: summary.releaseId });
+}
+
 export async function executeAuthorityObservation({ invocation, environment, fetchImpl, repositoryRoot,
   captureImpl = captureB2AuthorityObservation, verifyImpl = verifyB2AuthorityObservation,
+  prepareImpl = prepareB2AuthorityPreissuanceFromVerifiedObservation,
   nodeVersion = process.versions.node, execFileSyncImpl = execFileSync }) {
   const expectedRepository = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
   const expectedWorkflowRef = `${expectedRepository}/.github/workflows/nelyon-production-release.yml@refs/heads/main`;
@@ -904,10 +1138,11 @@ export async function executeAuthorityObservation({ invocation, environment, fet
     || ![Object.prototype, null].includes(Object.getPrototypeOf(invocation))
     || Object.getOwnPropertySymbols(invocation).length !== 0 || typeof repositoryRoot !== 'string'
     || typeof fetchImpl !== 'function' || typeof captureImpl !== 'function' || typeof verifyImpl !== 'function'
+    || typeof prepareImpl !== 'function'
     || typeof execFileSyncImpl !== 'function' || nodeVersion !== '24.21.0') throw new Error('blocked');
   const invocationDescriptors = Object.getOwnPropertyDescriptors(invocation);
   if (JSON.stringify(Object.keys(invocationDescriptors).sort())
-      !== JSON.stringify(['action', 'inputs', 'verificationOutput'])
+      !== JSON.stringify(['action', 'inputs', 'preissuanceOutput', 'verificationOutput'])
     || Object.values(invocationDescriptors).some(descriptor => !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable)
     || invocationDescriptors.action.value !== 'authority-observe') throw new Error('blocked');
   const inputs = invocationDescriptors.inputs.value;
@@ -915,13 +1150,15 @@ export async function executeAuthorityObservation({ invocation, environment, fet
     || ![Object.prototype, null].includes(Object.getPrototypeOf(inputs))
     || Object.getOwnPropertySymbols(inputs).length !== 0) throw new Error('blocked');
   const descriptors = Object.getOwnPropertyDescriptors(inputs);
-  if (JSON.stringify(Object.keys(descriptors).sort()) !== JSON.stringify(['approvedSha', 'approvedTree', 'policy'])
+  if (JSON.stringify(Object.keys(descriptors).sort())
+      !== JSON.stringify(['approvedSha', 'approvedTree', 'integrationBaseSha', 'policy'])
     || Object.values(descriptors).some(descriptor => !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable)) {
     throw new Error('blocked');
   }
   const approvedSha = descriptors.approvedSha.value;
   const approvedTreeSha = descriptors.approvedTree.value;
   if (!/^[0-9a-f]{40}$/u.test(approvedSha) || !/^[0-9a-f]{40}$/u.test(approvedTreeSha)
+    || descriptors.integrationBaseSha.value !== B2_AUTHORITY_INTEGRATION_BASE_SHA
     || environmentText(environment, 'GITHUB_EVENT_NAME', /^workflow_dispatch$/u) !== 'workflow_dispatch'
     || environmentText(environment, 'GITHUB_REPOSITORY', /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u) !== expectedRepository
     || environmentText(environment, 'GITHUB_REF', /^refs\/heads\/main$/u) !== 'refs/heads/main'
@@ -952,7 +1189,10 @@ export async function executeAuthorityObservation({ invocation, environment, fet
   const output = safeStageOutput(environment, invocationDescriptors.verificationOutput.value);
   const expectedOutput = path.join(realpathSync(environmentText(environment, 'RUNNER_TEMP', /^.{1,4096}$/u)),
     'nelyon-b2-authority-observation', 'observation.json');
-  if (output !== expectedOutput) throw new Error('blocked');
+  const preissuanceOutput = safeStageOutput(environment, invocationDescriptors.preissuanceOutput.value);
+  const expectedPreissuanceOutput = path.join(path.dirname(expectedOutput), 'preissuance.json');
+  if (output !== expectedOutput || preissuanceOutput !== expectedPreissuanceOutput
+    || preissuanceOutput === output) throw new Error('blocked');
   const observation = await captureImpl({
     approvedSha,
     approvedTreeSha,
@@ -962,19 +1202,12 @@ export async function executeAuthorityObservation({ invocation, environment, fet
     token: environmentText(environment, 'SUPABASE_ACCESS_TOKEN', /^[\x21-\x7e]{1,2048}$/u),
   });
   const verified = verifyImpl(observation);
-  let descriptor;
-  try {
-    descriptor = openSync(output, 'wx', 0o600);
-    writeFileSync(descriptor, `${canonicalJson(verified)}\n`, { encoding: 'utf8' });
-    fsyncSync(descriptor);
-    closeSync(descriptor); descriptor = undefined;
-    if (process.platform !== 'win32') {
-      const directory = openSync(path.dirname(output), 'r');
-      try { fsyncSync(directory); } finally { closeSync(directory); }
-    }
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-  }
+  const summary = prepareImpl({ repositoryRoot: root, approvedSha, approvedTreeSha,
+    integrationBaseSha: B2_AUTHORITY_INTEGRATION_BASE_SHA, observation: verified });
+  const artifact = materializeB2AuthorityPreissuanceArtifact(summary,
+    environmentText(environment, 'GITHUB_RUN_ID', /^[1-9][0-9]*$/u));
+  writeB2AuthorityObservationMetadata({ observationOutput: output, preissuanceOutput,
+    observationJson: `${canonicalJson(verified)}\n`, preissuanceJson: `${canonicalJson(artifact)}\n` });
   return SUCCESS;
 }
 
@@ -991,7 +1224,7 @@ export async function executeAuthorityIssuance({ invocation, environment, fetchI
   }
   const invocationDescriptors = Object.getOwnPropertyDescriptors(invocation);
   if (JSON.stringify(Object.keys(invocationDescriptors).sort())
-      !== JSON.stringify(['action', 'inputs', 'verificationOutput'])
+      !== JSON.stringify(['action', 'approvedDescriptorOutput', 'inputs', 'verificationOutput'])
     || Object.values(invocationDescriptors).some(descriptor => !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable)
     || invocationDescriptors.action.value !== 'authority-issue') throw new Error('blocked');
   const inputs = invocationDescriptors.inputs.value;
@@ -1033,7 +1266,12 @@ export async function executeAuthorityIssuance({ invocation, environment, fetchI
   const output = safeStageOutput(environment, invocationDescriptors.verificationOutput.value);
   const expectedOutput = path.join(realpathSync(environmentText(environment, 'RUNNER_TEMP', /^.{1,4096}$/u)),
     'nelyon-b2-authority-issue', 'receipt.json');
-  if (output !== expectedOutput) throw new Error('blocked');
+  const approvedDescriptorOutput = safeStageOutput(environment,
+    invocationDescriptors.approvedDescriptorOutput.value);
+  const expectedDescriptorOutput = path.join(path.dirname(expectedOutput),
+    'nelyon-web-control-centers-b2-release-descriptor.json');
+  if (output !== expectedOutput || approvedDescriptorOutput !== expectedDescriptorOutput
+    || approvedDescriptorOutput === output) throw new Error('blocked');
 
   const observer = createB2AuthorityIssuanceGithubObserver({ fetchImpl,
     githubToken: environmentText(environment, 'GITHUB_TOKEN', /^[\x21-\x7e]{1,2048}$/u),
@@ -1058,13 +1296,13 @@ export async function executeAuthorityIssuance({ invocation, environment, fetchI
     timeoutMs: 10_000,
   });
   const receipt = await issueB2PrivateAuthority({ preparation, observation, approval, publisher, issuedAt: now() });
-  let descriptor;
-  try {
-    descriptor = openSync(output, 'wx', 0o600);
-    writeFileSync(descriptor, `${canonicalJson(receipt)}\n`, { encoding: 'utf8' });
-    fsyncSync(descriptor);
-    closeSync(descriptor); descriptor = undefined;
-  } finally { if (descriptor !== undefined) closeSync(descriptor); }
+  const issuedDescriptor = readB2ApprovedDescriptorMaterialization(receipt);
+  if (receipt.descriptor?.sha256 !== issuedDescriptor.sha256
+    || receipt.descriptor?.byteLength !== issuedDescriptor.byteLength
+    || receipt.descriptor?.path !== issuedDescriptor.path
+    || receipt.publicContractSha256 !== summary.publicContractSha256) throw new Error('blocked');
+  writeB2AuthorityIssuanceMetadata({ descriptorOutput: approvedDescriptorOutput, receiptOutput: output,
+    descriptorJson: issuedDescriptor.descriptorJson, receiptJson: `${canonicalJson(receipt)}\n` });
   return SUCCESS;
 }
 

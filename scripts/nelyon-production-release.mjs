@@ -6303,9 +6303,10 @@ export function b2HistoricalSnapshotBinding({ verifiedSource, authorityContext }
   } catch { b2RecoveryReject(); }
 }
 
-function b2ProofRoot(root, proofPath) {
+function b2ProofRoot(root, proofPath, expectedName = 'protected-stage-proofs.json') {
+  const allowedNames = ['protected-stage-proofs.json', 'function-deployment-proof.json'];
   if (typeof root !== 'string' || typeof proofPath !== 'string' || !isAbsolute(root) || !isAbsolute(proofPath)
-    || root !== resolve(root) || proofPath !== join(root, 'protected-stage-proofs.json')) b2RecoveryReject();
+    || !allowedNames.includes(expectedName) || root !== resolve(root) || proofPath !== join(root, expectedName)) b2RecoveryReject();
   for (let current = root; ; current = dirname(current)) {
     const stat = lstatSync(current);
     if (!stat.isDirectory() || stat.isSymbolicLink() || relative(current, realpathSync(current)) !== '') b2RecoveryReject();
@@ -6421,26 +6422,29 @@ export function retainB2MigrationAttemptProof({trustedProofRoot,destinationDirec
     }
     const destination=join(destinationDirectory,'protected-stage-proofs.json');b2ProofRoot(destinationDirectory,destination);
     const existing=lstatSync(destination,{throwIfNoEntry:false});
-    if(existing){if(!existing.isFile()||existing.isSymbolicLink()||existing.nlink!==1||!readFileSync(destination).equals(bytes))b2RecoveryReject();}
-    else writeFileSync(destination,canonicalJson(proofs),{encoding:'utf8',flag:'wx',mode:0o600});
+    if(existing&&(!existing.isFile()||existing.isSymbolicLink()||existing.nlink!==1||!readFileSync(destination).equals(bytes)))b2RecoveryReject();
     const functionSource=join(trustedProofRoot,'function-deployment-proof.json');
     const functionStat=lstatSync(functionSource,{throwIfNoEntry:false});
+    let functionBytes=null,functionDestination=null,functionExisting=null;
     if(proofs.some(proof=>proof.stage==='functions')){
+      b2ProofRoot(trustedProofRoot,functionSource,'function-deployment-proof.json');
       if(!functionStat||!functionStat.isFile()||functionStat.isSymbolicLink()||functionStat.nlink!==1
         ||functionStat.size<1||functionStat.size>2*1024*1024)b2RecoveryReject();
-      const functionBytes=readFileSync(functionSource);
+      functionBytes=readFileSync(functionSource);
       const functionProof=JSON.parse(functionBytes.toString('utf8'));
       if(canonicalB2FunctionDeploymentProof(functionProof)!==functionBytes.toString('utf8'))b2RecoveryReject();
       const functionManifest=binding.contract?.functions;
       verifyB2FunctionDeploymentAttempt({proof:functionProof,manifest:functionManifest,
         manifestSha256:b2FunctionManifestSha256(functionManifest)});
-      const functionDestination=join(destinationDirectory,'function-deployment-proof.json');
-      b2ProofRoot(destinationDirectory,functionDestination);
-      const functionExisting=lstatSync(functionDestination,{throwIfNoEntry:false});
-      if(functionExisting){if(!functionExisting.isFile()||functionExisting.isSymbolicLink()
-        ||functionExisting.nlink!==1||!readFileSync(functionDestination).equals(functionBytes))b2RecoveryReject();}
-      else writeFileSync(functionDestination,functionBytes,{flag:'wx',mode:0o600});
+      functionDestination=join(destinationDirectory,'function-deployment-proof.json');
+      b2ProofRoot(destinationDirectory,functionDestination,'function-deployment-proof.json');
+      functionExisting=lstatSync(functionDestination,{throwIfNoEntry:false});
+      if(functionExisting&&(!functionExisting.isFile()||functionExisting.isSymbolicLink()
+        ||functionExisting.nlink!==1||!readFileSync(functionDestination).equals(functionBytes)))b2RecoveryReject();
+      if(existing&&!functionExisting)b2RecoveryReject();
     }
+    if(functionBytes&&!functionExisting)writeFileSync(functionDestination,functionBytes,{flag:'wx',mode:0o600});
+    if(!existing)writeFileSync(destination,canonicalJson(proofs),{encoding:'utf8',flag:'wx',mode:0o600});
     return true;
   }catch{b2RecoveryReject();}
 }

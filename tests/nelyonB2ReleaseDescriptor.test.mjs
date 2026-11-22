@@ -271,10 +271,12 @@ test('actual repository import graph yields the exact public eight-function clos
   assert.equal(gate.validateB2ReleaseDescriptorSources(input).contract.state, 'candidate');
 });
 
- test('current repository descriptor remains a fail-closed cron-enabled candidate',()=>{
+ test('current repository descriptor remains state-consistent and cannot grant authority alone',()=>{
   const current=readFileSync(descriptorPath);const value=parse(current,hash(current));
-  assert.equal(value.contract.state,'candidate');assert.equal(value.contract.release_ready,false);
+  const approved=value.contract.state==='approved';
+  assert.ok(['candidate','approved'].includes(value.contract.state));assert.equal(value.contract.release_ready,approved);
   assert.equal(value.contract.cron_activation,true);
-  assert.equal(value.private_authority.sha256,null);
+  if(approved)assert.match(value.private_authority.sha256,/^[0-9a-f]{64}$/u);
+  else assert.equal(value.private_authority.sha256,null);
   assert.throws(()=>gate.compileB2PublicEvidence({descriptorBytes:current,expectedDescriptorSha256:hash(current)}),{code:'B2_DESCRIPTOR_INVALID'});
  });
