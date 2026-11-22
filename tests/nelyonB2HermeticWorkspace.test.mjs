@@ -58,8 +58,9 @@ test('offline extended closure fixture still rejects old member sets and grants 
  const fixture=JSON.parse(readFileSync(new URL('./fixtures/nelyonB2ExplicitConnectionClosureCandidate.json',import.meta.url),'utf8'));
  assert.equal(fixture.fixture_only,true);assert.equal(fixture.deployment_authorized,false);
  const members=privateRuntimeClosureMemberPaths();
+ const lf=bytes=>Buffer.from(bytes.toString('utf8').replaceAll('\r\n','\n'));
  for(const proposed of fixture.proposed_members){
-  assert.ok(members.includes(proposed.path));assert.equal(hash(readFileSync(join(parent,proposed.path))),proposed.sha256);
+  assert.ok(members.includes(proposed.path));assert.equal(hash(lf(readFileSync(join(parent,proposed.path)))),proposed.sha256);
  }
  const files=members.filter(path=>!fixture.proposed_members.some(item=>item.path===path)).map(path=>({path,bytes:readFileSync(join(parent,path))}));
  assert.throws(()=>buildPrivateRuntimeClosureFromExactBytes({files}),/private runtime closure rejected/);

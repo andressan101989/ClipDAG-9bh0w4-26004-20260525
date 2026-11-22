@@ -24,6 +24,7 @@ const SERVICE_FUNCTIONS = new Set([
   'fail_publication_schedule_v1',
   'reconcile_publication_schedules_v1',
 ]);
+const NO_EXECUTE_FUNCTIONS = new Set(['wake_scheduled_publications_b2_v1']);
 const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const reviewedTrees = new WeakMap();
 const deployedInventories = new WeakMap();
@@ -216,7 +217,8 @@ function parseFunctions(migrationBytes) {
         : ` DEFAULT ${defaultValue.toLowerCase() === 'null' ? `NULL::${argumentTypes[index]}` : defaultValue}`}`).join(', ');
       const flags = [attrs[4]?.toUpperCase(), attrs[5] === 'definer' ? 'SECURITY DEFINER' : null].filter(Boolean);
       const definition = `CREATE OR REPLACE FUNCTION ${schema}.${name}(${argumentSql})\n RETURNS ${attrs[1] ? 'SETOF ' : ''}${typesMap[attrs[2]] ?? attrs[2]}\n LANGUAGE ${attrs[3]}\n${flags.length ? ` ${flags.join(' ')}\n` : ''} SET search_path TO '${attrs[6] === 'public' ? 'public' : ''}'\nAS $function$${body.replace(/\r\n?/g, '\n')}$function$\n`;
-      const role = schema === 'private' ? null : SERVICE_FUNCTIONS.has(name) ? 'service_role' : 'authenticated';
+      const role = schema === 'private' || NO_EXECUTE_FUNCTIONS.has(name)
+        ? null : SERVICE_FUNCTIONS.has(name) ? 'service_role' : 'authenticated';
       const acl = ['postgres', ...(role ? [role] : [])].sort()
         .map(grantee => ({ grantee, privilege_type: 'EXECUTE', is_grantable: false }));
       return {
@@ -233,10 +235,10 @@ function parseFunctions(migrationBytes) {
         definition_sha256: sha256(definition),
       };
     });
-  if (rows.length !== 30) reject();
+  if (rows.length !== 31) reject();
   const identity = row => `${row.schema}.${row.name}(${row.argument_types.join(',').replaceAll(' ', '')})`;
   rows.sort((left, right) => identity(left).localeCompare(identity(right)));
-  if (new Set(rows.map(identity)).size !== 30) reject();
+  if (new Set(rows.map(identity)).size !== 31) reject();
   return { rows, identity, text };
 }
 
@@ -244,7 +246,7 @@ function compileDatabaseFunctions(migrationBytes, authority) {
   const { rows, identity } = parseFunctions(migrationBytes);
   const records = authority.successorCatalog.records.filter(record => record.kind === 'function');
   const aclRecords = authority.successorCatalog.records.filter(record => record.kind === 'function_acl');
-  if (records.length !== 30 || aclRecords.length !== records.length) reject();
+  if (records.length !== 31 || aclRecords.length !== records.length) reject();
   const inherited = new Set(['public.create_photo_post_with_media', 'public.create_carousel_post',
     'public.update_my_publication_draft_v1', 'public.delete_my_publication_draft_v1', 'public.publish_my_publication_draft_v1']);
   for (const row of rows) {

@@ -13,11 +13,12 @@ import { createReleaseAuthorityContext } from '../scripts/nelyon-release-authori
 const root = new URL('../', import.meta.url);
 const MARKER = 'SYNTHETIC_COMPILER_PRIVATE_MARKER';
 const AT = '2026-11-08T12:00:00.000Z';
-// Candidate negative tests use the immutable historical public fixture, not live approved metadata.
-const candidateBytes = readFileSync(new URL('./fixtures/nelyonB2CandidateDescriptor.json', import.meta.url));
+// Candidate negative tests use the immutable historical public fixture.
+const historicalCandidateBytes = readFileSync(new URL('./fixtures/nelyonB2CandidateDescriptor.json', import.meta.url));
+const currentCandidateBytes = readFileSync(new URL('../.github/nelyon-web-control-centers-b2-release-descriptor.json', import.meta.url));
 const hash = gate.sha256Hex;
 function fixture(at = AT, backupLifetimeHours = 22, approvalLifetimeHours = 23) {
-  const descriptor = JSON.parse(candidateBytes);
+  const descriptor = JSON.parse(currentCandidateBytes);
   const c = descriptor.contract;
   const policy = JSON.parse(readFileSync(new URL('.github/nelyon-production-release-policy.json', root)));
   const sources = {};
@@ -35,7 +36,7 @@ function fixture(at = AT, backupLifetimeHours = 22, approvalLifetimeHours = 23) 
   const changes = c.productive_changes.map(({ path, status }) => ({ path, status, fileType: 'file' }));
   const affectedFunctions = c.functions.map(f => f.name);
   const contracts = gate.buildFunctionContracts({ affectedFunctions, graph, configBefore, configAfter, changes });
-  c.state = 'approved'; c.release_ready = true;
+  c.state = 'approved'; c.release_ready = true; c.cron_activation = true;
   c.reviewed_source_sha = 'a'.repeat(40); c.integration_base_sha = 'b'.repeat(40);
   c.function_inventory = { before: 34, after: 35 };
   for (const f of c.functions) {
@@ -117,7 +118,7 @@ test('B2 compiler public plan binds exact descriptor without private input or fa
 
 test('B2 compiler blocks candidate, wrong paths, full transitive source/config drift and missing ancestry', () => {
   for (const mutate of [
-    f => { f.input.descriptorBytes = candidateBytes; f.input.expectedDescriptorSha256 = hash(candidateBytes); },
+    f => { f.input.descriptorBytes = historicalCandidateBytes; f.input.expectedDescriptorSha256 = hash(historicalCandidateBytes); },
     f => { f.input.expectedDescriptorSha256 = '0'.repeat(64); },
     f => { f.input.changes.pop(); },
     f => { f.input.productiveFiles[0].bytes = Buffer.from('changed'); },

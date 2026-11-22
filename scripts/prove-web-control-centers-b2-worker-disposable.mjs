@@ -110,6 +110,7 @@ try {
     }
     eq(scalar(`select not has_function_privilege('anon','${signature}','EXECUTE') and has_function_privilege('authenticated','${signature}','EXECUTE') and has_function_privilege('service_role','${signature}','EXECUTE') and not exists(select 1 from aclexplode((select proacl from pg_proc where oid='${signature}'::regprocedure)) where grantee=0 and privilege_type='EXECUTE')`),'t','historical wrapper ACL restored before B2');
   }
+  sql(read('tests/fixtures/web-control-centers-b2-cron-stubs.sql'));
   sql(read('supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql'));
   const service = (source, allowFailure=false) => sql(`begin; set local role service_role; ${source}; commit;`, allowFailure);
   const serviceJson = source => JSON.parse(service(source).stdout.trim());

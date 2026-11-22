@@ -17,10 +17,11 @@ const names = ['ai-handoff', 'cleanup-stale-media-uploads', 'content-safety-scan
   'create-media-upload', 'finalize-media-upload', 'get-media-url',
   'process-scheduled-publications', 'video-semantic-index'];
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-// Frozen public candidate from 15197130; repository descriptor is now approved.
-// Parser candidate-state tests must not silently change when the live reference renews.
+// Frozen historical public candidate from 15197130.
+// Parser compatibility tests must not silently change with the live R2 candidate.
 const candidateFixture = new URL('./fixtures/nelyonB2CandidateDescriptor.json', import.meta.url);
 const bytes = () => readFileSync(candidateFixture);
+const currentBytes = () => readFileSync(descriptorPath);
 function parse(value = bytes(), digest = hash(value)) {
   assert.equal(typeof gate.parseB2ReleaseDescriptor, 'function', 'strict B2 descriptor parser is implemented');
   return gate.parseB2ReleaseDescriptor(value, digest);
@@ -32,7 +33,8 @@ function rewritten(mutate) {
   return Buffer.from(JSON.stringify(value));
 }
 function sourceInput() {
-  return { descriptorBytes: bytes(), expectedDescriptorSha256: hash(bytes()), affectedFunctions: names,
+  const descriptorBytes = currentBytes();
+  return { descriptorBytes, expectedDescriptorSha256: hash(descriptorBytes), affectedFunctions: names,
     productiveFiles: paths.map(path => ({ path, type: 'file', status: path === paths[0] || path === paths[1] ? 'M' : 'A',
       bytes: Buffer.from(readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')) })) };
 }
@@ -78,7 +80,6 @@ test('unknown and altered public semantics fail even with recomputed digests', (
     value => { value.private_authority.locator = 'SYNTHETIC_PRIVATE_MARKER'; },
     value => { value.contract.functions.pop(); },
     value => { value.contract.functions[6].verify_jwt = true; },
-    value => { value.contract.cron_activation = true; },
     value => { value.contract.finance_invariants.require_no_movement = false; },
     value => { value.contract.productive_changes[0].path = '../supabase/config.toml'; },
     value => { value.contract.functions[0].name = 'bdag-ledger'; },
@@ -120,6 +121,7 @@ test('source validation binds migration, config, shared bytes, exact closure and
 test('approved state requires all final bindings and protected inventory counts', () => {
   const approved = rewritten(value => {
     value.contract.state = 'approved'; value.contract.release_ready = true;
+    value.contract.cron_activation = true;
     value.contract.reviewed_source_sha = 'a'.repeat(40);
     value.contract.integration_base_sha = 'b'.repeat(40);
     value.contract.function_inventory = { before: 40, after: 41 };
@@ -128,6 +130,7 @@ test('approved state requires all final bindings and protected inventory counts'
   });
   const value = parse(approved);
   assert.equal(value.contract.state, 'approved');
+  assert.equal(value.contract.cron_activation, true);
   for (const mutate of [
     d => { d.private_authority.sha256 = null; },
     d => { d.contract.function_inventory.before = null; },
@@ -136,6 +139,7 @@ test('approved state requires all final bindings and protected inventory counts'
     d => { d.contract.functions[0].config_sha256 = null; },
     d => { d.contract.reviewed_source_sha = null; },
     d => { d.contract.integration_base_sha = null; },
+    d => { d.contract.cron_activation = false; },
   ]) {
     const changed = JSON.parse(approved); mutate(changed);
     changed.public_contract_sha256 = hash(gate.canonicalJson(changed.contract));
@@ -182,6 +186,7 @@ test('descriptor digests and source bindings reject arrays instead of coercing t
   ]) {
     denied(() => parse(rewritten(value => {
       value.contract.state = 'approved'; value.contract.release_ready = true;
+      value.contract.cron_activation = true;
       value.contract.reviewed_source_sha = 'a'.repeat(40); value.contract.integration_base_sha = 'b'.repeat(40);
       value.contract.function_inventory = { before: 40, after: 41 };
       value.contract.functions.forEach(item => { item.source_sha256 = 'c'.repeat(64); item.config_sha256 = 'd'.repeat(64); });
@@ -228,9 +233,10 @@ test('actual repository import graph yields the exact public eight-function clos
   assert.equal(gate.validateB2ReleaseDescriptorSources(input).contract.state, 'candidate');
 });
 
- test('current approved repository descriptor remains public data, not private execution authority',()=>{
+ test('current repository descriptor remains a fail-closed cron-enabled candidate',()=>{
   const current=readFileSync(descriptorPath);const value=parse(current,hash(current));
-  assert.equal(value.contract.state,'approved');assert.equal(value.contract.release_ready,true);
-  assert.match(value.private_authority.sha256,/^[a-f0-9]{64}$/);
+  assert.equal(value.contract.state,'candidate');assert.equal(value.contract.release_ready,false);
+  assert.equal(value.contract.cron_activation,true);
+  assert.equal(value.private_authority.sha256,null);
   assert.throws(()=>gate.compileB2PublicEvidence({descriptorBytes:current,expectedDescriptorSha256:hash(current)}),{code:'B2_DESCRIPTOR_INVALID'});
  });

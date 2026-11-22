@@ -1125,9 +1125,111 @@ grant execute on function public.claim_publication_schedules_v1(integer),public.
   public.confirm_publication_schedule_item_v1(uuid,bigint,uuid,integer,bigint,text,text,text),public.publish_publication_schedule_v1(uuid,bigint,uuid),
   public.fail_publication_schedule_v1(uuid,bigint,uuid,text,boolean),public.reconcile_publication_schedules_v1(integer) to service_role;
 
--- SOURCE-ONLY WAKE CONTRACT (no cron registration, secret, URL, or HTTP call):
--- Once per minute, the later authorized Edge wake calls reconcile(1), then
--- claim(1); process the returned fence via prepare -> copy -> confirm -> publish.
+-- Versioned B2 wake. It reuses the existing Vault-backed pg_net authority;
+-- no credential or project URL is embedded in migration bytes.
+do $dependency$
+begin
+  if pg_catalog.to_regprocedure('cron.schedule(text,text,text)') is null
+     or pg_catalog.to_regprocedure('cron.alter_job(bigint,text,text,text,text,boolean)') is null
+     or pg_catalog.to_regprocedure('net.http_post(text,jsonb,jsonb,jsonb,integer)') is null
+     or pg_catalog.to_regclass('vault.decrypted_secrets') is null then
+    raise exception using errcode='55000',message='publication_scheduler_dependency_missing';
+  end if;
+end;
+$dependency$;
+
+create or replace function public.wake_scheduled_publications_b2_v1()
+returns bigint
+language plpgsql
+security definer
+set search_path=''
+as $function$
+declare
+  v_project_url text;
+  v_publishable_key text;
+  v_dispatch_secret text;
+  v_request_id bigint;
+begin
+  select ds.decrypted_secret into v_project_url
+    from vault.decrypted_secrets ds where ds.name='call_dispatch_project_url' limit 1;
+  select ds.decrypted_secret into v_publishable_key
+    from vault.decrypted_secrets ds where ds.name='call_dispatch_publishable_key' limit 1;
+  select ds.decrypted_secret into v_dispatch_secret
+    from vault.decrypted_secrets ds where ds.name='call_dispatch_secret' limit 1;
+
+  if nullif(pg_catalog.btrim(v_project_url),'') is null
+     or nullif(pg_catalog.btrim(v_publishable_key),'') is null
+     or nullif(v_dispatch_secret,'') is null
+     or pg_catalog.octet_length(v_dispatch_secret)<32 then
+    raise exception using errcode='55000',message='publication_scheduler_secret_missing';
+  end if;
+
+  select net.http_post(
+    url:=pg_catalog.rtrim(v_project_url,'/')||'/functions/v1/process-scheduled-publications',
+    headers:=pg_catalog.jsonb_build_object(
+      'Content-Type','application/json',
+      'apikey',v_publishable_key,
+      'Authorization','Bearer '||v_publishable_key,
+      'x-scheduled-publications-secret',v_dispatch_secret
+    ),
+    body:='{}'::pg_catalog.jsonb,
+    timeout_milliseconds:=10000
+  ) into v_request_id;
+  return v_request_id;
+end;
+$function$;
+
+alter function public.wake_scheduled_publications_b2_v1() owner to postgres;
+revoke all on function public.wake_scheduled_publications_b2_v1()
+  from public,anon,authenticated,service_role;
+
+do $activation$
+declare
+  v_job_count integer;
+  v_job_id bigint;
+begin
+  lock table cron.job in share row exclusive mode;
+  select pg_catalog.count(*)::integer,pg_catalog.min(j.jobid)
+    into v_job_count,v_job_id
+    from cron.job j where j.jobname='process-scheduled-publications-b2';
+  if v_job_count>1 then
+    raise exception using errcode='55000',message='publication_scheduler_duplicate_job';
+  elsif v_job_count=0 then
+    select cron.schedule(
+      'process-scheduled-publications-b2',
+      '* * * * *',
+      'select public.wake_scheduled_publications_b2_v1()'
+    ) into v_job_id;
+  end if;
+
+  perform cron.alter_job(
+    v_job_id,
+    schedule:='* * * * *',
+    command:='select public.wake_scheduled_publications_b2_v1()',
+    database:=pg_catalog.current_database(),
+    username:='postgres',
+    active:=true
+  );
+
+  select pg_catalog.count(*)::integer into v_job_count
+    from cron.job j where j.jobname='process-scheduled-publications-b2';
+  if v_job_count<>1 or not exists(
+    select 1 from cron.job j
+      where j.jobid=v_job_id
+        and j.jobname='process-scheduled-publications-b2'
+        and j.schedule='* * * * *'
+        and j.command='select public.wake_scheduled_publications_b2_v1()'
+        and j.database=pg_catalog.current_database()
+        and j.username='postgres'
+        and j.active
+  ) then
+    raise exception using errcode='55000',message='publication_scheduler_activation_failed';
+  end if;
+end;
+$activation$;
+
+-- Once per minute, the authorized Edge wake calls reconcile(1), then claim(1);
+-- process the returned fence via prepare -> copy -> confirm -> publish.
 -- Copy may start only before claim_expires_at and must abort within 60 seconds.
 -- Provider writes must be conditional/idempotent at the returned target key,
 -- source-conditioned by source_etag. Before confirm, compute full-object SHA-256

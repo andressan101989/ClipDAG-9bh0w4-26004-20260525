@@ -624,13 +624,13 @@ test('B2 exact database source authority checks all role grants without expandin
   assert.throws(() => adapter.verifyB2DatabaseFunctionAuthority(rows, undefined, authorityContext), { code: 'B2_SNAPSHOT_AUTHORITY_INVALID' });
 });
 
-test('B2 neutral database normalizer accepts all 30 real signatures and rejects malformed or drifting authority', () => {
+test('B2 neutral database normalizer accepts all 31 real signatures and rejects malformed or drifting authority', () => {
   const matrix = b2DatabaseFunctionMatrix();
   assert.throws(() => adapter.normalizeRpcSecurityAttestations(matrix.rows), { code: 'RPC_SECURITY_ATTESTATION_FAILED' }, 'legacy public/authenticated policy stays intact');
   assert.equal(typeof adapter.normalizeB2DatabaseFunctionAttestations, 'function');
   const normalized = adapter.normalizeB2DatabaseFunctionAttestations([...matrix.rows].reverse());
   assert.deepEqual(normalized.items, matrix.sourceRows);
-  assert.equal(normalized.count, 30);
+  assert.equal(normalized.count, 31);
   assert.equal(normalized.sha256, hash(release.canonicalJson(matrix.sourceRows)));
   const f = fixture(); const authority = JSON.parse(f.options.authorityJson);
   authority.successorCatalog.records = matrix.records;

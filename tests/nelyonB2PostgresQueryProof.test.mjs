@@ -9,6 +9,7 @@ import {
 } from '../scripts/nelyon-production-snapshot-adapter.mjs';
 
 const proof = readFileSync(new URL('../scripts/prove-web-control-centers-b2-disposable.mjs', import.meta.url), 'utf8');
+const cronFixture = readFileSync(new URL('./fixtures/web-control-centers-b2-cron-stubs.sql', import.meta.url), 'utf8');
 
 test('B2 function identity SQL is independent of the session search path', () => {
   for (const query of [B2_CATALOG_SQL, RPC_SECURITY_ATTESTATION_SQL]) {
@@ -23,23 +24,28 @@ test('B2 function identity SQL is independent of the session search path', () =>
 });
 
 test('B2 disposable proof executes the three real adapter queries after an inert synthetic cron fixture', () => {
-  assert.equal(B2_DATABASE_FUNCTION_SCOPE.length, 30);
-  assert.equal(new Set(B2_DATABASE_FUNCTION_SCOPE).size, 30);
+  assert.equal(B2_DATABASE_FUNCTION_SCOPE.length, 31);
+  assert.equal(new Set(B2_DATABASE_FUNCTION_SCOPE).size, 31);
 
   assert.match(proof, /import\s*\{[\s\S]*\bB2_CATALOG_SQL\b[\s\S]*\bB2_DATABASE_FUNCTION_SCOPE\b[\s\S]*\bB2_RELATION_ACL_SQL\b[\s\S]*\bRPC_SECURITY_ATTESTATION_SQL\b[\s\S]*\}\s*from\s*['"]\.\/nelyon-production-snapshot-adapter\.mjs['"]/);
 
+  const syntheticCron = proof.indexOf("sql(read('tests/fixtures/web-control-centers-b2-cron-stubs.sql'))");
   const migration = proof.indexOf("sql(read('supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql'))");
-  const syntheticCron = proof.indexOf('create schema cron');
   const proofInvocation = proof.indexOf('runB2PostgresQueryProof();', migration);
-  const catalogQuery = proof.indexOf('${B2_CATALOG_SQL}', syntheticCron);
+  const catalogQuery = proof.indexOf('${B2_CATALOG_SQL}');
   const functionQuery = proof.indexOf('${RPC_SECURITY_ATTESTATION_SQL}', catalogQuery);
   const relationQuery = proof.indexOf('${B2_RELATION_ACL_SQL}', functionQuery);
+  assert.ok(syntheticCron >= 0, 'the proof must load its explicit inert cron fixture');
+  assert.ok(migration > syntheticCron, 'the B2 migration must execute after the inert cron fixture');
   assert.ok(migration >= 0, 'B2 migration must remain in the disposable lifecycle');
-  assert.ok(syntheticCron >= 0, 'the proof must create only its explicit synthetic cron shape');
   assert.ok(proofInvocation > migration, 'the query proof must execute after the B1 to B2 migration');
-  assert.ok(catalogQuery > syntheticCron, 'the exact catalog query must execute after the synthetic cron row exists');
+  assert.ok(catalogQuery >= 0, 'the proof must execute the exact catalog query');
   assert.ok(functionQuery > catalogQuery, 'the exact parameterized function query must execute without a copied SQL authority');
   assert.ok(relationQuery > functionQuery, 'the exact relation query must execute without a copied SQL authority');
+  assert.match(cronFixture, /create schema cron/);
+  assert.match(cronFixture, /create function cron\.schedule/);
+  assert.match(cronFixture, /create function cron\.alter_job/);
+  assert.match(cronFixture, /create function net\.http_post/);
   assert.match(proof, /executeB2AdapterQueries\('default'\)/,
     'the exact adapter queries must execute under the transport-default search path');
   assert.match(proof, /executeB2AdapterQueries\('empty'\)/,
@@ -48,7 +54,7 @@ test('B2 disposable proof executes the three real adapter queries after an inert
     'both search-path variants must return identical runtime-consumed rows');
 
   assert.match(proof, /synthetic-publication-query-proof/);
-  assert.match(proof, /active\s+boolean\s+not\s+null/);
+  assert.match(cronFixture, /active\s+boolean\s+not\s+null/);
   assert.match(proof, /'synthetic-publication-query-proof',[\s\S]*?false/);
   assert.match(proof, /pg_extension[\s\S]*?pg_cron/);
   assert.match(proof, /tableAclPrivileges\s*=\s*new Set\(\[[^\]]*'MAINTAIN'[^\]]*\]\)/,
