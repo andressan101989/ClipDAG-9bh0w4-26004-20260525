@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {mkdtempSync,writeFileSync,readFileSync,rmSync,mkdirSync,symlinkSync,linkSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
@@ -58,12 +59,22 @@ test('offline extended closure fixture still rejects old member sets and grants 
  const fixture=JSON.parse(readFileSync(new URL('./fixtures/nelyonB2ExplicitConnectionClosureCandidate.json',import.meta.url),'utf8'));
  assert.equal(fixture.fixture_only,true);assert.equal(fixture.deployment_authorized,false);
  const members=privateRuntimeClosureMemberPaths();
- const lf=bytes=>Buffer.from(bytes.toString('utf8').replaceAll('\r\n','\n'));
+ assert.deepEqual(fixture.current_local_closure.files.map(item=>item.path),members);
+ const exactBlob=relativePath=>{
+  const listing=execFileSync('git',['ls-tree','-z','HEAD','--',relativePath],{cwd:parent});
+  const match=/^[0-9]{6} blob ([0-9a-f]{40})\t([^\0]+)\0$/.exec(listing.toString('utf8'));
+  assert.ok(match);assert.equal(match[2],relativePath);
+  return execFileSync('git',['cat-file','blob',match[1]],{cwd:parent,maxBuffer:16*1024*1024});
+ };
+ const files=members.map(path=>({path,bytes:exactBlob(path)}));
+ for(const [index,file] of files.entries())assert.equal(hash(file.bytes),fixture.current_local_closure.files[index].sha256);
+ assert.deepEqual(buildPrivateRuntimeClosureFromExactBytes({files}),fixture.current_local_closure);
  for(const proposed of fixture.proposed_members){
-  assert.ok(members.includes(proposed.path));assert.equal(hash(lf(readFileSync(join(parent,proposed.path)))),proposed.sha256);
+  const current=fixture.current_local_closure.files.find(item=>item.path===proposed.path);
+  assert.ok(current);assert.equal(proposed.sha256,current.sha256);
  }
- const files=members.filter(path=>!fixture.proposed_members.some(item=>item.path===path)).map(path=>({path,bytes:readFileSync(join(parent,path))}));
- assert.throws(()=>buildPrivateRuntimeClosureFromExactBytes({files}),/private runtime closure rejected/);
+ const incomplete=files.filter(file=>!fixture.proposed_members.some(item=>item.path===file.path));
+ assert.throws(()=>buildPrivateRuntimeClosureFromExactBytes({files:incomplete}),/private runtime closure rejected/);
 });
 test('hermetic wrapper rejects missing executor before mint',async()=>{
  const {runB2HermeticConnection}=await import('../scripts/nelyon-b2-explicit-connection.mjs');

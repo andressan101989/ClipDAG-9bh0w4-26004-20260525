@@ -42,9 +42,9 @@
       {
         "path": "supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql",
         "status": "A",
-        "blob": "b87a0f4c1c1489b8f61dcbfcbdfa07b6aa643638",
-        "sha256": "9936d1d1f225c02bd4a1921e4cb095575dc473ba01b75b46a4e89ddafe2c507f",
-        "byte_length": 81032
+        "blob": "3bf7c3f6abc1698b5ac7f5d5d1f59c3f3f92fcbd",
+        "sha256": "51f2aa99076c1e67bd5e6e986116e3a74d4407728c1d8d979bcfd5ad6dcd3c51",
+        "byte_length": 81378
       }
     ],
     "functions": [
@@ -118,7 +118,7 @@
     "private_authority_max_bytes": 2097152,
     "requires_separate_baseline_promotion": true
   },
-  "public_contract_sha256": "5761851e072ced6afa486fbc82fe888a44cb278c45003e6a1113bcc33c262e1b",
+  "public_contract_sha256": "ad648a6442ea4ac799d84753a788751c1c9fed9a4156dfe4539d4a6a49b116cb",
   "private_authority": {
     "required": true,
     "schema_version": 1,
