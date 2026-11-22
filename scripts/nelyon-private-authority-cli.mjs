@@ -59,6 +59,7 @@ import {
   prepareB2AuthorityIssuance,
   prepareB2AuthorityPreissuanceFromVerifiedObservation,
   readB2ApprovedDescriptorMaterialization,
+  readB2AuthorityIssuanceDiagnostic,
   readB2AuthorityPreparationSummary,
 } from './nelyon-private-authority-issuer.mjs';
 import { createR2PrivateAuthorityPublisher } from './nelyon-private-authority-provider.mjs';
@@ -388,6 +389,39 @@ const KNOWN_CODES = new Set([
   'PRIVATE_AUTHORITY_CLEANUP_FAILED',
 ]);
 const SUCCESS = Object.freeze({ schemaVersion: 1, result: 'VERIFIED', releaseReady: false });
+const authorityIssuanceDiagnostics = new WeakMap();
+const AUTHORITY_ISSUANCE_CATEGORIES = new Set([
+  'OBSERVER_CONFIGURATION',
+  'OBSERVATION_AUTHENTICATION',
+  'AUTHORITY_PREPARATION',
+  'PUBLIC_IDENTITY',
+  'OWNER_APPROVAL',
+  'PUBLISHER_CONFIGURATION',
+  'AUTHORITY_BUILD_OR_RECEIPT',
+  'DESCRIPTOR_MATERIALIZATION',
+  'METADATA_WRITE',
+]);
+
+export function readAuthorityIssuanceDiagnostic(error) {
+  return authorityIssuanceDiagnostics.get(error) ?? readB2AuthorityIssuanceDiagnostic(error);
+}
+
+function closedAuthorityIssuanceError(category) {
+  if (!AUTHORITY_ISSUANCE_CATEGORIES.has(category)) throw new Error('invalid');
+  const error = new Error('Private authority operation blocked');
+  Object.defineProperty(error, 'code', { value: 'PRIVATE_AUTHORITY_STAGE_BLOCKED', enumerable: true });
+  Object.defineProperty(error, 'stack', { value: 'Error: Private authority operation blocked' });
+  authorityIssuanceDiagnostics.set(error, Object.freeze({ phase: 'AUTHORITY_ISSUANCE', category }));
+  return Object.freeze(error);
+}
+
+async function authorityIssuanceBoundary(category, operation) {
+  try { return await operation(); }
+  catch (error) {
+    if (readAuthorityIssuanceDiagnostic(error)) throw error;
+    throw closedAuthorityIssuanceError(category);
+  }
+}
 
 function arrayData(value) {
   if (!Array.isArray(value) || types.isProxy(value) || Object.getPrototypeOf(value) !== Array.prototype
@@ -1273,36 +1307,51 @@ export async function executeAuthorityIssuance({ invocation, environment, fetchI
   if (output !== expectedOutput || approvedDescriptorOutput !== expectedDescriptorOutput
     || approvedDescriptorOutput === output) throw new Error('blocked');
 
-  const observer = createB2AuthorityIssuanceGithubObserver({ fetchImpl,
-    githubToken: environmentText(environment, 'GITHUB_TOKEN', /^[\x21-\x7e]{1,2048}$/u),
-    repository: expectedRepository, workflowPath: expectedWorkflow, apiOrigin: 'https://api.github.com' });
-  const observation = await observer.authenticateObservation({ runId: inputs.observationRun, runAttempt: 1,
-    approvedSha, approvedTreeSha, expectedObservationSha256: inputs.observationSha256 });
-  const preparation = prepareB2AuthorityIssuance({ repositoryRoot: root, approvedSha, approvedTreeSha,
-    integrationBaseSha: B2_AUTHORITY_INTEGRATION_BASE_SHA, observation });
-  const summary = readB2AuthorityPreparationSummary(preparation);
-  if (summary.releaseId !== inputs.releaseId || summary.preissuanceSha256 !== inputs.releaseId.slice('b2-authority-'.length)) {
-    throw new Error('blocked');
-  }
-  const approval = await observer.authenticateOwnerApproval({ runId, runAttempt: 1, approvedSha,
-    approvedTreeSha, releaseId: inputs.releaseId, preissuanceSha256: summary.preissuanceSha256, observation });
-  if (environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_PROVIDER', /^r2$/u) !== 'r2') throw new Error('blocked');
-  const publisher = createR2PrivateAuthorityPublisher({
-    accountId: environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID', /^[0-9a-f]{32}$/u),
-    bucket: environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_R2_BUCKET', /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u),
-    accessKeyId: environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID', /^[\x21-\x7e]{1,512}$/u),
-    secretAccessKey: environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY', /^[\x21-\x7e]{1,512}$/u),
-    fetch: fetchImpl,
-    timeoutMs: 10_000,
+  const observer = await authorityIssuanceBoundary('OBSERVER_CONFIGURATION', async () =>
+    createB2AuthorityIssuanceGithubObserver({ fetchImpl,
+      githubToken: environmentText(environment, 'GITHUB_TOKEN', /^[\x21-\x7e]{1,2048}$/u),
+      repository: expectedRepository, workflowPath: expectedWorkflow, apiOrigin: 'https://api.github.com' }));
+  const observation = await authorityIssuanceBoundary('OBSERVATION_AUTHENTICATION', async () =>
+    observer.authenticateObservation({ runId: inputs.observationRun, runAttempt: 1,
+      approvedSha, approvedTreeSha, expectedObservationSha256: inputs.observationSha256 }));
+  const preparation = await authorityIssuanceBoundary('AUTHORITY_PREPARATION', async () =>
+    prepareB2AuthorityIssuance({ repositoryRoot: root, approvedSha, approvedTreeSha,
+      integrationBaseSha: B2_AUTHORITY_INTEGRATION_BASE_SHA, observation }));
+  const summary = await authorityIssuanceBoundary('PUBLIC_IDENTITY', async () => {
+    const prepared = readB2AuthorityPreparationSummary(preparation);
+    if (prepared.releaseId !== inputs.releaseId
+      || prepared.preissuanceSha256 !== inputs.releaseId.slice('b2-authority-'.length)) throw new Error('blocked');
+    return prepared;
   });
-  const receipt = await issueB2PrivateAuthority({ preparation, observation, approval, publisher, issuedAt: now() });
-  const issuedDescriptor = readB2ApprovedDescriptorMaterialization(receipt);
-  if (receipt.descriptor?.sha256 !== issuedDescriptor.sha256
-    || receipt.descriptor?.byteLength !== issuedDescriptor.byteLength
-    || receipt.descriptor?.path !== issuedDescriptor.path
-    || receipt.publicContractSha256 !== summary.publicContractSha256) throw new Error('blocked');
-  writeB2AuthorityIssuanceMetadata({ descriptorOutput: approvedDescriptorOutput, receiptOutput: output,
-    descriptorJson: issuedDescriptor.descriptorJson, receiptJson: `${canonicalJson(receipt)}\n` });
+  const approval = await authorityIssuanceBoundary('OWNER_APPROVAL', async () =>
+    observer.authenticateOwnerApproval({ runId, runAttempt: 1, approvedSha,
+      approvedTreeSha, releaseId: inputs.releaseId, preissuanceSha256: summary.preissuanceSha256, observation }));
+  const publisher = await authorityIssuanceBoundary('PUBLISHER_CONFIGURATION', async () => {
+    if (environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_PROVIDER', /^r2$/u) !== 'r2') {
+      throw new Error('blocked');
+    }
+    return createR2PrivateAuthorityPublisher({
+      accountId: environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID', /^[0-9a-f]{32}$/u),
+      bucket: environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_R2_BUCKET', /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u),
+      accessKeyId: environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID', /^[\x21-\x7e]{1,512}$/u),
+      secretAccessKey: environmentText(environment, 'NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY', /^[\x21-\x7e]{1,512}$/u),
+      fetch: fetchImpl,
+      timeoutMs: 10_000,
+    });
+  });
+  const receipt = await authorityIssuanceBoundary('AUTHORITY_BUILD_OR_RECEIPT', async () =>
+    issueB2PrivateAuthority({ preparation, observation, approval, publisher, issuedAt: now() }));
+  const issuedDescriptor = await authorityIssuanceBoundary('DESCRIPTOR_MATERIALIZATION', async () => {
+    const issuedDescriptor = readB2ApprovedDescriptorMaterialization(receipt);
+    if (receipt.descriptor?.sha256 !== issuedDescriptor.sha256
+      || receipt.descriptor?.byteLength !== issuedDescriptor.byteLength
+      || receipt.descriptor?.path !== issuedDescriptor.path
+      || receipt.publicContractSha256 !== summary.publicContractSha256) throw new Error('blocked');
+    return issuedDescriptor;
+  });
+  await authorityIssuanceBoundary('METADATA_WRITE', async () =>
+    writeB2AuthorityIssuanceMetadata({ descriptorOutput: approvedDescriptorOutput, receiptOutput: output,
+      descriptorJson: issuedDescriptor.descriptorJson, receiptJson: `${canonicalJson(receipt)}\n` }));
   return SUCCESS;
 }
 
@@ -1380,7 +1429,8 @@ export async function runPrivateAuthorityCli(argv, suppliedHost = productionHost
     return 0;
   } catch (error) {
     const code = sanitizedCode(error);
-    writeStatus(host, code, readPrivateAuthorityDiagnostic(error) ?? readSnapshotDiagnostic(error));
+    writeStatus(host, code, readAuthorityIssuanceDiagnostic(error)
+      ?? readPrivateAuthorityDiagnostic(error) ?? readSnapshotDiagnostic(error));
     return 2;
   }
 }
