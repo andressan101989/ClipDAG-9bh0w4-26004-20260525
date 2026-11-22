@@ -7,6 +7,7 @@ import {
   assertReadOnlySql,
   captureB2AuthorityObservation,
   normalizeB2EdgeSecretDigestInventory,
+  readSnapshotDiagnostic,
   verifyB2AuthorityObservation,
 } from '../scripts/nelyon-production-snapshot-adapter.mjs';
 
@@ -303,6 +304,30 @@ test('sensitive transport rejects auth, redirect, non-JSON and oversized respons
       fetchImpl: async url => url.pathname.endsWith('/database/backups') ? response(backupRows()) : makeFailure(),
     });
     await rejectsWithoutSensitiveSurface(options);
+  }
+});
+
+test('authority observation exposes only a bounded stage/category diagnostic for provider failures', async () => {
+  const options = captureOptions({
+    fetchImpl: async url => {
+      if (url.pathname.endsWith('/database/backups')) {
+        return response({ message: `denied ${EDGE_DIGEST}` }, 403);
+      }
+      throw new Error('provider request order escaped the backup boundary');
+    },
+  });
+  let captured;
+  await assert.rejects(() => captureB2AuthorityObservation(options), error => {
+    captured = error;
+    return true;
+  });
+  assert.deepEqual(readSnapshotDiagnostic(captured), {
+    phase: 'AUTHORITY_OBSERVATION',
+    category: 'BACKUP_READ_ACCESS_DENIED',
+  });
+  const surface = JSON.stringify(readSnapshotDiagnostic(captured));
+  for (const forbidden of [EDGE_DIGEST, 'denied', 'database/backups', 'synthetic-token-never-retained']) {
+    assert.equal(surface.includes(forbidden), false, forbidden);
   }
 });
 
