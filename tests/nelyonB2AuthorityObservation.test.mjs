@@ -82,10 +82,12 @@ function captureOptions(overrides = {}) {
     if (url.pathname.endsWith('/functions')) return response(functionRows());
     if (url.pathname.endsWith('/advisors/security')) return response(advisorRows());
     if (url.pathname.endsWith('/secrets')) return response(edgeRows());
-    if (url.pathname.endsWith('/database/query/read-only')) {
+    if (url.pathname.endsWith('/database/query')) {
       const payload = JSON.parse(init.body);
+      assert.deepEqual(Object.keys(payload).sort(), ['parameters', 'query', 'read_only']);
       assert.equal(payload.query, B2_VAULT_EDGE_PARITY_SQL);
       assert.deepEqual(payload.parameters, [NONCE.toString('hex')]);
+      assert.equal(payload.read_only, false);
       return response([{ snapshot: { schema_version: 1, complete: true, hmac_tag: TAG } }], 201);
     }
     throw new Error('unexpected request');
@@ -156,7 +158,7 @@ test('authority observation captures strict Advisor facts and current Edge inven
     `/v1/projects/${PROJECT_REF}/functions`,
     `/v1/projects/${PROJECT_REF}/advisors/security`,
     `/v1/projects/${PROJECT_REF}/secrets`,
-    `/v1/projects/${PROJECT_REF}/database/query/read-only`,
+    `/v1/projects/${PROJECT_REF}/database/query`,
     `/v1/projects/${PROJECT_REF}/secrets`,
   ]);
   assert.equal(observation.kind, 'nelyon-b2-authority-observation-v1');
@@ -327,6 +329,42 @@ test('authority observation exposes only a bounded stage/category diagnostic for
   });
   const surface = JSON.stringify(readSnapshotDiagnostic(captured));
   for (const forbidden of [EDGE_DIGEST, 'denied', 'database/backups', 'synthetic-token-never-retained']) {
+    assert.equal(surface.includes(forbidden), false, forbidden);
+  }
+});
+
+test('Vault parity uses only the fixed privileged SQL transport and hides provider failures', async () => {
+  const paths = [];
+  const options = captureOptions({
+    fetchImpl: async (url, init) => {
+      paths.push(url.pathname);
+      if (url.pathname.endsWith('/database/backups')) return response(backupRows());
+      if (url.pathname.endsWith('/functions')) return response(functionRows());
+      if (url.pathname.endsWith('/advisors/security')) return response(advisorRows());
+      if (url.pathname.endsWith('/secrets')) return response(edgeRows());
+      if (url.pathname.endsWith('/database/query')) {
+        const payload = JSON.parse(init.body);
+        assert.deepEqual(Object.keys(payload).sort(), ['parameters', 'query', 'read_only']);
+        assert.equal(payload.query, B2_VAULT_EDGE_PARITY_SQL);
+        assert.deepEqual(payload.parameters, [NONCE.toString('hex')]);
+        assert.equal(payload.read_only, false);
+        return response({ message: `permission denied ${EDGE_DIGEST}` }, 400);
+      }
+      throw new Error('unexpected request');
+    },
+  });
+  let captured;
+  await assert.rejects(() => captureB2AuthorityObservation(options), error => {
+    captured = error;
+    return true;
+  });
+  assert.equal(paths.some(value => value.endsWith('/database/query/read-only')), false);
+  assert.deepEqual(readSnapshotDiagnostic(captured), {
+    phase: 'AUTHORITY_OBSERVATION',
+    category: 'VAULT_PARITY_READ_INVALID',
+  });
+  const surface = JSON.stringify(readSnapshotDiagnostic(captured));
+  for (const forbidden of [EDGE_DIGEST, 'permission denied', 'database/query', NONCE.toString('hex')]) {
     assert.equal(surface.includes(forbidden), false, forbidden);
   }
 });
