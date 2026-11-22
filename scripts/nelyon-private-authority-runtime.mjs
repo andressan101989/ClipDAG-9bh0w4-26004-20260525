@@ -13,7 +13,13 @@ import {
   readTrustedB2RecoveryStagingFiles,
 } from './nelyon-b2-recovery-provenance.mjs';
 import { verifyPrivateRuntimeClosure } from './nelyon-private-runtime-closure.mjs';
-import { assertB2IntegratedSource, resolveB2HistoricalAuthority, validatePolicy, verifyRecoveryArtifactProvenance } from './nelyon-production-release.mjs';
+import {
+  assertB2IntegratedSource,
+  resolveB2HistoricalAuthority,
+  validatePolicy,
+  verifyB2VaultEdgeParity,
+  verifyRecoveryArtifactProvenance,
+} from './nelyon-production-release.mjs';
 import {
   assertAuthorityReceiptMatch,
   createReleaseAuthorityContext,
@@ -47,6 +53,7 @@ const ACTION_STAGE = Object.freeze({
   'authority-proof': 'authority_proof',
   'dryrun-migrations': 'migrations',
   'apply-migrations': 'migrations',
+  'deploy-functions': 'functions',
   revalidate: 'authority_proof',
   'preflight-release': 'authority_proof',
   'authorize-refresh': 'authority_proof',
@@ -86,6 +93,7 @@ const ACTION_INPUT_KEYS = Object.freeze({
   'authority-proof': COMMON_INPUT_KEYS,
   'dryrun-migrations': [...COMMON_INPUT_KEYS,'currentGate','preSnapshot','binaryPath','stageOutput'],
   'apply-migrations': [...COMMON_INPUT_KEYS,'currentGate','preSnapshot','binaryPath','stageOutput'],
+  'deploy-functions': [...COMMON_INPUT_KEYS,'currentGate','preSnapshot','binaryPath','stageOutput'],
   revalidate: [...COMMON_INPUT_KEYS, 'compilerSha256', 'remoteEvidence', 'stageOutput'],
   'preflight-release': [...COMMON_INPUT_KEYS, 'compilerSha256', 'remoteEvidence', 'stageOutput'],
   'authorize-refresh': [...COMMON_INPUT_KEYS, 'policySha256', 'compilerSha256', 'environmentEvidence',
@@ -766,8 +774,9 @@ export function createPrivateAuthorityRuntime(options) {
     let verification;
     try {
       let authorityContext;
-      const authorizationAt = runtime.now();
+      let authorizationAt;
       if (recoveryAction) {
+        authorizationAt = runtime.now();
         authorityContext = await resolveProtectedB2RecoveryAuthority({ bootstrapCapability: runtime.bootstrapCapability,
           environment: runtime.environment, recoveryRuntime: runtime.recoveryRuntime, fetchImpl: runtime.fetchImpl });
       } else {
@@ -781,6 +790,7 @@ export function createPrivateAuthorityRuntime(options) {
           authorityJson = textDecoder.decode(authorityBytes);
           if (!Buffer.from(authorityJson, 'utf8').equals(authorityBytes)) fail('PRIVATE_AUTHORITY_PROVIDER_INVALID');
         } catch { fail('PRIVATE_AUTHORITY_PROVIDER_INVALID'); }
+        authorizationAt = runtime.now();
         const contract = parsedDescriptor.contract;
         try {
           authorityContext = createReleaseAuthorityContext({ descriptorBytes,
@@ -788,6 +798,7 @@ export function createPrivateAuthorityRuntime(options) {
             baselineSha: contract.baseline_sha, reviewedSourceSha: contract.reviewed_source_sha,
             integrationBaseSha: contract.integration_base_sha, requestedAt: authorizationAt,
             authorityJson, expectedPrivateAuthoritySha256: config.authoritySha256 });
+          verifyB2VaultEdgeParity(authorityContext, authorizationAt);
         } catch { fail('RELEASE_AUTHORITY_CONTEXT_INVALID'); }
       }
       const receipt = publicAuthorityReceipt(authorityContext);

@@ -1,3 +1,4 @@
+import { syntheticVaultEdgeParity } from './fixtures/nelyonB2SyntheticVaultEdgeParity.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -134,6 +135,7 @@ function b2Authority(overrides = {}) {
       completedObservedAt: '2026-11-08T10:30:00.000Z',
       expiresAt: '2026-11-09T10:00:00.000Z',
     },
+    ...(Object.hasOwn(overrides, 'vaultEdgeParity') ? { vaultEdgeParity: overrides.vaultEdgeParity } : {}),
     approval: {
       schemaVersion: 1,
       decision: 'APPROVED',
@@ -159,6 +161,38 @@ function rejectedB2(text, expected = digest(typeof text === 'string' ? text : ''
     return true;
   });
 }
+
+test('legacy B2 authority retains no Vault/Edge observation, and current parity binds both fixed targets', () => {
+  const legacy = b2Authority();
+  assert.equal(Object.hasOwn(parseB2PrivateAuthority(legacy, digest(legacy), EXPECTED_AT).authority, 'vaultEdgeParity'), false);
+  const parity = syntheticVaultEdgeParity('2026-11-08T11:00:00.000Z');
+  const current = b2Authority({ vaultEdgeParity: parity });
+  const { authority } = parseB2PrivateAuthority(current, digest(current), EXPECTED_AT);
+  assert.deepEqual(authority.vaultEdgeParity, parity);
+  assert.ok(Object.isFrozen(authority.vaultEdgeParity.edge));
+  rejectedB2(current, digest(legacy));
+  rejectedB2(current, digest(current), parity.expiresAt);
+});
+
+test('B2 Vault/Edge parity rejects incomplete, rotated, misbound, stale and value-bearing observations', () => {
+  const parity = syntheticVaultEdgeParity('2026-11-08T11:00:00.000Z');
+  for (const invalid of [
+    true,
+    { ...parity, projectRef: 'other-project' },
+    { ...parity, functionName: 'other-function' },
+    { ...parity, vault: { ...parity.vault, secretName: 'other_name' } },
+    { ...parity, edge: { ...parity.edge, secretName: 'OTHER_NAME' } },
+    { ...parity, edge: { ...parity.edge, secretVersion: 'synthetic-rotated' } },
+    { ...parity, vault: { ...parity.vault, revision: '' } },
+    { ...parity, edge: { ...parity.edge, provisioningGeneration: '' } },
+    { ...parity, changeFreezeId: '' },
+    { ...parity, observedAt: '2026-11-08T11:00:00.001Z' },
+    { ...parity, expiresAt: '2026-11-08T13:00:00.001Z' },
+    { ...parity, expiresAt: parity.observedAt },
+    { ...parity, vault: { ...parity.vault, value: MARKER } },
+    { ...parity, edge: { ...parity.edge, fingerprint: MARKER } },
+  ]) rejectedB2(b2Authority({ vaultEdgeParity: invalid }));
+});
 
 test('B2 backup v2 binds insertion and observed COMPLETED state without claiming completion time', () => {
   const text = b2Authority();

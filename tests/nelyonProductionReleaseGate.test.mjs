@@ -7525,7 +7525,7 @@ test('workflow routes postcheck_recovery through exact source artifacts and no m
   assert.match(deploy, /name: Upload sanitized postcheck recovery evidence[\s\S]*name: nelyon-postcheck-recovery-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}[\s\S]*retention-days: 90/);
   const recoveryRegion = deploy.slice(deploy.indexOf('name: Download exact approved source release artifact'), deploy.indexOf('name: Upload sanitized postcheck recovery evidence'));
   assert.doesNotMatch(recoveryRegion, /supabase\s+(?:db\s+push|migration|functions\s+deploy)|--phase\s+(?:pre|post)\b/);
-  for (const mutation of ['Set up pinned Supabase CLI', 'Verify exact remote migration dry-run', 'B2 protected migrations', 'Deploy each exact manifest function', 'Require postcheck before release success']) {
+  for (const mutation of ['Set up pinned Supabase CLI', 'Verify exact remote migration dry-run', 'B2 protected migrations', 'B2 protected functions', 'Require postcheck before release success']) {
     const index = deploy.indexOf(`name: ${mutation}`);
     assert.ok(index > 0);
     assert.match(deploy.slice(index, index + 260), /if:.*mode == 'release'/s);
@@ -7538,7 +7538,7 @@ test('release path revalidates before secrets and before every mutation', () => 
   const verifyGate = deploy.indexOf(' verify-gate ');
   const secretReference = deploy.indexOf('secrets.SUPABASE_ACCESS_TOKEN');
   const migration = deploy.indexOf('cli.mjs apply-migrations ');
-  const functions = deploy.indexOf('supabase functions deploy "$function_name"');
+  const functions = deploy.indexOf('cli.mjs deploy-functions ');
   const preflight = deploy.indexOf(' preflight-release ');
   const authorizeRefresh = deploy.indexOf(' authorize-refresh ');
   const fullGate = deploy.indexOf('name: Resolve protected private authority for release gate');
@@ -7557,11 +7557,13 @@ test('release path revalidates before secrets and before every mutation', () => 
   assert.match(migrationGate, /steps\.b2_migration_authority\.outcome == 'success'/);
   assert.match(migrationGate, /steps\.b2_migration_authority_cleanup\.outcome == 'success'/);
   assert.match(migrationGate, /cmp[^\n]*migration-receipt\.json/);
-  const functionStep = deploy.slice(deploy.indexOf('name: Deploy each exact manifest function'),
+  const functionStep = deploy.slice(deploy.indexOf('name: B2 protected functions'),
     deploy.indexOf('name: Verify independent private runtime closure before post-snapshot'));
-  assert.ok(functionStep.indexOf('verify-function-contract') < functionStep.indexOf('nelyon-private-authority-cli.mjs authority-proof'));
-  assert.ok(functionStep.indexOf('nelyon-private-authority-cli.mjs authority-proof') < functionStep.indexOf('supabase functions deploy "$function_name"'));
-  assert.match(deploy.slice(functions, functions + 220), /--use-api/);
+  assert.match(functionStep, /nelyon-private-authority-cli\.mjs deploy-functions/);
+  assert.doesNotMatch(functionStep, /supabase functions deploy|verify-function-contract|authority-proof/);
+  assert.match(functionStep, /Clean private authority scratch after protected functions/);
+  assert.match(functionStep, /Retain public B2 mutation attempt proofs even after failure/);
+  assert.match(readFileSync(new URL('../scripts/nelyon-b2-explicit-connection.mjs', import.meta.url), 'utf8'), /'--use-api'/);
   assert.match(deploy, /cli\.mjs dryrun-migrations/);
   assert.doesNotMatch(deploy, /supabase db push/);
   assert.match(deploy, /cli\.mjs apply-migrations/);

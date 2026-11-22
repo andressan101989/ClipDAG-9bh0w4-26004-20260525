@@ -21,15 +21,18 @@ import {
   createTrustedB2ReviewedTree,
 } from './nelyon-b2-source-parity.mjs';
 import { createHermeticMigrationWorkspace, readApprovedMigrationFiles } from './nelyon-b2-hermetic-workspace.mjs';
-import { createB2Executor, createB2HttpAdapter, runB2ProtectedDryRun, runB2ProtectedMigration } from './nelyon-b2-explicit-connection.mjs';
+import { createB2Executor, createB2HttpAdapter, runB2ProtectedDryRun, runB2ProtectedFunctions, runB2ProtectedMigration } from './nelyon-b2-explicit-connection.mjs';
 import { readTrustedB2HistoricalDescriptorBytes } from './nelyon-b2-recovery-provenance.mjs';
 import {
   canonicalJson,
+  b2HistoricalSnapshotBinding,
   sha256Hex,
   verifyB2IntegratedSource,
   verifyB2ProtectedAuthority,
   verifyB2HistoricalIntegratedSource,
+  verifyB2VaultEdgeParity,
   parseFunctionConfig,
+  verifyFunctionContractAtRepository,
   runCli as runReleaseCli,
   validatePolicy,
   verifyAdminRecoveryPostcheckChainProvenance,
@@ -49,6 +52,7 @@ const ACTIONS = new Set([
   'authorize-refresh',
   'dryrun-migrations',
   'apply-migrations',
+  'deploy-functions',
   'stage-b2-recovery-source',
   'revalidate',
   'verify-gate',
@@ -85,6 +89,7 @@ const ACTION_ADDITIONAL_FLAGS = Object.freeze({
   'authority-proof': {},
   'dryrun-migrations': { '--current-gate':'currentGate', '--pre-snapshot':'preSnapshot', '--binary-path':'binaryPath', '--stage-output':'stageOutput' },
   'apply-migrations': { '--current-gate':'currentGate', '--pre-snapshot':'preSnapshot', '--binary-path':'binaryPath', '--stage-output':'stageOutput' },
+  'deploy-functions': { '--current-gate':'currentGate', '--pre-snapshot':'preSnapshot', '--binary-path':'binaryPath', '--stage-output':'stageOutput' },
   'stage-b2-recovery-source': { '--recovery-source-run': 'recoverySourceRun' },
   'preflight-release': { '--compiler-sha256': 'compilerSha256', '--remote-evidence': 'remoteEvidence', '--stage-output': 'stageOutput' },
   'authorize-refresh': { '--policy-sha256': 'policySha256', '--compiler-sha256': 'compilerSha256',
@@ -488,9 +493,11 @@ async function historicalGitFile({ environment, fetchImpl, sourceSha, relativePa
   return bytes;
 }
 
-async function historicalSourceParity({ authorityContext, recoveryRuntime, environment, fetchImpl, functionRows, capturedAt }) {
-  const manifest = recoveryRuntime.verifiedSource.source_manifest;
-  const sourceSha = recoveryRuntime.verifiedSource.source_sha;
+async function historicalSourceParity({ authorityContext, recoveryRuntime, environment, fetchImpl, capturedAt }) {
+  const { manifest, edgeFunctions } = b2HistoricalSnapshotBinding({
+    verifiedSource: recoveryRuntime.verifiedSource, authorityContext,
+  });
+  const sourceSha = manifest.identity.approved_sha;
   const contracts = manifest.resources?.function_contracts;
   const expected = authorityContext.descriptor.contract.functions;
   if (!Array.isArray(contracts) || !Array.isArray(expected)) throw new Error('blocked');
@@ -505,12 +512,7 @@ async function historicalSourceParity({ authorityContext, recoveryRuntime, envir
   const reviewedTree = createTrustedB2ReviewedTree({ approvedSha: sourceSha, files,
     functionConfigs: expected.map(item => ({ name: item.name, config: config[item.name] })) });
   const deployedFunctionInventory = createTrustedB2DeployedFunctionInventory({ capturedAt,
-    functions: expected.map(item => {
-      const row = functionRows.find(candidate => (candidate.name ?? candidate.slug) === item.name);
-      const deployedSha256 = row?.ezbr_sha256 ?? row?.source_sha256;
-      if (typeof deployedSha256 !== 'string') throw new Error('blocked');
-      return { name: item.name, deployedSha256 };
-    }) });
+    functions: edgeFunctions.map(row => ({ name: row.slug, deployedSha256: row.ezbr_sha256 })) });
   return compileB2SourceParity({ authorityContext, manifest,
     integratedSource: verifyB2HistoricalIntegratedSource(recoveryRuntime),
     descriptorBytes: readTrustedB2HistoricalDescriptorBytes(recoveryRuntime.historicalRuntimeClosure,
@@ -628,7 +630,10 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
           ...(integratedSource ? { integratedSource } : {}),
           migrationBytes: readReviewedFile(repositoryRoot, authorityContext.descriptor.contract.productive_changes.at(-1).path) });
       }
-      if (action === 'authority-proof') return receipt;
+      if (action === 'authority-proof') {
+        verifyB2VaultEdgeParity(authorityContext, now);
+        return receipt;
+      }
       const policy = jsonBytes(publicInputs.policyBytes);
       const request = jsonBytes(publicInputs.requestBytes);
       const protectedB2Admin = adminRecoveryRequiresProtectedB2Runtime({ request, environment });
@@ -650,7 +655,7 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
           authorityContext: historicalAuthorityContext, chain });
         return receipt;
       }
-      if (['dryrun-migrations', 'apply-migrations'].includes(action)) {
+      if (['dryrun-migrations', 'apply-migrations', 'deploy-functions'].includes(action)) {
         // All inputs are authenticated controller state or protected step paths.
         // No JSON flag can supply source provenance, TLS policy, a binary pin or a clock.
         if (request.mode !== 'release' || typeof clock !== 'function' || typeof migrationExecFileImpl !== 'function') throw new Error('blocked');
@@ -665,6 +670,37 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
         const parent = realpathSync(environmentText(environment, 'RUNNER_TEMP', /^.{1,4096}$/u));
         const trustedProofRoot=path.join(parent,'nelyon-private-authority-public');
         if(path.dirname(output)!==trustedProofRoot) throw new Error('blocked');
+        if(action==='deploy-functions'){
+          const binary=realpathSync(inputs.binaryPath),stat=lstatSync(binary);
+          if(binary!==inputs.binaryPath||!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1
+            ||stat.size<1||stat.size>128*1024*1024||sha256Hex(readFileSync(binary))!==binarySha256)throw new Error('blocked');
+          const capturedAt=clock();
+          const currentRows=await deployedFunctionRows(environment,fetchImpl);
+          const inventory=inventoryFromRows(currentRows,capturedAt);
+          const guardedClock=()=>{const at=clock();verifyB2ProtectedAuthority({manifest,authorityContext,inventory,requestedAt:at});
+            verifyProductionPreSnapshot({pre,policy,request,manifest,authorityContext,
+              adapterSourceSha256:manifest.compiler.snapshot_adapter_sha256,requestedAt:at});return at;};
+          guardedClock();
+          const operation={request,manifest,policy,authorityContext,currentGate,backup:pre.backup,repositoryRoot,
+            trustedProofRoot,proofPath:path.join(trustedProofRoot,'protected-stage-proofs.json')};
+          const home=realpathSync(environmentText(environment,'RUNNER_TEMP',/^.{1,4096}$/u));
+          const token=environmentText(environment,'SUPABASE_ACCESS_TOKEN',/^[\x21-\x7e]{1,2048}$/u);
+          const execute=specification=>new Promise((resolve,reject)=>{
+            const s=specification;
+            if(s?.executable!==binary||s.cwd!==repositoryRoot||s.shell!==false||s.timeoutMs!==120000||s.maxBuffer!==1048576
+              ||!Array.isArray(s.args)||s.args.length!==6||s.args[0]!=='functions'||s.args[1]!=='deploy'
+              ||typeof s.args[2]!=='string'||s.args[3]!=='--project-ref'||s.args[4]!==policy.supabase.project_ref
+              ||s.args[5]!=='--use-api'
+              ||Object.keys(s.env??{}).join(',')!=='SUPABASE_ACCESS_TOKEN'||s.env.SUPABASE_ACCESS_TOKEN!==token)reject(new Error('blocked'));
+            else migrationExecFileImpl(binary,s.args,{cwd:repositoryRoot,env:{SUPABASE_ACCESS_TOKEN:token,HOME:home,USERPROFILE:home,
+              XDG_CONFIG_HOME:home,DO_NOT_TRACK:'1',SUPABASE_NO_UPDATE_NOTIFIER:'1',SUPABASE_TELEMETRY_DISABLED:'1'},shell:false,
+              windowsHide:true,timeout:120000,maxBuffer:1048576,encoding:'utf8'},error=>error?reject(new Error('blocked')):resolve({exitCode:0}));
+          });
+          const result=await runB2ProtectedFunctions({operation,now:guardedClock,connection:{projectRef:policy.supabase.project_ref,
+            binaryPath:binary,repositoryRoot,token,execute,verifyFunction:functionName=>verifyFunctionContractAtRepository({manifest,functionName,repositoryRoot})}});
+          writeFileSync(output,canonicalJson({schema_version:1,result:'FUNCTIONS_EXECUTED',manifest_sha256:sha256Hex(canonicalJson(manifest)),complete:result.complete,count:result.count}),{encoding:'utf8',flag:'wx'});
+          return receipt;
+        }
         const workspace = createHermeticMigrationWorkspace({parent, binaryPath:inputs.binaryPath, binarySha256, files});
         try {
           const capturedAt = clock();
@@ -699,7 +735,8 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
       }
       const offlineAuthorization = ['preflight-release', 'authorize-refresh'].includes(action);
       if (offlineAuthorization && (request.mode !== 'release' || Object.hasOwn(environment, 'SUPABASE_ACCESS_TOKEN'))) throw new Error('blocked');
-      const rows = ['preflight-release', 'authorize-refresh', 'revalidate-b2-recovery', 'revalidate-b2-admin-recovery', 'verify-b2-recovery-gate', 'verify-b2-admin-recovery-gate'].includes(action)
+      const rows = ['preflight-release', 'authorize-refresh', 'revalidate-b2-recovery', 'revalidate-b2-admin-recovery',
+        'verify-b2-recovery-gate', 'verify-b2-admin-recovery-gate', 'recovery-snapshot'].includes(action)
         ? [] : await deployedFunctionRows(environment, fetchImpl);
       const inventory = inventoryFromRows(rows, now);
       if (['preflight-release', 'authorize-refresh', 'revalidate', 'revalidate-b2-recovery', 'revalidate-b2-admin-recovery', 'verify-b2-recovery-gate', 'verify-b2-admin-recovery-gate', 'verify-gate', 'verify-pre-snapshot', 'postcheck', 'verify-recovery-source',
@@ -771,7 +808,7 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
           2 * 1024 * 1024).toString('utf8'));
         const recoveryAuthorization = { verifiedSource: recoveryRuntime.verifiedSource, currentGate };
         const sourceParity = await historicalSourceParity({ authorityContext, recoveryRuntime, environment,
-          fetchImpl, functionRows: rows, capturedAt: now });
+          fetchImpl, capturedAt: now });
         const recovery = await captureProductionSnapshot({ ...common, phase: 'recovery', sourceParity,
           recoveryAuthorization });
         const result = verifyProductionRecoverySnapshot({ ...common, recovery, recoveryAuthorization });

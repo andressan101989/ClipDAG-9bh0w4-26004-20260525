@@ -19,6 +19,12 @@ const assertPrivateOutputAbsent=result=>{assert.doesNotMatch((result.stdout??'')
 // All controller/helper code is real; only remote R2 and inventory transport is synthetic.
 for (const mode of ['gate_proof', 'release']) test(`${mode}: protected execution preserves authority and accepts authenticated workflow outputs`,async t=>{
   const f=integratedFixture(t,{mode});
+  const previousSupabaseAccessToken = process.env.SUPABASE_ACCESS_TOKEN;
+  if (mode === 'release') process.env.SUPABASE_ACCESS_TOKEN = 'SYNTHETIC_TOKEN_MARKER';
+  t.after(() => {
+    if (previousSupabaseAccessToken === undefined) delete process.env.SUPABASE_ACCESS_TOKEN;
+    else process.env.SUPABASE_ACCESS_TOKEN = previousSupabaseAccessToken;
+  });
   const runner=path.join(f.cwd,'runner');fs.mkdirSync(runner);
   const put=(name,value)=>{const p=path.join(runner,name);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,typeof value==='string'?value:json(value));return p;};
   const policy=put('policy.json',f.policy),request=put('request.json',f.request);
@@ -125,7 +131,7 @@ for (const mode of ['gate_proof', 'release']) test(`${mode}: protected execution
     if(mode==='release')for(const route of [
       ['initial','Revalidate protected release manifest after authorization','Resolve protected private authority before revalidation'],
       ['migration','Resolve protected private authority before migrations'],
-      ['functions','Revalidate protected release before functions','Deploy each exact manifest function'],
+      ['functions','Revalidate protected release before functions','B2 protected functions'],
     ])await t.test('workflow '+route[0]+' executes authenticated revalidation',async()=>{
       const blocks=workflow.split(/(?=^      - name: )/m);
       const block=blocks.find(b=>b.startsWith('      - name: '+route[1]+'\n'))??blocks.find(b=>b.startsWith('      - name: '+route[2]+'\n'));

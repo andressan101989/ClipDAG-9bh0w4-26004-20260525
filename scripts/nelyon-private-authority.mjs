@@ -265,9 +265,12 @@ export function parseB2PrivateAuthority(authorityJson, expectedSha256, requested
     if (!matchesString(expectedSha256, HEX_64)) reject();
     const requestedMillis = timestamp(requestedAt);
     const authority = boundedJson(authorityJson, true);
+    const hasVaultEdgeParity = Object.prototype.hasOwnProperty.call(authority, 'vaultEdgeParity');
     exactKeys(authority, [
       'schemaVersion', 'authorityId', 'publicContractSha256', 'phase', 'issuedFor',
-      'successorCatalog', 'securityAdvisor', 'backup', 'approval',
+      'successorCatalog', 'securityAdvisor', 'backup',
+      ...(hasVaultEdgeParity ? ['vaultEdgeParity'] : []),
+      'approval',
     ]);
     if (authority.schemaVersion !== 1) reject();
     boundedText(authority.authorityId, 1, 128);
@@ -305,6 +308,30 @@ export function parseB2PrivateAuthority(authorityJson, expectedSha256, requested
     if (backupInserted > backupObserved || backupExpires <= backupObserved
       || backupExpires - backupInserted > 86_400_000) reject();
 
+    let parityObserved = null;
+    if (hasVaultEdgeParity) {
+      exactKeys(authority.vaultEdgeParity, [
+        'schemaVersion', 'projectRef', 'functionName', 'vault', 'edge',
+        'changeFreezeId', 'observedAt', 'expiresAt',
+      ]);
+      exactKeys(authority.vaultEdgeParity.vault, ['secretName', 'revision', 'secretVersion']);
+      exactKeys(authority.vaultEdgeParity.edge, ['secretName', 'provisioningGeneration', 'secretVersion']);
+      const parity = authority.vaultEdgeParity;
+      const opaque = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(value);
+      parityObserved = timestamp(parity.observedAt);
+      const parityExpires = timestamp(parity.expiresAt);
+      if (parity.schemaVersion !== 1 || parity.projectRef !== 'aewwdlvbwpczqyvkwvvj'
+        || parity.functionName !== 'process-scheduled-publications'
+        || parity.vault.secretName !== 'call_dispatch_secret'
+        || parity.edge.secretName !== 'CALL_DISPATCH_SECRET'
+        || ![parity.vault.revision, parity.vault.secretVersion,
+          parity.edge.provisioningGeneration, parity.edge.secretVersion,
+          parity.changeFreezeId].every(opaque)
+        || parity.vault.secretVersion !== parity.edge.secretVersion
+        || parityExpires <= parityObserved || parityExpires - parityObserved > 7_200_000
+        || parityObserved > requestedMillis || requestedMillis >= parityExpires) reject();
+    }
+
     exactKeys(authority.approval, [
       'schemaVersion', 'decision', 'scope', 'authorizationSha256', 'approvedAt', 'expiresAt',
     ]);
@@ -314,7 +341,8 @@ export function parseB2PrivateAuthority(authorityJson, expectedSha256, requested
       || !matchesString(authority.approval.authorizationSha256, HEX_64)) reject();
     const approvedAt = timestamp(authority.approval.approvedAt);
     const approvalExpires = timestamp(authority.approval.expiresAt);
-    if (backupObserved > approvedAt || approvedAt > requestedMillis
+    if (backupObserved > approvedAt || (parityObserved !== null && parityObserved > approvedAt)
+      || approvedAt > requestedMillis
       || requestedMillis >= backupExpires || requestedMillis >= approvalExpires) reject();
 
     const sha256 = createHash('sha256').update(authorityJson, 'utf8').digest('hex');

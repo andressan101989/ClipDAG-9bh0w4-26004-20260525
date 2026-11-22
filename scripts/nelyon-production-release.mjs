@@ -2855,6 +2855,19 @@ function b2AuthorityReject() {
   throw Object.freeze(error);
 }
 
+export function verifyB2VaultEdgeParity(authorityContext, requestedAt) {
+  publicAuthorityReceipt(authorityContext);
+  const parity=authorityContext.privateAuthority.vaultEdgeParity;
+  b2Exact(parity,['schemaVersion','projectRef','functionName','vault','edge','changeFreezeId','observedAt','expiresAt']);
+  b2Exact(parity.vault,['secretName','revision','secretVersion']);
+  b2Exact(parity.edge,['secretName','provisioningGeneration','secretVersion']);
+  const at=b2ProofTime(requestedAt);
+  if(parity.schemaVersion!==1||parity.projectRef!=='aewwdlvbwpczqyvkwvvj'
+    ||parity.functionName!=='process-scheduled-publications'||parity.vault.secretName!=='call_dispatch_secret'
+    ||parity.edge.secretName!=='CALL_DISPATCH_SECRET'||parity.vault.secretVersion!==parity.edge.secretVersion
+    ||at<b2ProofTime(parity.observedAt)||at>=b2ProofTime(parity.expiresAt))b2AuthorityReject();
+}
+
 /** Protected callers supply a Task 2 minted context, never a candidate receipt. */
 export function verifyB2PreflightAuthority({ manifest, authorityContext, requestedAt }) {
   try {
@@ -2874,6 +2887,7 @@ export function verifyB2PreflightAuthority({ manifest, authorityContext, request
     // Only after WeakSet authentication may the non-enumerable private plane be
     // inspected. These values are compared in memory and never projected.
     const { backup, approval } = authorityContext.privateAuthority;
+    verifyB2VaultEdgeParity(authorityContext,requestedAt);
     if (operationTime < Date.parse(backup.completedObservedAt) || operationTime < Date.parse(approval.approvedAt)
       || operationTime >= Date.parse(backup.expiresAt) || operationTime >= Date.parse(approval.expiresAt)) b2AuthorityReject();
     const descriptor = parseB2ReleaseDescriptor(canonicalJson(authorityContext.descriptor), sha256Hex(canonicalJson(authorityContext.descriptor)));
@@ -4642,6 +4656,22 @@ export function verifyFunctionContracts({ manifest, graph, configBefore = {}, co
   };
 }
 
+/** Rebuild one approved Edge contract from the exact reviewed worktree and its
+ * declared baseline. The caller must already bind repositoryRoot to the
+ * integrated SHA; this helper performs no network access and no mutation. */
+export function verifyFunctionContractAtRepository({ manifest, functionName, repositoryRoot }) {
+  if (typeof repositoryRoot !== 'string' || !isAbsolute(repositoryRoot)
+    || typeof functionName !== 'string' || !functionName) {
+    deny('FUNCTION_CONTRACT_MISMATCH', 'reviewed function inputs are incomplete');
+  }
+  const configAfter = parseFunctionConfig(readFileSync(join(repositoryRoot, 'supabase', 'config.toml'), 'utf8'));
+  const configBefore = parseFunctionConfig(execFileSync('git', [
+    'show', `${manifest?.baseline?.sha}:supabase/config.toml`,
+  ], { cwd: repositoryRoot, env: gitChildEnvironment(), stdio: 'pipe', encoding: 'utf8' }));
+  const graph = buildFunctionGraph(collectFunctionSources(join(repositoryRoot, 'supabase', 'functions'), repositoryRoot));
+  return verifyFunctionContracts({ manifest, graph, configBefore, configAfter, functionName });
+}
+
 function isImmutableExternalSpecifier(specifier) {
   if (specifier.startsWith('node:')) return true;
   if (/^npm:(?:@[^/]+\/[^@/]+|[^@/]+)@\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\/.*)?$/.test(specifier)) return true;
@@ -6112,6 +6142,7 @@ function verifyB2CurrentBackup(options, bindApproved) {
 function verifyB2CurrentOperation(options) {
   const receipt = verifyB2CurrentGate(options);
   verifyB2CurrentBackup(options, !['postcheck_recovery', 'admin_recovery'].includes(options.request?.mode));
+  if(options.request?.mode==='release')verifyB2VaultEdgeParity(options.authorityContext,options.requestedAt);
   return receipt;
 }
 
@@ -6165,7 +6196,11 @@ export function b2HistoricalSnapshotBinding({ verifiedSource, authorityContext }
     const source = b2SourceState(verifiedSource);
     if (!source || b2HistoricalContexts.get(authorityContext) !== source) b2RecoveryReject();
     assertAuthorityReceiptMatch(publicAuthorityReceipt(authorityContext), source.proofs[0].receipt);
-    return { manifest: JSON.parse(canonicalJson(source.manifest)), requestedAt: source.proofs[0].verifiedAt };
+    return {
+      manifest: JSON.parse(canonicalJson(source.manifest)),
+      requestedAt: source.proofs[0].verifiedAt,
+      edgeFunctions: source.edgeFunctions.map(row => ({ ...row })),
+    };
   } catch { b2RecoveryReject(); }
 }
 
@@ -6255,9 +6290,9 @@ async function persistB2MutationProof({ trustedProofRoot, proofPath, request, cu
   }
 }
 
-/** Retain only the closed public migration-attempt proof, including after a
- * failed/indeterminate apply. This is evidence retention, never authorization
- * or an assertion that the operation succeeded. No private provider is read. */
+/** Retain only the closed public mutation-attempt proof prefix, including after
+ * a failed/indeterminate migration or Edge apply. This is evidence retention,
+ * never authorization or an assertion that either operation succeeded. */
 export function retainB2MigrationAttemptProof({trustedProofRoot,destinationDirectory,manifest,request,expectedReceipt}) {
   try {
     const source=join(trustedProofRoot,'protected-stage-proofs.json');
@@ -6267,20 +6302,24 @@ export function retainB2MigrationAttemptProof({trustedProofRoot,destinationDirec
     const fd=openSync(source,fsConstants.O_RDONLY|(fsConstants.O_NOFOLLOW??0));let bytes;
     try{if(!b2SameFile(stat,fstatSync(fd)))b2RecoveryReject();bytes=readFileSync(fd);}finally{closeSync(fd);}
     const proofs=JSON.parse(bytes.toString('utf8'));
-    if(!Array.isArray(proofs)||proofs.length!==1||canonicalJson(proofs)!==bytes.toString('utf8'))b2RecoveryReject();
+    if(!Array.isArray(proofs)||proofs.length<1||proofs.length>2||canonicalJson(proofs)!==bytes.toString('utf8'))b2RecoveryReject();
     assertAuthorityReceiptMatch(expectedReceipt,expectedReceipt);
-    const proof=proofs[0],identity=manifest?.identity,binding=manifest?.resources?.web_control_centers_b2_transition;
-    b2Exact(proof,['runId','runAttempt','releaseId','approvedSha','manifestSha256','stage','verifiedAt','receipt']);
-    if(!identity||!binding||proof.stage!=='migrations'||proof.runId!==String(request?.runId)
-      ||proof.runId!==identity.run_id||!/^[1-9][0-9]*$/.test(proof.runId)
-      ||proof.runAttempt!==request.runAttempt||proof.runAttempt!==identity.run_attempt||!Number.isSafeInteger(proof.runAttempt)||proof.runAttempt<1
-      ||proof.releaseId!==request.releaseId||proof.releaseId!==identity.release_id||!/^nelyon-[0-9]{8}-[0-9]{3}$/.test(proof.releaseId)
-      ||proof.approvedSha!==request.approvedSha||proof.approvedSha!==identity.approved_sha||!/^[a-f0-9]{40}$/.test(proof.approvedSha)
-      ||proof.manifestSha256!==sha256Hex(canonicalJson(manifest))
-      ||proof.receipt.descriptorSha256!==binding.descriptorSha256
-      ||proof.receipt.privateAuthoritySha256!==binding.expectedPrivateAuthoritySha256
-      ||proof.receipt.publicContractSha256!==binding.publicContractSha256)b2RecoveryReject();
-    b2ProofTime(proof.verifiedAt);assertAuthorityReceiptMatch(expectedReceipt,proof.receipt);
+    const identity=manifest?.identity,binding=manifest?.resources?.web_control_centers_b2_transition;
+    if(!identity||!binding||canonicalJson(proofs.map(proof=>proof?.stage))!==canonicalJson(['migrations','functions'].slice(0,proofs.length)))b2RecoveryReject();
+    let previousTime=-Infinity;
+    for(const proof of proofs){
+      b2Exact(proof,['runId','runAttempt','releaseId','approvedSha','manifestSha256','stage','verifiedAt','receipt']);
+      if(proof.runId!==String(request?.runId)||proof.runId!==identity.run_id||!/^[1-9][0-9]*$/.test(proof.runId)
+        ||proof.runAttempt!==request.runAttempt||proof.runAttempt!==identity.run_attempt||!Number.isSafeInteger(proof.runAttempt)||proof.runAttempt<1
+        ||proof.releaseId!==request.releaseId||proof.releaseId!==identity.release_id||!/^nelyon-[0-9]{8}-[0-9]{3}$/.test(proof.releaseId)
+        ||proof.approvedSha!==request.approvedSha||proof.approvedSha!==identity.approved_sha||!/^[a-f0-9]{40}$/.test(proof.approvedSha)
+        ||proof.manifestSha256!==sha256Hex(canonicalJson(manifest))
+        ||proof.receipt.descriptorSha256!==binding.descriptorSha256
+        ||proof.receipt.privateAuthoritySha256!==binding.expectedPrivateAuthoritySha256
+        ||proof.receipt.publicContractSha256!==binding.publicContractSha256)b2RecoveryReject();
+      const verifiedAt=b2ProofTime(proof.verifiedAt);if(verifiedAt<previousTime)b2RecoveryReject();previousTime=verifiedAt;
+      assertAuthorityReceiptMatch(expectedReceipt,proof.receipt);
+    }
     const destination=join(destinationDirectory,'protected-stage-proofs.json');b2ProofRoot(destinationDirectory,destination);
     const existing=lstatSync(destination,{throwIfNoEntry:false});
     if(existing){if(!existing.isFile()||existing.isSymbolicLink()||existing.nlink!==1||!readFileSync(destination).equals(bytes))b2RecoveryReject();}
@@ -6453,9 +6492,16 @@ function verifyRecoveryArtifactProvenanceInternal({ source, run, artifacts, rele
   };
   if (b2Proof) {
     result.authorityReceipt = b2Proof.proofs[0].receipt;
-    // Copy before branding: mutation of caller JSON or output cannot replace
-    // the manifest, source time, or receipt used for historical resolution.
-    const verifiedState = JSON.parse(canonicalJson({ manifest, ...b2Proof, publicSource: result,
+    // Copy the manifest, source time, receipt, and deployed Edge attestations
+    // into the private state for this authenticated attempt.
+    const edgeFunctions = source.edge_functions.map(row => ({
+      slug: row.name,
+      ezbr_sha256: row.source_sha256,
+      status: row.status,
+      verify_jwt: row.verify_jwt,
+      version: row.version,
+    }));
+    const verifiedState = JSON.parse(canonicalJson({ manifest, ...b2Proof, edgeFunctions, publicSource: result,
       provenance: { runId: source.run_id, runAttempt: source.run_attempt, approvedSha: source.source_sha,
         repository: source.repository, workflow: run.path,
         authorizationSha256: trustedProvenance.authorizationSha256,

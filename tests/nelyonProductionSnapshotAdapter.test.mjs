@@ -1,3 +1,4 @@
+import { syntheticVaultEdgeParity } from './fixtures/nelyonB2SyntheticVaultEdgeParity.mjs';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash, randomUUID } from 'node:crypto';
@@ -4021,6 +4022,7 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
     backup: { schemaVersion: 2, provider: 'supabase', kind: 'physical', projectRefSha256: sha256(p.supabase.project_ref), evidenceSha256: sha256(canonicalJson(legacy.backup)),
       status: 'COMPLETED', insertedAt: legacy.backup.inserted_at, completedObservedAt: legacy.observed_at,
       expiresAt: new Date(Date.parse(legacy.backup.inserted_at) + 86_400_000).toISOString() },
+    vaultEdgeParity: syntheticVaultEdgeParity(legacy.observed_at),
     approval: { schemaVersion: 1, decision: 'APPROVED', scope: [c.to_phase], authorizationSha256: '5'.repeat(64),
       approvedAt: legacy.observed_at, expiresAt: '2026-10-13T11:00:00.000Z' } };
   const scheduleRelations = [
@@ -4358,7 +4360,11 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
     await assert.rejects(adapter.captureProductionSnapshot(postArgs), { code: 'B2_SNAPSHOT_AUTHORITY_INVALID' });
   }
   catalogMode = 'exact';
-  const historical = await b2HistoricalCapture({ manifest: m, request: request(), contextArgs, policy: p, at });
+  const historical = await b2HistoricalCapture({ manifest: m, request: request(), contextArgs, policy: p, at,
+    deployedFunctionRows: [
+      { slug: 'content-safety-scan', status: 'ACTIVE', version: 36, verify_jwt: true, ezbr_sha256: '7'.repeat(64) },
+      { slug: 'process-scheduled-publications', status: 'ACTIVE', version: 1, verify_jwt: true, ezbr_sha256: '8'.repeat(64) },
+    ] });
   const recoveryAt = '2026-10-14T12:00:01.000Z';
   const recoveryPolicy = structuredClone(p);
   // These synthetic RPC fixtures are already installed at the synthetic baseline.

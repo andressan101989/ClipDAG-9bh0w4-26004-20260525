@@ -1,3 +1,4 @@
+import { syntheticVaultEdgeParity } from './fixtures/nelyonB2SyntheticVaultEdgeParity.mjs';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
@@ -31,7 +32,7 @@ const canonicalJson = value => {
   return `${JSON.stringify(normalize(value))}\n`;
 };
 
-function authorityFixture() {
+function authorityFixture({ historical = false } = {}) {
   const contract = {
     id: 'synthetic-b2-runtime-v1',
     to_phase: 'web-control-centers-b2',
@@ -65,12 +66,14 @@ function authorityFixture() {
       projectRefSha256: '6'.repeat(64), evidenceSha256: '7'.repeat(64), status: 'COMPLETED',
       insertedAt: '2026-11-08T10:00:00.000Z', completedObservedAt: '2026-11-08T10:30:00.000Z', expiresAt: '2026-11-09T10:00:00.000Z',
     },
+    vaultEdgeParity: syntheticVaultEdgeParity('2026-11-08T11:00:00.000Z'),
     approval: {
       schemaVersion: 1, decision: 'APPROVED', scope: [contract.to_phase],
       authorizationSha256: '8'.repeat(64), approvedAt: '2026-11-08T11:00:00.000Z',
       expiresAt: '2026-11-09T11:00:00.000Z',
     },
   };
+  if (historical) delete authority.vaultEdgeParity;
   const authorityBytes = Buffer.from(JSON.stringify(authority), 'utf8');
   const authoritySha256 = hash(authorityBytes);
   const descriptor = {
@@ -395,21 +398,46 @@ test('unavailable/marker-bearing provider failures stay generic and create no ou
   assert.equal(existsSync(output), false);
 });
 
+test('an authenticated historical envelope without parity cannot dispatch a new authority proof', async () => {
+  const fixture = authorityFixture({ historical: true });
+  const runnerTemp = mkdtempSync(join(tmpdir(), 'nelyon-runtime-missing-parity-'));
+  const runtimeClosure = closure();
+  const env = environment(fixture, runtimeClosure, runnerTemp);
+  const counters = {};
+  const runtime = createPrivateAuthorityRuntime({
+    bootstrapCapability: await bootstrap(env), environment: env,
+    fetchImpl: r2Fetch(fixture.authorityBytes, []), now: () => AT,
+    host: hostFor(fixture, runtimeClosure, counters),
+  });
+  const output = join(runnerTemp, 'verification.json');
+  await assert.rejects(runtime.execute(invocation(output)));
+  assert.equal(counters.dispatch ?? 0, 0);
+  assert.equal(existsSync(output), false);
+});
+
 test('trusted clock is resampled after provider wait so an expired authority cannot reach dispatch', async () => {
   const fixture = authorityFixture();
   const runnerTemp = mkdtempSync(join(tmpdir(), 'nelyon-runtime-expiry-'));
   const runtimeClosure = closure();
   const counters = {};
-  const instants = [AT, '2026-11-10T12:00:00.000Z'];
+  const parityExpiresAt = JSON.parse(fixture.authorityBytes).vaultEdgeParity.expiresAt;
+  let clock = AT;
+  const calls = [];
+  const fetchFixture = r2Fetch(fixture.authorityBytes, calls);
   const env = environment(fixture, runtimeClosure, runnerTemp);
   const runtime = createPrivateAuthorityRuntime({
     bootstrapCapability: await bootstrap(env), environment: env,
-    fetchImpl: r2Fetch(fixture.authorityBytes, []),
-    now: () => instants.shift() ?? '2026-11-10T12:00:00.000Z',
+    fetchImpl: async request => {
+      const response = await fetchFixture(request);
+      if (request.method === 'GET') clock = parityExpiresAt;
+      return response;
+    },
+    now: () => clock,
     host: hostFor(fixture, runtimeClosure, counters),
   });
   const output = join(runnerTemp, 'verification.json');
   await assertClosedError(runtime.execute(invocation(output)), 'RELEASE_AUTHORITY_CONTEXT_INVALID');
+  assert.deepEqual(calls.map(call => call.method), ['HEAD', 'GET']);
   assert.equal(counters.dispatch ?? 0, 0);
   assert.equal(existsSync(output), false);
 });

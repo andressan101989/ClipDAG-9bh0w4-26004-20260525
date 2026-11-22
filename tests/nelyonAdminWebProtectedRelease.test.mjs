@@ -588,11 +588,11 @@ test('canonical Admin recovery is forward-only, source-bound, and never invokes 
   assert.match(workflow, /postcheck-admin-recovery/);
   assert.match(workflow, /nelyon-admin-recovery-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/);
   const apply = workflow.slice(
-    workflow.indexOf('- name: Apply exact manifest migrations'),
-    workflow.indexOf('- name: Deploy each exact manifest function'),
+    workflow.indexOf('- name: B2 protected migrations'),
+    workflow.indexOf('- name: B2 protected functions'),
   );
   const functions = workflow.slice(
-    workflow.indexOf('- name: Deploy each exact manifest function'),
+    workflow.indexOf('- name: B2 protected functions'),
     workflow.indexOf('- name: Capture immutable read-only production post-snapshot'),
   );
   assert.match(apply, /needs\.plan\.outputs\.mode == 'release'/);
