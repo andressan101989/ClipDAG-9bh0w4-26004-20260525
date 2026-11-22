@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createReleaseAuthorityContext, publicAuthorityReceipt } from '../scripts/nelyon-release-authority-context.mjs';
+import { captureB2AuthorityObservation } from '../scripts/nelyon-production-snapshot-adapter.mjs';
 import { syntheticVaultEdgeParity } from './fixtures/nelyonB2SyntheticVaultEdgeParity.mjs';
 
 const cliModule = await import('../scripts/nelyon-private-authority-cli.mjs').catch(error => {
@@ -545,6 +546,37 @@ test('production authority observation validates exact main identity and writes 
   } finally {
     rmSync(runnerTemp, { recursive: true, force: true });
   }
+});
+
+test('authority-observe bridges only trusted snapshot stage diagnostics to the terminal status', async () => {
+  let snapshotError;
+  await assert.rejects(() => captureB2AuthorityObservation({
+    approvedSha: '1'.repeat(40),
+    approvedTreeSha: '2'.repeat(40),
+    backupPolicy: { required_status: 'COMPLETED', require_physical: true, max_age_seconds: 86_400 },
+    fetchImpl: async () => new Response('{}', {
+      status: 403,
+      headers: { 'content-type': 'application/json' },
+    }),
+    now: () => '2026-11-22T09:00:00.000Z',
+    repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+    token: 'synthetic-token-never-retained',
+  }), error => {
+    snapshotError = error;
+    return true;
+  });
+  const host = trustedHost(async () => { throw snapshotError; });
+  const code = await runPrivateAuthorityCli(['authority-observe', ...OBSERVE], host);
+  assert.equal(code, 2);
+  assert.deepEqual(JSON.parse(host.stdout.read()), {
+    schemaVersion: 1,
+    result: 'BLOCKED',
+    releaseReady: false,
+    code: 'PRIVATE_AUTHORITY_STAGE_BLOCKED',
+    diagnostic: { phase: 'AUTHORITY_OBSERVATION', category: 'BACKUP_READ_ACCESS_DENIED' },
+  });
+  assert.equal(host.stderr.read(), 'DENY PRIVATE_AUTHORITY_STAGE_BLOCKED\n');
+  assert.doesNotMatch(host.stdout.read() + host.stderr.read(), /synthetic-token|database\/backups|https:/u);
 });
 
 test('unknown actions, duplicate/unknown flags, passthrough and private authority inputs fail before execute', async () => {

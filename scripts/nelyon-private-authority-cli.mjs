@@ -46,6 +46,7 @@ import {
 import {
   captureB2AuthorityObservation,
   captureProductionSnapshot,
+  readSnapshotDiagnostic,
   verifyB2AuthorityObservation,
   verifyProductionPreSnapshot,
   verifyProductionRecoverySnapshot,
@@ -1141,7 +1142,7 @@ export async function runPrivateAuthorityCli(argv, suppliedHost = productionHost
     return 0;
   } catch (error) {
     const code = sanitizedCode(error);
-    writeStatus(host, code, readPrivateAuthorityDiagnostic(error));
+    writeStatus(host, code, readPrivateAuthorityDiagnostic(error) ?? readSnapshotDiagnostic(error));
     return 2;
   }
 }

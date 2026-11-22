@@ -6689,6 +6689,29 @@ export function verifyB2AuthorityObservation(observation) {
   return observation;
 }
 
+const AUTHORITY_OBSERVATION_DIAGNOSTIC_PHASE = 'AUTHORITY_OBSERVATION';
+const AUTHORITY_OBSERVATION_TRANSPORT_CATEGORIES = new Set([
+  'ACCESS_DENIED',
+  'INVALID',
+  'TIMEOUT',
+  'UNAVAILABLE',
+]);
+
+async function authorityObservationStage(stage, operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    const inherited = readSnapshotDiagnostic(error);
+    const suffix = inherited
+      && ['TRANSPORT', 'RESPONSE_VALIDATION'].includes(inherited.phase)
+      && AUTHORITY_OBSERVATION_TRANSPORT_CATEGORIES.has(inherited.category)
+      ? inherited.category
+      : 'VALIDATION';
+    fail('AUTHORITY_OBSERVATION_STAGE_FAILED', 'authority observation stage failed',
+      AUTHORITY_OBSERVATION_DIAGNOSTIC_PHASE, `${stage}_${suffix}`);
+  }
+}
+
 export async function captureB2AuthorityObservation(options) {
   const { approvedSha, approvedTreeSha, backupPolicy, fetchImpl, repository, token } = options ?? {};
   const now = options?.now ?? (() => new Date().toISOString());
@@ -6711,51 +6734,72 @@ export async function captureB2AuthorityObservation(options) {
   let before;
   let after;
   try {
-    const backupResponse = await fixedRequest({ fetchImpl, token, path: `${base}/database/backups`, expectedStatus: 200,
-      timeoutMs: GET_TIMEOUT_MS, label: 'database backups' });
-    const functionsResponse = await fixedRequest({ fetchImpl, token, path: `${base}/functions`, expectedStatus: 200,
-      timeoutMs: GET_TIMEOUT_MS, label: 'Edge function inventory' });
-    const advisorsResponse = await fixedRequest({ fetchImpl, token, path: `${base}/advisors/security`, expectedStatus: 200,
-      timeoutMs: GET_TIMEOUT_MS, label: 'Security Advisor inventory' });
-    const functionInventory = normalizeB2AuthorityFunctionInventory(functionsResponse.body);
-    const securityAdvisor = normalizeB2AuthoritySecurityAdvisor(advisorsResponse.body);
-    const beforeResponse = await fixedRequest({ fetchImpl, token, path: `${base}/secrets`, expectedStatus: 200,
-      timeoutMs: GET_TIMEOUT_MS, label: 'Edge secret inventory', sensitive: true });
-    before = normalizeB2EdgeSecretDigestInventory(beforeResponse.body);
-    const generated = randomBytesImpl(32);
-    if (!(generated instanceof Uint8Array)) {
-      fail('INVALID_AUTHORITY_OBSERVATION', 'authority observation nonce is invalid');
-    }
-    try {
-      if (generated.byteLength !== 32) {
+    const backupResponse = await authorityObservationStage('BACKUP_READ', () => fixedRequest({ fetchImpl, token,
+      path: `${base}/database/backups`, expectedStatus: 200, timeoutMs: GET_TIMEOUT_MS, label: 'database backups' }));
+    const functionsResponse = await authorityObservationStage('FUNCTION_READ', () => fixedRequest({ fetchImpl, token,
+      path: `${base}/functions`, expectedStatus: 200, timeoutMs: GET_TIMEOUT_MS, label: 'Edge function inventory' }));
+    const advisorsResponse = await authorityObservationStage('ADVISOR_READ', () => fixedRequest({ fetchImpl, token,
+      path: `${base}/advisors/security`, expectedStatus: 200, timeoutMs: GET_TIMEOUT_MS,
+      label: 'Security Advisor inventory' }));
+    const functionInventory = await authorityObservationStage('FUNCTION_NORMALIZE',
+      () => normalizeB2AuthorityFunctionInventory(functionsResponse.body));
+    const securityAdvisor = await authorityObservationStage('ADVISOR_NORMALIZE',
+      () => normalizeB2AuthoritySecurityAdvisor(advisorsResponse.body));
+    const beforeResponse = await authorityObservationStage('EDGE_SECRET_PRE_READ', () => fixedRequest({ fetchImpl, token,
+      path: `${base}/secrets`, expectedStatus: 200, timeoutMs: GET_TIMEOUT_MS,
+      label: 'Edge secret inventory', sensitive: true }));
+    before = await authorityObservationStage('EDGE_SECRET_PRE_NORMALIZE',
+      () => normalizeB2EdgeSecretDigestInventory(beforeResponse.body));
+    await authorityObservationStage('NONCE_CREATE', () => {
+      const generated = randomBytesImpl(32);
+      if (!(generated instanceof Uint8Array)) {
         fail('INVALID_AUTHORITY_OBSERVATION', 'authority observation nonce is invalid');
       }
-      nonce = Buffer.from(generated);
-    } finally {
-      generated.fill(0);
-    }
-    const vaultResponse = await fixedRequest({ fetchImpl, token, path: `${base}/database/query/read-only`, method: 'POST',
+      try {
+        if (generated.byteLength !== 32) {
+          fail('INVALID_AUTHORITY_OBSERVATION', 'authority observation nonce is invalid');
+        }
+        nonce = Buffer.from(generated);
+      } finally {
+        generated.fill(0);
+      }
+    });
+    const vaultResponse = await authorityObservationStage('VAULT_PARITY_READ', () => fixedRequest({ fetchImpl, token,
+      path: `${base}/database/query/read-only`, method: 'POST',
       body: { query: B2_VAULT_EDGE_PARITY_SQL, parameters: [nonce.toString('hex')] }, expectedStatus: 201,
-      timeoutMs: SQL_TIMEOUT_MS, label: 'Vault parity observation', sensitive: true });
-    vaultTag = normalizeVaultParitySnapshot(vaultResponse.body);
-    expectedTag = createHmac('sha256', before.targetDigest).update(nonce).digest();
-    if (vaultTag.length !== expectedTag.length || !timingSafeEqual(vaultTag, expectedTag)) {
-      fail('VAULT_EDGE_PARITY_MISMATCH', 'Vault and Edge secret observations do not match');
-    }
-    const afterResponse = await fixedRequest({ fetchImpl, token, path: `${base}/secrets`, expectedStatus: 200,
-      timeoutMs: GET_TIMEOUT_MS, label: 'Edge secret inventory', sensitive: true });
-    after = normalizeB2EdgeSecretDigestInventory(afterResponse.body);
-    if (!sameEdgeSecretInventories(before, after)) {
-      fail('VAULT_EDGE_PARITY_ROTATED', 'Edge secret inventory changed during observation');
-    }
-    const completedObservedAt = now();
-    const completedMillis = canonicalObservationTimestamp(completedObservedAt);
-    if (completedMillis < Date.parse(startedAt)) {
-      fail('INVALID_AUTHORITY_OBSERVATION', 'authority observation ordering is invalid');
-    }
-    const selected = selectRecentCompletedBackup(backupResponse.body, completedObservedAt, backupPolicy);
-    const backupExpiresAt = new Date(Date.parse(selected.inserted_at) + backupPolicy.max_age_seconds * 1000).toISOString();
-    if (Date.parse(backupExpiresAt) <= completedMillis) fail('STALE_BACKUP', 'latest completed physical backup is stale');
+      timeoutMs: SQL_TIMEOUT_MS, label: 'Vault parity observation', sensitive: true }));
+    vaultTag = await authorityObservationStage('VAULT_PARITY_NORMALIZE',
+      () => normalizeVaultParitySnapshot(vaultResponse.body));
+    await authorityObservationStage('VAULT_PARITY_COMPARE', () => {
+      expectedTag = createHmac('sha256', before.targetDigest).update(nonce).digest();
+      if (vaultTag.length !== expectedTag.length || !timingSafeEqual(vaultTag, expectedTag)) {
+        fail('VAULT_EDGE_PARITY_MISMATCH', 'Vault and Edge secret observations do not match');
+      }
+    });
+    const afterResponse = await authorityObservationStage('EDGE_SECRET_POST_READ', () => fixedRequest({ fetchImpl, token,
+      path: `${base}/secrets`, expectedStatus: 200, timeoutMs: GET_TIMEOUT_MS,
+      label: 'Edge secret inventory', sensitive: true }));
+    after = await authorityObservationStage('EDGE_SECRET_POST_NORMALIZE',
+      () => normalizeB2EdgeSecretDigestInventory(afterResponse.body));
+    await authorityObservationStage('EDGE_SECRET_STABILITY', () => {
+      if (!sameEdgeSecretInventories(before, after)) {
+        fail('VAULT_EDGE_PARITY_ROTATED', 'Edge secret inventory changed during observation');
+      }
+    });
+    const { completedObservedAt, completedMillis } = await authorityObservationStage('COMPLETION_CLOCK', () => {
+      const completedObservedAt = now();
+      const completedMillis = canonicalObservationTimestamp(completedObservedAt);
+      if (completedMillis < Date.parse(startedAt)) {
+        fail('INVALID_AUTHORITY_OBSERVATION', 'authority observation ordering is invalid');
+      }
+      return { completedObservedAt, completedMillis };
+    });
+    const { selected, backupExpiresAt } = await authorityObservationStage('BACKUP_VALIDATE', () => {
+      const selected = selectRecentCompletedBackup(backupResponse.body, completedObservedAt, backupPolicy);
+      const backupExpiresAt = new Date(Date.parse(selected.inserted_at) + backupPolicy.max_age_seconds * 1000).toISOString();
+      if (Date.parse(backupExpiresAt) <= completedMillis) fail('STALE_BACKUP', 'latest completed physical backup is stale');
+      return { selected, backupExpiresAt };
+    });
     const backupEvidenceSha256 = sha256(canonicalJson({ projectRef: PRODUCTION_PROJECT_REF, backup: selected }));
     const observationId = sha256(canonicalJson({
       schemaVersion: 1, projectRef: PRODUCTION_PROJECT_REF, repository, approvedSha, approvedTreeSha,
@@ -6799,7 +6843,7 @@ export async function captureB2AuthorityObservation(options) {
       },
     };
     const observation = { ...unsigned, observationSha256: sha256(canonicalJson(unsigned)) };
-    return verifyB2AuthorityObservation(observation);
+    return await authorityObservationStage('OBSERVATION_VERIFY', () => verifyB2AuthorityObservation(observation));
   } finally {
     nonce?.fill(0);
     expectedTag?.fill(0);
