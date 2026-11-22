@@ -22,8 +22,9 @@ import {
 import { B2_DATABASE_FUNCTION_SCOPE } from '../scripts/nelyon-production-snapshot-adapter.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
-const reviewedImageId = 'sha256:80d7b27c3e8d77cfa7226eee9508671796da214781ff15a35b3670d7ad5ee453';
-const reviewedImage = `public.ecr.aws/supabase/postgres@${reviewedImageId}`;
+const reviewedImageIndexDigest = 'sha256:80d7b27c3e8d77cfa7226eee9508671796da214781ff15a35b3670d7ad5ee453';
+const reviewedImageId = 'sha256:2d3ac69ad5c95d81458cc93a6cc6c31a98dfa00cd28f88a0a9358d315e1c357a';
+const reviewedImage = `public.ecr.aws/supabase/postgres@${reviewedImageIndexDigest}`;
 const migration = { path: 'supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql',
   blob: '1'.repeat(40), sha256: '2'.repeat(64), byteLength: 81378 };
 const origin = { repository: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
@@ -160,8 +161,9 @@ test('strict public envelope verifiers accept the exact reviewed proof shapes wi
   for (const row of successor.records) assert.equal(hash(row.expectedCanonicalJson), row.expectedSha256);
 });
 
-test('proof envelopes reject every image platform and RepoDigest substitution', () => {
+test('proof envelopes reject image identity, platform and RepoDigest substitutions', () => {
   for (const [field, replacement] of [
+    ['imageId', reviewedImageIndexDigest],
     ['imageRepoDigest', 'public.ecr.aws/supabase/postgres@sha256:' + 'f'.repeat(64)],
     ['imageOs', 'windows'],
     ['imageArchitecture', 'arm64'],

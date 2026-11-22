@@ -12,8 +12,9 @@ const FORBIDDEN = new Set(['__proto__', 'prototype', 'constructor']);
 const postgresCatalogEvidenceValues = new WeakMap();
 const pgCronEvidenceValues = new WeakMap();
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const REVIEWED_POSTGRES_IMAGE_ID = 'sha256:80d7b27c3e8d77cfa7226eee9508671796da214781ff15a35b3670d7ad5ee453';
-const REVIEWED_POSTGRES_IMAGE = `public.ecr.aws/supabase/postgres@${REVIEWED_POSTGRES_IMAGE_ID}`;
+const REVIEWED_POSTGRES_IMAGE_INDEX_DIGEST = 'sha256:80d7b27c3e8d77cfa7226eee9508671796da214781ff15a35b3670d7ad5ee453';
+const REVIEWED_POSTGRES_IMAGE_ID = 'sha256:2d3ac69ad5c95d81458cc93a6cc6c31a98dfa00cd28f88a0a9358d315e1c357a';
+const REVIEWED_POSTGRES_IMAGE = `public.ecr.aws/supabase/postgres@${REVIEWED_POSTGRES_IMAGE_INDEX_DIGEST}`;
 const REVIEWED_PROOF_ENV_KEYS = Object.freeze(['COMSPEC', 'HOME', 'LANG', 'LC_ALL',
   'LOCALAPPDATA', 'PATH', 'PATHEXT', 'PROGRAMDATA', 'SystemRoot', 'TEMP', 'TMP', 'TMPDIR', 'TZ', 'USERPROFILE',
   'WINDIR']);

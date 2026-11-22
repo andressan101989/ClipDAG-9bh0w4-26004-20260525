@@ -5,8 +5,9 @@ import { posix, resolve, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const repository = resolve(import.meta.dirname, '..');
-const expectedImageId = 'sha256:80d7b27c3e8d77cfa7226eee9508671796da214781ff15a35b3670d7ad5ee453';
-const image = `public.ecr.aws/supabase/postgres@${expectedImageId}`;
+const expectedImageIndexDigest = 'sha256:80d7b27c3e8d77cfa7226eee9508671796da214781ff15a35b3670d7ad5ee453';
+const expectedImageId = 'sha256:2d3ac69ad5c95d81458cc93a6cc6c31a98dfa00cd28f88a0a9358d315e1c357a';
+const image = `public.ecr.aws/supabase/postgres@${expectedImageIndexDigest}`;
 const pullPolicy = process.env.NELYON_B2_REVIEWED_PROOF === '1' ? 'always' : 'never';
 const expectedDockerBin = process.platform === 'linux' ? '/usr/bin/docker'
   : process.platform === 'win32' ? 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe' : null;
