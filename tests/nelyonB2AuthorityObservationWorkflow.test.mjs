@@ -57,13 +57,17 @@ test('authority issuance is an isolated terminal owner-dispatch path with protec
 test('authority issuer verifies closure before scoped credentials and retains only a one-day sanitized receipt', () => {
   const issuer = job('authority-issue', 'plan');
   const closureStart = issuer.indexOf('- name: Verify protected private runtime closure before issuance');
+  const installStart = issuer.indexOf('- name: Install exact private runtime dependency without scripts before issuance');
   const issueStart = issuer.indexOf('- name: Issue exact immutable B2 private authority');
-  assert.ok(closureStart > 0 && issueStart > closureStart);
-  const closure = issuer.slice(closureStart, issueStart);
+  assert.ok(closureStart > 0 && installStart > closureStart && issueStart > installStart);
+  const closure = issuer.slice(closureStart, installStart);
   assert.match(closure, /NELYON_AUTHORITY_ISSUE_RUNTIME_BOOTSTRAP_BEGIN/u);
   assert.match(closure, /scripts\/nelyon-private-authority-issuer\.mjs/u);
   assert.deepEqual(bootstrapMembers(closure, 'ISSUE'), privateRuntimeClosureMemberPaths());
   assert.doesNotMatch(closure, /GITHUB_TOKEN|R2_ACCESS_KEY|R2_SECRET_ACCESS/u);
+  const installation = issuer.slice(installStart, issueStart);
+  assert.match(installation, /run:\s*npm ci --ignore-scripts/u);
+  assert.doesNotMatch(installation, /npm install|SUPABASE_ACCESS_TOKEN|GITHUB_TOKEN|R2_ACCESS_KEY|R2_SECRET_ACCESS/u);
   const credentialScope = issuer.slice(issueStart);
   for (const name of ['GITHUB_TOKEN', 'NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID',
     'NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY']) assert.match(credentialScope, new RegExp(`${name}:`, 'u'));
@@ -98,12 +102,14 @@ test('authority observation has the protected read-only environment and one scop
 test('authority observation verifies the independent protected runtime closure before receiving the Supabase token', () => {
   const observer = job('authority-observation', 'authority-issue');
   const closureStart = observer.indexOf('- name: Verify protected private runtime closure before observation');
+  const installStart = observer.indexOf('- name: Install exact private runtime dependency without scripts before observation');
   const captureStart = observer.indexOf('- name: Capture one sanitized B2 authority observation');
   const tokenStart = observer.indexOf('SUPABASE_ACCESS_TOKEN:');
   assert.ok(closureStart > 0, 'protected closure step missing');
-  assert.ok(captureStart > closureStart, 'capture must follow the protected closure proof');
+  assert.ok(installStart > closureStart, 'dependency installation must follow the protected closure proof');
+  assert.ok(captureStart > installStart, 'capture must follow exact dependency installation');
   assert.ok(tokenStart > captureStart, 'Supabase token must be scoped only after the protected closure proof');
-  const closureStep = observer.slice(closureStart, captureStart);
+  const closureStep = observer.slice(closureStart, installStart);
   assert.match(closureStep, /NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256:\s*\$\{\{ vars\.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 \}\}/u);
   assert.match(closureStep, /NELYON_AUTHORITY_OBSERVE_RUNTIME_BOOTSTRAP_BEGIN/u);
   assert.match(closureStep, /scripts\/nelyon-b2-function-deployment-proof\.mjs/u);
@@ -111,6 +117,9 @@ test('authority observation verifies the independent protected runtime closure b
   assert.match(closureStep, /timingSafeEqual/u);
   assert.doesNotMatch(closureStep, /SUPABASE_ACCESS_TOKEN/u);
   assert.deepEqual(bootstrapMembers(closureStep, 'OBSERVE'), privateRuntimeClosureMemberPaths());
+  const installation = observer.slice(installStart, captureStart);
+  assert.match(installation, /run:\s*npm ci --ignore-scripts/u);
+  assert.doesNotMatch(installation, /npm install|SUPABASE_ACCESS_TOKEN/u);
   assert.equal((observer.match(/NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256:\s*\$\{\{ vars\.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 \}\}/gu) ?? []).length, 1);
 });
 

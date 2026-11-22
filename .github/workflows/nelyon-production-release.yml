@@ -246,6 +246,9 @@ jobs:
           // NELYON_AUTHORITY_OBSERVE_RUNTIME_BOOTSTRAP_END
           NODE
 
+      - name: Install exact private runtime dependency without scripts before observation
+        run: npm ci --ignore-scripts
+
       - name: Capture one sanitized B2 authority observation
         id: authority_observation_capture
         env:
@@ -479,6 +482,9 @@ jobs:
           if (!equalDigest(closure.closure_sha256, process.env.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256)) reject();
           // NELYON_AUTHORITY_ISSUE_RUNTIME_BOOTSTRAP_END
           NODE
+
+      - name: Install exact private runtime dependency without scripts before issuance
+        run: npm ci --ignore-scripts
 
       - name: Issue exact immutable B2 private authority
         id: authority_issue_publish
