@@ -12,10 +12,12 @@ on:
     paths:
       - .github/workflows/nelyon-b2-oci-authority-validation.yml
       - scripts/nelyon-b2-authority-preparation.mjs
+      - scripts/nelyon-private-authority-issuer.mjs
       - scripts/prove-web-control-centers-b2-disposable.mjs
       - scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs
       - tests/nelyonB2AuthorityEvidenceProof.test.mjs
       - tests/nelyonB2AuthorityPreparation.test.mjs
+      - tests/nelyonB2AuthorityIssuer.test.mjs
       - tests/nelyonB2OciAuthorityValidationWorkflow.test.mjs
 
 permissions:
@@ -74,6 +76,9 @@ jobs:
       - name: Run fail-closed identity regressions
         shell: bash
         run: node --test tests/nelyonB2AuthorityPreparation.test.mjs tests/nelyonB2AuthorityEvidenceProof.test.mjs
+      - name: Run owner approval consistency regression
+        shell: bash
+        run: node --test --test-name-pattern="owner approval" tests/nelyonB2AuthorityIssuer.test.mjs
   docker-image-config-pg-cron-proof:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

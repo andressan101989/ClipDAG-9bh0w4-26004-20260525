@@ -11,10 +11,12 @@ const jobs = workflow.jobs;
 const expectedPaths = [
   '.github/workflows/nelyon-b2-oci-authority-validation.yml',
   'scripts/nelyon-b2-authority-preparation.mjs',
+  'scripts/nelyon-private-authority-issuer.mjs',
   'scripts/prove-web-control-centers-b2-disposable.mjs',
   'scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs',
   'tests/nelyonB2AuthorityEvidenceProof.test.mjs',
   'tests/nelyonB2AuthorityPreparation.test.mjs',
+  'tests/nelyonB2AuthorityIssuer.test.mjs',
   'tests/nelyonB2OciAuthorityValidationWorkflow.test.mjs',
 ];
 
@@ -42,7 +44,7 @@ test('workflow is PR-only, scoped to the corrective, and read-only', () => {
     /upload-artifact/u,
     /supabase/u,
     /wrangler/u,
-    /authority[_ -]?issue/iu,
+    /authority[_ -]issue\b/iu,
     /\bdeploy(?:ment)?\b/iu,
     /\bR2\b/u,
   ]) assert.doesNotMatch(serialized, forbidden);
@@ -98,6 +100,9 @@ test('OCI index proof runs the canonical real-Docker catalog proof and negative 
 
   const negative = step(job, 'Run fail-closed identity regressions');
   assert.equal(negative.run, 'node --test tests/nelyonB2AuthorityPreparation.test.mjs tests/nelyonB2AuthorityEvidenceProof.test.mjs');
+  const ownerApproval = step(job, 'Run owner approval consistency regression');
+  assert.equal(ownerApproval.run,
+    'node --test --test-name-pattern="owner approval" tests/nelyonB2AuthorityIssuer.test.mjs');
 });
 test('image config proof runs the canonical real-Docker pg_cron proof and negative contracts', () => {
   const job = jobs['docker-image-config-pg-cron-proof'];
