@@ -123,6 +123,7 @@ function jsonResponse(value) {
 }
 
 function fixture({ duplicate = false, issueCreatedAt = '2026-11-22T10:02:00Z', streamedArtifact = false,
+  issueRunStatusSequence = ['in_progress'], issueJobStatusSequence = ['in_progress'],
   observationActorId = OWNER_ID, issueActorId = OWNER_ID,
   repositoryOwnerIds = [OWNER_ID, OWNER_ID], approvedSha = SHA, approvedTreeSha = TREE } = {}) {
   const observed = observation({ approvedSha, approvedTreeSha });
@@ -150,6 +151,8 @@ function fixture({ duplicate = false, issueCreatedAt = '2026-11-22T10:02:00Z', s
   if (duplicate) history[50] = { ...history[50], display_title: releaseId };
   const calls = [];
   let repositoryReads = 0;
+  let issueRunReads = 0;
+  let issueJobReads = 0;
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(input);
     calls.push(`${url.pathname}${url.search}`);
@@ -159,7 +162,11 @@ function fixture({ duplicate = false, issueCreatedAt = '2026-11-22T10:02:00Z', s
       return jsonResponse({ owner: { login: 'andressan101989', id } });
     }
     if (url.pathname.endsWith(`/actions/runs/${OBSERVATION_RUN}/attempts/1`)) return jsonResponse(run(OBSERVATION_RUN));
-    if (url.pathname.endsWith(`/actions/runs/${ISSUE_RUN}/attempts/1`)) return jsonResponse(run(ISSUE_RUN, true));
+    if (url.pathname.endsWith(`/actions/runs/${ISSUE_RUN}/attempts/1`)) {
+      const status = issueRunStatusSequence[Math.min(issueRunReads, issueRunStatusSequence.length - 1)];
+      issueRunReads += 1;
+      return jsonResponse({ ...run(ISSUE_RUN, true), status, conclusion: null });
+    }
     if (url.pathname.endsWith(`/git/commits/${approvedSha}`)) {
       return jsonResponse({ sha: approvedSha, tree: { sha: approvedTreeSha } });
     }
@@ -168,11 +175,14 @@ function fixture({ duplicate = false, issueCreatedAt = '2026-11-22T10:02:00Z', s
         name: 'Observe fresh B2 backup and Vault/Edge parity', status: 'completed', conclusion: 'success',
         head_sha: approvedSha }],
     });
-    if (url.pathname.endsWith(`/actions/runs/${ISSUE_RUN}/attempts/1/jobs`)) return jsonResponse({
-      total_count: 1, jobs: [{ id: ISSUE_JOB_ID, run_id: Number(ISSUE_RUN), run_attempt: 1,
-        name: 'Issue immutable B2 private authority', status: 'in_progress', conclusion: null,
-        head_sha: approvedSha }],
-    });
+    if (url.pathname.endsWith(`/actions/runs/${ISSUE_RUN}/attempts/1/jobs`)) {
+      const status = issueJobStatusSequence[Math.min(issueJobReads, issueJobStatusSequence.length - 1)];
+      issueJobReads += 1;
+      return jsonResponse({ total_count: 1,
+        jobs: [{ id: ISSUE_JOB_ID, run_id: Number(ISSUE_RUN), run_attempt: 1,
+          name: 'Issue immutable B2 private authority', status, conclusion: null,
+          head_sha: approvedSha }] });
+    }
     if (url.pathname.endsWith(`/actions/runs/${OBSERVATION_RUN}/artifacts`)) return jsonResponse({ total_count: 1,
       artifacts: [{ id: ARTIFACT_ID, name: `nelyon-b2-authority-observation-${OBSERVATION_RUN}`,
         size_in_bytes: archive.length, digest: `sha256:${hash(archive)}`, expired: false,
@@ -195,6 +205,7 @@ function fixture({ duplicate = false, issueCreatedAt = '2026-11-22T10:02:00Z', s
     throw new Error(`unexpected ${url}`);
   };
   return { observed, preissuance, releaseId, fetchImpl, calls, archive,
+    issueRunReads: () => issueRunReads, issueJobReads: () => issueJobReads,
     setIssueReleaseId(value) { currentIssueReleaseId = value; history[0].display_title = value; } };
 }
 
@@ -219,6 +230,24 @@ test('authenticated observation and owner dispatch approval bind exact GitHub pr
   assert.equal(approval.triggeringActor.id, String(OWNER_ID));
   assert.equal(approval.jobId, String(ISSUE_JOB_ID));
   assert.ok(value.calls.some(call => call.includes('page=2')), 'complete workflow history was not paginated');
+});
+
+test('owner approval retries bounded transient GitHub run and job consistency without weakening validation', async () => {
+  const value = fixture({
+    issueRunStatusSequence: ['queued', 'in_progress', 'in_progress'],
+    issueJobStatusSequence: ['queued', 'in_progress'],
+  });
+  const observer = createB2AuthorityIssuanceGithubObserver({ fetchImpl: value.fetchImpl,
+    githubToken: 'github-token-not-retained', repository: REPOSITORY, workflowPath: WORKFLOW,
+    apiOrigin: 'https://api.github.com' });
+  const observed = await observer.authenticateObservation({ runId: OBSERVATION_RUN, runAttempt: 1,
+    approvedSha: SHA, approvedTreeSha: TREE, expectedObservationSha256: value.observed.observationSha256 });
+  const approved = await observer.authenticateOwnerApproval({ runId: ISSUE_RUN, runAttempt: 1,
+    approvedSha: SHA, approvedTreeSha: TREE, releaseId: value.releaseId,
+    preissuanceSha256: value.preissuance.preissuanceSha256, observation: observed });
+  assert.equal(readTrustedB2AuthorityApproval(approved, observed).runId, ISSUE_RUN);
+  assert.equal(value.issueRunReads(), 3);
+  assert.equal(value.issueJobReads(), 2);
 });
 
 test('owner approval is one-use and rejects a prior run with the deterministic preissuance release id', async () => {

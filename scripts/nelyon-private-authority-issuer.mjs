@@ -41,6 +41,8 @@ const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 16 * 1024 * 1024;
 const MAX_PAGES = 100;
 const PAGE_SIZE = 100;
+const OWNER_APPROVAL_READ_ATTEMPTS = 3;
+const OWNER_APPROVAL_READ_DELAY_MS = 250;
 const observationCapabilities = new WeakMap();
 const approvalCapabilities = new WeakMap();
 const preparationCapabilities = new WeakMap();
@@ -370,33 +372,44 @@ export function createB2AuthorityIssuanceGithubObserver(options) {
         || input.approvedTreeSha !== observation.observation.approvedTreeSha
         || !HEX64.test(input.preissuanceSha256)
         || input.releaseId !== `b2-authority-${input.preissuanceSha256}`) reject();
-      const repository = await jsonRequest(fetchImpl, token, base);
-      const owner = plain(repository.owner);
-      if (owner.login !== OWNER) reject();
-      const ownerId = positiveIntegerString(owner.id);
-      const run = await jsonRequest(fetchImpl, token, `${base}/actions/runs/${runId}/attempts/1`);
-      const runIdentity = validateIdentityRun(run, { runId, approvedSha: input.approvedSha,
-        completed: false, displayTitle: input.releaseId });
-      if (runIdentity.actor.login !== OWNER || runIdentity.triggeringActor.login !== OWNER
-        || runIdentity.actor.id !== ownerId || runIdentity.triggeringActor.id !== ownerId
-        || runIdentity.actor.login !== observation.actor.login
-        || runIdentity.triggeringActor.login !== observation.triggeringActor.login
-        || runIdentity.actor.id !== observation.actor.id
-        || runIdentity.triggeringActor.id !== observation.triggeringActor.id) reject();
-      const jobs = await paginate({ fetchImpl, token,
-        url: `${base}/actions/runs/${runId}/attempts/1/jobs`, field: 'jobs' });
-      const jobId = validateJob(jobs, { runId, name: 'Issue immutable B2 private authority',
-        approvedSha: input.approvedSha, completed: false });
-      const runs = await paginate({ fetchImpl, token,
-        url: `${base}/actions/workflows/nelyon-production-release.yml/runs?branch=main&event=workflow_dispatch&exclude_pull_requests=true`,
-        field: 'workflow_runs' });
-      const matching = runs.filter(item => item?.display_title === input.releaseId);
-      if (matching.length !== 1 || positiveIntegerString(matching[0].id) !== runId) reject();
-      const approvedAt = runIdentity.createdAt;
-      if (Date.parse(approvedAt) <= Date.parse(observation.observation.completedObservedAt)) reject();
-      const expiresAt = new Date(Math.min(Date.parse(observation.observation.backup.expiresAt),
-        Date.parse(observation.observation.vaultEdgeParity.expiresAt))).toISOString();
-      if (Date.parse(approvedAt) >= Date.parse(expiresAt)) reject();
+      let evidence;
+      for (let attempt = 1; attempt <= OWNER_APPROVAL_READ_ATTEMPTS; attempt += 1) {
+        try {
+          const repository = await jsonRequest(fetchImpl, token, base);
+          const owner = plain(repository.owner);
+          if (owner.login !== OWNER) reject();
+          const ownerId = positiveIntegerString(owner.id);
+          const run = await jsonRequest(fetchImpl, token, `${base}/actions/runs/${runId}/attempts/1`);
+          const runIdentity = validateIdentityRun(run, { runId, approvedSha: input.approvedSha,
+            completed: false, displayTitle: input.releaseId });
+          if (runIdentity.actor.login !== OWNER || runIdentity.triggeringActor.login !== OWNER
+            || runIdentity.actor.id !== ownerId || runIdentity.triggeringActor.id !== ownerId
+            || runIdentity.actor.login !== observation.actor.login
+            || runIdentity.triggeringActor.login !== observation.triggeringActor.login
+            || runIdentity.actor.id !== observation.actor.id
+            || runIdentity.triggeringActor.id !== observation.triggeringActor.id) reject();
+          const jobs = await paginate({ fetchImpl, token,
+            url: `${base}/actions/runs/${runId}/attempts/1/jobs`, field: 'jobs' });
+          const jobId = validateJob(jobs, { runId, name: 'Issue immutable B2 private authority',
+            approvedSha: input.approvedSha, completed: false });
+          const runs = await paginate({ fetchImpl, token,
+            url: `${base}/actions/workflows/nelyon-production-release.yml/runs?branch=main&event=workflow_dispatch&exclude_pull_requests=true`,
+            field: 'workflow_runs' });
+          const matching = runs.filter(item => item?.display_title === input.releaseId);
+          if (matching.length !== 1 || positiveIntegerString(matching[0].id) !== runId) reject();
+          const approvedAt = runIdentity.createdAt;
+          if (Date.parse(approvedAt) <= Date.parse(observation.observation.completedObservedAt)) reject();
+          const expiresAt = new Date(Math.min(Date.parse(observation.observation.backup.expiresAt),
+            Date.parse(observation.observation.vaultEdgeParity.expiresAt))).toISOString();
+          if (Date.parse(approvedAt) >= Date.parse(expiresAt)) reject();
+          evidence = Object.freeze({ runIdentity, jobId, approvedAt, expiresAt });
+          break;
+        } catch (error) {
+          if (attempt === OWNER_APPROVAL_READ_ATTEMPTS) throw error;
+          await new Promise(resolve => setTimeout(resolve, OWNER_APPROVAL_READ_DELAY_MS));
+        }
+      }
+      const { runIdentity, jobId, approvedAt, expiresAt } = evidence;
       const authorizationSha256 = digest(canonicalBytes({ schemaVersion: 1, releaseId: input.releaseId,
         preissuanceSha256: input.preissuanceSha256, observationSha256: observation.observation.observationSha256,
         observationRunId: observation.runId, observationJobId: observation.jobId,
