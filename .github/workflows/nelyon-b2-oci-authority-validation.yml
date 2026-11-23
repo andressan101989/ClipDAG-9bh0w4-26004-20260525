@@ -1,0 +1,124 @@
+name: Nelyon B2 OCI authority validation
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    paths:
+      - .github/workflows/nelyon-b2-oci-authority-validation.yml
+      - scripts/nelyon-b2-authority-preparation.mjs
+      - scripts/prove-web-control-centers-b2-disposable.mjs
+      - scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs
+      - tests/nelyonB2AuthorityEvidenceProof.test.mjs
+      - tests/nelyonB2AuthorityPreparation.test.mjs
+      - tests/nelyonB2OciAuthorityValidationWorkflow.test.mjs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nelyon-b2-oci-authority-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  docker-oci-index-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Set up exact Node runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.21.0'
+      - name: Verify exact PR head
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(node --version)" = "v24.21.0"
+      - name: Verify Docker engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(realpath /usr/bin/docker)" = "/usr/bin/docker"
+          test "$(stat -c '%u' /usr/bin/docker)" = "0"
+          mode="$(stat -c '%a' /usr/bin/docker)"
+          test $(( 8#$mode & 8#022 )) -eq 0
+          /usr/bin/docker version
+      - name: Run real Docker OCI index proof
+        shell: bash
+        env:
+          CI: 'true'
+          NO_COLOR: '1'
+          NELYON_B2_DOCKER_BIN: /usr/bin/docker
+          NELYON_B2_REVIEWED_PROOF: '1'
+        run: |
+          set -euo pipefail
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          node scripts/prove-web-control-centers-b2-disposable.mjs --authority-evidence 2>&1 | tee "$log"
+          grep -Fq 'B2_POSTGRES_CATALOG_CAPABILITY' "$log"
+      - name: Run fail-closed identity regressions
+        shell: bash
+        run: node --test tests/nelyonB2AuthorityPreparation.test.mjs tests/nelyonB2AuthorityEvidenceProof.test.mjs
+  docker-image-config-pg-cron-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Set up exact Node runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.21.0'
+      - name: Verify exact PR head
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(node --version)" = "v24.21.0"
+      - name: Verify Docker engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(realpath /usr/bin/docker)" = "/usr/bin/docker"
+          test "$(stat -c '%u' /usr/bin/docker)" = "0"
+          mode="$(stat -c '%a' /usr/bin/docker)"
+          test $(( 8#$mode & 8#022 )) -eq 0
+          /usr/bin/docker version
+      - name: Run real Docker image config and pg_cron proof
+        shell: bash
+        env:
+          CI: 'true'
+          NO_COLOR: '1'
+          NELYON_B2_DOCKER_BIN: /usr/bin/docker
+          NELYON_B2_REVIEWED_PROOF: '1'
+        run: |
+          set -euo pipefail
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          node scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs --authority-evidence 2>&1 | tee "$log"
+          grep -Fq 'B2_REAL_PG_CRON_CAPABILITY' "$log"
+      - name: Run fail-closed identity regressions
+        shell: bash
+        run: node --test tests/nelyonB2AuthorityPreparation.test.mjs tests/nelyonB2AuthorityEvidenceProof.test.mjs
