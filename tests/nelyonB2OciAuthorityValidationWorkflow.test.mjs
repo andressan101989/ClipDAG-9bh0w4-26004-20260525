@@ -72,6 +72,7 @@ test('each job is independent, pinned to the exact PR head, and uses minimal per
     assert.deepEqual(checkout.with, {
       ref: '${{ github.event.pull_request.head.sha }}',
       'persist-credentials': false,
+      'fetch-depth': 0,
     });
     assert.equal(setupNode.uses, 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1');
     assert.deepEqual(setupNode.with, { 'node-version': '24.21.0' });
