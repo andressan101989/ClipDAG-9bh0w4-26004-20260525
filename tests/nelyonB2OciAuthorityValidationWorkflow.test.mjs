@@ -114,15 +114,19 @@ test('OCI index proof runs the canonical real-Docker catalog proof and negative 
     'node --test --test-name-pattern="owner approval" tests/nelyonB2AuthorityIssuer.test.mjs');
   const install = step(job, 'Install exact dependencies without scripts');
   assert.equal(install.run, 'npm ci --ignore-scripts --no-audit --no-fund');
-  const transport = step(job, 'Run protected provider and issuance regressions');
+  const transport = step(job, 'Run protected provider and probe regressions');
+  const issuance = step(job, 'Run protected issuance diagnostics');
   assert.ok(job.steps.indexOf(install) < job.steps.indexOf(transport));
+  assert.ok(job.steps.indexOf(transport) < job.steps.indexOf(issuance));
   assert.deepEqual(transport.env, {
     CI: 'true',
     NO_COLOR: '1',
     NELYON_B2_DOCKER_BIN: '/usr/bin/docker',
   });
   assert.equal(transport.run,
-    'node --test tests/nelyonPrivateAuthorityProvider.test.mjs tests/nelyonPrivateAuthorityRuntime.test.mjs tests/nelyonPrivateAuthorityCli.test.mjs tests/nelyonPrivateAuthorityWorkflow.test.mjs tests/nelyonB2R2AccessProbeWorkflow.test.mjs tests/nelyonB2AuthorityIssuer.test.mjs');
+    'node --test --test-concurrency=1 tests/nelyonPrivateAuthorityProvider.test.mjs tests/nelyonPrivateAuthorityRuntime.test.mjs tests/nelyonPrivateAuthorityCli.test.mjs tests/nelyonPrivateAuthorityWorkflow.test.mjs tests/nelyonB2R2AccessProbeWorkflow.test.mjs');
+  assert.deepEqual(issuance.env, transport.env);
+  assert.equal(issuance.run, 'node --test tests/nelyonB2AuthorityIssuer.test.mjs');
 });
 test('image config proof runs the canonical real-Docker pg_cron proof and negative contracts', () => {
   const job = jobs['docker-image-config-pg-cron-proof'];
