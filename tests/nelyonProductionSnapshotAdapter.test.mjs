@@ -4145,11 +4145,52 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
       fetchImpl, ...overrides }), error => {
       assert.equal(error.code, 'B2_SNAPSHOT_AUTHORITY_INVALID');
       assert.equal(error.stack, 'Error: B2 snapshot authority rejected');
-      assert.deepEqual(adapter.readSnapshotDiagnostic(error), expected);
+      const diagnostic = adapter.readSnapshotDiagnostic(error);
+      assert.deepEqual(diagnostic, expected);
+      if (diagnostic) assert.equal(Object.isFrozen(diagnostic), true);
+      assert.equal(Object.hasOwn(error, 'diagnostic'), false);
       assert.doesNotMatch(JSON.stringify(error), /DIAGNOSTIC_SECRET_SENTINEL/);
+      assert.doesNotMatch(JSON.stringify(diagnostic), /DIAGNOSTIC_SECRET_SENTINEL|database\/|query|authorization|https:/i);
       return true;
     });
   };
+  const invalidMigrationFetch = async (url, options) => new URL(url).pathname.endsWith('/database/migrations')
+    ? jsonResponse([{ version: 'invalid', name: 'invalid' }])
+    : preFetch(url, options);
+  for (const [name, fetchImpl, category] of [
+    ['health', successfulFetch([], { health: [] }), 'HEALTH_NORMALIZATION'],
+    ['migration inventory', invalidMigrationFetch, 'MIGRATION_NORMALIZATION'],
+    ['backup inventory', successfulFetch([], { backups: [] }), 'BACKUP_NORMALIZATION'],
+    ['function inventory', successfulFetch([], { functions: [{}] }), 'FUNCTION_INVENTORY_NORMALIZATION'],
+    ['security advisors', successfulFetch([], { advisors: { lints: [{}] } }), 'SECURITY_ADVISOR_NORMALIZATION'],
+    ['finance snapshot', successfulFetch([], { finance: {} }), 'FINANCE_NORMALIZATION'],
+    ['cron snapshot', successfulFetch([], { cron: {} }), 'CRON_NORMALIZATION'],
+    ['RPC security', successfulFetch([], { rpcSecurity: [] }), 'RPC_SECURITY_NORMALIZATION'],
+    ['Premium state', successfulFetch([], { premiumState: {} }), 'PREMIUM_STATE_NORMALIZATION'],
+  ]) await t.test(`trusted ${name} validation exposes only its fixed stage`, () => captureFailure(fetchImpl,
+    { phase: 'PRE_SNAPSHOT_CAPTURE', category }));
+  const failedStage = new Error('DIAGNOSTIC_SECRET_SENTINEL');
+  const requestQuery = options => options?.body ? JSON.parse(options.body).query : '';
+  await t.test('generic finance read failure exposes only its fixed stage', () => captureFailure(
+    async (url, options) => requestQuery(options)?.includes('nelyon-finance-snapshot-v1')
+      ? Promise.reject(failedStage) : preFetch(url, options),
+    { phase: 'PRE_SNAPSHOT_CAPTURE', category: 'FINANCE_READ' }));
+  await t.test('generic inherited-function prestate read failure exposes only its fixed stage', () => captureFailure(
+    async (url, options) => {
+      const query = requestQuery(options);
+      const identities = query === adapter.RPC_SECURITY_ATTESTATION_SQL
+        ? JSON.parse(JSON.parse(options.body).parameters?.[0] ?? '[]') : [];
+      return identities.length === 5 ? Promise.reject(failedStage) : preFetch(url, options);
+    }, { phase: 'PRE_SNAPSHOT_CAPTURE', category: 'INHERITED_FUNCTION_PRESTATE_READ' }));
+  await t.test('generic public-relation prestate read failure exposes only its fixed stage', () => captureFailure(
+    async (url, options) => requestQuery(options)?.includes('nelyon-b2-relation-acl-v1')
+      ? Promise.reject(failedStage) : preFetch(url, options),
+    { phase: 'PRE_SNAPSHOT_CAPTURE', category: 'PUBLIC_RELATION_PRESTATE_READ' }));
+  await t.test('function inventory count drift has its own fixed prestate category', () => captureFailure(
+    async (url, options) => new URL(url).pathname.endsWith('/functions')
+      ? jsonResponse(preFunctionRows.slice(1)) : preFetch(url, options),
+    { phase: 'PRE_SNAPSHOT_CAPTURE', category: 'FUNCTION_INVENTORY_PRESTATE' }));
+  assert.equal(adapter.readSnapshotDiagnostic(failedStage), undefined);
   for (const status of [401, 403, 429, 500, 503]) {
     await captureFailure(async () => new Response('DIAGNOSTIC_SECRET_SENTINEL', { status }),
       { phase: 'TRANSPORT', category: [401, 403].includes(status) ? 'ACCESS_DENIED' : 'UNAVAILABLE' });
@@ -4174,7 +4215,8 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
   for (const error of [hostile, Object.assign(new Error('DIAGNOSTIC_SECRET_SENTINEL'), {
     name: 'AbortError', code: 'REMOTE_TIMEOUT', diagnostic: { phase: 'TRANSPORT', category: 'TIMEOUT' } }),
   new Proxy({}, { get() { inspected++; throw new Error('DIAGNOSTIC_SECRET_SENTINEL'); } })]) {
-    await captureFailure(async () => { throw error; }, undefined);
+    await captureFailure(async () => { throw error; },
+      { phase: 'PRE_SNAPSHOT_CAPTURE', category: 'HEALTH_READ' });
     assert.equal(adapter.readSnapshotDiagnostic(error), undefined);
   }
   for (const response of [{ status: 403, headers: new Headers() },
@@ -4182,7 +4224,8 @@ test('B2 pre capture preserves runner-local baseline checks and deserialized rec
       if (key === 'then') return undefined; // Promise resolution, not response inspection.
       inspected++; throw new Error('DIAGNOSTIC_SECRET_SENTINEL');
     } })]) {
-    await captureFailure(async () => response, undefined);
+    await captureFailure(async () => response,
+      { phase: 'PRE_SNAPSHOT_CAPTURE', category: 'HEALTH_READ' });
   }
   // Native data, not an overridden status getter, determines the diagnostic.
   await captureFailure(async () => Object.defineProperty(new Response(null, { status: 200 }), 'status', {
