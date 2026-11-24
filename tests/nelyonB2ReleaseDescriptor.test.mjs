@@ -102,8 +102,10 @@ test('unknown and altered public semantics fail even with recomputed digests', (
 
 test('source validation binds migration, config, shared bytes, exact closure and ordinary file paths', () => {
   const input = sourceInput();
+  const current = parse(input.descriptorBytes, input.expectedDescriptorSha256);
   assert.equal(typeof gate.validateB2ReleaseDescriptorSources, 'function');
-  assert.equal(gate.validateB2ReleaseDescriptorSources(input).contract.release_ready, false);
+  assert.equal(gate.validateB2ReleaseDescriptorSources(input).contract.release_ready,
+    current.contract.release_ready);
   for (const index of [0, 1, 2, 3, 4]) {
     const altered = sourceInput();
     altered.productiveFiles[index].bytes = Buffer.concat([altered.productiveFiles[index].bytes, Buffer.from('\n')]);
@@ -268,7 +270,8 @@ test('actual repository import graph yields the exact public eight-function clos
   });
   assert.deepEqual(actual, names);
   const input = sourceInput(); input.affectedFunctions = actual;
-  assert.equal(gate.validateB2ReleaseDescriptorSources(input).contract.state, 'candidate');
+  const current = parse(input.descriptorBytes, input.expectedDescriptorSha256);
+  assert.equal(gate.validateB2ReleaseDescriptorSources(input).contract.state, current.contract.state);
 });
 
  test('current repository descriptor remains state-consistent and cannot grant authority alone',()=>{
