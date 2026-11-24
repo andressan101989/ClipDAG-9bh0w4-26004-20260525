@@ -3249,6 +3249,47 @@ test('policy accepts the exact repository owner project modes and managed functi
   assert.equal(policy.environment.required_reviewer, null);
 });
 
+test('policy phase-binds B2 scheduler enrollment to the post-B2 baseline', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const b2Migration = '20261108061946_web_control_centers_b2_scheduled_publishing';
+  const scheduler = 'process-scheduled-publications';
+  const postB2 = structuredClone(policy);
+  postB2.baseline.latest_migration = b2Migration;
+  postB2.baseline.migration_count += 1;
+  postB2.supabase.managed_functions = [...MANAGED_FUNCTIONS, scheduler];
+  postB2.supabase.expected_remote_function_count = 35;
+
+  assert.equal(gate.validatePolicy(postB2), true);
+
+  const preB2WithScheduler = structuredClone(policy);
+  preB2WithScheduler.supabase.managed_functions.push(scheduler);
+  preB2WithScheduler.supabase.expected_remote_function_count = 35;
+  assertDenied(() => gate.validatePolicy(preB2WithScheduler), 'INVALID_MANAGED_FUNCTIONS');
+
+  const postB2WithoutScheduler = structuredClone(postB2);
+  postB2WithoutScheduler.supabase.managed_functions = [...MANAGED_FUNCTIONS];
+  assertDenied(() => gate.validatePolicy(postB2WithoutScheduler), 'INVALID_MANAGED_FUNCTIONS');
+
+  const postB2WithDuplicateScheduler = structuredClone(postB2);
+  postB2WithDuplicateScheduler.supabase.managed_functions = [
+    ...MANAGED_FUNCTIONS.slice(0, -1),
+    scheduler,
+    scheduler,
+  ];
+  assertDenied(() => gate.validatePolicy(postB2WithDuplicateScheduler), 'INVALID_MANAGED_FUNCTIONS');
+
+  const postB2WithHistoricalRemoteCount = structuredClone(postB2);
+  postB2WithHistoricalRemoteCount.supabase.expected_remote_function_count = 34;
+  assertDenied(() => gate.validatePolicy(postB2WithHistoricalRemoteCount), 'INVALID_REMOTE_FUNCTION_COUNT');
+});
+
+test('pre-B2 policy rejects the post-B2 remote function count before scheduler enrollment', async () => {
+  const { gate, policy } = await loadGateAndPolicy();
+  const invalid = structuredClone(policy);
+  invalid.supabase.expected_remote_function_count = 35;
+  assertDenied(() => gate.validatePolicy(invalid), 'INVALID_REMOTE_FUNCTION_COUNT');
+});
+
 test('policy binds the sole F2 managed-scope transition to immutable evidence and Finance OFF', async () => {
   const { gate, policy: installedPolicy } = await loadGateAndPolicy();
   const policy = asF3TransitionPolicy(installedPolicy);
