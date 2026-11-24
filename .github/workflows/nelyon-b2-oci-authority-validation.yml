@@ -91,13 +91,20 @@ jobs:
       - name: Run owner approval consistency regression
         shell: bash
         run: node --test --test-name-pattern="owner approval" tests/nelyonB2AuthorityIssuer.test.mjs
-      - name: Run protected provider and issuance regressions
+      - name: Run protected provider and probe regressions
         shell: bash
         env:
           CI: 'true'
           NO_COLOR: '1'
           NELYON_B2_DOCKER_BIN: /usr/bin/docker
-        run: node --test tests/nelyonPrivateAuthorityProvider.test.mjs tests/nelyonPrivateAuthorityRuntime.test.mjs tests/nelyonPrivateAuthorityCli.test.mjs tests/nelyonPrivateAuthorityWorkflow.test.mjs tests/nelyonB2R2AccessProbeWorkflow.test.mjs tests/nelyonB2AuthorityIssuer.test.mjs
+        run: node --test --test-concurrency=1 tests/nelyonPrivateAuthorityProvider.test.mjs tests/nelyonPrivateAuthorityRuntime.test.mjs tests/nelyonPrivateAuthorityCli.test.mjs tests/nelyonPrivateAuthorityWorkflow.test.mjs tests/nelyonB2R2AccessProbeWorkflow.test.mjs
+      - name: Run protected issuance diagnostics
+        shell: bash
+        env:
+          CI: 'true'
+          NO_COLOR: '1'
+          NELYON_B2_DOCKER_BIN: /usr/bin/docker
+        run: node --test tests/nelyonB2AuthorityIssuer.test.mjs
   docker-image-config-pg-cron-proof:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
