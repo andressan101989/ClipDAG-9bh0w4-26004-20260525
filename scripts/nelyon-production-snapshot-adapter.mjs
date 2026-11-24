@@ -6901,7 +6901,7 @@ export async function captureB2AuthorityObservation(options) {
       if (Date.parse(backupExpiresAt) <= completedMillis) fail('STALE_BACKUP', 'latest completed physical backup is stale');
       return { selected, backupExpiresAt };
     });
-    const backupEvidenceSha256 = sha256(canonicalJson({ projectRef: PRODUCTION_PROJECT_REF, backup: selected }));
+    const backupEvidenceSha256 = sha256(canonicalJson(selected));
     const observationId = sha256(canonicalJson({
       schemaVersion: 1, projectRef: PRODUCTION_PROJECT_REF, repository, approvedSha, approvedTreeSha,
       startedAt, completedObservedAt, backupEvidenceSha256,

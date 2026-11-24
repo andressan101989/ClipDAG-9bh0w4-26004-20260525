@@ -167,6 +167,8 @@ test('authority observation captures strict Advisor facts and current Edge inven
   assert.equal(observation.completedObservedAt, COMPLETED);
   assert.equal(observation.backup.status, 'COMPLETED');
   assert.equal(observation.backup.insertedAt, '2026-11-22T08:55:00.000Z');
+  assert.equal(observation.backup.evidenceSha256,
+    '6b278832308faca2b20f53a91b2d7c943d1821508cb4e5e986dbe698adccd3df');
   assert.equal(observation.backup.completedObservedAt, COMPLETED);
   assert.equal(observation.vaultEdgeParity.schemaVersion, 2);
   assert.equal(observation.vaultEdgeParity.mechanism, 'supabase-vault-edge-nonce-hmac-sha256-v1');
