@@ -29,6 +29,100 @@ function b2SnapshotReject(source, phase, category) {
   if (diagnostic) snapshotDiagnostics.set(error, diagnostic);
   throw Object.freeze(error);
 }
+const B2_SNAPSHOT_CAPTURE_PHASES = Object.freeze({
+  pre: 'PRE_SNAPSHOT_CAPTURE',
+  post: 'POST_SNAPSHOT_CAPTURE',
+  recovery: 'RECOVERY_SNAPSHOT_CAPTURE',
+});
+const B2_SNAPSHOT_CAPTURE_CATEGORIES = new Set([
+  'AUTHORITY_BACKUP_BINDING',
+  'BACKUP_NORMALIZATION',
+  'CRON_NORMALIZATION',
+  'FINAL_PRE_SNAPSHOT_VERIFICATION',
+  'FINANCE_AUTHORITY_NORMALIZATION',
+  'FINANCE_AUTHORITY_READ',
+  'FINANCE_FACTS_NORMALIZATION',
+  'FINANCE_FACTS_READ',
+  'FINANCE_NORMALIZATION',
+  'FINANCE_READ',
+  'FUNCTION_INVENTORY_NORMALIZATION',
+  'FUNCTION_INVENTORY_PRESTATE',
+  'FUNCTION_INVENTORY_READ',
+  'HEALTH_NORMALIZATION',
+  'HEALTH_READ',
+  'INHERITED_FUNCTION_PRESTATE_READ',
+  'MIGRATION_NORMALIZATION',
+  'MIGRATION_READ',
+  'PREMIUM_STATE_READ',
+  'PREMIUM_STATE_NORMALIZATION',
+  'RPC_SECURITY_READ',
+  'RPC_SECURITY_NORMALIZATION',
+  'PUBLIC_RELATION_PRESTATE_READ',
+  'SECURITY_ADVISOR_READ',
+  'SECURITY_ADVISOR_NORMALIZATION',
+  'SECURITY_ADVISOR_PRESTATE',
+  'STORIES_B1_NORMALIZATION',
+  'STORIES_B1_READ',
+  'STORIES_QA_C1_NORMALIZATION',
+  'STORIES_QA_C1_READ',
+  'STORIES_SAFETY_C1_NORMALIZATION',
+  'STORIES_SAFETY_C1_READ',
+  'STORIES_SAFETY_C2_NORMALIZATION',
+  'STORIES_SAFETY_C2_READ',
+  'SUPERUSER_CONTROL_CENTER_NORMALIZATION',
+  'SUPERUSER_CONTROL_CENTER_READ',
+  'SUPERUSER_QA_PERF_C1_NORMALIZATION',
+  'SUPERUSER_QA_PERF_C1_READ',
+  'WEB_CONTROL_CENTERS_B1_NORMALIZATION',
+  'WEB_CONTROL_CENTERS_B1_READ',
+  'WEB_CONTROL_CENTERS_B1_QA_C3_NORMALIZATION',
+  'WEB_CONTROL_CENTERS_B1_QA_C3_READ',
+  'BACKUP_READ',
+  'CRON_READ',
+]);
+const B2_SNAPSHOT_READ_CATEGORIES = Object.freeze({
+  'Premium postcheck state': 'PREMIUM_STATE_READ',
+  'RPC security attestation': 'RPC_SECURITY_READ',
+  'Stories B1 fail-closed state': 'STORIES_B1_READ',
+  'Stories QA C1 authority state': 'STORIES_QA_C1_READ',
+  'Stories Safety C1 predecessor state': 'STORIES_SAFETY_C1_READ',
+  'Stories Safety C2 publish-first state': 'STORIES_SAFETY_C2_READ',
+  'Superuser Control Center authority state': 'SUPERUSER_CONTROL_CENTER_READ',
+  'Superuser QA PERF C1 authority state': 'SUPERUSER_QA_PERF_C1_READ',
+  'Web Control Centers B1 QA-C3 RPC state': 'WEB_CONTROL_CENTERS_B1_QA_C3_READ',
+  'Web Control Centers B1 authority state': 'WEB_CONTROL_CENTERS_B1_READ',
+  'cron snapshot': 'CRON_READ',
+  'database backups': 'BACKUP_READ',
+  'finance fact envelope': 'FINANCE_FACTS_READ',
+  'finance snapshot': 'FINANCE_READ',
+  'finance static authority': 'FINANCE_AUTHORITY_READ',
+  'function inventory': 'FUNCTION_INVENTORY_READ',
+  'migration inventory': 'MIGRATION_READ',
+  'project health': 'HEALTH_READ',
+  'security advisors': 'SECURITY_ADVISOR_READ',
+});
+function b2SnapshotCaptureStage(snapshotPhase, category, operation) {
+  const diagnosticPhase = B2_SNAPSHOT_CAPTURE_PHASES[snapshotPhase];
+  if (!diagnosticPhase || !B2_SNAPSHOT_CAPTURE_CATEGORIES.has(category)
+    || typeof operation !== 'function') b2SnapshotReject();
+  try {
+    return operation();
+  } catch (error) {
+    if (!snapshotErrors.has(error) || readSnapshotDiagnostic(error)) throw error;
+    b2SnapshotReject(error, diagnosticPhase, category);
+  }
+}
+async function b2SnapshotCaptureAsyncStage(snapshotPhase, category, operation) {
+  const diagnosticPhase = B2_SNAPSHOT_CAPTURE_PHASES[snapshotPhase];
+  if (!diagnosticPhase || !B2_SNAPSHOT_CAPTURE_CATEGORIES.has(category)
+    || typeof operation !== 'function') b2SnapshotReject();
+  try {
+    return await operation();
+  } catch (error) {
+    if (!snapshotErrors.has(error) || readSnapshotDiagnostic(error)) throw error;
+    b2SnapshotReject(error, diagnosticPhase, category);
+  }
+}
 const b2FreshCaptures = new WeakMap();
 const b2AdvisorCaptureBodies = new WeakMap();
 function isB2Snapshot(manifest, authorityContext) {
@@ -7734,9 +7828,11 @@ export async function captureProductionSnapshot(options) {
     if (sourceParity) b2ValidateSourceParity(sourceParity, authorityContext, historical?.manifest ?? manifest, requestedAt);
     const evidence = await captureLegacyProductionSnapshot({ ...options, observedAt: requestedAt });
     const authority = authorityContext.privateAuthority;
-    if (authority.backup.projectRefSha256 !== sha256(PRODUCTION_PROJECT_REF)
-      || (!historical && (authority.backup.insertedAt !== evidence.backup.inserted_at
-        || authority.backup.evidenceSha256 !== sha256(canonicalJson(evidence.backup))))) b2SnapshotReject();
+    b2SnapshotCaptureStage(phase, 'AUTHORITY_BACKUP_BINDING', () => {
+      if (authority.backup.projectRefSha256 !== sha256(PRODUCTION_PROJECT_REF)
+        || (!historical && (authority.backup.insertedAt !== evidence.backup.inserted_at
+          || authority.backup.evidenceSha256 !== sha256(canonicalJson(evidence.backup))))) b2SnapshotReject();
+    });
     if (historical) verifyB2RecoveryOperation({ recoveryRequest: request, recoveryManifest: manifest,
       ...options.recoveryAuthorization, authorityContext, policy, backup: evidence.backup, requestedAt });
     if (phase === 'pre') {
@@ -7744,22 +7840,29 @@ export async function captureProductionSnapshot(options) {
       if (!advisorBody) b2SnapshotReject();
       b2AdvisorCaptureBodies.delete(evidence);
       verifyB2AdvisorPrestate(advisorBody, authorityContext);
-      const inherited = await fixedRequest({ fetchImpl: options.fetchImpl ?? globalThis.fetch, token: options.token,
-        path: `/v1/projects/${PRODUCTION_PROJECT_REF}/database/query/read-only`, method: 'POST',
-        body: { query: RPC_SECURITY_ATTESTATION_SQL, parameters: [JSON.stringify(B2_INHERITED_FUNCTIONS)] },
-        expectedStatus: 201, timeoutMs: SQL_TIMEOUT_MS, label: 'B2 inherited function baseline' });
+      const inherited = await b2SnapshotCaptureAsyncStage(phase, 'INHERITED_FUNCTION_PRESTATE_READ', () =>
+        fixedRequest({ fetchImpl: options.fetchImpl ?? globalThis.fetch, token: options.token,
+          path: `/v1/projects/${PRODUCTION_PROJECT_REF}/database/query/read-only`, method: 'POST',
+          body: { query: RPC_SECURITY_ATTESTATION_SQL, parameters: [JSON.stringify(B2_INHERITED_FUNCTIONS)] },
+          expectedStatus: 201, timeoutMs: SQL_TIMEOUT_MS, label: 'B2 inherited function baseline' }));
       verifyB2InheritedFunctionPrestate(inherited.body, authorityContext);
       evidence.adapter.queries.push({ id: 'nelyon-b2-inherited-rpc-security-v1', sha256: sha256(RPC_SECURITY_ATTESTATION_SQL) });
       evidence.requests.push(inherited.receipt);
       assertReadOnlySql(B2_RELATION_ACL_SQL.replace(/'(?:''|[^'])*'/g, "''"));
-      const relations = await fixedRequest({ fetchImpl: options.fetchImpl ?? globalThis.fetch, token: options.token,
-        path: `/v1/projects/${PRODUCTION_PROJECT_REF}/database/query/read-only`, method: 'POST',
-        body: { query: B2_RELATION_ACL_SQL }, expectedStatus: 201, timeoutMs: SQL_TIMEOUT_MS, label: 'B2 public relation baseline' });
+      const relations = await b2SnapshotCaptureAsyncStage(phase, 'PUBLIC_RELATION_PRESTATE_READ', () =>
+        fixedRequest({ fetchImpl: options.fetchImpl ?? globalThis.fetch, token: options.token,
+          path: `/v1/projects/${PRODUCTION_PROJECT_REF}/database/query/read-only`, method: 'POST',
+          body: { query: B2_RELATION_ACL_SQL }, expectedStatus: 201, timeoutMs: SQL_TIMEOUT_MS,
+          label: 'B2 public relation baseline' }));
       verifyB2PublicRelationPrestate(relations.body, authorityContext);
       evidence.adapter.queries.push({ id: 'nelyon-b2-relation-acl-v1', sha256: sha256(B2_RELATION_ACL_SQL) });
       evidence.requests.push(relations.receipt);
-      if (evidence.cron_security.advisors.sha256 !== authority.securityAdvisor.baselineSha256
-        || evidence.functions.count !== authorityContext.descriptor.contract.function_inventory.before) b2SnapshotReject();
+      b2SnapshotCaptureStage(phase, 'SECURITY_ADVISOR_PRESTATE', () => {
+        if (evidence.cron_security.advisors.sha256 !== authority.securityAdvisor.baselineSha256) b2SnapshotReject();
+      });
+      b2SnapshotCaptureStage(phase, 'FUNCTION_INVENTORY_PRESTATE', () => {
+        if (evidence.functions.count !== authorityContext.descriptor.contract.function_inventory.before) b2SnapshotReject();
+      });
       evidence.authority_verification = b2Verification('pre_snapshot', receipt);
     } else {
       if (phase !== 'post' && !(phase === 'recovery' && historical)) b2SnapshotReject();
@@ -7821,8 +7924,9 @@ export async function captureProductionSnapshot(options) {
     }
     const { evidence_sha256: ignored, ...unsigned } = evidence;
     evidence.evidence_sha256 = sha256(canonicalJson(unsigned));
-    if (phase === 'pre') verifyProductionPreSnapshot({ pre: evidence, policy, request, manifest,
-      adapterSourceSha256: options.adapterSourceSha256, authorityContext, requestedAt });
+    if (phase === 'pre') b2SnapshotCaptureStage(phase, 'FINAL_PRE_SNAPSHOT_VERIFICATION', () =>
+      verifyProductionPreSnapshot({ pre: evidence, policy, request, manifest,
+        adapterSourceSha256: options.adapterSourceSha256, authorityContext, requestedAt }));
     else validateCapturedEvidence({ evidence, phase, policy, request, manifest,
       adapterSourceSha256: options.adapterSourceSha256, authorityContext, requestedAt, recoveryAuthorization: options.recoveryAuthorization });
     b2FreshCaptures.set(evidence, { bytes: canonicalJson(evidence), at: requestedAt, receipt });
@@ -7842,6 +7946,12 @@ async function captureLegacyProductionSnapshot({
   authorityContext,
 }) {
   const identity = validateIdentity({ phase, policy, request, manifest, token, observedAt, adapterSourceSha256 });
+  const validateStage = authorityContext
+    ? (category, operation) => b2SnapshotCaptureStage(phase, category, operation)
+    : (_category, operation) => operation();
+  const validateAsyncStage = authorityContext
+    ? (category, operation) => b2SnapshotCaptureAsyncStage(phase, category, operation)
+    : async (_category, operation) => operation();
   if (typeof fetchImpl !== 'function') fail('INVALID_TRANSPORT', 'fetch implementation is unavailable');
   assertReadOnlySql(FINANCE_SNAPSHOT_SQL);
   assertReadOnlySql(CRON_SNAPSHOT_SQL);
@@ -7850,12 +7960,15 @@ async function captureLegacyProductionSnapshot({
   const base = `/v1/projects/${PRODUCTION_PROJECT_REF}`;
   const calls = [];
   const get = async (path, label) => {
-    const result = await fixedRequest({ fetchImpl, token, path, expectedStatus: 200, timeoutMs: GET_TIMEOUT_MS, label });
+    const operation = () => fixedRequest({ fetchImpl, token, path, expectedStatus: 200, timeoutMs: GET_TIMEOUT_MS, label });
+    const result = authorityContext
+      ? await b2SnapshotCaptureAsyncStage(phase, B2_SNAPSHOT_READ_CATEGORIES[label], operation)
+      : await operation();
     calls.push(result.receipt);
     return result.body;
   };
   const sql = async (query, parameters, label) => {
-    const result = await fixedRequest({
+    const operation = () => fixedRequest({
       fetchImpl,
       token,
       path: `${base}/database/query/read-only`,
@@ -7865,12 +7978,15 @@ async function captureLegacyProductionSnapshot({
       timeoutMs: SQL_TIMEOUT_MS,
       label,
     });
+    const result = authorityContext
+      ? await b2SnapshotCaptureAsyncStage(phase, B2_SNAPSHOT_READ_CATEGORIES[label], operation)
+      : await operation();
     calls.push(result.receipt);
     return result.body;
   };
   const healthBody = await get(`${base}/health?services=${REQUIRED_HEALTH_SERVICES.join(',')}`, 'project health');
   const migrationsBody = await get(`${base}/database/migrations`, 'migration inventory');
-  const migrations = normalizeMigrations(migrationsBody);
+  const migrations = validateStage('MIGRATION_NORMALIZATION', () => normalizeMigrations(migrationsBody));
   const storiesRequirement = storiesB1StateRequirement(policy, manifest, phase, { request, migrations });
   const storiesQuery = storiesRequirement.query;
   const storiesSafetyRequirement = storiesSafetyC1StateRequirement(policy, manifest, phase, { request, migrations });
@@ -7922,48 +8038,58 @@ async function captureLegacyProductionSnapshot({
   if (requireFinanceAuthority) {
     assertReadOnlySql(financeQueries.authority);
     assertReadOnlySql(financeQueries.facts);
-    financeAuthority = singleSnapshot(await sql(financeQueries.authority, null, 'finance static authority'),
-      value => normalizeFinanceAuthority(value, financeQueries.phase), 'finance static authority');
-    financeFacts = singleSnapshot(await sql(financeQueries.facts, [identity.release_id, identity.run_id], 'finance fact envelope'),
-      value => validateFinanceFacts(value, financeQueries.phase), 'finance fact envelope');
+    financeAuthority = await validateAsyncStage('FINANCE_AUTHORITY_NORMALIZATION', async () =>
+      singleSnapshot(await sql(financeQueries.authority, null, 'finance static authority'),
+        value => normalizeFinanceAuthority(value, financeQueries.phase), 'finance static authority'));
+    financeFacts = await validateAsyncStage('FINANCE_FACTS_NORMALIZATION', async () =>
+      singleSnapshot(await sql(financeQueries.facts, [identity.release_id, identity.run_id], 'finance fact envelope'),
+        value => validateFinanceFacts(value, financeQueries.phase), 'finance fact envelope'));
     validateFinanceAuthority(financeAuthority, policy, financeQueries.phase);
   }
   const storiesB1State = storiesRequirement.required
-    ? singleSnapshot(
+    ? await validateAsyncStage('STORIES_B1_NORMALIZATION', async () => singleSnapshot(
       await sql(storiesQuery, null, 'Stories B1 fail-closed state'),
       normalizeStoriesB1State,
       'Stories B1 fail-closed state',
-    )
+    ))
     : null;
   const storiesSafetyC1State = storiesSafetyRequirement.required
-    ? singleSnapshot(
+    ? await validateAsyncStage('STORIES_SAFETY_C1_NORMALIZATION', async () => singleSnapshot(
       await sql(storiesSafetyRequirement.query, null, 'Stories Safety C1 predecessor state'),
       normalizeStoriesSafetyC1State,
       'Stories Safety C1 fail-closed state',
-    )
+    ))
     : null;
   const storiesSafetyC2State = storiesSafetyC2Requirement.required
-    ? singleSnapshot(await sql(storiesSafetyC2Authority.query, null, 'Stories Safety C2 publish-first state'),
-      normalizeStoriesSafetyC2State, 'Stories Safety C2 publish-first state') : null;
+    ? await validateAsyncStage('STORIES_SAFETY_C2_NORMALIZATION', async () => singleSnapshot(
+      await sql(storiesSafetyC2Authority.query, null, 'Stories Safety C2 publish-first state'),
+      normalizeStoriesSafetyC2State, 'Stories Safety C2 publish-first state')) : null;
   const storiesQaC1State = storiesQaRequirement.required
-    ? singleSnapshot(await sql(storiesQaRequirement.query, null, 'Stories QA C1 authority state'),
-      normalizeStoriesQaC1State, 'Stories QA C1 authority state') : null;
+    ? await validateAsyncStage('STORIES_QA_C1_NORMALIZATION', async () => singleSnapshot(
+      await sql(storiesQaRequirement.query, null, 'Stories QA C1 authority state'),
+      normalizeStoriesQaC1State, 'Stories QA C1 authority state')) : null;
   const superuserControlCenterState = controlCenterRequirement.required
-    ? singleSnapshot(await sql(controlCenterRequirement.query, [identity.release_id, identity.run_id],
-      'Superuser Control Center authority state'),
-      normalizeSuperuserControlCenterState, 'Superuser Control Center authority state') : null;
+    ? await validateAsyncStage('SUPERUSER_CONTROL_CENTER_NORMALIZATION', async () => singleSnapshot(
+      await sql(controlCenterRequirement.query, [identity.release_id, identity.run_id],
+        'Superuser Control Center authority state'),
+      normalizeSuperuserControlCenterState, 'Superuser Control Center authority state')) : null;
   const superuserQaPerfC1State = perfC1Requirement.required
-    ? singleSnapshot(await sql(perfC1Requirement.query, null, 'Superuser QA PERF C1 authority state'),
-      normalizeSuperuserQaPerfC1State, 'Superuser QA PERF C1 authority state') : null;
+    ? await validateAsyncStage('SUPERUSER_QA_PERF_C1_NORMALIZATION', async () => singleSnapshot(
+      await sql(perfC1Requirement.query, null, 'Superuser QA PERF C1 authority state'),
+      normalizeSuperuserQaPerfC1State, 'Superuser QA PERF C1 authority state')) : null;
   const webControlCentersB1State = webB1Requirement.required
-    ? singleSnapshot(await sql(webB1Requirement.query, null, 'Web Control Centers B1 authority state'),
-      normalizeWebControlCentersB1State, 'Web Control Centers B1 authority state') : null;
+    ? await validateAsyncStage('WEB_CONTROL_CENTERS_B1_NORMALIZATION', async () => singleSnapshot(
+      await sql(webB1Requirement.query, null, 'Web Control Centers B1 authority state'),
+      normalizeWebControlCentersB1State, 'Web Control Centers B1 authority state')) : null;
   const webControlCentersB1QaC3State = webB1QaC3Requirement.required
-    ? singleSnapshot(await sql(webB1QaC3Requirement.query, null,
-      'Web Control Centers B1 QA-C3 RPC state'),
-      normalizeWebControlCentersB1QaC3State, 'Web Control Centers B1 QA-C3 RPC state') : null;
-  const rpcSecurity = normalizeRpcSecurityAttestations(rpcSecurityBody);
-  validateRpcIdentitySet(rpcSecurity, phaseExceptions);
+    ? await validateAsyncStage('WEB_CONTROL_CENTERS_B1_QA_C3_NORMALIZATION', async () => singleSnapshot(
+      await sql(webB1QaC3Requirement.query, null, 'Web Control Centers B1 QA-C3 RPC state'),
+      normalizeWebControlCentersB1QaC3State, 'Web Control Centers B1 QA-C3 RPC state')) : null;
+  const rpcSecurity = validateStage('RPC_SECURITY_NORMALIZATION', () => {
+    const normalized = normalizeRpcSecurityAttestations(rpcSecurityBody);
+    validateRpcIdentitySet(normalized, phaseExceptions);
+    return normalized;
+  });
   const evidence = {
     schema_version: 1,
     complete: true,
@@ -8015,19 +8141,23 @@ async function captureLegacyProductionSnapshot({
       ],
     },
     observed_at: new Date(observedAt).toISOString(),
-    health: normalizeHealth(healthBody),
-    backup: selectRecentCompletedBackup(backupsBody, observedAt, policy.supabase.backup),
+    health: validateStage('HEALTH_NORMALIZATION', () => normalizeHealth(healthBody)),
+    backup: validateStage('BACKUP_NORMALIZATION', () =>
+      selectRecentCompletedBackup(backupsBody, observedAt, policy.supabase.backup)),
     migrations,
-    functions: normalizeFunctions(functionsBody),
+    functions: validateStage('FUNCTION_INVENTORY_NORMALIZATION', () => normalizeFunctions(functionsBody)),
     cron_security: {
       complete: true,
-      cron: singleSnapshot(cronBody, validateCronSnapshot, 'cron snapshot'),
-      advisors: normalizeSecurityAdvisors(advisorsBody),
+      cron: validateStage('CRON_NORMALIZATION', () =>
+        singleSnapshot(cronBody, validateCronSnapshot, 'cron snapshot')),
+      advisors: validateStage('SECURITY_ADVISOR_NORMALIZATION', () => normalizeSecurityAdvisors(advisorsBody)),
     },
-    finance: singleSnapshot(financeBody, validateFinanceSnapshot, 'finance snapshot'),
+    finance: validateStage('FINANCE_NORMALIZATION', () =>
+      singleSnapshot(financeBody, validateFinanceSnapshot, 'finance snapshot')),
     ...(requireFinanceAuthority ? { finance_authority: financeAuthority, finance_facts: financeFacts } : {}),
     rpc_security: rpcSecurity,
-    premium_state: singleSnapshot(premiumStateBody, normalizePremiumPostcheckState, 'Premium postcheck state'),
+    premium_state: validateStage('PREMIUM_STATE_NORMALIZATION', () =>
+      singleSnapshot(premiumStateBody, normalizePremiumPostcheckState, 'Premium postcheck state')),
     ...(storiesRequirement.required ? { stories_b1_state: storiesB1State } : {}),
     ...(storiesSafetyRequirement.required
       ? { stories_safety_c1_state: storiesSafetyC1State }
