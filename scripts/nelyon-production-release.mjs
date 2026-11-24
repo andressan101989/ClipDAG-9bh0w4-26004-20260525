@@ -2141,6 +2141,9 @@ const AUTO_DEPLOY_POLICY = Object.freeze({
   observed_state: 'UNAVAILABLE',
   risk_treatment: 'owner_accepted_unobserved_state',
 });
+const WEB_CONTROL_CENTERS_B2_MIGRATION =
+  '20261108061946_web_control_centers_b2_scheduled_publishing';
+const WEB_CONTROL_CENTERS_B2_FUNCTION = 'process-scheduled-publications';
 
 export function validateAutoDeployPolicy(policy) {
   if (canonicalJson(policy) !== canonicalJson(AUTO_DEPLOY_POLICY)) {
@@ -2355,11 +2358,21 @@ export function validatePolicy(policy) {
   })) {
     deny('INVALID_BACKUP_POLICY', 'production backup policy is invalid');
   }
-  if (!Array.isArray(policy.supabase?.managed_functions) || policy.supabase.managed_functions.length !== 19) {
-    deny('INVALID_MANAGED_FUNCTIONS', 'managed function allowlist must contain exactly 19 functions');
+  const b2BaselineInstalled = policy.baseline.latest_migration >= WEB_CONTROL_CENTERS_B2_MIGRATION;
+  const expectedManagedFunctionCount = b2BaselineInstalled ? 20 : 19;
+  const expectedRemoteFunctionCount = b2BaselineInstalled ? 35 : 34;
+  if (!Array.isArray(policy.supabase?.managed_functions)
+    || policy.supabase.managed_functions.length !== expectedManagedFunctionCount
+    || policy.supabase.managed_functions.includes(WEB_CONTROL_CENTERS_B2_FUNCTION) !== b2BaselineInstalled) {
+    deny('INVALID_MANAGED_FUNCTIONS',
+      `managed function allowlist must match the exact ${b2BaselineInstalled ? 'post-B2' : 'pre-B2'} phase`);
   }
   if (new Set(policy.supabase.managed_functions).size !== policy.supabase.managed_functions.length) {
     deny('INVALID_MANAGED_FUNCTIONS', 'managed function allowlist contains duplicates');
+  }
+  if (policy.supabase.expected_remote_function_count !== expectedRemoteFunctionCount) {
+    deny('INVALID_REMOTE_FUNCTION_COUNT',
+      `remote function count must match the exact ${b2BaselineInstalled ? 'post-B2' : 'pre-B2'} phase`);
   }
   const financeOff = {
     platform_fee_bps: 0,

@@ -73,7 +73,7 @@
       },
       {
         "path": "scripts/nelyon-production-release.mjs",
-        "sha256": "c87894c51cb182d6288d6844ae7e7e611fa50edd496b34b921c6d960b0981144"
+        "sha256": "3970bdb0f4962718ff2fce2690960ee618f2489ed51d049f502c4a252b066998"
       },
       {
         "path": "scripts/nelyon-production-snapshot-adapter.mjs",
@@ -112,7 +112,7 @@
       "wrangler": "4.135.0",
       "supabase_setup_action": "45a513f8c64c0bc8e0e3dfe572b5c95be85f6359"
     },
-    "closure_sha256": "2d96642417b01c3094419ddbcb29348c0d49cb54f9db0e20850b45d4cf348c6d"
+    "closure_sha256": "6f927bb5af253f16b870f8024b29210a72878ac47eaf05dc30c86bdda8abeaf4"
   },
   "proposed_members": [
     {
