@@ -339,7 +339,9 @@ test('provider configuration is step-scoped only to closed private runtime invoc
 test('proof cleanup is contained, always runs, and gates receipt publication', () => {
   const proof = workflowJob(workflowText(), 'private-authority-check');
   const cleanup = step(proof, 'Clean private authority scratch after proof');
-  assert.match(cleanup, /if:\s*always\(\)/);
+  assert.match(cleanup, /always\(\)[\s\S]*mode != 'postcheck_recovery'[\s\S]*b2_recovery_pending == 'true'/);
+  assert.equal(admitted(cleanup,{mode:'gate_proof',priorFailed:true}),true);
+  assert.equal(admitted(cleanup,{mode:'postcheck_recovery',b2RecoveryPending:'false',priorFailed:true}),false);
   assert.match(cleanup, /nelyon-private-authority-owned/);
   assert.match(cleanup, /realpathSync|realpath/);
   assert.match(cleanup, /lstatSync|lstat/);
@@ -673,14 +675,15 @@ test('retained evidence uses exact public allowlists and never uploads private r
 // Evaluate the actual workflow admission expressions for this bounded subset.
 // No run body, secret, endpoint or checkout module is executed. GitHub inserts
 // success() unless a status function is present; always() explicitly bypasses it.
-function admitted(body, { mode, b2 = 'true', outcomes = {}, priorFailed = true }) {
+function admitted(body, { mode, b2 = 'true', b2RecoveryPending = 'false', outcomes = {}, priorFailed = true }) {
   const field = body.match(/^        if: ([^\n]*)(?:\n((?:          [^\n]*\n)*))?/m);
   assert.ok(field, 'step must declare its admission condition');
   const expression = field[1] === '>-' ? field[2].trim().replace(/\s+/g, ' ') : field[1];
   const status = /\b(?:always|success|failure|cancelled)\(\)/.test(expression);
   if (!status && priorFailed) return false;
   const steps = new Proxy({}, { get: (_, id) => ({ outcome: outcomes[id] ?? 'success' }) });
-  const needs = { plan: { outputs: { mode, admin_enabled: 'true', admin_recovery_b2_required: b2 } } };
+  const needs = { plan: { outputs: { mode, admin_enabled: 'true', admin_recovery_b2_required: b2,
+    b2_recovery_pending: b2RecoveryPending } } };
   return Boolean(Function('steps', 'needs', 'always', 'success', 'failure', 'cancelled',
     `return (${expression});`)(steps, needs, () => true, () => !priorFailed, () => priorFailed, () => false));
 }
@@ -720,6 +723,56 @@ test('protected release revalidation stages require fresh action outputs and do 
     'Clean private authority scratch before migrations','Clean private authority scratch after protected function revalidation']) {
     assert.equal(admitted(step(deploy,name),{mode:'release',priorFailed:true}),true,
       `${name} must run even after a failed private stage`);
+  }
+});
+
+test('protected gate proof keeps authority in process without deployment credentials', () => {
+  const deploy=workflowJob(workflowText(),'deploy');
+  for(const [name,action,modes]of [
+    ['Resolve protected private authority before revalidation','revalidate',['gate_proof']],
+    ['Resolve protected private authority for gate proof','verify-gate',['gate_proof']],
+  ]) {
+    const body=step(deploy,name);
+    assert.match(body,new RegExp(`nelyon-private-authority-cli\\.mjs ${action}`));
+    assert.match(body,/--stage-output/);
+    assert.match(body,/--verification-output/);
+    assert.doesNotMatch(body,/SUPABASE_ACCESS_TOKEN|node "\$NELYON_HELPER"/);
+    for(const mode of ['gate_proof','postcheck_recovery','release']) {
+      assert.equal(admitted(body,{mode,priorFailed:false}),modes.includes(mode),`${name}: ${mode}`);
+    }
+  }
+  for(const name of ['Revalidate immutable manifest after authorization','Verify gate proof without deployment secrets']) {
+    const body=step(deploy,name);
+    assert.ok(body.indexOf('cmp ')>=0 && body.indexOf('cmp ')<body.indexOf('cp '));
+    assert.doesNotMatch(body,/node "\$NELYON_HELPER"|SUPABASE_ACCESS_TOKEN|R2_SECRET_ACCESS_KEY/);
+  }
+});
+
+test('non-pending postcheck recovery is public and tokenless while pending B2 recovery stays protected', () => {
+  const text=workflowText();
+  const proof=workflowJob(text,'private-authority-check');
+  const deploy=workflowJob(text,'deploy');
+  for(const [job,name]of [[proof,'Verify independent private runtime closure'],
+    [proof,'Resolve protected private authority proof'],[deploy,'Verify independent private runtime closure for deploy'],
+    [deploy,'Stage closed protected proof receipt for comparisons']]) {
+    const body=step(job,name);
+    assert.equal(admitted(body,{mode:'postcheck_recovery',b2RecoveryPending:'false',priorFailed:false}),false,name);
+    assert.equal(admitted(body,{mode:'gate_proof',priorFailed:false}),true,name);
+  }
+  for(const [name,action]of [
+    ['Revalidate non-pending postcheck recovery without private authority','revalidate'],
+    ['Verify postcheck recovery gate without deployment commands','verify-gate'],
+  ]) {
+    const body=step(deploy,name);
+    assert.match(body,new RegExp(`node "\\$NELYON_HELPER" ${action}`));
+    assert.doesNotMatch(body,/nelyon-private-authority-cli|SUPABASE_ACCESS_TOKEN|NELYON_PRIVATE_AUTHORITY_|R2_SECRET_ACCESS_KEY|cmp /);
+    assert.equal(admitted(body,{mode:'postcheck_recovery',b2RecoveryPending:'false',priorFailed:false}),true,name);
+    assert.equal(admitted(body,{mode:'postcheck_recovery',b2RecoveryPending:'true',priorFailed:false}),false,name);
+    assert.equal(admitted(body,{mode:'gate_proof',priorFailed:false}),false,name);
+  }
+  for(const name of ['Stage B2 recovery source for revalidation','Revalidate pending B2 recovery after authorization',
+    'Stage B2 recovery source for current gate','Verify pending B2 recovery gate']) {
+    assert.match(step(deploy,name),/b2_recovery_pending == 'true'/,name);
   }
 });
 

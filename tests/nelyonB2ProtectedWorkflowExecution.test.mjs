@@ -32,7 +32,7 @@ for (const mode of ['gate_proof', 'release']) test(`${mode}: protected execution
   const bundle=path.join(runner,'bundle');
   put('bundle/manifest.json',f.manifest);put('bundle/manifest.sha256',hash(json(f.manifest))+'\n');put('bundle/summary.md','synthetic');
   const remoteEvidence=put('remote.json',f.evidence);
-  const env={NELYON_PRIVATE_AUTHORITY_PROVIDER:'r2',NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID:'a'.repeat(32),NELYON_PRIVATE_AUTHORITY_R2_BUCKET:'synthetic-bucket',NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID:'synthetic-access',NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY:'SYNTHETIC_PRIVATE_MARKER',NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256:hash(f.descriptorBytes),NELYON_PRIVATE_AUTHORITY_SHA256:hash(f.authorityBytes),NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256:f.manifest.runtime_closure.closure_sha256,NELYON_RELEASE_POLICY_SHA256:hash(json(f.policy)),SUPABASE_ACCESS_TOKEN:'SYNTHETIC_TOKEN_MARKER',RUNNER_TEMP:runner};
+  const env={NELYON_PRIVATE_AUTHORITY_PROVIDER:'r2',NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID:'a'.repeat(32),NELYON_PRIVATE_AUTHORITY_R2_BUCKET:'synthetic-bucket',NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID:'synthetic-access',NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY:'SYNTHETIC_PRIVATE_MARKER',NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256:hash(f.descriptorBytes),NELYON_PRIVATE_AUTHORITY_SHA256:hash(f.authorityBytes),NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256:f.manifest.runtime_closure.closure_sha256,NELYON_RELEASE_POLICY_SHA256:hash(json(f.policy)),...(mode==='release'?{SUPABASE_ACCESS_TOKEN:'SYNTHETIC_TOKEN_MARKER'}:{}),RUNNER_TEMP:runner};
   const names=JSON.parse(f.descriptorBytes).contract.functions.map(f=>f.name).filter(n=>n!=='process-scheduled-publications');
   while(names.length<34)names.push('synthetic-unrelated-'+names.length);
   assert.equal(names.length,34);
@@ -103,12 +103,14 @@ for (const mode of ['gate_proof', 'release']) test(`${mode}: protected execution
 
     }
     if(mode==='release')assert.equal(process.env.SUPABASE_ACCESS_TOKEN,'SYNTHETIC_TOKEN_MARKER','launch test with synthetic token, never a real credential');
+    const protectedInventoryCalls = inventoryCalls;
     await controller.execute(revalidate);
     assert.equal(JSON.parse(fs.readFileSync(revalidate.inputs.stageOutput)).result,'REVALIDATED');
     assert.deepEqual(JSON.parse(fs.readFileSync(revalidate.verificationOutput)),expected);
     await controller.execute(gate);
     assert.equal(JSON.parse(fs.readFileSync(gate.inputs.stageOutput)).result,'GATE_VERIFIED');
     assert.deepEqual(JSON.parse(fs.readFileSync(gate.verificationOutput)),expected);
+    if(mode==='gate_proof')assert.equal(inventoryCalls,protectedInventoryCalls,'gate proof must not read deployment inventory or require its token');
     const workflow=fs.readFileSync(path.join(ROOT,'.github/workflows/nelyon-production-release.yml'),'utf8').replaceAll('\r\n','\n').replace(/^      - &b2_diagnostic_step_[0-9]+\n        name:/gm, '      - name:');
     if (mode === 'release') await t.test('diagnostic YAML capture follows real revalidation and gate and fails closed at fake health read', async () => {
       const resolved = YAML.parse(fs.readFileSync(path.join(ROOT, '.github/workflows/nelyon-production-release.yml'), 'utf8'), { maxAliasCount: 1000 });
@@ -129,11 +131,15 @@ for (const mode of ['gate_proof', 'release']) test(`${mode}: protected execution
       assert.doesNotMatch(output.join(''), /SYNTHETIC_(PRIVATE|TOKEN)_MARKER/);
       t.diagnostic('Negative capture boundary only; this does not claim a successful complete snapshot end-to-end.');
     });
-    if(mode==='release')for(const route of [
-      ['initial','Revalidate protected release manifest after authorization','Resolve protected private authority before revalidation'],
-      ['migration','Resolve protected private authority before migrations'],
-      ['functions','Revalidate protected release before functions','B2 protected functions'],
-    ])await t.test('workflow '+route[0]+' executes authenticated revalidation',async()=>{
+    const protectedRoutes = mode === 'release' ? [
+      ['initial','Revalidate protected release manifest after authorization','Resolve protected private authority before revalidation','revalidate','REVALIDATED'],
+      ['migration','Resolve protected private authority before migrations',undefined,'revalidate','REVALIDATED'],
+      ['functions','Revalidate protected release before functions','B2 protected functions','revalidate','REVALIDATED'],
+    ] : [
+      ['initial','Resolve protected private authority before revalidation',undefined,'revalidate','REVALIDATED'],
+      ['gate','Resolve protected private authority for gate proof',undefined,'verify-gate','GATE_VERIFIED'],
+    ];
+    for(const route of protectedRoutes)await t.test('workflow '+route[0]+' executes authenticated '+route[3],async()=>{
       const blocks=workflow.split(/(?=^      - name: )/m);
       const block=blocks.find(b=>b.startsWith('      - name: '+route[1]+'\n'))??blocks.find(b=>b.startsWith('      - name: '+route[2]+'\n'));
       assert.ok(block,'required protected stage exists');
@@ -146,8 +152,9 @@ for (const mode of ['gate_proof', 'release']) test(`${mode}: protected execution
       const stageOutput=path.join(runner,'yaml-'+route[0]+'-stage.json');
       const verificationOutput=path.join(runner,'yaml-'+route[0]+'-receipt.json');
       const tokens=[...text.matchAll(/"([^"]*)"|'([^']*)'|([^\s]+)/g)].map(m=>m[1]??m[2]??m[3]);
-      const substitutions={'$NELYON_POLICY':policy,'release-artifact/request.json':request,'release-artifact/bundle':bundle,'release-artifact/remote-evidence.json':remoteEvidence,'${{ needs.plan.outputs.compiler_sha256 }}':f.manifest.compiler.sha256};
+      const substitutions={'$NELYON_POLICY':policy,'$NELYON_RELEASE_POLICY_SHA256':hash(json(f.policy)),'$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED':'OFF','release-artifact/request.json':request,'release-artifact/bundle':bundle,'release-artifact/remote-evidence.json':remoteEvidence,'gate-evidence/environment.json':gate.inputs.environmentEvidence,'gate-evidence/branches.json':gate.inputs.branchPolicies,'gate-evidence/approvals.json':gate.inputs.approvals,'gate-evidence/runs.json':gate.inputs.runs,'${{ needs.plan.outputs.compiler_sha256 }}':f.manifest.compiler.sha256};
       const argv=tokens.map(token=>substitutions[token]??token);
+      assert.equal(argv[0],route[3],'workflow must execute the protected action, not proof-only authority resolution');
       for(const [flag,value]of [['--stage-output',stageOutput],['--verification-output',verificationOutput]]){
         const index=argv.indexOf(flag);if(index>=0)argv[index+1]=value;
       }
@@ -155,7 +162,7 @@ for (const mode of ['gate_proof', 'release']) test(`${mode}: protected execution
       assert.equal(await runPrivateAuthorityCli(argv,{execute:parsed=>controller.execute(parsed),stdout:sink,stderr:sink}),0,output.join(''));
       assert.doesNotMatch(output.join(''),/SYNTHETIC_(PRIVATE|TOKEN)_MARKER/);
       assert.equal(fs.existsSync(stageOutput),true,'proof alone does not produce REVALIDATED stage evidence');
-      assert.equal(JSON.parse(fs.readFileSync(stageOutput)).result,'REVALIDATED');
+      assert.equal(JSON.parse(fs.readFileSync(stageOutput)).result,route[4]);
       assert.deepEqual(JSON.parse(fs.readFileSync(verificationOutput)),expected);
     });
     const comparator=workflow.match(/          const \{ readFileSync \} = require\('node:fs'\);\n          const expected = .*\n          const verification = .*release-gate-verification.json.*\n          if .*\n/)[0].split('\n').map(x=>x.replace(/^          /,'')).join('\n');
@@ -167,7 +174,7 @@ for (const mode of ['gate_proof', 'release']) test(`${mode}: protected execution
     for(const value of [{...expected,approvalSha256:'0'.repeat(64)}, {}, {receipt:expected}]){
       put('nelyon-private-authority-public/release-gate-verification.json',value);const rejected=runComparator(comparator);assertPrivateOutputAbsent(rejected);assert.notEqual(rejected.status,0);
     }
-    for(const variant of ['missing-token','after','incomplete']){
+    if(mode==='release')for(const variant of ['missing-token','after','incomplete']){
       const environment={...env};if(variant==='missing-token')delete environment.SUPABASE_ACCESS_TOKEN;
       rows=variant==='after'?[...names,'process-scheduled-publications'].map(name=>({name})):variant==='incomplete'?names.slice(1).map(name=>({name})):names.map(name=>({name}));
       for(const source of [revalidate,gate]){
@@ -179,8 +186,72 @@ for (const mode of ['gate_proof', 'release']) test(`${mode}: protected execution
         assert.equal(fs.existsSync(bad.inputs.stageOutput),false);assert.equal(fs.existsSync(bad.verificationOutput),false);
       }
     }
-    assert.ok(inventoryCalls>=3);
+    if(mode==='release')assert.ok(inventoryCalls>=3);
+    else assert.equal(inventoryCalls,0,'gate proof remains independent of Supabase deployment credentials');
     t.diagnostic('Raw helper remains fail-closed; actual YAML consumers must accept authenticated results.');
     for(const p of [proof.verificationOutput,revalidate.verificationOutput,gate.verificationOutput,revalidate.inputs.stageOutput,gate.inputs.stageOutput])assert.doesNotMatch(fs.readFileSync(p,'utf8'),/SYNTHETIC_(PRIVATE|TOKEN)_MARKER/);
   } finally {process.chdir(previous);}
+});
+
+test('postcheck_recovery no-change manifest executes the public tokenless workflow gates', async t => {
+  const f = integratedFixture(t, { mode: 'gate_proof' });
+  const policy = structuredClone(f.policy);
+  policy.baseline.sha = f.request.approvedSha;
+  const source = policy.postcheck_recovery.approved_sources[0];
+  const request = { ...f.request, mode: 'postcheck_recovery',
+    scopeConfirmation: policy.scope_confirmations.postcheck_recovery,
+    recoverySourceRunId: source.run_id, productiveResources: [] };
+  const evidence = release.compileLocalEvidence({ cwd: f.cwd, policy, request, generatedAt: AT });
+  const manifest = release.buildManifest({ ...evidence, policy, request });
+  assert.equal(manifest.result, 'NO PRODUCTIVE CHANGES');
+  assert.equal(manifest.resources.web_control_centers_b2_transition, undefined);
+
+  const runner = path.join(f.cwd, 'postcheck-runner'); fs.mkdirSync(runner);
+  const put = (name, value) => { const target = path.join(runner, name); fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, typeof value === 'string' ? value : json(value)); return target; };
+  const policyPath = put('policy.json', policy), requestPath = put('request.json', request);
+  const bundle = path.join(runner, 'bundle');
+  put('bundle/manifest.json', manifest); put('bundle/manifest.sha256', `${hash(json(manifest))}\n`); put('bundle/summary.md', 'synthetic');
+  const remoteEvidence = put('remote.json', evidence);
+  const environmentEvidence = put('environment.json', { id: policy.environment.id, name: 'production', can_admins_bypass: false,
+    protection_rules: [], deployment_branch_policy: { protected_branches: false, custom_branch_policies: true } });
+  const branchPolicies = put('branches.json', { complete: true, pages: [{ items: [{ name: policy.default_branch }] }] });
+  const approvals = put('approvals.json', { complete: true, sourceRunId: request.runId,
+    sourceRunAttempt: request.runAttempt, pages: [{ items: [] }] });
+  const runs = put('runs.json', { complete: true, pages: [{ items: [] }] });
+  const substitutions = { '$NELYON_POLICY': policyPath, '$NELYON_RELEASE_POLICY_SHA256': hash(json(policy)),
+    '$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED': 'OFF', 'release-artifact/request.json': requestPath,
+    'release-artifact/bundle': bundle, 'release-artifact/remote-evidence.json': remoteEvidence,
+    'gate-evidence/environment.json': environmentEvidence, 'gate-evidence/branches.json': branchPolicies,
+    'gate-evidence/approvals.json': approvals, 'gate-evidence/runs.json': runs,
+    '${{ needs.plan.outputs.compiler_sha256 }}': manifest.compiler.sha256 };
+  const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/nelyon-production-release.yml'), 'utf8')
+    .replaceAll('\r\n', '\n').replace(/^      - &b2_diagnostic_step_[0-9]+\n        name:/gm, '      - name:');
+  const executeActualStep = async (name, output) => {
+    const blocks = workflow.split(/(?=^      - name: )/m);
+    const block = blocks.find(value => value.startsWith(`      - name: ${name}\n`));
+    assert.ok(block, `missing ${name}`);
+    assert.doesNotMatch(block, /nelyon-private-authority-cli|SUPABASE_ACCESS_TOKEN|NELYON_PRIVATE_AUTHORITY_/);
+    const lines = block.split('\n');
+    const start = lines.findIndex(line => line.includes('node "$NELYON_HELPER" '));
+    assert.ok(start >= 0, `${name} must execute the public helper`);
+    const command = [lines[start].split('node "$NELYON_HELPER" ')[1]];
+    for (let index = start; lines[index].trimEnd().endsWith('\\'); index += 1) command.push(lines[index + 1]);
+    const tokens = [...command.join('\n').replace(/\\\n\s*/g, ' ').matchAll(/"([^"]*)"|'([^']*)'|([^\s]+)/g)]
+      .map(match => substitutions[match[1] ?? match[2] ?? match[3]] ?? (match[1] ?? match[2] ?? match[3]));
+    const outputIndex = tokens.indexOf('--output'); assert.ok(outputIndex >= 0); tokens[outputIndex + 1] = output;
+    const sink = { write: () => true };
+    assert.equal(await release.runCli(tokens, undefined, undefined, undefined, { now: () => AT, stdout: sink, stderr: sink }), 0);
+  };
+  const previous = process.cwd(); process.chdir(f.cwd);
+  try {
+    const revalidated = path.join(runner, 'revalidated.json');
+    await executeActualStep('Revalidate non-pending postcheck recovery without private authority', revalidated);
+    assert.equal(JSON.parse(fs.readFileSync(revalidated)).result, 'REVALIDATED');
+    const gate = path.join(runner, 'gate.json');
+    await executeActualStep('Verify postcheck recovery gate without deployment commands', gate);
+    assert.equal(JSON.parse(fs.readFileSync(gate)).result, 'GATE_VERIFIED');
+    assert.throws(() => release.verifyB2PreflightAuthority({ manifest: f.manifest,
+      authorityContext: undefined, requestedAt: AT }), { code: 'B2_AUTHORITY_REQUIRED' });
+  } finally { process.chdir(previous); }
 });

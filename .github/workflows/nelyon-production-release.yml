@@ -1036,6 +1036,9 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Verify independent private runtime closure
+        if: >-
+          needs.plan.outputs.mode != 'postcheck_recovery' ||
+          needs.plan.outputs.b2_recovery_pending == 'true'
         env:
           NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
         run: |
@@ -1150,9 +1153,15 @@ jobs:
           mkdir -p "$RUNNER_TEMP/nelyon-private-authority-public"
 
       - name: Install exact private runtime dependency without scripts
+        if: >-
+          needs.plan.outputs.mode != 'postcheck_recovery' ||
+          needs.plan.outputs.b2_recovery_pending == 'true'
         run: npm ci --ignore-scripts
 
       - name: Verify installed private runtime signer
+        if: >-
+          needs.plan.outputs.mode != 'postcheck_recovery' ||
+          needs.plan.outputs.b2_recovery_pending == 'true'
         run: |
           set -euo pipefail
           node --input-type=commonjs <<'NODE'
@@ -1267,7 +1276,8 @@ jobs:
         id: private_authority_proof
         if: >-
           needs.plan.outputs.b2_recovery_pending != 'true' &&
-          needs.plan.outputs.mode != 'admin_recovery'
+          needs.plan.outputs.mode != 'admin_recovery' &&
+          needs.plan.outputs.mode != 'postcheck_recovery'
         env: &current_private_authority_env
           NELYON_PRIVATE_AUTHORITY_PROVIDER: ${{ vars.NELYON_PRIVATE_AUTHORITY_PROVIDER }}
           NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
@@ -1289,7 +1299,10 @@ jobs:
 
       - name: Clean private authority scratch after proof
         id: private_authority_cleanup
-        if: always()
+        if: >-
+          always() && (
+          needs.plan.outputs.mode != 'postcheck_recovery' ||
+          needs.plan.outputs.b2_recovery_pending == 'true')
         run: |
           set -euo pipefail
           node --input-type=commonjs <<'NODE'
@@ -1410,6 +1423,9 @@ jobs:
 
       - &b2_diagnostic_step_5
         name: Verify independent private runtime closure for deploy
+        if: >-
+          needs.plan.outputs.mode != 'postcheck_recovery' ||
+          needs.plan.outputs.b2_recovery_pending == 'true'
         env:
           NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
         run: |
@@ -1442,17 +1458,25 @@ jobs:
 
       - &b2_diagnostic_step_6
         name: Install exact private runtime dependency without scripts for deploy
+        if: >-
+          needs.plan.outputs.mode != 'postcheck_recovery' ||
+          needs.plan.outputs.b2_recovery_pending == 'true'
         run: npm ci --ignore-scripts
 
       - &b2_diagnostic_step_7
         name: Verify installed private runtime signer for deploy
+        if: >-
+          needs.plan.outputs.mode != 'postcheck_recovery' ||
+          needs.plan.outputs.b2_recovery_pending == 'true'
         run: node "$RUNNER_TEMP/nelyon-private-runtime-signer.cjs"
 
       - &b2_diagnostic_step_8
         name: Stage closed protected proof receipt for comparisons
         if: >-
-          needs.plan.outputs.mode != 'admin_recovery' ||
-          needs.plan.outputs.admin_recovery_b2_required == 'true'
+          (needs.plan.outputs.mode != 'postcheck_recovery' ||
+           needs.plan.outputs.b2_recovery_pending == 'true') &&
+          (needs.plan.outputs.mode != 'admin_recovery' ||
+           needs.plan.outputs.admin_recovery_b2_required == 'true')
         env:
           EXPECTED_PRIVATE_AUTHORITY_RECEIPT: ${{ needs.private-authority-check.outputs.receipt }}
         run: |
@@ -1466,24 +1490,26 @@ jobs:
           writeFileSync(path.join(process.env.RUNNER_TEMP, 'nelyon-private-authority-public', 'expected-receipt.json'), `${JSON.stringify(receipt)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o400 });
           NODE
 
+      - name: Fetch current main before protected read-only revalidation
+        if: needs.plan.outputs.mode == 'gate_proof'
+        run: git fetch --no-tags origin main
+
       - name: Resolve protected private authority before revalidation
         id: b2_revalidation_authority
         if: >-
-          needs.plan.outputs.b2_recovery_pending != 'true' &&
-          needs.plan.outputs.mode != 'admin_recovery' &&
-          needs.plan.outputs.mode != 'release'
+          needs.plan.outputs.mode == 'gate_proof'
         env: *current_private_authority_env
         run: |
           set -euo pipefail
-          node scripts/nelyon-private-authority-cli.mjs authority-proof \
-            --policy "$NELYON_POLICY" \
-            --request release-artifact/request.json \
-            --bundle release-artifact/bundle \
+          node scripts/nelyon-private-authority-cli.mjs revalidate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/revalidation-stage.json" \
             --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/revalidation-receipt.json"
 
       - name: Clean private authority scratch after revalidation
         id: b2_revalidation_authority_cleanup
-        if: always() && needs.plan.outputs.mode != 'release'
+        if: always() && needs.plan.outputs.mode == 'gate_proof'
         run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
 
       - &b2_diagnostic_step_9
@@ -1566,16 +1592,26 @@ jobs:
 
       - name: Revalidate immutable manifest after authorization
         if: >-
-          needs.plan.outputs.b2_recovery_pending != 'true' &&
-          needs.plan.outputs.mode != 'admin_recovery' &&
-          needs.plan.outputs.mode != 'release' &&
+          needs.plan.outputs.mode == 'gate_proof' &&
           steps.b2_revalidation_authority.outcome == 'success' &&
           steps.b2_revalidation_authority_cleanup.outcome == 'success'
         run: |
           set -euo pipefail
           cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/revalidation-receipt.json"
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/revalidation-stage.json" gate-evidence/revalidation.json
+
+      - name: Revalidate non-pending postcheck recovery without private authority
+        if: >-
+          needs.plan.outputs.mode == 'postcheck_recovery' &&
+          needs.plan.outputs.b2_recovery_pending != 'true'
+        run: |
+          set -euo pipefail
           git fetch --no-tags origin main
-          node "$NELYON_HELPER" revalidate --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --remote-evidence release-artifact/remote-evidence.json --output gate-evidence/revalidation.json
+          node "$NELYON_HELPER" revalidate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" \
+            --remote-evidence release-artifact/remote-evidence.json \
+            --output gate-evidence/revalidation.json
 
       - &b2_diagnostic_step_28
         name: Accept protected release preflight
@@ -1668,8 +1704,13 @@ jobs:
         env: *current_private_authority_env
         run: |
           set -euo pipefail
-          node scripts/nelyon-private-authority-cli.mjs authority-proof \
+          node scripts/nelyon-private-authority-cli.mjs verify-gate \
             --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" \
+            --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json \
+            --approvals gate-evidence/approvals.json --runs gate-evidence/runs.json \
+            --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" \
+            --stage-output "$RUNNER_TEMP/nelyon-private-authority-public/gate-proof-stage.json" \
             --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/gate-proof-receipt.json"
 
       - name: Clean private authority scratch after gate proof
@@ -1685,40 +1726,28 @@ jobs:
         run: |
           set -euo pipefail
           cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/gate-proof-receipt.json"
-          node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
+          cp "$RUNNER_TEMP/nelyon-private-authority-public/gate-proof-stage.json" gate-evidence/gate-proof.json
           echo "GATE PROOF SUCCESS" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify independent private runtime closure before postcheck recovery gate
-        if: needs.plan.outputs.mode == 'postcheck_recovery'
+        if: >-
+          needs.plan.outputs.mode == 'postcheck_recovery' &&
+          needs.plan.outputs.b2_recovery_pending == 'true'
         env:
           NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256: ${{ vars.NELYON_PRIVATE_AUTHORITY_RUNTIME_CLOSURE_SHA256 }}
         run: node "$RUNNER_TEMP/nelyon-private-runtime-bootstrap.cjs"
 
-      - name: Resolve protected private authority for postcheck recovery gate
-        id: b2_postcheck_recovery_gate_authority
-        if: needs.plan.outputs.mode == 'postcheck_recovery' && needs.plan.outputs.b2_recovery_pending != 'true'
-        env: *current_private_authority_env
-        run: |
-          set -euo pipefail
-          node scripts/nelyon-private-authority-cli.mjs authority-proof \
-            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
-            --verification-output "$RUNNER_TEMP/nelyon-private-authority-public/postcheck-recovery-gate-receipt.json"
-
-      - name: Clean private authority scratch after postcheck recovery gate
-        id: b2_postcheck_recovery_gate_authority_cleanup
-        if: always() && needs.plan.outputs.mode == 'postcheck_recovery'
-        run: node "$RUNNER_TEMP/nelyon-private-runtime-cleanup.cjs"
-
       - name: Verify postcheck recovery gate without deployment commands
-        if: >-
-          needs.plan.outputs.mode == 'postcheck_recovery' &&
-          needs.plan.outputs.b2_recovery_pending != 'true' &&
-          steps.b2_postcheck_recovery_gate_authority.outcome == 'success' &&
-          steps.b2_postcheck_recovery_gate_authority_cleanup.outcome == 'success'
+        if: needs.plan.outputs.mode == 'postcheck_recovery' && needs.plan.outputs.b2_recovery_pending != 'true'
         run: |
           set -euo pipefail
-          cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/postcheck-recovery-gate-receipt.json"
-          node "$NELYON_HELPER" verify-gate --policy "$NELYON_POLICY" --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --request release-artifact/request.json --bundle release-artifact/bundle --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json --approvals gate-evidence/approvals.json --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" --runs gate-evidence/runs.json --output gate-evidence/gate-proof.json
+          node "$NELYON_HELPER" verify-gate \
+            --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
+            --policy-sha256 "$NELYON_RELEASE_POLICY_SHA256" --compiler-sha256 "${{ needs.plan.outputs.compiler_sha256 }}" \
+            --environment gate-evidence/environment.json --branch-policies gate-evidence/branches.json \
+            --approvals gate-evidence/approvals.json --runs gate-evidence/runs.json \
+            --auto-deploy-expected "$SUPABASE_GITHUB_AUTO_DEPLOY_EXPECTED" \
+            --output gate-evidence/gate-proof.json
 
       - name: Stage B2 recovery source for current gate
         id: b2_pending_gate_stage

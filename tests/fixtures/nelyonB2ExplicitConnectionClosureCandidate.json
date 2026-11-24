@@ -9,7 +9,7 @@
     "files": [
       {
         "path": ".github/workflows/nelyon-production-release.yml",
-        "sha256": "c8350ae28b668910adeee5229e1d52f3e9f473a5a64bcc1e0b9f72a854f7b9ba"
+        "sha256": "8b9087e72f24f114e36db53c2e6ea23e1644a8ef2de496466117f62404217477"
       },
       {
         "path": "package-lock.json",
@@ -49,7 +49,7 @@
       },
       {
         "path": "scripts/nelyon-private-authority-cli.mjs",
-        "sha256": "a8abfd5f4a4af20dd0f93e0079c1ada8dda786492e00e700351fcd2ca4119585"
+        "sha256": "75ff114b1a387425671f9cbd1155a3c2c8082f5804051873d0ed7bae5cdea22e"
       },
       {
         "path": "scripts/nelyon-private-authority-issuer.mjs",
@@ -73,7 +73,7 @@
       },
       {
         "path": "scripts/nelyon-production-release.mjs",
-        "sha256": "a6306068154873739ec55c7e3bff116c2291c36ad9a8bb43e487d20d4890dd5d"
+        "sha256": "c87894c51cb182d6288d6844ae7e7e611fa50edd496b34b921c6d960b0981144"
       },
       {
         "path": "scripts/nelyon-production-snapshot-adapter.mjs",
@@ -112,7 +112,7 @@
       "wrangler": "4.135.0",
       "supabase_setup_action": "45a513f8c64c0bc8e0e3dfe572b5c95be85f6359"
     },
-    "closure_sha256": "61bbaefe258574b27ae766ecd12c197e67340bc2186ced36fc545aafc952c76f"
+    "closure_sha256": "2d96642417b01c3094419ddbcb29348c0d49cb54f9db0e20850b45d4cf348c6d"
   },
   "proposed_members": [
     {

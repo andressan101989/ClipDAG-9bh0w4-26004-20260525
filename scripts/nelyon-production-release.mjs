@@ -8846,7 +8846,9 @@ export async function runCli(argv, authorityContext, inventory, recoveryRuntime,
       runAttempt: releaseRequest.runAttempt, runId: releaseRequest.runId,
     } });
     if (command === 'preflight-release' && releaseRequest.mode !== 'release') b2AuthorityReject();
-    const authorityProof = (command === 'preflight-release' ? verifyB2PreflightAuthority : verifyB2ProtectedAuthority)({ manifest: initialBundle.manifest,
+    const readOnlyProofMode = releaseRequest.mode === 'gate_proof';
+    const authorityProof = (command === 'preflight-release' || readOnlyProofMode
+      ? verifyB2PreflightAuthority : verifyB2ProtectedAuthority)({ manifest: initialBundle.manifest,
       authorityContext, inventory, requestedAt: runtime.now() });
     const gitState = resolveGitState({
       cwd: process.cwd(),
@@ -9088,7 +9090,9 @@ export async function runCli(argv, authorityContext, inventory, recoveryRuntime,
       },
     });
     if (command === 'authorize-refresh' && releaseRequest.mode !== 'release') b2AuthorityReject();
-    const authorityProof = (command === 'authorize-refresh' ? verifyB2PreflightAuthority : verifyB2ProtectedAuthority)({ manifest: verifiedBundle.manifest,
+    const readOnlyProofMode = releaseRequest.mode === 'gate_proof';
+    const authorityProof = (command === 'authorize-refresh' || readOnlyProofMode
+      ? verifyB2PreflightAuthority : verifyB2ProtectedAuthority)({ manifest: verifiedBundle.manifest,
       authorityContext, inventory, requestedAt: runtime.now() });
     if (verifiedBundle.manifest.compiler?.sha256 !== sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-release.mjs')))
       || verifiedBundle.manifest.compiler?.snapshot_adapter_sha256 !== sha256Hex(readFileSync(join(process.cwd(), 'scripts', 'nelyon-production-snapshot-adapter.mjs')))) {
