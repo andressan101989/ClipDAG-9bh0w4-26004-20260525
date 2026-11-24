@@ -9,7 +9,7 @@
     "files": [
       {
         "path": ".github/workflows/nelyon-production-release.yml",
-        "sha256": "27dd37c6f23549aaa6da86c564cbed3e5d6ffedde9bbb35378e69fe0aaade2f1"
+        "sha256": "c8350ae28b668910adeee5229e1d52f3e9f473a5a64bcc1e0b9f72a854f7b9ba"
       },
       {
         "path": "package-lock.json",
@@ -25,7 +25,7 @@
       },
       {
         "path": "scripts/nelyon-b2-authority-preparation.mjs",
-        "sha256": "ee6e05a6d497a0479b39492cb16d41da862a299f30c6300af24385f91ab61ba9"
+        "sha256": "34571c20f45aec131590d16fa2ba81fd6f3af5fe0b2cc57c47bd2cac839c8675"
       },
       {
         "path": "scripts/nelyon-b2-explicit-connection.mjs",
@@ -49,19 +49,19 @@
       },
       {
         "path": "scripts/nelyon-private-authority-cli.mjs",
-        "sha256": "d12ecc3916d72293eee1ab98e9b925b598de0ebe214fd474e2c19e575b669f6d"
+        "sha256": "a8abfd5f4a4af20dd0f93e0079c1ada8dda786492e00e700351fcd2ca4119585"
       },
       {
         "path": "scripts/nelyon-private-authority-issuer.mjs",
-        "sha256": "374f2d512071fc73433c1415f12cefd508dd8730a62707e44ee7343a253ab65c"
+        "sha256": "5042bfa8f6727080585cedac54698694abad314f28cd6879ccc27bdd347c1bc0"
       },
       {
         "path": "scripts/nelyon-private-authority-provider.mjs",
-        "sha256": "9b9da5f05e90aefc18696371a3cbfd789705fafdde119ab11dc149fa2157e14d"
+        "sha256": "edbeabd4ef67d71ee215384f3bea0356004b97dca8288531effb162d6c26f764"
       },
       {
         "path": "scripts/nelyon-private-authority-runtime.mjs",
-        "sha256": "8d1d4ddd3a1f7093bd3efdd9f3c4f8233e0b2f7ee3db2c687cfb7fe6b6dd1d14"
+        "sha256": "264277d3e1c61fe4164c81c740a0a69c77cb93b368ebe98b9d05734dc3b8cb7a"
       },
       {
         "path": "scripts/nelyon-private-authority.mjs",
@@ -85,11 +85,11 @@
       },
       {
         "path": "scripts/prove-web-control-centers-b2-disposable.mjs",
-        "sha256": "eb6e8aa6cb1a435446fa90eabe592c2056f2b40001dc2b3e6225df1da817e61c"
+        "sha256": "d417024261104951525ccbf1a56f701255d6d213e6282751705a48bf104fcc31"
       },
       {
         "path": "scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs",
-        "sha256": "0598edad7f399628b535138e37ceff3bd529c09682f28e4a15cc01b280d35bc8"
+        "sha256": "f23b37148d842677e925a9a65611eace48ebbbfd66d313a6705b97383676700e"
       },
       {
         "path": "shared/web-deployment/publicSupabaseBuildEnv.mjs",
@@ -112,7 +112,7 @@
       "wrangler": "4.135.0",
       "supabase_setup_action": "45a513f8c64c0bc8e0e3dfe572b5c95be85f6359"
     },
-    "closure_sha256": "76706468c4eabe3834144ef631135614ded2d866b45ef449d9a1ff6d380131a2"
+    "closure_sha256": "61bbaefe258574b27ae766ecd12c197e67340bc2186ced36fc545aafc952c76f"
   },
   "proposed_members": [
     {
