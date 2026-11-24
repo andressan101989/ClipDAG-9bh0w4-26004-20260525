@@ -49,6 +49,14 @@ const RECOVERY_REQUIRED_ENV = Object.freeze(REQUIRED_ENV.filter(name => ![
   'NELYON_PRIVATE_AUTHORITY_DESCRIPTOR_SHA256',
   'NELYON_PRIVATE_AUTHORITY_SHA256',
 ].includes(name)));
+const R2_ACCESS_PROBE_ENV = Object.freeze([
+  'NELYON_PRIVATE_AUTHORITY_PROVIDER',
+  'NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID',
+  'NELYON_PRIVATE_AUTHORITY_R2_BUCKET',
+  'NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID',
+  'NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY',
+  'NELYON_PRIVATE_AUTHORITY_TIMEOUT_MS',
+]);
 const ACTION_STAGE = Object.freeze({
   'authority-proof': 'authority_proof',
   'dryrun-migrations': 'migrations',
@@ -271,6 +279,43 @@ function readTrustedProviderEnvironment(environment, requireCurrentPins) {
 
 export function readTrustedAuthorityEnvironment(environment) {
   return readTrustedProviderEnvironment(environment, true);
+}
+
+/** Read only the exact R2 material needed for a terminal HeadBucket probe.
+ * Authority, descriptor, policy, closure and recovery pins are intentionally
+ * rejected so this path cannot bootstrap or authorize a release. */
+export function readTrustedR2AccessProbeEnvironment(environment) {
+  const descriptors = ownEnvironment(environment);
+  const presentReserved = ENV_NAMES.filter(name => Object.hasOwn(descriptors, name));
+  const required = R2_ACCESS_PROBE_ENV.filter(name => name !== 'NELYON_PRIVATE_AUTHORITY_TIMEOUT_MS');
+  if (required.some(name => !presentReserved.includes(name))
+    || presentReserved.some(name => !R2_ACCESS_PROBE_ENV.includes(name))) {
+    fail('PRIVATE_AUTHORITY_PROVIDER_INVALID');
+  }
+  const value = name => descriptors[name]?.value;
+  const timeoutRaw = Object.hasOwn(descriptors, 'NELYON_PRIVATE_AUTHORITY_TIMEOUT_MS')
+    ? value('NELYON_PRIVATE_AUTHORITY_TIMEOUT_MS') : '10000';
+  if (value('NELYON_PRIVATE_AUTHORITY_PROVIDER') !== 'r2'
+    || !scalar(value('NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID'), /^[0-9a-f]{32}$/)
+    || !scalar(value('NELYON_PRIVATE_AUTHORITY_R2_BUCKET'), /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/)
+    || !scalar(value('NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID'), /^[\x21-\x7e]{1,512}$/)
+    || !scalar(value('NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY'), /^[\x21-\x7e]{1,512}$/)
+    || typeof timeoutRaw !== 'string'
+    || !/^(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|60000)$/.test(timeoutRaw)) {
+    fail('PRIVATE_AUTHORITY_PROVIDER_INVALID');
+  }
+  const timeoutMs = Number(timeoutRaw);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
+    fail('PRIVATE_AUTHORITY_PROVIDER_INVALID');
+  }
+  return Object.freeze({
+    provider: 'r2',
+    accountId: value('NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID'),
+    bucket: value('NELYON_PRIVATE_AUTHORITY_R2_BUCKET'),
+    accessKeyId: value('NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID'),
+    secretAccessKey: value('NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY'),
+    timeoutMs,
+  });
 }
 
 function readTrustedRecoveryEnvironment(environment) {

@@ -1,5 +1,5 @@
 name: Nelyon controlled production release
-run-name: ${{ inputs.mode == 'authority_issue' && inputs.release_id || format('{0} | {1} | {2}', inputs.mode == 'authority_observe' && 'Nelyon B2 authority observation' || (toJSON(inputs.preflight_only) == 'true' && 'Nelyon read-only B2 diagnostic' || 'Nelyon production release'), inputs.mode, inputs.release_id) }}
+run-name: ${{ inputs.mode == 'r2_access_probe' && 'Nelyon R2 runtime access probe' || (inputs.mode == 'authority_issue' && inputs.release_id || format('{0} | {1} | {2}', inputs.mode == 'authority_observe' && 'Nelyon B2 authority observation' || (toJSON(inputs.preflight_only) == 'true' && 'Nelyon read-only B2 diagnostic' || 'Nelyon production release'), inputs.mode, inputs.release_id)) }}
 
 on:
   workflow_dispatch:
@@ -21,6 +21,7 @@ on:
         required: true
         type: choice
         options:
+          - r2_access_probe
           - authority_observe
           - authority_issue
           - plan_only
@@ -60,6 +61,143 @@ env:
   NELYON_WRANGLER: apps/admin-web/node_modules/.bin/wrangler
 
 jobs:
+  r2-runtime-access-probe:
+    name: Verify protected R2 runtime access
+    if: ${{ inputs.mode == 'r2_access_probe' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: production
+    permissions:
+      contents: read
+    concurrency:
+      group: nelyon-supabase-production
+      cancel-in-progress: false
+    steps:
+      - name: Checkout exact approved SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.approved_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.21.0'
+
+      - name: Validate exact read-only R2 runtime probe invocation
+        id: r2_probe_identity
+        env:
+          INPUT_APPROVED_SHA: ${{ inputs.approved_sha }}
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_RELEASE_ID: ${{ inputs.release_id }}
+          INPUT_SCOPE_CONFIRMATION: ${{ inputs.scope_confirmation }}
+          INPUT_PREFLIGHT_ONLY: ${{ toJSON(inputs.preflight_only) }}
+          INPUT_RECOVERY_SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
+          INPUT_AUTHORITY_OBSERVATION_RUN_ID: ${{ inputs.authority_observation_run_id }}
+          INPUT_AUTHORITY_OBSERVATION_SHA256: ${{ inputs.authority_observation_sha256 }}
+          INPUT_AUTHORITY_INTEGRATION_BASE_SHA: ${{ inputs.authority_integration_base_sha }}
+          OBSERVED_REPOSITORY: ${{ github.repository }}
+          OBSERVED_REF: ${{ github.ref }}
+          OBSERVED_WORKFLOW_REF: ${{ github.workflow_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { mkdirSync } from 'node:fs';
+          import path from 'node:path';
+          const repository = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
+          const workflowRef = `${repository}/.github/workflows/nelyon-production-release.yml@refs/heads/main`;
+          const approvedSha = process.env.INPUT_APPROVED_SHA ?? '';
+          if (process.versions.node !== '24.21.0'
+            || process.env.INPUT_MODE !== 'r2_access_probe'
+            || process.env.INPUT_RELEASE_ID !== `b2-r2-access-probe-${approvedSha}`
+            || process.env.INPUT_SCOPE_CONFIRMATION !== 'R2_RUNTIME_ACCESS_READ_ONLY'
+            || process.env.INPUT_PREFLIGHT_ONLY !== 'false'
+            || (process.env.INPUT_RECOVERY_SOURCE_RUN_ID ?? '') !== ''
+            || (process.env.INPUT_AUTHORITY_OBSERVATION_RUN_ID ?? '') !== ''
+            || (process.env.INPUT_AUTHORITY_OBSERVATION_SHA256 ?? '') !== ''
+            || (process.env.INPUT_AUTHORITY_INTEGRATION_BASE_SHA ?? '') !== ''
+            || process.env.OBSERVED_REPOSITORY !== repository
+            || process.env.OBSERVED_REF !== 'refs/heads/main'
+            || process.env.OBSERVED_WORKFLOW_REF !== workflowRef
+            || process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch'
+            || process.env.GITHUB_ACTOR !== 'andressan101989'
+            || process.env.GITHUB_TRIGGERING_ACTOR !== 'andressan101989'
+            || process.env.GITHUB_RUN_ATTEMPT !== '1'
+            || !/^[0-9a-f]{40}$/.test(approvedSha)) {
+            throw new Error('R2 runtime probe invocation rejected');
+          }
+          const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+          if (head !== approvedSha || process.env.GITHUB_SHA !== approvedSha || !/^[0-9a-f]{40}$/.test(tree)) {
+            throw new Error('R2 runtime probe source identity rejected');
+          }
+          mkdirSync(path.join(process.env.RUNNER_TEMP, 'nelyon-b2-r2-access-probe'), {
+            recursive: false,
+            mode: 0o700,
+          });
+          process.stdout.write('R2 runtime probe identity verified\n');
+          process.env.GITHUB_OUTPUT && await import('node:fs').then(({ appendFileSync }) => {
+            appendFileSync(process.env.GITHUB_OUTPUT, `approved_tree=${tree}\n`);
+          });
+          NODE
+
+      - name: Install exact R2 signer without scripts
+        shell: bash
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify protected R2 runtime access
+        id: r2_runtime_access
+        env:
+          NELYON_APPROVED_SHA: ${{ inputs.approved_sha }}
+          NELYON_APPROVED_TREE: ${{ steps.r2_probe_identity.outputs.approved_tree }}
+          NELYON_R2_PROBE_SCOPE: ${{ inputs.scope_confirmation }}
+          NELYON_R2_PROBE_RELEASE_ID: ${{ inputs.release_id }}
+          NELYON_PRIVATE_AUTHORITY_PROVIDER: r2
+          NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_BUCKET: ${{ vars.NELYON_PRIVATE_AUTHORITY_R2_BUCKET }}
+          NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID }}
+          NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: ${{ secrets.NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY }}
+          NELYON_PRIVATE_AUTHORITY_TIMEOUT_MS: '10000'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/nelyon-private-authority-cli.mjs r2-access-probe \
+            --approved-sha "${{ inputs.approved_sha }}" \
+            --approved-tree "${{ steps.r2_probe_identity.outputs.approved_tree }}" \
+            --verification-output "$RUNNER_TEMP/nelyon-b2-r2-access-probe/r2-runtime-access.json"
+
+      - name: Upload sanitized R2 runtime access receipt
+        if: ${{ steps.r2_runtime_access.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nelyon-b2-r2-runtime-access-${{ github.run_id }}
+          path: ${{ runner.temp }}/nelyon-b2-r2-access-probe/r2-runtime-access.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Clean R2 runtime access scratch
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { lstatSync, realpathSync, rmSync } from 'node:fs';
+          import path from 'node:path';
+          const root = realpathSync(process.env.RUNNER_TEMP);
+          const target = path.join(root, 'nelyon-b2-r2-access-probe');
+          const stat = lstatSync(target, { throwIfNoEntry: false });
+          if (!stat) process.exit(0);
+          const relative = path.relative(root, target);
+          if (relative !== 'nelyon-b2-r2-access-probe' || stat.isSymbolicLink()
+            || !stat.isDirectory() || realpathSync(target) !== target) {
+            throw new Error('R2 runtime probe cleanup rejected');
+          }
+          rmSync(target, { recursive: true, force: false, maxRetries: 0 });
+          NODE
+
   authority-observation:
     name: Observe fresh B2 backup and Vault/Edge parity
     if: ${{ inputs.mode == 'authority_observe' }}
@@ -562,7 +700,7 @@ jobs:
 
   plan:
     name: Build immutable release plan
-    if: ${{ inputs.mode != 'authority_observe' && inputs.mode != 'authority_issue' }}
+    if: ${{ inputs.mode != 'r2_access_probe' && inputs.mode != 'authority_observe' && inputs.mode != 'authority_issue' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

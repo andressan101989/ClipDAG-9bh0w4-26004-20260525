@@ -19,7 +19,8 @@ const runtimeModule = await import('../scripts/nelyon-private-authority-runtime.
   return {};
 });
 const { bootstrapPrivateAuthorityRuntime, createPrivateAuthorityRuntime, loadProtectedB2RecoveryRuntime,
-  readTrustedAuthorityEnvironment, resolveProtectedB2RecoveryAuthority, stageProtectedB2RecoverySource } = runtimeModule;
+  readTrustedAuthorityEnvironment, readTrustedR2AccessProbeEnvironment,
+  resolveProtectedB2RecoveryAuthority, stageProtectedB2RecoverySource } = runtimeModule;
 const ROOT = resolve(new URL('../', import.meta.url).pathname.replace(/^\/(?:[A-Za-z]:)/, value => value.slice(1)));
 const AT = '2026-11-08T12:00:00.000Z';
 const MARKER = 'PRIVATE_RUNTIME_SYNTHETIC_MARKER';
@@ -227,6 +228,48 @@ test('trusted environment is exact, frozen and missing configuration is fail-clo
   ]);
   assert.equal(values.timeoutMs, 10000);
   assert.equal(values.secretAccessKey, 'synthetic-secret-key');
+});
+
+test('R2 access probe environment is exact, frozen and independent of authority pins', () => {
+  assert.equal(typeof readTrustedR2AccessProbeEnvironment, 'function');
+  const probeEnvironment = {
+    NELYON_PRIVATE_AUTHORITY_PROVIDER: 'r2',
+    NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: 'a'.repeat(32),
+    NELYON_PRIVATE_AUTHORITY_R2_BUCKET: 'nelyon-b2-release-authority-prod',
+    NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: 'synthetic-access-key',
+    NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: 'synthetic-secret-key',
+    NELYON_PRIVATE_AUTHORITY_TIMEOUT_MS: '10000',
+    ORDINARY_UNRELATED_VALUE: 'allowed',
+  };
+  const values = readTrustedR2AccessProbeEnvironment(probeEnvironment);
+  assert.equal(Object.isFrozen(values), true);
+  assert.deepEqual(values, {
+    provider: 'r2',
+    accountId: 'a'.repeat(32),
+    bucket: 'nelyon-b2-release-authority-prod',
+    accessKeyId: 'synthetic-access-key',
+    secretAccessKey: 'synthetic-secret-key',
+    timeoutMs: 10000,
+  });
+  assert.throws(() => readTrustedR2AccessProbeEnvironment({
+    ...probeEnvironment,
+    NELYON_PRIVATE_AUTHORITY_SHA256: '0'.repeat(64),
+  }), { code: 'PRIVATE_AUTHORITY_PROVIDER_INVALID' });
+  assert.throws(() => readTrustedR2AccessProbeEnvironment({
+    ...probeEnvironment,
+    NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: undefined,
+  }), { code: 'PRIVATE_AUTHORITY_PROVIDER_INVALID' });
+  let reads = 0;
+  const hostile = { ...probeEnvironment };
+  Object.defineProperty(hostile, 'NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY', {
+    enumerable: true,
+    get() { reads += 1; throw new Error(MARKER); },
+  });
+  assert.throws(() => readTrustedR2AccessProbeEnvironment(hostile),
+    { code: 'PRIVATE_AUTHORITY_PROVIDER_INVALID' });
+  assert.equal(reads, 0);
+  assert.throws(() => readTrustedR2AccessProbeEnvironment(new Proxy(probeEnvironment, {})),
+    { code: 'PRIVATE_AUTHORITY_PROVIDER_INVALID' });
 });
 
 test('unknown reserved variables, malformed values, proxies and getters are rejected without coercion', () => {

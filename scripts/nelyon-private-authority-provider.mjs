@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { types } from 'node:util';
 import { performance } from 'node:perf_hooks';
-import { setImmediate as yieldTurn } from 'node:timers/promises';
+import { setImmediate as yieldTurn, setTimeout as delay } from 'node:timers/promises';
 import { AwsClient } from 'aws4fetch';
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -10,9 +10,13 @@ const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_VERSIONS = 64;
 const MAX_MEMORY_BYTES = 16 * 1024 * 1024;
 const MAX_STREAM_CHUNKS = 16_384;
+const READBACK_DELAYS_MS = Object.freeze([0, 25, 100]);
 const INVALID = Symbol('invalid');
 const UNAVAILABLE = Symbol('unavailable');
+const TRANSIENT = Symbol('transient');
 const detailedR2Readers = new WeakMap();
+const detailedR2Failures = new WeakMap();
+const publisherDiagnostics = new WeakMap();
 const byteLength = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'byteLength').get;
 const setBytes = Uint8Array.prototype.set;
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -26,11 +30,32 @@ function failure(reason) {
   return Object.freeze(error);
 }
 
-function publisherFailure() {
+function publisherFailure(diagnostic = null) {
   const message = 'Private authority publisher rejected';
   const error = new Error(message);
   error.code = 'PRIVATE_AUTHORITY_PUBLISHER_INVALID';
   error.stack = `Error: ${message}`;
+  if (diagnostic) publisherDiagnostics.set(error, Object.freeze({ ...diagnostic }));
+  return Object.freeze(error);
+}
+
+export function readR2PrivateAuthorityPublisherDiagnostic(error) {
+  return publisherDiagnostics.get(error);
+}
+
+function detailedR2Failure(reason, phase, httpStatus = null) {
+  const error = new Error('Private authority readback rejected');
+  error.stack = 'Error: Private authority readback rejected';
+  const diagnostic = { phase };
+  if (['READBACK_HEAD', 'READBACK_GET'].includes(phase)
+    && Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599) {
+    diagnostic.httpStatus = httpStatus;
+  }
+  detailedR2Failures.set(error, Object.freeze({
+    reason,
+    retryable: reason !== INVALID,
+    diagnostic: Object.freeze(diagnostic),
+  }));
   return Object.freeze(error);
 }
 
@@ -108,6 +133,9 @@ function configuration(options) {
 
 function contentLength(response) {
   if (response.status === 404) throw UNAVAILABLE;
+  if ([408, 429].includes(response.status) || (response.status >= 500 && response.status <= 599)) {
+    throw TRANSIENT;
+  }
   if (response.status !== 200) throw INVALID;
   const encoding = response.headers.get('content-encoding');
   if (encoding !== null && encoding !== 'identity') throw INVALID;
@@ -124,9 +152,72 @@ function contentEtag(response) {
   return etag;
 }
 
+function contentMetadata(response, digest) {
+  if (response.headers.get('content-type') !== 'application/json'
+    || response.headers.get('x-amz-meta-nelyon-content-sha256') !== digest
+    || response.headers.get('x-amz-meta-nelyon-write-id') !== digest) throw INVALID;
+  return Object.freeze({
+    contentType: 'application/json',
+    contentSha256: digest,
+    writeId: digest,
+  });
+}
+
 // Cancellation must never wait for a remote error body or a misbehaving stream.
 function cancelBody(body) {
   try { Promise.resolve(body?.cancel()).catch(() => {}); } catch { /* sanitized by caller */ }
+}
+
+/** Protected read-only credential probe. It signs exactly one S3 HeadBucket
+ * request and exposes no object, list, write, delete, fallback or retry API. */
+export function createR2PrivateAuthorityAccessProbe(options) {
+  try {
+    const { accountId, bucket, accessKeyId, secretAccessKey, fetch: read, timeoutMs } = configuration(options);
+    const signer = new AwsClient({ accessKeyId, secretAccessKey, service: 's3', region: 'auto', retries: 0 });
+    const endpoint = `https://${accountId}.r2.cloudflarestorage.com/${bucket}`;
+    return Object.freeze({ async verify() {
+      let timer;
+      let body;
+      let timedOut = false;
+      const abort = new AbortController();
+      try {
+        const signed = await signer.sign(endpoint, {
+          method: 'HEAD', signal: abort.signal, redirect: 'error', credentials: 'omit',
+          headers: { 'accept-encoding': 'identity' },
+        });
+        const request = (async () => await read(signed))();
+        request.then(response => {
+          if (timedOut) cancelBody(response?.body);
+        }, () => {});
+        const response = await Promise.race([request, new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            timedOut = true;
+            abort.abort();
+            reject(INVALID);
+          }, timeoutMs);
+        })]);
+        body = response?.body;
+        cancelBody(body);
+        body = null;
+        if (response?.status !== 200) throw INVALID;
+        return Object.freeze({
+          schemaVersion: 1,
+          result: 'R2_RUNTIME_ACCESS_VERIFIED',
+          operation: 'HeadBucket',
+          bucket,
+          status: 200,
+        });
+      } catch {
+        throw failure(INVALID);
+      } finally {
+        clearTimeout(timer);
+        abort.abort();
+        cancelBody(body);
+      }
+    } });
+  } catch {
+    throw failure(INVALID);
+  }
 }
 
 /** Real S3-compatible R2 reader, deliberately unconfigured. All configuration
@@ -138,12 +229,17 @@ export function createR2PrivateAuthorityProvider(options) {
     const { accountId, bucket, accessKeyId, secretAccessKey, fetch: read, timeoutMs } = configuration(options);
     const signer = new AwsClient({ accessKeyId, secretAccessKey, service: 's3', region: 'auto', retries: 0 });
     const prefix = `https://${accountId}.r2.cloudflarestorage.com/${bucket}/internal/release-authority/v1/sha256/`;
-    const readBySha256 = async (digest, detailed) => {
+    const readBySha256 = async (digest, detailed, operationTimeoutMs = timeoutMs) => {
       let timer;
       let reader;
       let body;
+      let phase = 'READBACK_HEAD';
+      let observedStatus = null;
       const abort = new AbortController();
-      const expiresAt = performance.now() + timeoutMs;
+      if (!Number.isInteger(operationTimeoutMs) || operationTimeoutMs < 1 || operationTimeoutMs > timeoutMs) {
+        throw failure(INVALID);
+      }
+      const expiresAt = performance.now() + operationTimeoutMs;
       const checkDeadline = () => {
         if (abort.signal.aborted || performance.now() >= expiresAt) {
           abort.abort();
@@ -153,7 +249,7 @@ export function createR2PrivateAuthorityProvider(options) {
       try {
         checkDigest(digest);
         const deadline = new Promise((_, reject) => {
-          timer = setTimeout(() => { abort.abort(); reject(INVALID); }, timeoutMs);
+          timer = setTimeout(() => { abort.abort(); reject(TRANSIENT); }, operationTimeoutMs);
         });
         const request = async method => {
           checkDeadline();
@@ -169,17 +265,33 @@ export function createR2PrivateAuthorityProvider(options) {
           return response;
         };
         const operation = async () => {
+          phase = 'READBACK_HEAD';
           const head = await request('HEAD');
+          observedStatus = head.status;
           body = head.body;
           checkDeadline();
           const size = contentLength(head);
+          phase = 'READBACK_METADATA';
           const etag = detailed ? contentEtag(head) : null;
+          const metadata = detailed ? contentMetadata(head, digest) : null;
           cancelBody(body);
           body = null;
+          phase = 'READBACK_GET';
+          observedStatus = null;
           const get = await request('GET');
+          observedStatus = get.status;
           body = get.body;
           checkDeadline();
-          if (contentLength(get) !== size || (detailed && contentEtag(get) !== etag) || !body) throw INVALID;
+          if (contentLength(get) !== size || !body) throw INVALID;
+          if (detailed) {
+            phase = 'READBACK_METADATA';
+            if (contentEtag(get) !== etag) throw INVALID;
+            const getMetadata = contentMetadata(get, digest);
+            if (getMetadata.contentType !== metadata.contentType
+              || getMetadata.contentSha256 !== metadata.contentSha256
+              || getMetadata.writeId !== metadata.writeId) throw INVALID;
+          }
+          phase = 'READBACK_BYTES';
           reader = body.getReader();
           const bytes = Buffer.alloc(size);
           let received = 0;
@@ -203,14 +315,20 @@ export function createR2PrivateAuthorityProvider(options) {
               checkDeadline();
             }
           }
-          if (received !== size || sha256(bytes) !== digest) throw INVALID;
+          if (received !== size) throw INVALID;
+          phase = 'READBACK_DIGEST';
+          if (sha256(bytes) !== digest) throw INVALID;
           checkDeadline();
-          return detailed ? Object.freeze({ bytes, etag }) : bytes;
+          return detailed ? Object.freeze({ bytes, etag, metadata }) : bytes;
         };
         // One race for the entire operation: successful reads do not attach
         // additional reactions to a shared pending deadline promise.
         return await Promise.race([operation(), deadline]);
       } catch (reason) {
+        if (detailed) {
+          if (detailedR2Failures.has(reason)) throw reason;
+          throw detailedR2Failure(reason, phase, observedStatus);
+        }
         throw failure(reason);
       } finally {
         clearTimeout(timer);
@@ -221,7 +339,7 @@ export function createR2PrivateAuthorityProvider(options) {
       }
     };
     const provider = Object.freeze({ getBySha256(digest) { return readBySha256(digest, false); } });
-    detailedR2Readers.set(provider, digest => readBySha256(digest, true));
+    detailedR2Readers.set(provider, (digest, operationTimeoutMs) => readBySha256(digest, true, operationTimeoutMs));
     return provider;
   } catch (reason) { throw failure(reason); }
 }
@@ -246,6 +364,7 @@ export function createR2PrivateAuthorityPublisher(options) {
 
     return Object.freeze({ async publishBySha256(digest, value) {
       let timer;
+      let diagnostic = Object.freeze({ phase: 'PUT_PREPARATION' });
       const abort = new AbortController();
       try {
         checkDigest(digest);
@@ -263,9 +382,12 @@ export function createR2PrivateAuthorityPublisher(options) {
             'content-length': String(bytes.length),
             'content-type': 'application/json',
             'if-none-match': '*',
+            'x-amz-meta-nelyon-content-sha256': digest,
+            'x-amz-meta-nelyon-write-id': digest,
           },
         });
 
+        diagnostic = Object.freeze({ phase: 'PUT_TRANSPORT' });
         let dispatched = false;
         let timedOut = false;
         const put = (async () => {
@@ -296,16 +418,54 @@ export function createR2PrivateAuthorityPublisher(options) {
           cancelBody(response.body);
           if (response.status === 200) disposition = 'CREATED';
           else if (response.status === 412) disposition = 'ALREADY_EXISTS';
-          else throw INVALID;
+          else if ([408, 429].includes(response.status)
+            || (response.status >= 500 && response.status <= 599)) disposition = 'UNCERTAIN_WRITE_VERIFIED';
+          else {
+            diagnostic = Object.freeze({ phase: 'PUT_STATUS', httpStatus: response.status });
+            throw INVALID;
+          }
         } catch (reason) {
           if (reason === INVALID || !dispatched) throw INVALID;
+          diagnostic = Object.freeze({ phase: 'PUT_TRANSPORT' });
           disposition = 'UNCERTAIN_WRITE_VERIFIED';
         } finally {
           clearTimeout(timer);
           abort.abort();
         }
 
-        const { bytes: observed, etag } = await verifyDetailed(digest);
+        const readbackDeadline = performance.now() + timeoutMs;
+        let verified;
+        let lastReadbackDiagnostic = null;
+        for (let attempt = 0; attempt < READBACK_DELAYS_MS.length; attempt += 1) {
+          const waitMs = READBACK_DELAYS_MS[attempt];
+          if (waitMs > 0) {
+            const remainingBeforeDelay = readbackDeadline - performance.now();
+            if (remainingBeforeDelay <= waitMs) break;
+            await delay(waitMs);
+          }
+          const remaining = Math.ceil(readbackDeadline - performance.now());
+          if (remaining < 1) break;
+          try {
+            verified = await verifyDetailed(digest, Math.min(timeoutMs, remaining));
+            break;
+          } catch (reason) {
+            const detail = detailedR2Failures.get(reason);
+            if (!detail) {
+              diagnostic = Object.freeze({ phase: 'READBACK_BYTES' });
+              throw INVALID;
+            }
+            lastReadbackDiagnostic = detail.diagnostic;
+            diagnostic = detail.diagnostic;
+            if (!detail.retryable) throw INVALID;
+          }
+        }
+        if (!verified) {
+          diagnostic = Object.freeze({ ...(lastReadbackDiagnostic || { phase: 'READBACK_HEAD' }),
+            exhausted: true });
+          throw INVALID;
+        }
+        const { bytes: observed, etag } = verified;
+        diagnostic = Object.freeze({ phase: 'READBACK_BYTES' });
         if (observed.length !== bytes.length || !observed.equals(bytes)) throw INVALID;
         return Object.freeze({
           schemaVersion: 1,
@@ -317,7 +477,7 @@ export function createR2PrivateAuthorityPublisher(options) {
           readback: 'HEAD_GET_EXACT',
         });
       } catch {
-        throw publisherFailure();
+        throw publisherFailure(diagnostic);
       } finally {
         clearTimeout(timer);
         abort.abort();

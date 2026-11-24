@@ -29,7 +29,7 @@ function nodeBody(run) {
 }
 
 test('typed opt-in preserves release default and separates terminal job structurally', () => {
-  assert.equal(workflow['run-name'], "${{ inputs.mode == 'authority_issue' && inputs.release_id || format('{0} | {1} | {2}', inputs.mode == 'authority_observe' && 'Nelyon B2 authority observation' || (toJSON(inputs.preflight_only) == 'true' && 'Nelyon read-only B2 diagnostic' || 'Nelyon production release'), inputs.mode, inputs.release_id) }}");
+  assert.equal(workflow['run-name'], "${{ inputs.mode == 'r2_access_probe' && 'Nelyon R2 runtime access probe' || (inputs.mode == 'authority_issue' && inputs.release_id || format('{0} | {1} | {2}', inputs.mode == 'authority_observe' && 'Nelyon B2 authority observation' || (toJSON(inputs.preflight_only) == 'true' && 'Nelyon read-only B2 diagnostic' || 'Nelyon production release'), inputs.mode, inputs.release_id)) }}");
   assert.deepEqual(workflow.on.workflow_dispatch.inputs.preflight_only, { description: 'Read-only B2 snapshot diagnostic; never deploy', required: false, type: 'boolean', default: false });
   const d = diagnostic(); assert.deepEqual(d.needs, ['plan', 'private-authority-check']);
   assert.equal(d.environment, 'production'); assert.deepEqual(d.concurrency, workflow.jobs.deploy.concurrency);
