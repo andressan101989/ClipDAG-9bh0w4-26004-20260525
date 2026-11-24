@@ -69,6 +69,9 @@ jobs:
           mode="$(stat -c '%a' /usr/bin/docker)"
           test $(( 8#$mode & 8#022 )) -eq 0
           /usr/bin/docker version
+      - name: Install exact dependencies without scripts
+        shell: bash
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Run real Docker OCI index proof
         shell: bash
         env:

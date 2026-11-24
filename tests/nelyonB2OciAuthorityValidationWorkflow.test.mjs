@@ -112,7 +112,10 @@ test('OCI index proof runs the canonical real-Docker catalog proof and negative 
   const ownerApproval = step(job, 'Run owner approval consistency regression');
   assert.equal(ownerApproval.run,
     'node --test --test-name-pattern="owner approval" tests/nelyonB2AuthorityIssuer.test.mjs');
+  const install = step(job, 'Install exact dependencies without scripts');
+  assert.equal(install.run, 'npm ci --ignore-scripts --no-audit --no-fund');
   const transport = step(job, 'Run protected provider and issuance regressions');
+  assert.ok(job.steps.indexOf(install) < job.steps.indexOf(transport));
   assert.deepEqual(transport.env, {
     CI: 'true',
     NO_COLOR: '1',
