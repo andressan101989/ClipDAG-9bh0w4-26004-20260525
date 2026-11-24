@@ -1077,8 +1077,10 @@ export function createPrivateAuthorityProductionHost({ publicInputs, environment
       }
       const offlineAuthorization = ['preflight-release', 'authorize-refresh'].includes(action);
       if (offlineAuthorization && (request.mode !== 'release' || Object.hasOwn(environment, 'SUPABASE_ACCESS_TOKEN'))) throw new Error('blocked');
+      const readOnlyProofMode = request.mode === 'gate_proof';
       const rows = ['preflight-release', 'authorize-refresh', 'revalidate-b2-recovery', 'revalidate-b2-admin-recovery',
         'verify-b2-recovery-gate', 'verify-b2-admin-recovery-gate', 'recovery-snapshot'].includes(action)
+        || (readOnlyProofMode && ['revalidate', 'verify-gate'].includes(action))
         ? [] : await deployedFunctionRows(environment, fetchImpl);
       const inventory = inventoryFromRows(rows, now);
       if (['preflight-release', 'authorize-refresh', 'revalidate', 'revalidate-b2-recovery', 'revalidate-b2-admin-recovery', 'verify-b2-recovery-gate', 'verify-b2-admin-recovery-gate', 'verify-gate', 'verify-pre-snapshot', 'postcheck', 'verify-recovery-source',
