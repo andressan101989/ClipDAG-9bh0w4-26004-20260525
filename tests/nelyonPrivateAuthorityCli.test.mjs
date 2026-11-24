@@ -21,6 +21,7 @@ const {
   createPrivateAuthorityProductionHost,
   executeAuthorityIssuance,
   executeAuthorityObservation,
+  executeR2AccessProbe,
   readAuthorityIssuanceDiagnostic,
   runPrivateAuthorityCli,
   writeB2AuthorityObservationMetadata,
@@ -53,9 +54,15 @@ const ISSUE = [
   '--approved-descriptor-output', 'nelyon-web-control-centers-b2-release-descriptor.json',
   '--verification-output', 'receipt.json',
 ];
+const R2_PROBE = [
+  '--approved-sha', 'a'.repeat(40),
+  '--approved-tree', 'b'.repeat(40),
+  '--verification-output', 'r2-runtime-access.json',
+];
 const ACTIONS = [
   'authority-observe',
   'authority-issue',
+  'r2-access-probe',
   'authority-proof',
   'preflight-release',
   'authorize-refresh',
@@ -333,11 +340,30 @@ test('every runtime action is a closed enum and reaches only the trusted execute
   });
   for (const action of ACTIONS) {
     const args = action === 'authority-observe' ? OBSERVE
-      : action === 'authority-issue' ? ISSUE : [...COMMON, ...EXTRA[action]];
+      : action === 'authority-issue' ? ISSUE
+        : action === 'r2-access-probe' ? R2_PROBE : [...COMMON, ...EXTRA[action]];
     const code = await runPrivateAuthorityCli([action, ...args], host);
     assert.equal(code, 0, action);
   }
   assert.deepEqual(seen, ACTIONS);
+});
+
+test('r2-access-probe is a separate terminal flag plane with no authority, bundle or release inputs', async () => {
+  let observed;
+  const host = trustedHost(async invocation => {
+    observed = invocation;
+    return Object.freeze({ schemaVersion: 1, result: 'VERIFIED', releaseReady: false });
+  });
+  assert.equal(await runPrivateAuthorityCli(['r2-access-probe', ...R2_PROBE], host), 0);
+  assert.deepEqual(observed, {
+    action: 'r2-access-probe',
+    inputs: { approvedSha: 'a'.repeat(40), approvedTree: 'b'.repeat(40) },
+    verificationOutput: 'r2-runtime-access.json',
+  });
+  for (const extra of [
+    ['--policy', 'policy.json'], ['--request', 'request.json'], ['--bundle', 'bundle'],
+    ['--observation-run', '1'], ['--release-id', `b2-authority-${'e'.repeat(64)}`],
+  ]) assert.equal(await runPrivateAuthorityCli(['r2-access-probe', ...R2_PROBE, ...extra], host), 2);
 });
 
 test('authority-observe is a separate terminal flag plane with no current bundle or request', async () => {
@@ -445,6 +471,86 @@ test('authority-issue production dispatch is terminal and precedes current descr
   const terminalBranch = source.slice(issuerBranch, publicInputLoad);
   assert.match(terminalBranch, /return executeAuthorityIssuance/u);
   assert.doesNotMatch(terminalBranch, /bootstrapPrivateAuthorityRuntime|createPrivateAuthorityRuntime|authorityContext/u);
+});
+
+test('R2 access probe production dispatch is terminal and precedes bundle or closure loading', () => {
+  const source = readFileSync(new URL('../scripts/nelyon-private-authority-cli.mjs', import.meta.url), 'utf8');
+  const hostStart = source.indexOf('const productionHost = Object.freeze({');
+  const probeBranch = source.indexOf("if (invocation.action === 'r2-access-probe')", hostStart);
+  const publicInputLoad = source.indexOf('const publicInputs = loadProductionPublicInputs', hostStart);
+  assert.ok(hostStart >= 0 && probeBranch > hostStart && publicInputLoad > probeBranch);
+  const terminalBranch = source.slice(probeBranch, publicInputLoad);
+  assert.match(terminalBranch, /return executeR2AccessProbe/u);
+  assert.doesNotMatch(terminalBranch,
+    /bootstrapPrivateAuthorityRuntime|createPrivateAuthorityRuntime|loadProductionPublicInputs|authorityContext/u);
+});
+
+test('R2 access probe binds main identity, performs one HeadBucket and writes a sanitized atomic receipt', async () => {
+  assert.equal(typeof executeR2AccessProbe, 'function');
+  const repositoryRoot = process.cwd();
+  const approvedSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot, encoding: 'utf8' }).trim();
+  const approvedTree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: repositoryRoot, encoding: 'utf8' }).trim();
+  const runnerTemp = mkdtempSync(path.join(tmpdir(), 'nelyon-r2-probe-'));
+  const outputDirectory = path.join(runnerTemp, 'nelyon-b2-r2-access-probe');
+  mkdirSync(outputDirectory);
+  const output = path.join(outputDirectory, 'r2-runtime-access.json');
+  const environment = Object.freeze({
+    GITHUB_EVENT_NAME: 'workflow_dispatch',
+    GITHUB_REPOSITORY: 'andressan101989/ClipDAG-9bh0w4-26004-20260525',
+    GITHUB_REF: 'refs/heads/main',
+    GITHUB_WORKFLOW_REF: 'andressan101989/ClipDAG-9bh0w4-26004-20260525/.github/workflows/nelyon-production-release.yml@refs/heads/main',
+    GITHUB_ACTOR: 'andressan101989',
+    GITHUB_TRIGGERING_ACTOR: 'andressan101989',
+    GITHUB_RUN_ID: '45123456789',
+    GITHUB_RUN_ATTEMPT: '1',
+    GITHUB_SHA: approvedSha,
+    NELYON_APPROVED_SHA: approvedSha,
+    NELYON_APPROVED_TREE: approvedTree,
+    NELYON_R2_PROBE_SCOPE: 'R2_RUNTIME_ACCESS_READ_ONLY',
+    NELYON_R2_PROBE_RELEASE_ID: `b2-r2-access-probe-${approvedSha}`,
+    NELYON_PRIVATE_AUTHORITY_PROVIDER: 'r2',
+    NELYON_PRIVATE_AUTHORITY_R2_ACCOUNT_ID: 'a'.repeat(32),
+    NELYON_PRIVATE_AUTHORITY_R2_BUCKET: 'nelyon-b2-release-authority-prod',
+    NELYON_PRIVATE_AUTHORITY_R2_ACCESS_KEY_ID: 'synthetic-access-key',
+    NELYON_PRIVATE_AUTHORITY_R2_SECRET_ACCESS_KEY: MARKER,
+    NELYON_PRIVATE_AUTHORITY_TIMEOUT_MS: '10000',
+    RUNNER_TEMP: runnerTemp,
+  });
+  const calls = [];
+  try {
+    const result = await executeR2AccessProbe({
+      invocation: Object.freeze({ action: 'r2-access-probe',
+        inputs: Object.freeze({ approvedSha, approvedTree }), verificationOutput: output }),
+      environment,
+      fetchImpl: async request => { calls.push(request); return new Response(null, { status: 200 }); },
+      repositoryRoot,
+      now: () => '2026-11-24T05:00:00.000Z',
+      nodeVersion: '24.21.0',
+    });
+    assert.deepEqual(result, { schemaVersion: 1, result: 'VERIFIED', releaseReady: false });
+    assert.deepEqual(calls.map(request => request.method), ['HEAD']);
+    const receiptText = readFileSync(output, 'utf8');
+    const receipt = JSON.parse(receiptText);
+    assert.equal(receiptText.endsWith('\n'), true);
+    assert.deepEqual(receipt, {
+      schemaVersion: 1,
+      kind: 'nelyon-b2-r2-runtime-access-v1',
+      result: 'R2_RUNTIME_ACCESS_VERIFIED',
+      approvedSha,
+      approvedTree,
+      runId: '45123456789',
+      runAttempt: 1,
+      operation: 'HeadBucket',
+      bucket: 'nelyon-b2-release-authority-prod',
+      httpStatus: 200,
+      authenticated: true,
+      completedAt: '2026-11-24T05:00:00.000Z',
+    });
+    assert.doesNotMatch(receiptText, new RegExp(MARKER, 'u'));
+    assert.equal(readdirSync(outputDirectory).some(name => name.includes('.tmp-')), false);
+  } finally {
+    rmSync(runnerTemp, { recursive: true, force: true });
+  }
 });
 
 test('authority issuance writes a canonical approved descriptor beside its sanitized receipt', () => {

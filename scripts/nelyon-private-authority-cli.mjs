@@ -12,6 +12,7 @@ import {
   createPrivateAuthorityRuntime,
   loadProtectedB2RecoveryRuntime,
   readPrivateAuthorityDiagnostic,
+  readTrustedR2AccessProbeEnvironment,
   stageProtectedB2RecoverySource,
 } from './nelyon-private-authority-runtime.mjs';
 import {
@@ -62,11 +63,15 @@ import {
   readB2AuthorityIssuanceDiagnostic,
   readB2AuthorityPreparationSummary,
 } from './nelyon-private-authority-issuer.mjs';
-import { createR2PrivateAuthorityPublisher } from './nelyon-private-authority-provider.mjs';
+import {
+  createR2PrivateAuthorityAccessProbe,
+  createR2PrivateAuthorityPublisher,
+} from './nelyon-private-authority-provider.mjs';
 
 const ACTIONS = new Set([
   'authority-observe',
   'authority-issue',
+  'r2-access-probe',
   'authority-proof',
   'preflight-release',
   'authorize-refresh',
@@ -97,6 +102,7 @@ const ACTIONS = new Set([
 let functionProofCheckpointSequence = 0;
 let authorityIssuanceMetadataSequence = 0;
 let authorityObservationMetadataSequence = 0;
+let r2AccessProbeReceiptSequence = 0;
 export function writeFunctionProofCheckpoint(target, proof) {
   const temporary = `${target}.tmp-${process.pid}-${++functionProofCheckpointSequence}`;
   let descriptor;
@@ -277,6 +283,54 @@ export function writeB2AuthorityObservationMetadata(input, operations = AUTHORIT
   if (primaryError) throw primaryError;
   if (cleanupErrors.length > 0) throw cleanupErrors[0];
 }
+
+function writeR2AccessProbeReceipt(target, receiptJson,
+  operations = AUTHORITY_ISSUANCE_FILE_OPERATIONS) {
+  if (typeof target !== 'string' || !path.isAbsolute(target)
+    || path.basename(target) !== 'r2-runtime-access.json'
+    || typeof receiptJson !== 'string' || !receiptJson.endsWith('\n')
+    || Buffer.byteLength(receiptJson, 'utf8') < 3
+    || Buffer.byteLength(receiptJson, 'utf8') > 64 * 1024
+    || receiptJson.includes('\0') || lstatSync(target, { throwIfNoEntry: false })) throw new Error('blocked');
+  const parent = path.dirname(target);
+  const parentStat = lstatSync(parent);
+  if (!parentStat.isDirectory() || parentStat.isSymbolicLink() || realpathSync(parent) !== parent) {
+    throw new Error('blocked');
+  }
+  const fileOperations = trustedAuthorityIssuanceFileOperations(operations);
+  const temporary = `${target}.tmp-${process.pid}-${++r2AccessProbeReceiptSequence}`;
+  let descriptor;
+  let completed = false;
+  let primaryError;
+  try {
+    descriptor = fileOperations.openSync(temporary, 'wx', 0o600);
+    fileOperations.writeFileSync(descriptor, receiptJson, { encoding: 'utf8' });
+    fileOperations.fsyncSync(descriptor);
+    fileOperations.closeSync(descriptor); descriptor = undefined;
+    fileOperations.renameSync(temporary, target);
+    if (process.platform !== 'win32') {
+      const directory = fileOperations.openSync(parent, 'r');
+      try { fileOperations.fsyncSync(directory); } finally { fileOperations.closeSync(directory); }
+    }
+    completed = true;
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    if (descriptor !== undefined) {
+      try { fileOperations.closeSync(descriptor); } catch { /* preserve primary failure */ }
+    }
+    try { fileOperations.unlinkSync(temporary); } catch (error) {
+      if (error?.code !== 'ENOENT' && !primaryError) primaryError = error;
+    }
+    if (!completed) {
+      try { fileOperations.unlinkSync(target); } catch (error) {
+        if (error?.code !== 'ENOENT' && !primaryError) primaryError = error;
+      }
+    }
+  }
+  if (primaryError) throw primaryError;
+  if (!completed) throw new Error('blocked');
+}
 const COMMON_FLAGS = Object.freeze({
   '--policy': 'policy',
   '--request': 'request',
@@ -300,6 +354,11 @@ const AUTHORITY_ISSUE_FLAGS = Object.freeze({
   '--observation-sha256': 'observationSha256',
   '--release-id': 'releaseId',
   '--approved-descriptor-output': 'approvedDescriptorOutput',
+  '--verification-output': 'verificationOutput',
+});
+const R2_ACCESS_PROBE_FLAGS = Object.freeze({
+  '--approved-sha': 'approvedSha',
+  '--approved-tree': 'approvedTree',
   '--verification-output': 'verificationOutput',
 });
 const CHAIN_FLAGS = Object.freeze({ '--chain-run': 'chainRun', '--chain-artifacts': 'chainArtifacts',
@@ -451,7 +510,9 @@ function parse(argv) {
     ? AUTHORITY_OBSERVE_FLAGS
     : values[0] === 'authority-issue'
       ? AUTHORITY_ISSUE_FLAGS
-    : { ...COMMON_FLAGS, ...ACTION_ADDITIONAL_FLAGS[values[0]] };
+      : values[0] === 'r2-access-probe'
+        ? R2_ACCESS_PROBE_FLAGS
+        : { ...COMMON_FLAGS, ...ACTION_ADDITIONAL_FLAGS[values[0]] };
   const flags = Object.freeze({ ...requiredFlags, ...(CHAIN_ACTIONS.has(values[0]) ? CHAIN_FLAGS : {}) });
   const required = Object.keys(requiredFlags);
   const parsed = new Map();
@@ -1162,6 +1223,100 @@ export function materializeB2AuthorityPreissuanceArtifact(summary, runId) {
     descriptor, functionInventory, preissuance, releaseId: summary.releaseId });
 }
 
+export async function executeR2AccessProbe({ invocation, environment, fetchImpl, repositoryRoot,
+  now = () => new Date().toISOString(), nodeVersion = process.versions.node }) {
+  const expectedRepository = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
+  const expectedWorkflow = '.github/workflows/nelyon-production-release.yml';
+  const expectedWorkflowRef = `${expectedRepository}/${expectedWorkflow}@refs/heads/main`;
+  if (!invocation || typeof invocation !== 'object' || Array.isArray(invocation) || types.isProxy(invocation)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(invocation))
+    || Object.getOwnPropertySymbols(invocation).length !== 0 || typeof repositoryRoot !== 'string'
+    || typeof fetchImpl !== 'function' || types.isProxy(fetchImpl)
+    || typeof now !== 'function' || types.isProxy(now) || nodeVersion !== '24.21.0') throw new Error('blocked');
+  const invocationDescriptors = Object.getOwnPropertyDescriptors(invocation);
+  if (JSON.stringify(Object.keys(invocationDescriptors).sort())
+      !== JSON.stringify(['action', 'inputs', 'verificationOutput'])
+    || Object.values(invocationDescriptors).some(descriptor => !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable)
+    || invocationDescriptors.action.value !== 'r2-access-probe') throw new Error('blocked');
+  const inputs = invocationDescriptors.inputs.value;
+  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs) || types.isProxy(inputs)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(inputs))
+    || Object.getOwnPropertySymbols(inputs).length !== 0
+    || JSON.stringify(Object.keys(inputs).sort()) !== JSON.stringify(['approvedSha', 'approvedTree'])) {
+    throw new Error('blocked');
+  }
+  const approvedSha = inputs.approvedSha;
+  const approvedTree = inputs.approvedTree;
+  const expectedReleaseId = `b2-r2-access-probe-${approvedSha}`;
+  if (!/^[0-9a-f]{40}$/u.test(approvedSha) || !/^[0-9a-f]{40}$/u.test(approvedTree)
+    || environmentText(environment, 'GITHUB_EVENT_NAME', /^workflow_dispatch$/u) !== 'workflow_dispatch'
+    || environmentText(environment, 'GITHUB_REPOSITORY', /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u) !== expectedRepository
+    || environmentText(environment, 'GITHUB_REF', /^refs\/heads\/main$/u) !== 'refs/heads/main'
+    || environmentText(environment, 'GITHUB_WORKFLOW_REF', /^.{1,1024}$/u) !== expectedWorkflowRef
+    || environmentText(environment, 'GITHUB_ACTOR', /^[A-Za-z0-9-]{1,39}$/u) !== 'andressan101989'
+    || environmentText(environment, 'GITHUB_TRIGGERING_ACTOR', /^[A-Za-z0-9-]{1,39}$/u) !== 'andressan101989'
+    || environmentText(environment, 'GITHUB_RUN_ATTEMPT', /^1$/u) !== '1'
+    || environmentText(environment, 'GITHUB_SHA', /^[0-9a-f]{40}$/u) !== approvedSha
+    || environmentText(environment, 'NELYON_APPROVED_SHA', /^[0-9a-f]{40}$/u) !== approvedSha
+    || environmentText(environment, 'NELYON_APPROVED_TREE', /^[0-9a-f]{40}$/u) !== approvedTree
+    || environmentText(environment, 'NELYON_R2_PROBE_SCOPE', /^R2_RUNTIME_ACCESS_READ_ONLY$/u)
+      !== 'R2_RUNTIME_ACCESS_READ_ONLY'
+    || environmentText(environment, 'NELYON_R2_PROBE_RELEASE_ID', /^b2-r2-access-probe-[0-9a-f]{40}$/u)
+      !== expectedReleaseId) throw new Error('blocked');
+  const runId = environmentText(environment, 'GITHUB_RUN_ID', /^[1-9][0-9]*$/u);
+  const root = realpathSync(repositoryRoot);
+  if (execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() !== approvedSha
+    || execFileSync('git', ['-C', root, 'rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim() !== approvedTree) {
+    throw new Error('blocked');
+  }
+  const output = safeStageOutput(environment, invocationDescriptors.verificationOutput.value);
+  const expectedOutput = path.join(realpathSync(environmentText(environment, 'RUNNER_TEMP', /^.{1,4096}$/u)),
+    'nelyon-b2-r2-access-probe', 'r2-runtime-access.json');
+  if (output !== expectedOutput) throw new Error('blocked');
+  const config = readTrustedR2AccessProbeEnvironment(environment);
+  if (config.bucket !== 'nelyon-b2-release-authority-prod') throw new Error('blocked');
+  let access;
+  try {
+    access = await createR2PrivateAuthorityAccessProbe({
+      accountId: config.accountId,
+      bucket: config.bucket,
+      accessKeyId: config.accessKeyId,
+      secretAccessKey: config.secretAccessKey,
+      fetch: fetchImpl,
+      timeoutMs: config.timeoutMs,
+    }).verify();
+  } catch {
+    const error = new Error('Private authority operation blocked');
+    Object.defineProperty(error, 'code', { value: 'PRIVATE_AUTHORITY_PROVIDER_INVALID', enumerable: true });
+    Object.defineProperty(error, 'stack', { value: 'Error: Private authority operation blocked' });
+    throw Object.freeze(error);
+  }
+  let completedAt;
+  try { completedAt = now(); } catch { throw new Error('blocked'); }
+  if (typeof completedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(completedAt)
+    || !Number.isFinite(Date.parse(completedAt)) || new Date(completedAt).toISOString() !== completedAt
+    || access?.schemaVersion !== 1 || access.result !== 'R2_RUNTIME_ACCESS_VERIFIED'
+    || access.operation !== 'HeadBucket' || access.bucket !== config.bucket || access.status !== 200) {
+    throw new Error('blocked');
+  }
+  const receipt = Object.freeze({
+    schemaVersion: 1,
+    kind: 'nelyon-b2-r2-runtime-access-v1',
+    result: 'R2_RUNTIME_ACCESS_VERIFIED',
+    approvedSha,
+    approvedTree,
+    runId,
+    runAttempt: 1,
+    operation: 'HeadBucket',
+    bucket: config.bucket,
+    httpStatus: 200,
+    authenticated: true,
+    completedAt,
+  });
+  writeR2AccessProbeReceipt(output, `${canonicalJson(receipt)}\n`);
+  return SUCCESS;
+}
+
 export async function executeAuthorityObservation({ invocation, environment, fetchImpl, repositoryRoot,
   captureImpl = captureB2AuthorityObservation, verifyImpl = verifyB2AuthorityObservation,
   prepareImpl = prepareB2AuthorityPreissuanceFromVerifiedObservation,
@@ -1358,6 +1513,10 @@ export async function executeAuthorityIssuance({ invocation, environment, fetchI
 const productionHost = Object.freeze({
   async execute(invocation) {
     const repositoryRoot = process.cwd();
+    if (invocation.action === 'r2-access-probe') {
+      return executeR2AccessProbe({ invocation, environment: copyProductionEnvironment(process.env),
+        fetchImpl: globalThis.fetch, repositoryRoot });
+    }
     if (invocation.action === 'authority-observe') {
       return executeAuthorityObservation({ invocation, environment: copyProductionEnvironment(process.env),
         fetchImpl: globalThis.fetch, repositoryRoot });

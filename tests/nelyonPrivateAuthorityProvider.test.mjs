@@ -21,6 +21,15 @@ const r2Publisher = (...args) => {
   assert.equal(typeof providerModule.createR2PrivateAuthorityPublisher, 'function', 'R2 publisher exists');
   return providerModule.createR2PrivateAuthorityPublisher(...args);
 };
+const r2AccessProbe = (...args) => {
+  assert.equal(typeof providerModule.createR2PrivateAuthorityAccessProbe, 'function', 'R2 access probe exists');
+  return providerModule.createR2PrivateAuthorityAccessProbe(...args);
+};
+const publisherDiagnostic = error => {
+  assert.equal(typeof providerModule.readR2PrivateAuthorityPublisherDiagnostic, 'function',
+    'R2 publisher diagnostic reader exists');
+  return providerModule.readR2PrivateAuthorityPublisherDiagnostic(error);
+};
 const MARKER = 'SYNTHETIC_PROVIDER_PRIVATE_MARKER';
 const BYTES = Buffer.from(`{"synthetic":"${MARKER}"}`);
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -44,11 +53,18 @@ const rejected = (operation, code) => assert.rejects(operation, error => clean(e
 const response = (bytes = BYTES, length = bytes.length) => new Response(bytes, {
   headers: { 'content-length': String(length) },
 });
+const publisherHeaders = (etag = ETAG) => ({
+  'content-length': String(BYTES.length),
+  'content-type': 'application/json',
+  etag,
+  'x-amz-meta-nelyon-content-sha256': SHA,
+  'x-amz-meta-nelyon-write-id': SHA,
+});
 const publisherHead = (etag = ETAG) => new Response(null, {
-  headers: { 'content-length': String(BYTES.length), etag },
+  headers: publisherHeaders(etag),
 });
 const publisherGet = (bytes = BYTES, etag = ETAG) => new Response(bytes, {
-  headers: { 'content-length': String(bytes.length), etag },
+  headers: { ...publisherHeaders(etag), 'content-length': String(bytes.length) },
 });
 function fakeReader(overrides = {}) {
   const calls = [];
@@ -112,7 +128,7 @@ test('constructors reject Proxy, getters and coercion without invoking them', ()
   const byteGetter = Buffer.from(BYTES);
   Object.defineProperty(byteGetter, 'length', { get() { touched++; throw new Error(MARKER); } });
   assert.throws(() => memory({ [SHA]: byteGetter }), clean);
-  for (const create of [memory, r2]) assert.throws(() => create(new Proxy({}, {
+  for (const create of [memory, r2, r2AccessProbe]) assert.throws(() => create(new Proxy({}, {
     ownKeys() { touched++; throw new Error(MARKER); },
   })), clean);
   const options = config(async () => response());
@@ -122,6 +138,64 @@ test('constructors reject Proxy, getters and coercion without invoking them', ()
   assert.throws(() => r2({ ...config(async () => response()), endpoint: `https://${MARKER}.invalid` }), clean);
   assert.throws(() => r2({ ...config(async () => response()), fetch: new Proxy(() => {}, {}) }), clean);
   assert.equal(touched, 0);
+});
+
+test('R2 access probe performs one signed HeadBucket and returns only sanitized evidence', async () => {
+  const calls = [];
+  let cancelled = false;
+  const probe = r2AccessProbe(config(async request => {
+    calls.push(request);
+    return new Response(new ReadableStream({ cancel() { cancelled = true; } }), { status: 200 });
+  }));
+  const result = await probe.verify();
+  assert.deepEqual(result, {
+    schemaVersion: 1,
+    result: 'R2_RUNTIME_ACCESS_VERIFIED',
+    operation: 'HeadBucket',
+    bucket: 'synthetic-authority',
+    status: 200,
+  });
+  assert.deepEqual(Object.keys(probe), ['verify']);
+  assert.equal(Object.isFrozen(probe), true);
+  assert.equal(Object.isFrozen(result), true);
+  assert.equal(calls.length, 1);
+  const request = calls[0];
+  const url = new URL(request.url);
+  assert.equal(request.method, 'HEAD');
+  assert.equal(url.protocol, 'https:');
+  assert.equal(url.hostname, `${'a'.repeat(32)}.r2.cloudflarestorage.com`);
+  assert.equal(url.pathname, '/synthetic-authority');
+  assert.equal(url.search, '');
+  assert.equal(request.body, null);
+  assert.equal(request.redirect, 'error');
+  assert.equal(request.credentials, 'omit');
+  assert.equal(request.headers.has('authorization'), true);
+  assert.equal(request.headers.has('x-amz-date'), true);
+  assert.equal(request.headers.get('x-amz-content-sha256'), 'UNSIGNED-PAYLOAD');
+  assert.equal(cancelled, true);
+  for (const output of [JSON.stringify(result), inspect(result), inspect(probe)]) {
+    for (const secret of [MARKER, 'r2.cloudflarestorage.com', 'authorization']) {
+      assert.equal(output.toLowerCase().includes(secret.toLowerCase()), false);
+    }
+  }
+});
+
+test('R2 access probe rejects non-200, transport failure and timeout without fallback or leakage', async () => {
+  for (const status of [301, 400, 403, 404, 429, 500, 503]) {
+    const calls = [];
+    await rejected(() => r2AccessProbe(config(async request => {
+      calls.push(request);
+      return new Response(MARKER, { status });
+    })).verify());
+    assert.deepEqual(calls.map(request => request.method), ['HEAD']);
+  }
+  await rejected(() => r2AccessProbe(config(async () => { throw new Error(MARKER); })).verify());
+  let signal;
+  await rejected(() => r2AccessProbe({ ...config(request => {
+    signal = request.signal;
+    return new Promise(() => {});
+  }), timeoutMs: 15 }).verify());
+  assert.equal(signal.aborted, true);
 });
 
 test('R2 performs only signed HEAD then signed GET at digest-derived key', async () => {
@@ -305,6 +379,8 @@ test('R2 publisher performs one conditional PUT and exact readback at the digest
   assert.equal(put.headers.get('if-none-match'), '*');
   assert.equal(put.headers.get('content-type'), 'application/json');
   assert.equal(put.headers.get('content-length'), String(BYTES.length));
+  assert.equal(put.headers.get('x-amz-meta-nelyon-content-sha256'), SHA);
+  assert.equal(put.headers.get('x-amz-meta-nelyon-write-id'), SHA);
   assert.deepEqual(Buffer.from(await put.arrayBuffer()), BYTES);
   assert.deepEqual(Object.keys(r2Publisher(config(fetch))), ['publishBySha256']);
 });
@@ -366,6 +442,55 @@ test('R2 publisher resolves a timed-out PUT only by exact readback and cancels a
   assert.equal(cancelled, true);
 });
 
+test('R2 publisher reconciles ambiguous HTTP status and delayed visibility without a second PUT', async () => {
+  const calls = [];
+  let headAttempts = 0;
+  const fetch = async request => {
+    calls.push(request);
+    if (request.method === 'PUT') return new Response(null, { status: 503 });
+    if (request.method === 'HEAD' && ++headAttempts === 1) return new Response(null, { status: 404 });
+    if (request.method === 'HEAD') return publisherHead();
+    if (request.method === 'GET') return publisherGet();
+    assert.fail('unexpected publisher method');
+  };
+  assert.deepEqual(await r2Publisher({ ...config(fetch), timeoutMs: 500 }).publishBySha256(SHA, BYTES), {
+    schemaVersion: 1, result: 'UNCERTAIN_WRITE_VERIFIED', sha256: SHA, byteLength: BYTES.length,
+    key: KEY, etag: ETAG, readback: 'HEAD_GET_EXACT',
+  });
+  assert.deepEqual(calls.map(request => request.method), ['PUT', 'HEAD', 'HEAD', 'GET']);
+  assert.equal(calls.filter(request => request.method === 'PUT').length, 1);
+});
+
+test('R2 publisher bounds failed readback retries and never repeats an ambiguous PUT', async () => {
+  const calls = [];
+  await rejected(() => r2Publisher({ ...config(async request => {
+    calls.push(request);
+    if (request.method === 'PUT') throw new Error(MARKER);
+    return new Response(null, { status: 404 });
+  }), timeoutMs: 500 }).publishBySha256(SHA, BYTES), 'PRIVATE_AUTHORITY_PUBLISHER_INVALID');
+  assert.equal(calls.filter(request => request.method === 'PUT').length, 1);
+  assert.equal(calls.filter(request => request.method === 'HEAD').length, 3);
+  assert.equal(calls.filter(request => request.method === 'GET').length, 0);
+});
+
+test('R2 publisher requires exact content type and stable digest metadata on readback', async () => {
+  const variants = [
+    { 'content-type': 'application/octet-stream' },
+    { 'x-amz-meta-nelyon-content-sha256': '0'.repeat(64) },
+    { 'x-amz-meta-nelyon-write-id': '0'.repeat(64) },
+  ];
+  for (const override of variants) {
+    const calls = [];
+    await rejected(() => r2Publisher(config(async request => {
+      calls.push(request);
+      if (request.method === 'PUT') return new Response(null, { status: 200 });
+      if (request.method === 'HEAD') return new Response(null, { headers: { ...publisherHeaders(), ...override } });
+      return publisherGet();
+    })).publishBySha256(SHA, BYTES), 'PRIVATE_AUTHORITY_PUBLISHER_INVALID');
+    assert.deepEqual(calls.map(request => request.method), ['PUT', 'HEAD']);
+  }
+});
+
 test('R2 publisher fails closed on wrong digest, non-precondition status or readback mismatch', async () => {
   let calls = [];
   await rejected(() => r2Publisher(config(async request => { calls.push(request); return new Response(null, { status: 403 }); }))
@@ -399,4 +524,59 @@ test('R2 publisher fails closed on wrong digest, non-precondition status or read
   await rejected(() => r2Publisher(config(async request => { calls.push(request); return response(); }))
     .publishBySha256('0'.repeat(64), BYTES), 'PRIVATE_AUTHORITY_PUBLISHER_INVALID');
   assert.equal(calls.length, 0);
+});
+
+test('R2 publisher exposes only non-forgeable sanitized failure subphases', async () => {
+  let statusFailure;
+  await assert.rejects(() => r2Publisher(config(async () => new Response(MARKER, { status: 403 })))
+    .publishBySha256(SHA, BYTES), error => {
+      statusFailure = error;
+      return clean(error, 'PRIVATE_AUTHORITY_PUBLISHER_INVALID');
+    });
+  assert.deepEqual(publisherDiagnostic(statusFailure), Object.freeze({
+    phase: 'PUT_STATUS',
+    httpStatus: 403,
+  }));
+
+  let metadataFailure;
+  await assert.rejects(() => r2Publisher(config(async request => {
+    if (request.method === 'PUT') return new Response(null, { status: 200 });
+    if (request.method === 'HEAD') return new Response(null, { headers: {
+      ...publisherHeaders(),
+      'x-amz-meta-nelyon-write-id': '0'.repeat(64),
+    } });
+    assert.fail('metadata failure must stop before GET');
+  })).publishBySha256(SHA, BYTES), error => {
+    metadataFailure = error;
+    return clean(error, 'PRIVATE_AUTHORITY_PUBLISHER_INVALID');
+  });
+  assert.deepEqual(publisherDiagnostic(metadataFailure), Object.freeze({
+    phase: 'READBACK_METADATA',
+  }));
+
+  let exhaustedFailure;
+  await assert.rejects(() => r2Publisher({ ...config(async request => {
+    if (request.method === 'PUT') throw new Error(MARKER);
+    return new Response(null, { status: 404 });
+  }), timeoutMs: 500 }).publishBySha256(SHA, BYTES), error => {
+    exhaustedFailure = error;
+    return clean(error, 'PRIVATE_AUTHORITY_PUBLISHER_INVALID');
+  });
+  assert.deepEqual(publisherDiagnostic(exhaustedFailure), Object.freeze({
+    phase: 'READBACK_HEAD',
+    httpStatus: 404,
+    exhausted: true,
+  }));
+
+  const forged = new Error('Private authority publisher rejected');
+  Object.defineProperty(forged, 'diagnostic', {
+    value: { phase: 'PUT_STATUS', httpStatus: 403 },
+    enumerable: true,
+  });
+  assert.equal(publisherDiagnostic(forged), undefined);
+  for (const diagnostic of [publisherDiagnostic(statusFailure), publisherDiagnostic(metadataFailure),
+    publisherDiagnostic(exhaustedFailure)]) {
+    assert.equal(Object.isFrozen(diagnostic), true);
+    assert.doesNotMatch(JSON.stringify(diagnostic), /SYNTHETIC|synthetic-authority|cloudflarestorage|sha256/iu);
+  }
 });

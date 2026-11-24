@@ -27,6 +27,7 @@ import {
   buildPrivateRuntimeClosureFromExactBytes,
   privateRuntimeClosureMemberPaths,
 } from './nelyon-private-runtime-closure.mjs';
+import { readR2PrivateAuthorityPublisherDiagnostic } from './nelyon-private-authority-provider.mjs';
 
 const REPOSITORY = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
 const WORKFLOW = '.github/workflows/nelyon-production-release.yml';
@@ -53,12 +54,19 @@ export function readB2AuthorityIssuanceDiagnostic(error) {
   return issuanceDiagnostics.get(error);
 }
 
-function reject(category = null) {
+function reject(category = null, r2Diagnostic = null) {
   const error = new Error('B2 authority issuance blocked');
   error.code = 'B2_AUTHORITY_ISSUANCE_BLOCKED';
   error.stack = 'Error: B2 authority issuance blocked';
   if (category === 'R2_WRITE_READBACK') {
-    issuanceDiagnostics.set(error, Object.freeze({ phase: 'AUTHORITY_ISSUANCE', category }));
+    const diagnostic = { phase: 'AUTHORITY_ISSUANCE', category };
+    if (r2Diagnostic && typeof r2Diagnostic === 'object' && Object.isFrozen(r2Diagnostic)
+      && typeof r2Diagnostic.phase === 'string') {
+      diagnostic.r2Phase = r2Diagnostic.phase;
+      if (Number.isInteger(r2Diagnostic.httpStatus)) diagnostic.httpStatus = r2Diagnostic.httpStatus;
+      if (r2Diagnostic.exhausted === true) diagnostic.exhausted = true;
+    }
+    issuanceDiagnostics.set(error, Object.freeze(diagnostic));
   }
   throw Object.freeze(error);
 }
@@ -784,7 +792,7 @@ export async function issueB2PrivateAuthority(input) {
     || parsedDescriptor.private_authority.sha256 !== authoritySha256) reject();
   let publication;
   try { publication = await input.publisher.publishBySha256(authoritySha256, authorityBytes); }
-  catch { reject('R2_WRITE_READBACK'); }
+  catch (error) { reject('R2_WRITE_READBACK', readR2PrivateAuthorityPublisherDiagnostic(error)); }
   exact(publication, ['schemaVersion', 'result', 'sha256', 'byteLength', 'key', 'etag', 'readback']);
   if (publication.schemaVersion !== 1 || publication.sha256 !== authoritySha256
     || publication.byteLength !== authorityBytes.length

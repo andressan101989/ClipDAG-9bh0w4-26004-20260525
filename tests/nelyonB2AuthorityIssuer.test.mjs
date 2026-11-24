@@ -23,6 +23,7 @@ import {
   verifyB2ApprovedDescriptorRenewalBoundary,
 } from '../scripts/nelyon-private-authority-issuer.mjs';
 import { canonicalJson } from '../scripts/nelyon-production-release.mjs';
+import { createR2PrivateAuthorityPublisher } from '../scripts/nelyon-private-authority-provider.mjs';
 
 const REPOSITORY = 'andressan101989/ClipDAG-9bh0w4-26004-20260525';
 const WORKFLOW = '.github/workflows/nelyon-production-release.yml';
@@ -375,6 +376,47 @@ test('R2 write/readback failures have a non-forgeable closed issuance diagnostic
     value: { phase: 'AUTHORITY_ISSUANCE', category: 'R2_WRITE_READBACK' }, enumerable: true,
   });
   assert.equal(readB2AuthorityIssuanceDiagnostic(forged), undefined);
+});
+
+test('issuer preserves only the provider authenticated safe R2 subphase', async () => {
+  const repositoryRoot = process.cwd();
+  const approvedSha = execFileSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim();
+  const approvedTreeSha = execFileSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD^{tree}'], {
+    encoding: 'utf8',
+  }).trim();
+  const value = fixture({ approvedSha, approvedTreeSha });
+  const observer = createB2AuthorityIssuanceGithubObserver({ fetchImpl: value.fetchImpl,
+    githubToken: 'github-token-not-retained', repository: REPOSITORY, workflowPath: WORKFLOW,
+    apiOrigin: 'https://api.github.com' });
+  const observed = await observer.authenticateObservation({ runId: OBSERVATION_RUN, runAttempt: 1,
+    approvedSha, approvedTreeSha, expectedObservationSha256: value.observed.observationSha256 });
+  const preparation = prepareB2AuthorityIssuance({ repositoryRoot, approvedSha, approvedTreeSha,
+    integrationBaseSha: B2_AUTHORITY_INTEGRATION_BASE_SHA, observation: observed });
+  const summary = readB2AuthorityPreparationSummary(preparation);
+  value.setIssueReleaseId(summary.releaseId);
+  const approved = await observer.authenticateOwnerApproval({ runId: ISSUE_RUN, runAttempt: 1,
+    approvedSha, approvedTreeSha, releaseId: summary.releaseId,
+    preissuanceSha256: summary.preissuanceSha256, observation: observed });
+  const provider = createR2PrivateAuthorityPublisher({ accountId: 'a'.repeat(32),
+    bucket: 'synthetic-authority', accessKeyId: 'synthetic-access',
+    secretAccessKey: 'synthetic-secret', timeoutMs: 200,
+    fetch: async () => new Response('PRIVATE_PROVIDER_BODY', { status: 403 }) });
+  let failure;
+  await assert.rejects(() => issueB2PrivateAuthority({ preparation, observation: observed,
+    approval: approved, publisher: provider, issuedAt: '2026-11-22T10:03:00.000Z' }), error => {
+    failure = error;
+    return true;
+  });
+  assert.deepEqual(readB2AuthorityIssuanceDiagnostic(failure), Object.freeze({
+    phase: 'AUTHORITY_ISSUANCE',
+    category: 'R2_WRITE_READBACK',
+    r2Phase: 'PUT_STATUS',
+    httpStatus: 403,
+  }));
+  assert.doesNotMatch(`${String(failure)}${JSON.stringify(readB2AuthorityIssuanceDiagnostic(failure))}`,
+    /PRIVATE_PROVIDER_BODY|synthetic-authority|synthetic-access|synthetic-secret/iu);
 });
 
 test('authority descriptor classifier accepts the initial candidate and an invariant approved renewal', () => {
