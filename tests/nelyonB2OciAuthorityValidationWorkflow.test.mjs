@@ -9,6 +9,7 @@ const workflow = YAML.parse(source, { maxAliasCount: 100 });
 const jobs = workflow.jobs;
 
 const expectedPaths = [
+  '.github/nelyon-web-control-centers-b2-release-descriptor.json',
   '.github/workflows/nelyon-production-release.yml',
   '.github/workflows/nelyon-b2-oci-authority-validation.yml',
   'scripts/nelyon-b2-authority-preparation.mjs',
