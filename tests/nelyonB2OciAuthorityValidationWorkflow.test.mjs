@@ -9,15 +9,24 @@ const workflow = YAML.parse(source, { maxAliasCount: 100 });
 const jobs = workflow.jobs;
 
 const expectedPaths = [
+  '.github/workflows/nelyon-production-release.yml',
   '.github/workflows/nelyon-b2-oci-authority-validation.yml',
   'scripts/nelyon-b2-authority-preparation.mjs',
+  'scripts/nelyon-private-authority-cli.mjs',
   'scripts/nelyon-private-authority-issuer.mjs',
+  'scripts/nelyon-private-authority-provider.mjs',
+  'scripts/nelyon-private-authority-runtime.mjs',
   'scripts/prove-web-control-centers-b2-disposable.mjs',
   'scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs',
   'tests/nelyonB2AuthorityEvidenceProof.test.mjs',
   'tests/nelyonB2AuthorityPreparation.test.mjs',
   'tests/nelyonB2AuthorityIssuer.test.mjs',
   'tests/nelyonB2OciAuthorityValidationWorkflow.test.mjs',
+  'tests/nelyonB2R2AccessProbeWorkflow.test.mjs',
+  'tests/nelyonPrivateAuthorityCli.test.mjs',
+  'tests/nelyonPrivateAuthorityProvider.test.mjs',
+  'tests/nelyonPrivateAuthorityRuntime.test.mjs',
+  'tests/nelyonPrivateAuthorityWorkflow.test.mjs',
 ];
 
 const step = (job, name) => {
@@ -103,6 +112,14 @@ test('OCI index proof runs the canonical real-Docker catalog proof and negative 
   const ownerApproval = step(job, 'Run owner approval consistency regression');
   assert.equal(ownerApproval.run,
     'node --test --test-name-pattern="owner approval" tests/nelyonB2AuthorityIssuer.test.mjs');
+  const transport = step(job, 'Run protected provider and issuance regressions');
+  assert.deepEqual(transport.env, {
+    CI: 'true',
+    NO_COLOR: '1',
+    NELYON_B2_DOCKER_BIN: '/usr/bin/docker',
+  });
+  assert.equal(transport.run,
+    'node --test tests/nelyonPrivateAuthorityProvider.test.mjs tests/nelyonPrivateAuthorityRuntime.test.mjs tests/nelyonPrivateAuthorityCli.test.mjs tests/nelyonPrivateAuthorityWorkflow.test.mjs tests/nelyonB2R2AccessProbeWorkflow.test.mjs tests/nelyonB2AuthorityIssuer.test.mjs');
 });
 test('image config proof runs the canonical real-Docker pg_cron proof and negative contracts', () => {
   const job = jobs['docker-image-config-pg-cron-proof'];
