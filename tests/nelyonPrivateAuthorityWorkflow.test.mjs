@@ -914,4 +914,7 @@ test('migration and Edge stages resolve independently pinned Linux ELF instead o
  assert.equal((workflow.match(/--binary-path "\$NELYON_MIGRATION_BINARY"/g)??[]).length,2);
  assert.equal((workflow.match(/--binary-path "\$NELYON_FUNCTION_BINARY"/g)??[]).length,1);
  assert.doesNotMatch(workflow,/--binary-path "\$\(command -v supabase\)"/);
+ const assignments=workflow.match(/^\s+NELYON_(?:MIGRATION|FUNCTION)_BINARY=.*$/gm)??[];
+ assert.equal(assignments.length,3);
+ for(const assignment of assignments) assert.ok(assignment.endsWith('"$(command -v supabase)")"'),assignment);
 });
