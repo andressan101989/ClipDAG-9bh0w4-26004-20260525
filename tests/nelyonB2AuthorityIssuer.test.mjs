@@ -35,9 +35,44 @@ const OWNER_ID = 1234567;
 const OBSERVATION_JOB_ID = 9101;
 const ISSUE_JOB_ID = 9102;
 const ARTIFACT_ID = 9201;
+const DESCRIPTOR_PATH = '.github/nelyon-web-control-centers-b2-release-descriptor.json';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const canonicalBytes = value => Buffer.from(`${canonicalJson(value)}\n`, 'utf8');
+
+function readCandidateDescriptorBytes(repositoryRoot = process.cwd()) {
+  const liveBytes = readFileSync(path.join(repositoryRoot, DESCRIPTOR_PATH));
+  const live = JSON.parse(liveBytes.toString('utf8'));
+  if (live.contract?.state === 'candidate') return liveBytes;
+  assert.equal(live.contract?.state, 'approved');
+  assert.match(live.contract.reviewed_source_sha, /^[0-9a-f]{40}$/u);
+  return execFileSync('git', ['-C', repositoryRoot, 'cat-file', 'blob',
+    `${live.contract.reviewed_source_sha}:${DESCRIPTOR_PATH}`]);
+}
+
+function createCandidateRepositoryFixture() {
+  const currentRoot = process.cwd();
+  const live = JSON.parse(readFileSync(path.join(currentRoot, DESCRIPTOR_PATH), 'utf8'));
+  if (live.contract?.state === 'candidate') {
+    return Object.freeze({ repositoryRoot: currentRoot,
+      approvedSha: execFileSync('git', ['-C', currentRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+      approvedTreeSha: execFileSync('git', ['-C', currentRoot, 'rev-parse', 'HEAD^{tree}'],
+        { encoding: 'utf8' }).trim(), cleanup() {} });
+  }
+  assert.equal(live.contract?.state, 'approved');
+  assert.match(live.contract.reviewed_source_sha, /^[0-9a-f]{40}$/u);
+  assert.match(live.contract.reviewed_source_tree_sha, /^[0-9a-f]{40}$/u);
+  const parent = mkdtempSync(path.join(tmpdir(), 'nelyon-b2-candidate-repository-'));
+  const repositoryRoot = path.join(parent, 'worktree');
+  execFileSync('git', ['-C', currentRoot, 'worktree', 'add', '--detach', repositoryRoot,
+    live.contract.reviewed_source_sha], { stdio: 'ignore' });
+  return Object.freeze({ repositoryRoot, approvedSha: live.contract.reviewed_source_sha,
+    approvedTreeSha: live.contract.reviewed_source_tree_sha, cleanup() {
+      execFileSync('git', ['-C', currentRoot, 'worktree', 'remove', '--force', repositoryRoot],
+        { stdio: 'ignore' });
+      rmSync(parent, { recursive: true, force: true });
+    } });
+}
 
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -331,15 +366,11 @@ test('approved descriptor bytes are fully parsed before immutable provider publi
   assert.ok(descriptorParse >= 0 && publication > descriptorParse);
 });
 
-test('R2 write/readback failures have a non-forgeable closed issuance diagnostic', async () => {
+test('R2 write/readback failures have a non-forgeable closed issuance diagnostic', async t => {
   assert.equal(typeof readB2AuthorityIssuanceDiagnostic, 'function');
-  const repositoryRoot = process.cwd();
-  const approvedSha = execFileSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD'], {
-    encoding: 'utf8',
-  }).trim();
-  const approvedTreeSha = execFileSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD^{tree}'], {
-    encoding: 'utf8',
-  }).trim();
+  const candidate = createCandidateRepositoryFixture();
+  t.after(candidate.cleanup);
+  const { repositoryRoot, approvedSha, approvedTreeSha } = candidate;
   const value = fixture({ approvedSha, approvedTreeSha });
   const observer = createB2AuthorityIssuanceGithubObserver({ fetchImpl: value.fetchImpl,
     githubToken: 'github-token-not-retained', repository: REPOSITORY, workflowPath: WORKFLOW,
@@ -378,14 +409,10 @@ test('R2 write/readback failures have a non-forgeable closed issuance diagnostic
   assert.equal(readB2AuthorityIssuanceDiagnostic(forged), undefined);
 });
 
-test('issuer preserves only the provider authenticated safe R2 subphase', async () => {
-  const repositoryRoot = process.cwd();
-  const approvedSha = execFileSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD'], {
-    encoding: 'utf8',
-  }).trim();
-  const approvedTreeSha = execFileSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD^{tree}'], {
-    encoding: 'utf8',
-  }).trim();
+test('issuer preserves only the provider authenticated safe R2 subphase', async t => {
+  const candidate = createCandidateRepositoryFixture();
+  t.after(candidate.cleanup);
+  const { repositoryRoot, approvedSha, approvedTreeSha } = candidate;
   const value = fixture({ approvedSha, approvedTreeSha });
   const observer = createB2AuthorityIssuanceGithubObserver({ fetchImpl: value.fetchImpl,
     githubToken: 'github-token-not-retained', repository: REPOSITORY, workflowPath: WORKFLOW,
@@ -420,8 +447,7 @@ test('issuer preserves only the provider authenticated safe R2 subphase', async 
 });
 
 test('authority descriptor classifier accepts the initial candidate and an invariant approved renewal', () => {
-  const candidateBytes = readFileSync(new URL(
-    '../.github/nelyon-web-control-centers-b2-release-descriptor.json', import.meta.url));
+  const candidateBytes = readCandidateDescriptorBytes();
   const candidate = classifyB2AuthorityIssuanceDescriptor({ descriptorBytes: candidateBytes,
     descriptorSha256: hash(candidateBytes), currentSha: SHA, currentTreeSha: TREE,
     integrationBaseSha: '3'.repeat(40) });
