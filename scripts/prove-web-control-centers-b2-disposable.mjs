@@ -99,6 +99,19 @@ const setup = baseline[1].replace(/\$\{([^}]+)\}/g, (_, name) => {
   assert.ok(Object.hasOwn(replacements, name), `unrecognized baseline variable ${name}`);
   return replacements[name];
 });
+// The extracted B1 fixture intentionally contains only the schema/function
+// bytes needed by its behavior proof. B2 authority evidence also binds the
+// unchanged hosted ACL predecessor, so replay the exact production DCL that
+// B2 inherits without modifying it. Function grants come from
+// 20260726105000_media_public_urls_and_safe_links.sql; the service_role table
+// grant models Supabase's hosted owner-adjacent API role on PostgreSQL 17.
+const productionEquivalentPredecessorAcl = `
+revoke all on function public.create_carousel_post(text,text,uuid[]) from public, anon;
+grant execute on function public.create_carousel_post(text,text,uuid[]) to authenticated, service_role;
+revoke all on function public.create_photo_post_with_media(text,text,uuid) from public, anon;
+grant execute on function public.create_photo_post_with_media(text,text,uuid) to authenticated, service_role;
+grant all privileges on table public.media_assets, public.media_asset_links to service_role;
+`;
 const listener = createServer();
 await new Promise((accept, reject) => { listener.once('error', reject); listener.listen(0, '127.0.0.1', accept); });
 const port = listener.address().port;
@@ -383,6 +396,21 @@ $b2_relation_acl_query$;
   qeq(functionSecurityRows.length, 31, 'function security projection preserves every exact identity once');
   qeq(functionSecurityRows.map(row => row.identity), [...B2_DATABASE_FUNCTION_SCOPE].sort(),
     'function security projection is exact, complete, and deterministically sorted');
+  const inheritedCreateRpcAcl = [
+    { grantee: 'authenticated', privilege_type: 'EXECUTE', is_grantable: false },
+    { grantee: 'postgres', privilege_type: 'EXECUTE', is_grantable: false },
+    { grantee: 'service_role', privilege_type: 'EXECUTE', is_grantable: false },
+  ];
+  for (const identity of [
+    'public.create_carousel_post(text,text,uuid[])',
+    'public.create_photo_post_with_media(text,text,uuid)',
+  ]) {
+    const row = functionSecurityRows.find(item => item.identity === identity);
+    qeq(row && { acl: row.acl, execute: row.execute }, {
+      acl: inheritedCreateRpcAcl,
+      execute: { public: false, anon: false, authenticated: true, service_role: true },
+    }, `inherited create RPC ACL exactly matches production predecessor: ${identity}`);
+  }
 
   const catalogShapes = Object.freeze({
     relation: ['identity', 'rls', 'forceRls', 'owner', 'definitionSha256'],
@@ -501,6 +529,21 @@ $b2_relation_acl_query$;
   qeq(new Set(observedRelationIdentities).size, 7, 'relation ACL query contains no duplicate identity');
   qeq([...observedRelationIdentities].sort(), [...B2_QUERY_RELATIONS].sort(), 'relation ACL query contains no missing or extra identity');
   qeq([...observedRelationIdentities].sort(), [...catalogIdentities.get('relation')].sort(), 'catalog and ACL relation identities are identical');
+  const hostedPublicMediaAcl = [
+    { grantee: 'anon', privilege_type: 'SELECT', is_grantable: false },
+    { grantee: 'authenticated', privilege_type: 'SELECT', is_grantable: false },
+    ...['DELETE', 'INSERT', 'MAINTAIN', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']
+      .map(privilege_type => ({ grantee: 'postgres', privilege_type, is_grantable: false })),
+    ...['DELETE', 'INSERT', 'MAINTAIN', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']
+      .map(privilege_type => ({ grantee: 'service_role', privilege_type, is_grantable: false })),
+  ];
+  for (const identity of ['public.media_asset_links', 'public.media_assets']) {
+    const row = relationRows.find(item => item.identity === identity);
+    qeq(row && { owner: row.owner, rls: row.rls, forceRls: row.forceRls, acl: row.acl, access: row.access }, {
+      owner: 'postgres', rls: true, forceRls: false, acl: hostedPublicMediaAcl,
+      access: { public: false, anon: true, authenticated: true, service_role: true },
+    }, `public media relation ACL exactly matches production predecessor: ${identity}`);
+  }
 
   console.log('B2_POSTGRES_QUERY_PROOF_PASS '+JSON.stringify({ checks: queryChecks, functions: functionRows.length,
     catalogRows: catalogRows.length, relations: relationRows.length, syntheticCronExcluded:true, pgCronExtension:false }));
@@ -566,6 +609,7 @@ try {
   sql(setup);
   sql(read('supabase/migrations/20261102065812_web_control_centers_b1_publication_drafts.sql'));
   sql(read('supabase/migrations/20261107053930_web_control_centers_b1_qa_c3_draft_list_recovery.sql'));
+  sql(productionEquivalentPredecessorAcl);
   sql("update public.media_assets set size_bytes=123,etag=repeat('a',32) where visibility='private'");
   const c1=read('supabase/migrations/20261023141630_creator_premium_media_lifecycle_c1.sql');
   sql(extractFunction(c1,'create or replace function private.guard_ready_media_asset_identity()'));
