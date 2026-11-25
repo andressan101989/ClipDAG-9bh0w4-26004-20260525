@@ -2,17 +2,17 @@
   "schema_version": 1,
   "contract": {
     "id": "web-control-centers-b2-scheduled-publishing-v1",
-    "state": "approved",
-    "release_ready": true,
+    "state": "candidate",
+    "release_ready": false,
     "from_phase": "web_control_centers_b1_qa_c3",
     "to_phase": "web-control-centers-b2",
     "baseline_sha": "612a90d087817f06e2c979665a63c054bbddcf18",
-    "reviewed_source_sha": "b4f0bc328aced60af326ca77e77553f3255edba9",
-    "reviewed_source_tree_sha": "bb5920f4bf347d0761e05ef8c8289af976a9c357",
-    "integration_base_sha": "109395035d13ba3db8d338dc3b2524191defe873",
-    "advisor_authorization_contract_sha256": "9f0816a3c77dcfaff5050bc747241debd1670313a6fb6046f7cc72c87daabc6f",
-    "advisor_authorization_verifier_sha256": "34571c20f45aec131590d16fa2ba81fd6f3af5fe0b2cc57c47bd2cac839c8675",
-    "advisor_authorization_tests_sha256": "831f3328716ef199bf5235aae8f3073e9dcaab07e26a7d4f8ce53ff7716e5a0f",
+    "reviewed_source_sha": null,
+    "reviewed_source_tree_sha": null,
+    "integration_base_sha": null,
+    "advisor_authorization_contract_sha256": null,
+    "advisor_authorization_verifier_sha256": null,
+    "advisor_authorization_tests_sha256": null,
     "approved_sha_ancestry": "verified_integration_base",
     "productive_changes": [
       {
@@ -55,55 +55,55 @@
       {
         "name": "ai-handoff",
         "verify_jwt": false,
-        "source_sha256": "4268bd7f63dc450b1861d37107e447d414ab50fd1c3c3d6aff71f17f4e8808d7",
-        "config_sha256": "6d8580c4ff70c0c913ca332e237a1b022be2094c1036d1cb9e65f3df83b3aea1"
+        "source_sha256": null,
+        "config_sha256": null
       },
       {
         "name": "cleanup-stale-media-uploads",
         "verify_jwt": false,
-        "source_sha256": "68e9607caa987bf8f124828e00d3d2ccfb3e2806d6b7540318600b4b5117855e",
-        "config_sha256": "6d8580c4ff70c0c913ca332e237a1b022be2094c1036d1cb9e65f3df83b3aea1"
+        "source_sha256": null,
+        "config_sha256": null
       },
       {
         "name": "content-safety-scan",
         "verify_jwt": true,
-        "source_sha256": "dbd357e0d407a0db37d81d52a785f04bf08126817695b18f4a4a75fa45066abc",
-        "config_sha256": "cc65db7c5d8143ab8e779821dd9f55dbb580a2adefdd1c915f65192218e2a6f0"
+        "source_sha256": null,
+        "config_sha256": null
       },
       {
         "name": "create-media-upload",
         "verify_jwt": true,
-        "source_sha256": "fa8127f524e9b4320070ad8214eba7a5d7c46d14064d612a1f10c903629341ce",
-        "config_sha256": "cc65db7c5d8143ab8e779821dd9f55dbb580a2adefdd1c915f65192218e2a6f0"
+        "source_sha256": null,
+        "config_sha256": null
       },
       {
         "name": "finalize-media-upload",
         "verify_jwt": true,
-        "source_sha256": "58d1f4a1ea7cbd6a5af7e58af568a086b3ae26e00334e029dbb9b0a488780430",
-        "config_sha256": "cc65db7c5d8143ab8e779821dd9f55dbb580a2adefdd1c915f65192218e2a6f0"
+        "source_sha256": null,
+        "config_sha256": null
       },
       {
         "name": "get-media-url",
         "verify_jwt": true,
-        "source_sha256": "529b80099615f1f9db0f5e9b8b063e303ed065fb76c69b017638ba0ed1fe8930",
-        "config_sha256": "cc65db7c5d8143ab8e779821dd9f55dbb580a2adefdd1c915f65192218e2a6f0"
+        "source_sha256": null,
+        "config_sha256": null
       },
       {
         "name": "process-scheduled-publications",
         "verify_jwt": false,
-        "source_sha256": "26d1d9804d34a2e1c39141d437b604e9b2c14bfa443e07b184838ee20c36654b",
-        "config_sha256": "6d8580c4ff70c0c913ca332e237a1b022be2094c1036d1cb9e65f3df83b3aea1"
+        "source_sha256": null,
+        "config_sha256": null
       },
       {
         "name": "video-semantic-index",
         "verify_jwt": true,
-        "source_sha256": "e5bf74d6e1ac05ecdb4d9abb57675a9192ac815e39fa5e15a4aa666b2721dd7b",
-        "config_sha256": "cc65db7c5d8143ab8e779821dd9f55dbb580a2adefdd1c915f65192218e2a6f0"
+        "source_sha256": null,
+        "config_sha256": null
       }
     ],
     "function_inventory": {
-      "before": 34,
-      "after": 35
+      "before": null,
+      "after": null
     },
     "managed_scope_transition": {
       "add": [
@@ -122,11 +122,11 @@
     "private_authority_max_bytes": 2097152,
     "requires_separate_baseline_promotion": true
   },
-  "public_contract_sha256": "4b1080e0ddc81f87cf5aea88e65d5b3c84df699f0450c6aa15ba962cda71ecce",
+  "public_contract_sha256": "f37e87b506fc0340614c8b1c80fc62520669bd91aea1eb4182c6fd0f1fbb0ae2",
   "private_authority": {
     "required": true,
     "schema_version": 1,
     "authority_id": "web-control-centers-b2-release-authority-v1",
-    "sha256": "134033fd0a78573e53f5956b8dd3bda706ee4b8f8076b31742a389def6abf508"
+    "sha256": null
   }
 }

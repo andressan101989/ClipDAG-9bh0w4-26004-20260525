@@ -6230,7 +6230,7 @@ function verifyB2CurrentGate({ request, manifest, currentGate, authorityContext,
   const identity = manifest?.identity;
   if (!identity || identity.run_id !== String(request?.runId) || identity.run_attempt !== request?.runAttempt
     || !/^[1-9][0-9]*$/.test(identity.run_id) || !Number.isSafeInteger(identity.run_attempt) || identity.run_attempt < 1
-    || !/^nelyon-[0-9]{8}-[0-9]{3}$/.test(identity.release_id) || !/^[0-9a-f]{40}$/.test(identity.approved_sha)
+    || !RELEASE_ID_PATTERN.test(identity.release_id) || !/^[0-9a-f]{40}$/.test(identity.approved_sha)
     || identity.release_id !== request?.releaseId || identity.approved_sha !== request?.approvedSha
     || currentGate?.result !== 'GATE_VERIFIED' || String(currentGate.run_id) !== identity.run_id
     || currentGate.run_attempt !== identity.run_attempt || currentGate.release_id !== identity.release_id
@@ -6424,7 +6424,7 @@ export function retainB2MigrationAttemptProof({trustedProofRoot,destinationDirec
       b2Exact(proof,['runId','runAttempt','releaseId','approvedSha','manifestSha256','stage','verifiedAt','receipt']);
       if(proof.runId!==String(request?.runId)||proof.runId!==identity.run_id||!/^[1-9][0-9]*$/.test(proof.runId)
         ||proof.runAttempt!==request.runAttempt||proof.runAttempt!==identity.run_attempt||!Number.isSafeInteger(proof.runAttempt)||proof.runAttempt<1
-        ||proof.releaseId!==request.releaseId||proof.releaseId!==identity.release_id||!/^nelyon-[0-9]{8}-[0-9]{3}$/.test(proof.releaseId)
+        ||proof.releaseId!==request.releaseId||proof.releaseId!==identity.release_id||!RELEASE_ID_PATTERN.test(proof.releaseId)
         ||proof.approvedSha!==request.approvedSha||proof.approvedSha!==identity.approved_sha||!/^[a-f0-9]{40}$/.test(proof.approvedSha)
         ||proof.manifestSha256!==sha256Hex(canonicalJson(manifest))
         ||proof.receipt.descriptorSha256!==binding.descriptorSha256

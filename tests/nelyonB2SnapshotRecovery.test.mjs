@@ -859,7 +859,10 @@ test('unapproved extra workspace migration is rejected before any role mint',asy
 test('protected standalone dry-run requires full gate and cannot advance migration proof',async()=>{
  const connection=await import('../scripts/nelyon-b2-explicit-connection.mjs');assert.equal(typeof connection.runB2ProtectedDryRun,'function');
  const {createHermeticMigrationWorkspace}=await import('../scripts/nelyon-b2-hermetic-workspace.mjs');
- const f=fixture(),op=operationFixture(f);f.request.mode='release';f.manifest.resources.migrations=[];op.currentGate={...op.currentGate,run_id:f.request.runId,release_id:f.request.releaseId,manifest_sha256:hash(release.canonicalJson(f.manifest))};
+ const f=fixture(),op=operationFixture(f);f.request.mode='release';f.manifest.resources.migrations=[];
+ const productionReleaseId='b2-release-3bc0149-20261125T0647Z';
+ f.request.releaseId=productionReleaseId;f.manifest.identity.release_id=productionReleaseId;
+ op.currentGate={...op.currentGate,run_id:f.request.runId,release_id:f.request.releaseId,manifest_sha256:hash(release.canonicalJson(f.manifest))};
  const root=mkdtempSync(join(process.cwd(),'.b2-protected-dryrun-'));try{
  const binary=Buffer.from('fake');writeFileSync(join(root,'fake'),binary);const config=Buffer.from('');
  const workspace=createHermeticMigrationWorkspace({parent:root,binaryPath:join(root,'fake'),binarySha256:hash(binary),files:[{path:'supabase/config.toml',bytes:config,sha256:hash(config)}]});
@@ -867,6 +870,13 @@ test('protected standalone dry-run requires full gate and cannot advance migrati
  const operation={repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath:join(root,'protected-stage-proofs.json'),trustedProofRoot:root};
  const parameters={phase:'dry-run',workspace,projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture',request:async()=>{requests++;return {role:'cli_login_postgres',password:'fixture'};},execute:async spec=>{executes++;assert.ok(spec.args.includes('--dry-run'));return {exitCode:0,stdout:JSON.stringify({dryRun:true,message:'ok',migrations:[],roles:[],seeds:[],upToDate:true})};}};
  await assert.rejects(()=>connection.runB2ProtectedDryRun({operation:{...operation,currentGate:{...op.currentGate,result:'READ_ONLY_REFRESH_AUTHORIZED'}},connection:parameters,now:()=>AT}));assert.equal(requests,0);
+ for(const releaseId of ['short','bad id','bad/id','a'.repeat(129)]){
+  const manifest=structuredClone(operation.manifest);manifest.identity.release_id=releaseId;
+  const request={...operation.request,releaseId};
+  const currentGate={...operation.currentGate,release_id:releaseId,manifest_sha256:hash(release.canonicalJson(manifest))};
+  await assert.rejects(()=>connection.runB2ProtectedDryRun({operation:{...operation,manifest,request,currentGate},connection:parameters,now:()=>AT}));
+  assert.equal(requests,0);assert.equal(executes,0);
+ }
  assert.deepEqual(await connection.runB2ProtectedDryRun({operation,connection:parameters,now:()=>AT}),{complete:true,pending_versions:[]});
  assert.equal(requests,1);assert.equal(executes,1);assert.equal(fs.existsSync(operation.proofPath),false);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
