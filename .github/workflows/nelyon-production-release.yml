@@ -3118,7 +3118,7 @@ jobs:
         env: *current_private_release_env
         run: |
           set -euo pipefail
-          NELYON_MIGRATION_BINARY="$(node --input-type=module -e 'import {resolveInstalledLinuxCliBinary} from "./scripts/nelyon-b2-hermetic-workspace.mjs"; process.stdout.write(resolveInstalledLinuxCliBinary({shimPath:process.argv[1],binarySha256:process.env.NELYON_SUPABASE_CLI_SHA256}));' "$(command -v supabase)")
+          NELYON_MIGRATION_BINARY="$(node --input-type=module -e 'import {resolveInstalledLinuxCliBinary} from "./scripts/nelyon-b2-hermetic-workspace.mjs"; process.stdout.write(resolveInstalledLinuxCliBinary({shimPath:process.argv[1],binarySha256:process.env.NELYON_SUPABASE_CLI_SHA256}));' "$(command -v supabase)")"
           node scripts/nelyon-private-authority-cli.mjs dryrun-migrations \
             --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
             --current-gate "$RUNNER_TEMP/nelyon-private-authority-public/release-gate-stage.json" \
@@ -3178,7 +3178,7 @@ jobs:
           set -euo pipefail
           cmp "$RUNNER_TEMP/nelyon-private-authority-public/expected-receipt.json" "$RUNNER_TEMP/nelyon-private-authority-public/migration-receipt.json"
           cp "$RUNNER_TEMP/nelyon-private-authority-public/migration-revalidation-stage.json" gate-evidence/pre-migration-revalidation.json
-          NELYON_MIGRATION_BINARY="$(node --input-type=module -e 'import {resolveInstalledLinuxCliBinary} from "./scripts/nelyon-b2-hermetic-workspace.mjs"; process.stdout.write(resolveInstalledLinuxCliBinary({shimPath:process.argv[1],binarySha256:process.env.NELYON_SUPABASE_CLI_SHA256}));' "$(command -v supabase)")
+          NELYON_MIGRATION_BINARY="$(node --input-type=module -e 'import {resolveInstalledLinuxCliBinary} from "./scripts/nelyon-b2-hermetic-workspace.mjs"; process.stdout.write(resolveInstalledLinuxCliBinary({shimPath:process.argv[1],binarySha256:process.env.NELYON_SUPABASE_CLI_SHA256}));' "$(command -v supabase)")"
           node scripts/nelyon-private-authority-cli.mjs apply-migrations \
             --policy "$NELYON_POLICY" --request release-artifact/request.json --bundle release-artifact/bundle \
             --current-gate "$RUNNER_TEMP/nelyon-private-authority-public/release-gate-stage.json" \
