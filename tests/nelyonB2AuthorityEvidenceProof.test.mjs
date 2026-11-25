@@ -52,6 +52,27 @@ test('PG17 catalog evidence is branded as a component and excludes every synthet
   assert.doesNotMatch(catalogProof, /mintEligibility:\s*'PRODUCTION_(?:AUTHORITY|CRON)_READY'/);
 });
 
+test('PG17 catalog predecessor replays the exact hosted ACLs retained by B2', () => {
+  assert.match(catalogProof, /const productionEquivalentPredecessorAcl\s*=\s*`/u,
+    'the authority catalog must make its hosted predecessor ACL bootstrap explicit');
+  for (const statement of [
+    'revoke all on function public.create_carousel_post(text,text,uuid[]) from public, anon;',
+    'grant execute on function public.create_carousel_post(text,text,uuid[]) to authenticated, service_role;',
+    'revoke all on function public.create_photo_post_with_media(text,text,uuid) from public, anon;',
+    'grant execute on function public.create_photo_post_with_media(text,text,uuid) to authenticated, service_role;',
+    'grant all privileges on table public.media_assets, public.media_asset_links to service_role;',
+  ]) assert.ok(catalogProof.includes(statement), `missing production predecessor DCL: ${statement}`);
+  assert.match(catalogProof, /sql\(productionEquivalentPredecessorAcl\)/u,
+    'the production-equivalent DCL must execute before successor evidence is captured');
+  assert.ok(catalogProof.indexOf('sql(productionEquivalentPredecessorAcl)')
+    < catalogProof.indexOf("sql(read('supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql'))"),
+  'the hosted predecessor ACL must be installed before the B2 migration and successor catalog capture');
+  assert.match(catalogProof, /inherited create RPC ACL exactly matches production predecessor/u,
+    'the real PostgreSQL proof must assert the inherited RPC ACL and effective execution matrix');
+  assert.match(catalogProof, /public media relation ACL exactly matches production predecessor/u,
+    'the real PostgreSQL proof must assert the hosted service_role table ACL and access matrix');
+});
+
 test('real pg_cron evidence binds the exact extension, hosted role, image and database normalization', () => {
   assert.match(cronProof, /kind:\s*'nelyon-b2-real-pg-cron-evidence-v1'/);
   assert.match(cronProof, /mintEligibility:\s*'PRODUCTION_CRON_COMPONENT'/);
