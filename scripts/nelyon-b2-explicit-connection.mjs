@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { Buffer } from 'node:buffer';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { verifyHermeticMigrationWorkspace, verifyHermeticMigrationManifest, verifyHermeticGitSource } from './nelyon-b2-hermetic-workspace.mjs';
 import { verifyMigrationDryRun, executeB2ProtectedMutation, verifyB2ProtectedReleaseMutation } from './nelyon-production-release.mjs';
 import {
@@ -17,34 +18,119 @@ import {
 // and no command-line entry point. Must NOT be wired into a workflow until the
 // protected caller implements and independently verifies every context gate.
 const PROJECT = 'aewwdlvbwpczqyvkwvvj';
+const DIRECT_HOST = `db.${PROJECT}.supabase.co`;
+const POOLER_CONFIG_URL = `https://api.supabase.com/v1/projects/${PROJECT}/config/database/pooler`;
+const LOGIN_ROLE_URL = `https://api.supabase.com/v1/projects/${PROJECT}/cli/login-role`;
+const SESSION_POOLER_HOST = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.pooler\.supabase\.com$/;
+const READINESS_SQL = "select session_user = 'cli_login_postgres' and current_user = 'postgres' and current_database() = 'postgres' as ok";
+const READINESS_ATTEMPTS = 9;
+const READINESS_TIMEOUT_MS = 15000;
+const PUSH_TIMEOUT_MS = 120000;
+const ROLE_EXPIRY_SAFETY_MS = 5000;
 const fail = () => { throw new Error('B2_EXPLICIT_CONNECTION_FAILED'); };
-export async function runB2ExplicitConnection({ phase, projectRef, host, token, cwd, manifest, verifyContext, request, execute }) {
+
+function primarySessionPooler(configs) {
+  if (!Array.isArray(configs) || configs.length === 0 || configs.length > 64) fail();
+  const primary = configs.filter(config => config !== null && typeof config === 'object'
+    && !Array.isArray(config) && config.database_type === 'PRIMARY');
+  if (primary.length !== 1) fail();
+  const config = primary[0];
+  if (typeof config.connection_string !== 'string'
+    || (Object.hasOwn(config, 'connectionString') && config.connection_string !== config.connectionString)
+    || Buffer.byteLength(config.connection_string, 'utf8') > 4096
+    || /[\r\n\0]/u.test(config.connection_string)) fail();
+  let url;
+  try { url = new URL(config.connection_string); } catch { fail(); }
+  let user;
+  let password;
   try {
-    if (projectRef !== PROJECT || host !== `db.${PROJECT}.supabase.co`
+    user = decodeURIComponent(url.username);
+    password = decodeURIComponent(url.password);
+  } catch { fail(); }
+  const poolerHost = url.hostname;
+  if (url.protocol !== 'postgresql:' || user !== `postgres.${PROJECT}`
+    || password !== '[YOUR-PASSWORD]' || !SESSION_POOLER_HOST.test(poolerHost)
+    || poolerHost !== poolerHost.toLowerCase() || !['5432', '6543'].includes(url.port)
+    || url.pathname !== '/postgres' || url.search !== '' || url.hash !== ''
+    || config.db_host !== poolerHost || config.db_port !== Number(url.port)
+    || config.db_name !== 'postgres' || config.db_user !== `postgres.${PROJECT}`
+    || !['session', 'transaction'].includes(config.pool_mode)) fail();
+  return Object.freeze({ host: poolerHost });
+}
+
+export async function runB2ExplicitConnection({ phase, projectRef, host, token, cwd, manifest, verifyContext, request, execute, wait = sleep, clock = Date.now }) {
+  try {
+    if (projectRef !== PROJECT || host !== DIRECT_HOST
       || !['dry-run','apply'].includes(phase) || typeof cwd !== 'string' || !cwd
       || typeof token !== 'string' || !token || /[\r\n\0]/.test(token)
-      || ![verifyContext,request,execute].every(fn=>typeof fn === 'function')) fail();
+      || ![verifyContext,request,execute,wait,clock].every(fn=>typeof fn === 'function')) fail();
+    let lastClock = -1;
+    const readClock = () => {
+      const observed = clock();
+      if (!Number.isSafeInteger(observed) || observed < 0 || observed < lastClock) fail();
+      lastClock = observed;
+      return observed;
+    };
     // Caller must enforce existing authority, receipts, freshness, manifest bytes,
     // backup/snapshots, exact binary and equivalence of effective remotes config.
     // This callback contract is NOT itself a replacement for any of those gates.
     const context = await verifyContext({ phase, projectRef, cwd, manifest });
     if (context?.cliVersion !== '2.120.0' || context?.effectiveConfigVerified !== true) fail();
+    const pooler = primarySessionPooler(await request({
+      url:POOLER_CONFIG_URL,
+      method:'GET', redirect:'error', timeoutMs:15000,
+      headers:{Authorization:`Bearer ${token}`},
+    }));
+    const roleRequestedAt = readClock();
     const role = await request({
-      url:`https://api.supabase.com/v1/projects/${PROJECT}/cli/login-role`,
+      url:LOGIN_ROLE_URL,
       method:'POST', redirect:'error', timeoutMs:15000,
       headers:{Authorization:`Bearer ${token}`}, body:{read_only:false},
     });
-    if (typeof role?.role !== 'string' || !/^cli_login_[a-z0-9_]+$/.test(role.role)
-      || typeof role.password !== 'string' || !role.password || role.password.includes('\0')) fail();
-    const refreshed = await verifyContext({ phase, projectRef, cwd, manifest });
-    if (refreshed?.cliVersion !== '2.120.0' || refreshed?.effectiveConfigVerified !== true) fail();
-    const dsn = `postgresql://${role.role}@${host}:5432/postgres?sslmode=verify-full`;
+    if (role?.role !== 'cli_login_postgres'
+      || typeof role.password !== 'string' || !role.password || role.password.includes('\0')
+      || !Number.isSafeInteger(role.ttl_seconds) || role.ttl_seconds <= 0
+      || !Number.isSafeInteger(role.ttl_seconds * 1000)
+      || !Number.isSafeInteger(roleRequestedAt + (role.ttl_seconds * 1000))) fail();
+    const roleExpiresAt = roleRequestedAt + (role.ttl_seconds * 1000);
+    const dsn = `postgresql://${role.role}.${PROJECT}@${pooler.host}:5432/postgres?sslmode=verify-full`;
+    const readinessArgs=['db','query','--db-url',dsn,'--agent=no','--output=json',READINESS_SQL];
+    let ready = false;
+    for (let attempt = 1; attempt <= READINESS_ATTEMPTS; attempt += 1) {
+      const refreshed = await verifyContext({ phase, projectRef, cwd, manifest });
+      if (refreshed?.cliVersion !== '2.120.0' || refreshed?.effectiveConfigVerified !== true) fail();
+      if (roleExpiresAt - readClock() < READINESS_TIMEOUT_MS + PUSH_TIMEOUT_MS + ROLE_EXPIRY_SAFETY_MS) fail();
+      let probe;
+      try {
+        probe = await execute({args:readinessArgs,cwd,env:{PGPASSWORD:role.password},shell:false,
+          timeoutMs:READINESS_TIMEOUT_MS,maxBuffer:65536});
+      } catch {}
+      if (probe?.exitCode === 0) {
+        if (typeof probe.stdout !== 'string' || Buffer.byteLength(probe.stdout, 'utf8') > 65536
+          || probe.stdout.includes(role.password) || probe.stdout.includes(token)) fail();
+        let rows;
+        try { rows = JSON.parse(probe.stdout); } catch { fail(); }
+        if (!Array.isArray(rows) || rows.length !== 1 || rows[0] === null
+          || typeof rows[0] !== 'object' || Array.isArray(rows[0])
+          || Object.keys(rows[0]).join(',') !== 'ok' || rows[0].ok !== true) fail();
+        ready = true;
+        break;
+      }
+      if (attempt === READINESS_ATTEMPTS) fail();
+      const delay = Math.min(3000 * (1.5 ** (attempt - 1)), 60000);
+      if (roleExpiresAt - readClock() < delay + READINESS_TIMEOUT_MS + PUSH_TIMEOUT_MS + ROLE_EXPIRY_SAFETY_MS) fail();
+      await wait(delay);
+    }
+    if (!ready) fail();
+    const finalContext = await verifyContext({ phase, projectRef, cwd, manifest });
+    if (finalContext?.cliVersion !== '2.120.0' || finalContext?.effectiveConfigVerified !== true) fail();
+    if (roleExpiresAt - readClock() < PUSH_TIMEOUT_MS + ROLE_EXPIRY_SAFETY_MS) fail();
     const args=['db','push','--db-url',dsn,'--skip-vault','--yes'];
     if (phase === 'dry-run') args.push('--dry-run','--output-format','json');
     // Adapter MUST replace env, never merge process.env, use shell:false,
     // reject redirects, bound captured output and suppress raw stderr/errors.
     // No PAT is given to CLI, no --project-ref, no linked fallback or retries.
-    const result = await execute({args,cwd,env:{PGPASSWORD:role.password},shell:false,timeoutMs:120000,maxBuffer:1024*1024});
+    const result = await execute({args,cwd,env:{PGPASSWORD:role.password},shell:false,timeoutMs:PUSH_TIMEOUT_MS,maxBuffer:1024*1024});
     if (result?.exitCode !== 0) fail();
     if (phase === 'apply') return {complete:true};
     if (typeof result.stdout !== 'string' || !result.stdout.trimStart().startsWith('{') || result.stdout.includes(role.password)
@@ -83,23 +169,28 @@ export function createB2HttpAdapter({fetchImpl=globalThis.fetch}={}) {
     let reader;
     try{
       const s=specification;
-      if(s?.url!==`https://api.supabase.com/v1/projects/${PROJECT}/cli/login-role`
-        ||s.method!=='POST'||s.redirect!=='error'||s.timeoutMs!==15000
-        ||JSON.stringify(s.body)!=='{"read_only":false}'
+      const poolerRequest=s?.url===POOLER_CONFIG_URL&&s.method==='GET'
+        &&s.body===undefined;
+      const roleRequest=s?.url===LOGIN_ROLE_URL&&s.method==='POST'
+        &&JSON.stringify(s.body)==='{"read_only":false}';
+      if((!poolerRequest&&!roleRequest)||s.redirect!=='error'||s.timeoutMs!==15000
         ||Object.keys(s.headers??{}).join(',')!=='Authorization'
         ||typeof s.headers.Authorization!=='string'||!/^Bearer [^\r\n\0]+$/.test(s.headers.Authorization))fail();
-      const response=await fetchImpl(s.url,{method:'POST',redirect:'error',signal:AbortSignal.timeout(15000),
-        headers:{Authorization:s.headers.Authorization,'Content-Type':'application/json'},body:'{"read_only":false}'});
-      if(response.status!==201||response.redirected===true)fail();
+      const response=await fetchImpl(s.url,{method:s.method,redirect:'error',signal:AbortSignal.timeout(15000),
+        headers:roleRequest?{Authorization:s.headers.Authorization,'Content-Type':'application/json'}
+          :{Authorization:s.headers.Authorization},...(roleRequest?{body:'{"read_only":false}'}:{})});
+      if(response.status!==(roleRequest?201:200)||response.redirected===true)fail();
       const length=response.headers.get('content-length');
       if(length!==null && (!/^\d+$/.test(length)||Number(length)>65536))fail();
       reader=response.body?.getReader();if(!reader)fail();
       let total=0;const chunks=[];
       for(;;){const {done,value}=await reader.read();if(done)break;total+=value.byteLength;if(total>65536)fail();chunks.push(Buffer.from(value));}
       const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));
-      if(typeof value?.role!=='string'||!/^cli_login_[a-z0-9_]+$/.test(value.role)
-        ||typeof value.password!=='string'||!value.password||value.password.includes('\0'))fail();
-      return {role:value.role,password:value.password};
+      if(poolerRequest){primarySessionPooler(value);return value;}
+      if(value?.role!=='cli_login_postgres'
+        ||typeof value.password!=='string'||!value.password||value.password.includes('\0')
+        ||!Number.isSafeInteger(value.ttl_seconds)||value.ttl_seconds<=0)fail();
+      return {role:value.role,password:value.password,ttl_seconds:value.ttl_seconds};
     }catch{fail();}
     finally{if(reader){try{await reader.cancel();}catch{}reader.releaseLock();}}
   };
@@ -113,18 +204,24 @@ export function createB2Executor({workspace,execFileImpl=execFile}) {
       const s=specification;
       verifyHermeticMigrationWorkspace(workspace);
       if(s?.executable!==workspace.binaryPath||s.cwd!==workspace.cwd||s.shell!==false
-        ||s.timeoutMs!==120000||s.maxBuffer!==1048576||!Array.isArray(s.args)
+        ||!Array.isArray(s.args)
         ||Object.keys(s.env??{}).join(',')!=='PGPASSWORD'||typeof s.env.PGPASSWORD!=='string'
         ||!s.env.PGPASSWORD||s.env.PGPASSWORD.includes('\0'))fail();
       const args=s.args;
-      if(![6,9].includes(args.length)||args[0]!=='db'||args[1]!=='push'||args[2]!=='--db-url'
-        ||typeof args[3]!=='string'||!/^postgresql:\/\/cli_login_[a-z0-9_]+@db\.aewwdlvbwpczqyvkwvvj\.supabase\.co:5432\/postgres\?sslmode=verify-full$/.test(args[3])
-        ||args[4]!=='--skip-vault'||args[5]!=='--yes'
-        ||(args.length===9&&(args[6]!=='--dry-run'||args[7]!=='--output-format'||args[8]!=='json')))fail();
+      const dsnValid=typeof args[3]==='string'
+        &&/^postgresql:\/\/cli_login_[a-z0-9_]+\.aewwdlvbwpczqyvkwvvj@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.pooler\.supabase\.com:5432\/postgres\?sslmode=verify-full$/.test(args[3]);
+      const pushValid=[6,9].includes(args.length)&&args[0]==='db'&&args[1]==='push'
+        &&args[2]==='--db-url'&&dsnValid&&args[4]==='--skip-vault'&&args[5]==='--yes'
+        &&(args.length===6||(args[6]==='--dry-run'&&args[7]==='--output-format'&&args[8]==='json'))
+        &&s.timeoutMs===120000&&s.maxBuffer===1048576;
+      const readinessValid=args.length===7&&args[0]==='db'&&args[1]==='query'
+        &&args[2]==='--db-url'&&dsnValid&&args[4]==='--agent=no'&&args[5]==='--output=json'
+        &&args[6]===READINESS_SQL&&s.timeoutMs===15000&&s.maxBuffer===65536;
+      if(!pushValid&&!readinessValid)fail();
       return await new Promise((resolve,reject)=>{
         execFileImpl(workspace.binaryPath,[...args],{cwd:workspace.cwd,env:{PGPASSWORD:s.env.PGPASSWORD,HOME:workspace.homePath,USERPROFILE:workspace.homePath,XDG_CONFIG_HOME:workspace.homePath,DO_NOT_TRACK:'1',SUPABASE_NO_UPDATE_NOTIFIER:'1',SUPABASE_TELEMETRY_DISABLED:'1'},
-          shell:false,windowsHide:true,timeout:120000,maxBuffer:1048576,encoding:'utf8'},(error,stdout)=>{
-          if(error || typeof stdout!=='string' || Buffer.byteLength(stdout)>1048576)reject(new Error('B2_EXPLICIT_CONNECTION_FAILED'));
+          shell:false,windowsHide:true,timeout:s.timeoutMs,maxBuffer:s.maxBuffer,encoding:'utf8'},(error,stdout)=>{
+          if(error || typeof stdout!=='string' || Buffer.byteLength(stdout)>s.maxBuffer)reject(new Error('B2_EXPLICIT_CONNECTION_FAILED'));
           else {
             try{verifyHermeticMigrationWorkspace(workspace);resolve({exitCode:0,stdout});}
             catch{reject(new Error('B2_EXPLICIT_CONNECTION_FAILED'));}

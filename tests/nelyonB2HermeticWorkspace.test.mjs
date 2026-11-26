@@ -9,6 +9,7 @@ import {join} from 'node:path';
 import {createHermeticMigrationWorkspace,verifyHermeticMigrationWorkspace} from '../scripts/nelyon-b2-hermetic-workspace.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const parent=fileURLToPath(new URL('../',import.meta.url));
+const poolerConfig=()=>{const ref='aewwdlvbwpczqyvkwvvj',host='aws-0-us-east-1.pooler.supabase.com',connection=`postgresql://postgres.${ref}:[YOUR-PASSWORD]@${host}:6543/postgres`;return [{identifier:'primary-fixture',database_type:'PRIMARY',is_using_scram_auth:true,db_user:`postgres.${ref}`,db_host:host,db_port:6543,db_name:'postgres',connection_string:connection,connectionString:connection,default_pool_size:15,max_client_conn:200,pool_mode:'transaction'}];};
 const make=()=>{
  const root=mkdtempSync(join(parent,'.b2-hermetic-test-'));
  const bytes=Buffer.from('fake binary never executed');const binary=join(root,'supabase-fixture');writeFileSync(binary,bytes);
@@ -50,7 +51,7 @@ test('hermetic wrapper checks bytes after role mint before starting pinned execu
  const workspace=createHermeticMigrationWorkspace(input);let executes=0;
  await assert.rejects(()=>module.runB2HermeticConnection({workspace,phase:'apply',projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture-token',manifest:{},
  verifyContext:async()=>({cliVersion:'2.120.0',effectiveConfigVerified:true}),
- request:async()=>{writeFileSync(join(workspace.cwd,'.env'),'bad');return {role:'cli_login_postgres',password:'fixture-password'};},
+ request:async spec=>{if(spec.method==='GET')return poolerConfig();writeFileSync(join(workspace.cwd,'.env'),'bad');return {role:'cli_login_postgres',password:'fixture-password',ttl_seconds:300};},
  execute:async()=>{executes++;return {exitCode:0};}}));
  assert.equal(executes,0);
  }finally{rmSync(root,{recursive:true,force:true});}
@@ -80,7 +81,7 @@ test('offline extended closure fixture still rejects old member sets and grants 
 test('hermetic wrapper rejects missing executor before mint',async()=>{
  const {runB2HermeticConnection}=await import('../scripts/nelyon-b2-explicit-connection.mjs');
  const {root,input}=make();try{const workspace=createHermeticMigrationWorkspace(input);let requests=0;
- await assert.rejects(()=>runB2HermeticConnection({workspace,phase:'apply',projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture-token',manifest:{},verifyContext:async()=>({cliVersion:'2.120.0',effectiveConfigVerified:true}),request:async()=>{requests++;return {role:'cli_login_postgres',password:'fixture-password'};}}));
+ await assert.rejects(()=>runB2HermeticConnection({workspace,phase:'apply',projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture-token',manifest:{},verifyContext:async()=>({cliVersion:'2.120.0',effectiveConfigVerified:true}),request:async()=>{requests++;return {role:'cli_login_postgres',password:'fixture-password',ttl_seconds:300};}}));
  assert.equal(requests,0);
  }finally{rmSync(root,{recursive:true,force:true});}
 });

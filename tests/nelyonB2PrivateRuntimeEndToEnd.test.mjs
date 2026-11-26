@@ -82,6 +82,7 @@ const SOURCE_AT = '2026-10-12T12:00:01.000Z';
 const RECOVERY_AT = '2026-10-14T12:00:01.000Z';
 const SECRET = 'PRIVATE_B2_E2E_SECRET_MARKER';
 const sha256 = value => createHash('sha256').update(value).digest('hex');
+const migrationPoolerConfig=()=>{const ref='aewwdlvbwpczqyvkwvvj',host='aws-0-us-east-1.pooler.supabase.com',connection=`postgresql://postgres.${ref}:[YOUR-PASSWORD]@${host}:6543/postgres`;return [{identifier:'primary-fixture',database_type:'PRIMARY',is_using_scram_auth:true,db_user:`postgres.${ref}`,db_host:host,db_port:6543,db_name:'postgres',connection_string:connection,connectionString:connection,default_pool_size:15,max_client_conn:200,pool_mode:'transaction'}];};
 const gitBlob = bytes => createHash('sha1').update(Buffer.from(`blob ${bytes.length}\0`, 'utf8')).update(bytes).digest('hex');
 const gitBytes = relativePath => Buffer.from(execFileSync('git', ['show', `HEAD:${relativePath}`], {
   cwd: ROOT, encoding: 'buffer', maxBuffer: 8 * 1024 * 1024,
@@ -881,10 +882,14 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
       manifest_sha256:sha256(canonicalJson(manifest)),environment:policy.environment,authorityReceipt:expectedReceipt};
     writeFileSync(gatePath,canonicalJson(gate));
     const migrationFetch=async(input,options)=>{
+      if(String(input)==='https://api.supabase.com/v1/projects/aewwdlvbwpczqyvkwvvj/config/database/pooler') {
+        assert.equal(options.method,'GET');assert.equal(options.redirect,'error');assert.equal(options.body,undefined);
+        return new Response(JSON.stringify(migrationPoolerConfig()),{status:200});
+      }
       if(String(input)==='https://api.supabase.com/v1/projects/aewwdlvbwpczqyvkwvvj/cli/login-role') {
         assert.equal(options.method,'POST');assert.equal(options.redirect,'error');mints++;
         if(expireAfterMint)time='2030-01-01T00:00:00.000Z';
-        return new Response(JSON.stringify({role:'cli_login_fixture',password:'SYNTHETIC_DB_PASSWORD'}),{status:201});
+        return new Response(JSON.stringify({role:'cli_login_postgres',password:'SYNTHETIC_DB_PASSWORD',ttl_seconds:300}),{status:201});
       }
       return currentFetch(input,options);
     };
@@ -892,6 +897,9 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
       executions++;assert.equal(options.shell,false);assert.equal(options.env.PGPASSWORD,'SYNTHETIC_DB_PASSWORD');
       assert.equal(options.env.SUPABASE_ACCESS_TOKEN,undefined);assert.equal(args.includes('--project-ref'),false);
       assert.equal(args.some(value=>value.includes('SYNTHETIC_DB_PASSWORD')),false);
+      assert.equal(args.some(value=>value.includes('db.aewwdlvbwpczqyvkwvvj.supabase.co')),false);
+      assert.equal(args.some(value=>value.includes('cli_login_postgres.aewwdlvbwpczqyvkwvvj@aws-0-us-east-1.pooler.supabase.com:5432')),true);
+      if(args[1]==='query'){callback(null,'[{"ok":true}]');return;}
       if(failApply&&!args.includes('--dry-run')){callback(new Error('synthetic timeout'));return;}
       callback(null,args.includes('--dry-run')?JSON.stringify({dryRun:true,message:'pending',migrations:manifest.resources.migrations.map(x=>x.path.split('/').at(-1)),roles:[],seeds:[],upToDate:false}):'applied');
     };
@@ -925,7 +933,7 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     const applied=await invoke('apply-migrations','protected-apply');assert.equal(applied.code,0);
     assert.equal(JSON.parse(readFileSync(applied.output)).result,'MIGRATIONS_EXECUTED');
     assert.equal(JSON.parse(readFileSync(join(migrationRoot,'protected-stage-proofs.json')))[0].stage,'migrations');
-    assert.equal(mints,3);assert.equal(executions,3);
+    assert.equal(mints,3);assert.equal(executions,6);
     const blockedCheckpointPath=join(migrationRoot,'function-deployment-proof.json');
     mkdirSync(blockedCheckpointPath);
     const blockedCheckpoint=await invoke('deploy-functions','checkpoint-unavailable');
@@ -933,8 +941,8 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     assert.deepEqual(JSON.parse(readFileSync(join(migrationRoot,'protected-stage-proofs.json'))).map(item=>item.stage),
       ['migrations'], 'functions stage must not publish before its durable checkpoint exists');
     rmSync(blockedCheckpointPath,{recursive:true,force:false});
-    assert.equal(mints,3);assert.equal(executions,3);
-    assert.notEqual((await invoke('apply-migrations','duplicate-apply')).code,0);assert.equal(mints,3);assert.equal(executions,3);
+    assert.equal(mints,3);assert.equal(executions,6);
+    assert.notEqual((await invoke('apply-migrations','duplicate-apply')).code,0);assert.equal(mints,3);assert.equal(executions,6);
     const failureRoot=join(root,'failed-attempt'),failurePublic=join(failureRoot,'nelyon-private-authority-public'),failureGate=join(failureRoot,'gate-evidence');
     mkdirSync(failurePublic,{recursive:true});mkdirSync(failureGate);
     const failurePre=join(failurePublic,'pre.json'),failureGatePath=join(failurePublic,'gate.json');
@@ -945,7 +953,7 @@ test('Task 7 production graph closes current and exact-attempt recovery authorit
     assert.equal(retainB2MigrationAttemptProof({trustedProofRoot:failurePublic,destinationDirectory:failureGate,manifest,request:releaseRequest,expectedReceipt}),true);
     const retained=JSON.parse(readFileSync(join(failureGate,'protected-stage-proofs.json')));
     assert.equal(retained[0].stage,'migrations');assert.equal(Object.hasOwn(retained[0],'complete'),false);
-    assert.equal(mints,5);assert.equal(executions,5);
+    assert.equal(mints,5);assert.equal(executions,10);
 
   });
 
