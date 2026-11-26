@@ -14,6 +14,8 @@ on:
       - .github/workflows/nelyon-production-release.yml
       - .github/workflows/nelyon-b2-oci-authority-validation.yml
       - scripts/nelyon-b2-authority-preparation.mjs
+      - scripts/nelyon-b2-explicit-connection.mjs
+      - scripts/nelyon-b2-hermetic-workspace.mjs
       - scripts/nelyon-private-authority-cli.mjs
       - scripts/nelyon-private-authority-issuer.mjs
       - scripts/nelyon-private-authority-provider.mjs
@@ -23,8 +25,14 @@ on:
       - tests/nelyonB2AuthorityEvidenceProof.test.mjs
       - tests/nelyonB2AuthorityPreparation.test.mjs
       - tests/nelyonB2AuthorityIssuer.test.mjs
+      - tests/nelyonB2ConcreteAdapters.test.mjs
+      - tests/nelyonB2ExplicitConnection.test.mjs
+      - tests/fixtures/nelyonB2ExplicitConnectionClosureCandidate.json
+      - tests/nelyonB2HermeticWorkspace.test.mjs
       - tests/nelyonB2OciAuthorityValidationWorkflow.test.mjs
+      - tests/nelyonB2PrivateRuntimeEndToEnd.test.mjs
       - tests/nelyonB2R2AccessProbeWorkflow.test.mjs
+      - tests/nelyonB2SnapshotRecovery.test.mjs
       - tests/nelyonPrivateAuthorityCli.test.mjs
       - tests/nelyonPrivateAuthorityProvider.test.mjs
       - tests/nelyonPrivateAuthorityRuntime.test.mjs
@@ -74,6 +82,9 @@ jobs:
       - name: Install exact dependencies without scripts
         shell: bash
         run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run protected pooler fallback regressions
+        shell: bash
+        run: node --test --test-concurrency=1 tests/nelyonB2ConcreteAdapters.test.mjs tests/nelyonB2ExplicitConnection.test.mjs tests/nelyonB2HermeticWorkspace.test.mjs tests/nelyonB2SnapshotRecovery.test.mjs tests/nelyonB2PrivateRuntimeEndToEnd.test.mjs
       - name: Run real Docker OCI index proof
         shell: bash
         env:

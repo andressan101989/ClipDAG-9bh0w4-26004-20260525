@@ -9,7 +9,7 @@
     "files": [
       {
         "path": ".github/workflows/nelyon-production-release.yml",
-        "sha256": "8b9087e72f24f114e36db53c2e6ea23e1644a8ef2de496466117f62404217477"
+        "sha256": "f6b35e773617a6c1d85ae3b14a673afb7e711d2ff7ef9e802182b1e28cd39821"
       },
       {
         "path": "package-lock.json",
@@ -29,7 +29,7 @@
       },
       {
         "path": "scripts/nelyon-b2-explicit-connection.mjs",
-        "sha256": "19a973efc75fe95e2429a5a650126f5efb767948cad49e09c0f3a30fc40d9763"
+        "sha256": "ec32440e2a8522eebb2bb99fca0054a0ce0de0edce848caf60ffbcf64a66fe4e"
       },
       {
         "path": "scripts/nelyon-b2-function-deployment-proof.mjs",
@@ -73,7 +73,7 @@
       },
       {
         "path": "scripts/nelyon-production-release.mjs",
-        "sha256": "3970bdb0f4962718ff2fce2690960ee618f2489ed51d049f502c4a252b066998"
+        "sha256": "cb7fe6d8085ed6b6b7b487f1e3217fb736b27e1efd6f941ba78d7990d7ab43d5"
       },
       {
         "path": "scripts/nelyon-production-snapshot-adapter.mjs",
@@ -85,7 +85,7 @@
       },
       {
         "path": "scripts/prove-web-control-centers-b2-disposable.mjs",
-        "sha256": "d417024261104951525ccbf1a56f701255d6d213e6282751705a48bf104fcc31"
+        "sha256": "133e87139c2ea67a88e6d3a4970a4b573bb8d974b498084c0b1ec33f61f471e4"
       },
       {
         "path": "scripts/prove-web-control-centers-b2-pg-cron-disposable.mjs",
@@ -112,12 +112,12 @@
       "wrangler": "4.135.0",
       "supabase_setup_action": "45a513f8c64c0bc8e0e3dfe572b5c95be85f6359"
     },
-    "closure_sha256": "2d1786f9698840b9d95ac21b0de6052098dc94d71004f2efead8a4d524163ac0"
+    "closure_sha256": "48fc5ccd355d43d03d706a4d2179d3616a278fb0c637dda2cd52a8383e4f9717"
   },
   "proposed_members": [
     {
       "path": "scripts/nelyon-b2-explicit-connection.mjs",
-      "sha256": "19a973efc75fe95e2429a5a650126f5efb767948cad49e09c0f3a30fc40d9763"
+      "sha256": "ec32440e2a8522eebb2bb99fca0054a0ce0de0edce848caf60ffbcf64a66fe4e"
     },
     {
       "path": "scripts/nelyon-b2-hermetic-workspace.mjs",

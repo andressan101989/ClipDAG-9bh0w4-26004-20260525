@@ -24,6 +24,7 @@ const AT = '2026-11-08T12:00:00.000Z';
 const MARKER = 'SYNTHETIC_B2_PRIVATE_MARKER';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const canonical = value => release.canonicalJson(value).trimEnd();
+const migrationPoolerConfig=()=>{const ref='aewwdlvbwpczqyvkwvvj',host='aws-0-us-east-1.pooler.supabase.com',connection=`postgresql://postgres.${ref}:[YOUR-PASSWORD]@${host}:6543/postgres`;return [{identifier:'primary-fixture',database_type:'PRIMARY',is_using_scram_auth:true,db_user:`postgres.${ref}`,db_host:host,db_port:6543,db_name:'postgres',connection_string:connection,connectionString:connection,default_pool_size:15,max_client_conn:200,pool_mode:'transaction'}];};
 function fixture({ backupInsertedAt = '2026-11-08T10:00:00.000Z' } = {}) {
   const migrationPath = 'supabase/migrations/20261108061946_web_control_centers_b2_scheduled_publishing.sql';
   const migrationBytes = readFileSync(new URL(`../${migrationPath}`, import.meta.url));
@@ -802,10 +803,10 @@ test('explicit migration connection runs inside existing protected mutation gate
   const operation={repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath,trustedProofRoot:root};
   const parameters={phase:'apply',projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture-token',workspace,
    verifyContext:async()=>({cliVersion:'2.120.0',effectiveConfigVerified:true}),
-   request:async()=>{assert.ok(fs.existsSync(proofPath));calls++;return {role:'cli_login_postgres',password:'fixture-password'};},
-   execute:async()=>{calls++;return {exitCode:0,stdout:JSON.stringify({dryRun:true,message:'ok',migrations:[],roles:[],seeds:[],upToDate:true})};}};
+   request:async spec=>{assert.ok(fs.existsSync(proofPath));calls++;return spec.method==='GET'?migrationPoolerConfig():{role:'cli_login_postgres',password:'fixture-password',ttl_seconds:300};},
+   execute:async spec=>{calls++;return {exitCode:0,stdout:spec.args[1]==='query'?'[{"ok":true}]':JSON.stringify({dryRun:true,message:'ok',migrations:[],roles:[],seeds:[],upToDate:true})};}};
   await assert.rejects(()=>connection.runB2ProtectedMigration({operation,now:()=>'2026-11-10T12:00:00.000Z',connection:parameters}));assert.equal(calls,0);
-  assert.deepEqual(await connection.runB2ProtectedMigration({operation,now:()=>AT,connection:parameters}),{complete:true});assert.equal(calls,4);
+  assert.deepEqual(await connection.runB2ProtectedMigration({operation,now:()=>AT,connection:parameters}),{complete:true});assert.equal(calls,8);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 test('post-mint protected authorization uses fresh clock rather than caller boolean',async()=>{
@@ -817,7 +818,7 @@ test('post-mint protected authorization uses fresh clock rather than caller bool
  const binary=Buffer.from('fake');writeFileSync(join(root,'fake'),binary);const config=Buffer.from('');
  const workspace=createHermeticMigrationWorkspace({parent:root,binaryPath:join(root,'fake'),binarySha256:hash(binary),files:[{path:'supabase/config.toml',bytes:config,sha256:hash(config)}]});
  const repositoryRoot=bindExplicitConnectionSource(root,workspace,f,op);let time=AT,executes=0,mints=0;
- await assert.rejects(()=>connection.runB2ProtectedMigration({operation:{repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath:join(root,'protected-stage-proofs.json'),trustedProofRoot:root},now:()=>time,connection:{phase:'apply',workspace,projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture',verifyContext:async()=>({cliVersion:'2.120.0',effectiveConfigVerified:true}),request:async()=>{mints++;time='2026-11-10T12:00:00.000Z';return {role:'cli_login_postgres',password:'fixture'};},execute:async()=>{executes++;return {exitCode:0};}}}));
+ await assert.rejects(()=>connection.runB2ProtectedMigration({operation:{repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath:join(root,'protected-stage-proofs.json'),trustedProofRoot:root},now:()=>time,connection:{phase:'apply',workspace,projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture',verifyContext:async()=>({cliVersion:'2.120.0',effectiveConfigVerified:true}),request:async spec=>{if(spec.method==='GET')return migrationPoolerConfig();mints++;time='2026-11-10T12:00:00.000Z';return {role:'cli_login_postgres',password:'fixture',ttl_seconds:300};},execute:async()=>{executes++;return {exitCode:0};}}}));
  assert.equal(mints,1);assert.equal(executes,0);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
@@ -828,7 +829,7 @@ test('protected apply rejects an extra pending migration from exact dry-run',asy
  const binary=Buffer.from('fake');writeFileSync(join(root,'fake'),binary);const config=Buffer.from('');const extra=Buffer.from('select 1;');
  const workspace=createHermeticMigrationWorkspace({parent:root,binaryPath:join(root,'fake'),binarySha256:hash(binary),files:[{path:'supabase/config.toml',bytes:config,sha256:hash(config)},{path:'supabase/migrations/20260102000000_extra.sql',bytes:extra,sha256:hash(extra)}]});
  const repositoryRoot=bindExplicitConnectionSource(root,workspace,f,op);let applies=0,dryRuns=0;
- await assert.rejects(()=>connection.runB2ProtectedMigration({operation:{repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath:join(root,'protected-stage-proofs.json'),trustedProofRoot:root},now:()=>AT,connection:{phase:'apply',workspace,projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture',request:async()=>({role:'cli_login_postgres',password:'fixture'}),execute:async spec=>{if(spec.args.includes('--dry-run'))dryRuns++;else applies++;return {exitCode:0,stdout:JSON.stringify({dryRun:true,message:'pending',migrations:['20260102000000_extra.sql'],roles:[],seeds:[],upToDate:false})};}}}));
+ await assert.rejects(()=>connection.runB2ProtectedMigration({operation:{repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath:join(root,'protected-stage-proofs.json'),trustedProofRoot:root},now:()=>AT,connection:{phase:'apply',workspace,projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture',request:async spec=>spec.method==='GET'?migrationPoolerConfig():({role:'cli_login_postgres',password:'fixture',ttl_seconds:300}),execute:async spec=>{if(spec.args[1]==='query')return {exitCode:0,stdout:'[{"ok":true}]'};if(spec.args.includes('--dry-run'))dryRuns++;else applies++;return {exitCode:0,stdout:JSON.stringify({dryRun:true,message:'pending',migrations:['20260102000000_extra.sql'],roles:[],seeds:[],upToDate:false})};}}}));
  assert.equal(dryRuns,1);assert.equal(applies,0);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
@@ -852,7 +853,7 @@ test('unapproved extra workspace migration is rejected before any role mint',asy
  const binary=Buffer.from('fake');writeFileSync(join(root,'fake'),binary);const config=Buffer.from('');const extra=Buffer.from('select 1;');const extraPath='supabase/migrations/20260102000000_extra.sql';
  const workspace=createHermeticMigrationWorkspace({parent:root,binaryPath:join(root,'fake'),binarySha256:hash(binary),files:[{path:'supabase/config.toml',bytes:config,sha256:hash(config)},{path:extraPath,bytes:extra,sha256:hash(extra)}]});
  const repositoryRoot=bindExplicitConnectionSource(root,workspace,f,op,[extraPath]);let requests=0,executes=0;
- await assert.rejects(()=>connection.runB2ProtectedMigration({operation:{repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath:join(root,'protected-stage-proofs.json'),trustedProofRoot:root},now:()=>AT,connection:{phase:'apply',workspace,projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture',request:async()=>{requests++;return {role:'cli_login_postgres',password:'fixture'};},execute:async()=>{executes++;return {exitCode:0,stdout:''};}}}));
+ await assert.rejects(()=>connection.runB2ProtectedMigration({operation:{repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath:join(root,'protected-stage-proofs.json'),trustedProofRoot:root},now:()=>AT,connection:{phase:'apply',workspace,projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture',request:async()=>{requests++;return {role:'cli_login_postgres',password:'fixture',ttl_seconds:300};},execute:async()=>{executes++;return {exitCode:0,stdout:''};}}}));
  assert.equal(requests,0);assert.equal(executes,0);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
@@ -868,7 +869,7 @@ test('protected standalone dry-run requires full gate and cannot advance migrati
  const workspace=createHermeticMigrationWorkspace({parent:root,binaryPath:join(root,'fake'),binarySha256:hash(binary),files:[{path:'supabase/config.toml',bytes:config,sha256:hash(config)}]});
  const repositoryRoot=bindExplicitConnectionSource(root,workspace,f,op);let requests=0,executes=0;
  const operation={repositoryRoot,manifest:f.manifest,request:f.request,currentGate:op.currentGate,authorityContext:f.context,policy:op.policy,backup:op.backup,requestedAt:AT,proofPath:join(root,'protected-stage-proofs.json'),trustedProofRoot:root};
- const parameters={phase:'dry-run',workspace,projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture',request:async()=>{requests++;return {role:'cli_login_postgres',password:'fixture'};},execute:async spec=>{executes++;assert.ok(spec.args.includes('--dry-run'));return {exitCode:0,stdout:JSON.stringify({dryRun:true,message:'ok',migrations:[],roles:[],seeds:[],upToDate:true})};}};
+ const parameters={phase:'dry-run',workspace,projectRef:'aewwdlvbwpczqyvkwvvj',host:'db.aewwdlvbwpczqyvkwvvj.supabase.co',token:'fixture',request:async spec=>{requests++;return spec.method==='GET'?migrationPoolerConfig():{role:'cli_login_postgres',password:'fixture',ttl_seconds:300};},execute:async spec=>{executes++;if(spec.args[1]==='query')return {exitCode:0,stdout:'[{"ok":true}]'};assert.ok(spec.args.includes('--dry-run'));return {exitCode:0,stdout:JSON.stringify({dryRun:true,message:'ok',migrations:[],roles:[],seeds:[],upToDate:true})};}};
  await assert.rejects(()=>connection.runB2ProtectedDryRun({operation:{...operation,currentGate:{...op.currentGate,result:'READ_ONLY_REFRESH_AUTHORIZED'}},connection:parameters,now:()=>AT}));assert.equal(requests,0);
  for(const releaseId of ['short','bad id','bad/id','a'.repeat(129)]){
   const manifest=structuredClone(operation.manifest);manifest.identity.release_id=releaseId;
@@ -878,6 +879,6 @@ test('protected standalone dry-run requires full gate and cannot advance migrati
   assert.equal(requests,0);assert.equal(executes,0);
  }
  assert.deepEqual(await connection.runB2ProtectedDryRun({operation,connection:parameters,now:()=>AT}),{complete:true,pending_versions:[]});
- assert.equal(requests,1);assert.equal(executes,1);assert.equal(fs.existsSync(operation.proofPath),false);
+ assert.equal(requests,2);assert.equal(executes,2);assert.equal(fs.existsSync(operation.proofPath),false);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
