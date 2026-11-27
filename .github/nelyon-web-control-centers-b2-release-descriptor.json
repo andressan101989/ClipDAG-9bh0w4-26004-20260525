@@ -127,6 +127,6 @@
     "required": true,
     "schema_version": 1,
     "authority_id": "web-control-centers-b2-release-authority-v1",
-    "sha256": "6013b75b98f7de4c578631043bfaa1abb3dc4b685d98c3f4471cc4ec45e54d87"
+    "sha256": "0acd5b26940ce04bcc6c9c9304c3b39f3e07158f3378f262fc632c52e515062c"
   }
 }
