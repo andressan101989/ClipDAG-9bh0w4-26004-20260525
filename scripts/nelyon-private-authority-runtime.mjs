@@ -5,6 +5,7 @@ import path from 'node:path';
 import { types } from 'node:util';
 
 import { createR2PrivateAuthorityProvider } from './nelyon-private-authority-provider.mjs';
+import { readB2ExplicitConnectionDiagnostic } from './nelyon-b2-explicit-connection.mjs';
 import { readSnapshotDiagnostic } from './nelyon-production-snapshot-adapter.mjs';
 import {
   createB2RecoveryProvenanceLoader,
@@ -860,7 +861,7 @@ export function createPrivateAuthorityRuntime(options) {
         });
       } catch (source) {
         const error = closedError('PRIVATE_AUTHORITY_STAGE_BLOCKED');
-        const diagnostic = readSnapshotDiagnostic(source);
+        const diagnostic = readSnapshotDiagnostic(source) ?? readB2ExplicitConnectionDiagnostic(source);
         if (diagnostic) diagnostics.set(error, diagnostic);
         throw error;
       }

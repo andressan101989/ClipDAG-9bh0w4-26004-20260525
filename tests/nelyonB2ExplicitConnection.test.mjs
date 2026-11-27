@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {runB2ExplicitConnection} from '../scripts/nelyon-b2-explicit-connection.mjs';
+import { Buffer } from 'node:buffer';
+import * as explicitConnection from '../scripts/nelyon-b2-explicit-connection.mjs';
+const {runB2ExplicitConnection} = explicitConnection;
 const ref='aewwdlvbwpczqyvkwvvj';
 const secret='temporary-test-password';
 const token='test-management-token';
@@ -86,10 +88,71 @@ test('authentication failure stops once and hides remote message',async()=>{
  assert.equal(calls.filter(value=>value?.args?.[1]==='query').length,9);
  assert.equal(calls.filter(value=>value?.args?.[1]==='push').length,0);
 });
+test('readiness exhaustion exposes only a closed sanitized diagnostic for the final attempt',async()=>{
+ const {input,calls}=fixture();let monotonic=0;
+ input.monotonicClock=()=>{const value=monotonic;monotonic+=25;return value;};
+ input.execute=async spec=>{calls.push(spec);return spec.args[1]==='query'
+  ?{exitCode:28,stdout:'x',stderr:secret+token}:{exitCode:0,stdout:'{}'};};
+ let captured;
+ await assert.rejects(()=>runB2ExplicitConnection(input),error=>{captured=error;return true;});
+ assert.equal(captured.message,'B2_EXPLICIT_CONNECTION_FAILED');
+ assert.equal(captured.stack,'Error: B2_EXPLICIT_CONNECTION_FAILED');
+ assert.equal(Object.hasOwn(captured,'diagnostic'),false);
+ const diagnostic=explicitConnection.readB2ExplicitConnectionDiagnostic(captured);
+ assert.deepEqual(diagnostic,{phase:'B2_EXPLICIT_CONNECTION',boundary:'READINESS',kind:'EXIT_NONZERO',
+  attempt:9,elapsedMs:25,exitCode:28,stdoutBytes:1,stderrBytes:Buffer.byteLength(secret+token)});
+ assert.ok(Object.isFrozen(diagnostic));
+ assert.doesNotMatch(JSON.stringify(diagnostic)+captured.stack,new RegExp(`${secret}|${token}`));
+ assert.equal(calls.filter(value=>value?.args?.[1]==='query').length,9);
+});
 test('transport failure does not fall back or expose token',async()=>{
- const {input,calls}=fixture(); input.request=async spec=>{calls.push(spec);throw Error(token);};
- await assert.rejects(()=>runB2ExplicitConnection(input),{message:'B2_EXPLICIT_CONNECTION_FAILED'});
+ const {input,calls}=fixture();let monotonic=0;input.monotonicClock=()=>{const value=monotonic;monotonic+=25;return value;};
+ input.request=async spec=>{calls.push(spec);throw Error(token);};let captured;
+ await assert.rejects(()=>runB2ExplicitConnection(input),error=>{captured=error;return true;});
+ assert.deepEqual(explicitConnection.readB2ExplicitConnectionDiagnostic(captured),{
+  phase:'B2_EXPLICIT_CONNECTION',boundary:'POOLER_CONFIG',kind:'TRANSPORT',attempt:0,elapsedMs:25,
+  exitCode:null,stdoutBytes:0,stderrBytes:0});
  assert.equal(calls.length,2);
+});
+test('invalid successful readiness output is classified without retry or secret disclosure',async()=>{
+ const {input}=fixture();let monotonic=0;let pushes=0;
+ input.monotonicClock=()=>{const value=monotonic;monotonic+=25;return value;};
+ input.execute=async spec=>{if(spec.args[1]==='query')return {exitCode:0,stdout:`not-json-${secret}`,stderr:''};
+  pushes++;return {exitCode:0,stdout:'{}'};};
+ let captured;await assert.rejects(()=>runB2ExplicitConnection(input),error=>{captured=error;return true;});
+ assert.deepEqual(explicitConnection.readB2ExplicitConnectionDiagnostic(captured),{
+  phase:'B2_EXPLICIT_CONNECTION',boundary:'READINESS',kind:'OUTPUT_INVALID',attempt:1,elapsedMs:25,
+  exitCode:0,stdoutBytes:Buffer.byteLength(`not-json-${secret}`),stderrBytes:0});
+ assert.equal(pushes,0);assert.doesNotMatch(JSON.stringify(captured),new RegExp(secret));
+});
+test('invalid subprocess exit-code shape is output invalid and never retried',async()=>{
+ const {input,calls}=fixture();let monotonic=0;
+ input.monotonicClock=()=>{const value=monotonic;monotonic+=25;return value;};
+ input.execute=async spec=>{calls.push(spec);return {exitCode:'1',stdout:secret,stderr:token};};
+ let captured;await assert.rejects(()=>runB2ExplicitConnection(input),error=>{captured=error;return true;});
+ assert.deepEqual(explicitConnection.readB2ExplicitConnectionDiagnostic(captured),{
+  phase:'B2_EXPLICIT_CONNECTION',boundary:'READINESS',kind:'OUTPUT_INVALID',attempt:1,elapsedMs:25,
+  exitCode:null,stdoutBytes:0,stderrBytes:0});
+ assert.equal(calls.filter(value=>value?.args?.[1]==='query').length,1);
+ assert.doesNotMatch(String(captured.stack),new RegExp(`${secret}|${token}`));
+});
+test('dry-run nonzero is classified after readiness without copying provider output',async()=>{
+ const {input}=fixture();let monotonic=0;
+ input.monotonicClock=()=>{const value=monotonic;monotonic+=25;return value;};
+ input.execute=async spec=>spec.args[1]==='query'?{exitCode:0,stdout:'[{"ok":true}]',stderr:''}
+  :{exitCode:19,stdout:'x',stderr:secret+token};
+ let captured;await assert.rejects(()=>runB2ExplicitConnection(input),error=>{captured=error;return true;});
+ const diagnostic=explicitConnection.readB2ExplicitConnectionDiagnostic(captured);
+ assert.deepEqual(diagnostic,{phase:'B2_EXPLICIT_CONNECTION',boundary:'DRY_RUN',kind:'EXIT_NONZERO',
+  attempt:0,elapsedMs:25,exitCode:19,stdoutBytes:1,stderrBytes:Buffer.byteLength(secret+token)});
+ assert.doesNotMatch(JSON.stringify(diagnostic)+captured.stack,new RegExp(`${secret}|${token}`));
+});
+test('diagnostic reader cannot be spoofed by properties, getters, or proxies',()=>{
+ let inspected=0;const forged=Object.assign(new Error(secret),{diagnostic:{phase:'B2_EXPLICIT_CONNECTION'}});
+ const getter=Object.defineProperty(new Error(secret),'diagnostic',{get(){inspected++;throw new Error(secret);}});
+ const proxy=new Proxy(forged,{get(){inspected++;throw new Error(secret);},getPrototypeOf(){inspected++;throw new Error(secret);}});
+ for(const value of [forged,getter,proxy,{},null])assert.equal(explicitConnection.readB2ExplicitConnectionDiagnostic(value),undefined);
+ assert.equal(inspected,0);
 });
 for(const [name,providerResponse] of [
  ['missing PRIMARY',()=>primaryPoolerConfig({database_type:'READ_REPLICA'})],
@@ -146,8 +209,11 @@ test('successful dry-run output containing credential is rejected',async()=>{
  await assert.rejects(()=>runB2ExplicitConnection(input),{message:'B2_EXPLICIT_CONNECTION_FAILED'});
 });
 test('revalidates authority after mint and aborts changed context before execute',async()=>{
- const {input,calls}=fixture();let count=0;input.verifyContext=async()=>{count++;return {cliVersion:'2.120.0',effectiveConfigVerified:count===1};};
- await assert.rejects(()=>runB2ExplicitConnection(input));
+ const {input,calls}=fixture();let count=0;input.verifyContext=async()=>{count++;return {cliVersion:'2.120.0',effectiveConfigVerified:count===1};};let captured;
+ await assert.rejects(()=>runB2ExplicitConnection(input),error=>{captured=error;return true;});
+ assert.deepEqual(explicitConnection.readB2ExplicitConnectionDiagnostic(captured),{
+  phase:'B2_EXPLICIT_CONNECTION',boundary:'READINESS',kind:'CONTEXT_INVALID',attempt:1,elapsedMs:0,
+  exitCode:null,stdoutBytes:0,stderrBytes:0});
  assert.equal(count,2);assert.equal(calls.length,2);
 });
 test('revalidates authority after readiness and aborts before migration push',async()=>{
@@ -201,7 +267,10 @@ test('fails closed before push when the temporary role cannot retain the full pu
   if(spec.args[1]==='query'){probes++;now=6000;return {exitCode:0,stdout:'[{"ok":true}]'};}
   pushes++;return {exitCode:0,stdout:'{}'};
  };
- await assert.rejects(()=>runB2ExplicitConnection(input),{message:'B2_EXPLICIT_CONNECTION_FAILED'});
+ let captured;await assert.rejects(()=>runB2ExplicitConnection(input),error=>{captured=error;return true;});
+ assert.deepEqual(explicitConnection.readB2ExplicitConnectionDiagnostic(captured),{
+  phase:'B2_EXPLICIT_CONNECTION',boundary:'READINESS',kind:'EXPIRY_BUDGET',attempt:1,elapsedMs:0,
+  exitCode:null,stdoutBytes:0,stderrBytes:0});
  assert.equal(probes,0);assert.equal(pushes,0);
 });
 test('accounts for probe duration and refuses to start push inside the expiry reserve',async()=>{

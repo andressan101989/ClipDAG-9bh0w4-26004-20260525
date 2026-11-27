@@ -26,6 +26,17 @@ test('HTTP adapter reads only the fixed primary pooler endpoint with no body',as
  assert.equal(seen.options.method,'GET');assert.equal(seen.options.redirect,'error');
  assert.equal(seen.options.body,undefined);assert.deepEqual(seen.options.headers,{Authorization:'Bearer test-token'});
 });
+test('orchestration classifies a structurally invalid provider response as output, not transport',async()=>{
+ const adapter=implementation.createB2HttpAdapter({fetchImpl:async()=>new Response('not-json',{status:200})});
+ let captured;await assert.rejects(()=>implementation.runB2ExplicitConnection({phase:'dry-run',projectRef:ref,
+  host:`db.${ref}.supabase.co`,token:'test-token',cwd:'C:/fixture',manifest:{resources:{migrations:[]}},
+  verifyContext:async()=>({cliVersion:'2.120.0',effectiveConfigVerified:true}),request:adapter,
+  execute:async()=>{assert.fail('invalid provider output must stop before subprocess');},wait:async()=>{},
+  clock:()=>0,monotonicClock:(()=>{let value=0;return()=>{const result=value;value+=25;return result;};})()}),
+ error=>{captured=error;return true;});
+ assert.deepEqual(implementation.readB2ExplicitConnectionDiagnostic(captured),{phase:'B2_EXPLICIT_CONNECTION',
+  boundary:'POOLER_CONFIG',kind:'OUTPUT_INVALID',attempt:0,elapsedMs:25,exitCode:null,stdoutBytes:0,stderrBytes:0});
+});
 for(const [name,change] of [ ['wrong destination',s=>s.url='https://evil.invalid'],['redirect',s=>s.redirect='follow'],['wrong method',s=>s.method='DELETE'],['different body',s=>s.body={read_only:true}],['unbounded timeout',s=>s.timeoutMs=0]]) {
  test(`HTTP rejects ${name} before fetch`,async()=>{let calls=0;assert.equal(typeof implementation.createB2HttpAdapter,'function');const adapter=implementation.createB2HttpAdapter({fetchImpl:async()=>{calls++;}});const spec=request();change(spec);await assert.rejects(()=>adapter(spec));assert.equal(calls,0);});
 }
@@ -85,6 +96,73 @@ for(const [name,dsn] of [
  ['transaction port',`postgresql://cli_login_postgres.${ref}@${poolerHost}:6543/postgres?sslmode=verify-full`],
 ]) test(`executor rejects ${name} DSN before spawn`,async()=>{const {root,workspace}=workspaceFixture();try{let calls=0;const execute=implementation.createB2Executor({workspace,execFileImpl:(f,a,o,cb)=>{calls++;cb(null,'{}','');}});const spec=execution(workspace);spec.args[3]=dsn;await assert.rejects(()=>execute(spec),{message:'B2_EXPLICIT_CONNECTION_FAILED'});assert.equal(calls,0);}finally{rmSync(root,{recursive:true,force:true});}});
 test('executor suppresses secret-bearing spawn errors',async()=>{assert.equal(typeof implementation.createB2Executor,'function');const {root,workspace}=workspaceFixture();try{const execute=implementation.createB2Executor({workspace,execFileImpl:(f,a,o,cb)=>cb(Error('test-pass'))});await assert.rejects(()=>execute(execution(workspace)),{message:'B2_EXPLICIT_CONNECTION_FAILED'});}finally{rmSync(root,{recursive:true,force:true});}});
+for(const [name,specification,error,kind,exitCode] of [
+ ['readiness timeout',readiness,Object.assign(new Error('SYNTHETIC_SECRET_MARKER'),{killed:true,code:null}),'TIMEOUT',null],
+ ['dry-run nonzero',execution,Object.assign(new Error('SYNTHETIC_SECRET_MARKER'),{killed:false,code:28}),'EXIT_NONZERO',28],
+ ['dry-run spawn',execution,Object.assign(new Error('SYNTHETIC_SECRET_MARKER'),{killed:false,code:'ENOENT'}),'SPAWN',null],
+ ['dry-run max-buffer',execution,Object.assign(new Error('SYNTHETIC_SECRET_MARKER'),{killed:false,code:'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'}),'OUTPUT_INVALID',null],
+ ['dry-run highest signed exit',execution,Object.assign(new Error('SYNTHETIC_SECRET_MARKER'),{killed:false,code:0x7fffffff}),'EXIT_NONZERO',0x7fffffff],
+ ['dry-run first unsigned exit',execution,Object.assign(new Error('SYNTHETIC_SECRET_MARKER'),{killed:false,code:0x80000000}),'EXIT_NONZERO',0x80000000],
+ ['dry-run highest unsigned exit',execution,Object.assign(new Error('SYNTHETIC_SECRET_MARKER'),{killed:false,code:0xffffffff}),'EXIT_NONZERO',0xffffffff],
+]) test(`executor mints a closed ${name} diagnostic without copying child output`,async()=>{
+ const {root,workspace}=workspaceFixture();try{let monotonic=0;
+  const execute=implementation.createB2Executor({workspace,monotonicClock:()=>{const value=monotonic;monotonic+=25;return value;},
+   execFileImpl:(f,a,o,cb)=>cb(error,'out','SYNTHETIC_SECRET_MARKER')});
+  let captured;await assert.rejects(()=>execute(specification(workspace)),value=>{captured=value;return true;});
+  const diagnostic=implementation.readB2ExplicitConnectionDiagnostic(captured);
+  assert.deepEqual(diagnostic,{phase:'B2_EXPLICIT_CONNECTION',
+   boundary:specification===readiness?'READINESS':'DRY_RUN',kind,attempt:0,elapsedMs:25,exitCode,
+   stdoutBytes:3,stderrBytes:Buffer.byteLength('SYNTHETIC_SECRET_MARKER')});
+  assert.equal(Object.hasOwn(captured,'diagnostic'),false);assert.equal(captured.stack,'Error: B2_EXPLICIT_CONNECTION_FAILED');
+  assert.doesNotMatch(JSON.stringify(diagnostic)+captured.stack,/SYNTHETIC_SECRET_MARKER/);
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
+test('executor classifies a synchronous child-process launch failure without exposing it',async()=>{
+ const {root,workspace}=workspaceFixture();try{let monotonic=0;const execute=implementation.createB2Executor({workspace,
+  monotonicClock:()=>{const value=monotonic;monotonic+=25;return value;},
+  execFileImpl:()=>{throw new Error('SYNTHETIC_SECRET_MARKER');}});
+ let captured;await assert.rejects(()=>execute(execution(workspace)),error=>{captured=error;return true;});
+ assert.deepEqual(implementation.readB2ExplicitConnectionDiagnostic(captured),{phase:'B2_EXPLICIT_CONNECTION',
+  boundary:'DRY_RUN',kind:'SPAWN',attempt:0,elapsedMs:25,exitCode:null,stdoutBytes:0,stderrBytes:0});
+ assert.doesNotMatch(String(captured.stack),/SYNTHETIC_SECRET_MARKER/);
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
+test('executor does not invoke hostile child-error accessors while classifying failure',async()=>{
+ const {root,workspace}=workspaceFixture();try{let inspected=0;let monotonic=0;
+  const hostile=Object.defineProperties(new Error('SYNTHETIC_SECRET_MARKER'),{
+   killed:{get(){inspected++;throw new Error('SYNTHETIC_SECRET_MARKER');}},
+   code:{get(){inspected++;throw new Error('SYNTHETIC_SECRET_MARKER');}},
+  });
+  const execute=implementation.createB2Executor({workspace,
+   monotonicClock:()=>{const value=monotonic;monotonic+=25;return value;},
+   execFileImpl:(f,a,o,cb)=>cb(hostile,'','SYNTHETIC_SECRET_MARKER')});
+  let captured;await assert.rejects(()=>execute(execution(workspace)),error=>{captured=error;return true;});
+  assert.equal(inspected,0);
+  assert.deepEqual(implementation.readB2ExplicitConnectionDiagnostic(captured),{phase:'B2_EXPLICIT_CONNECTION',
+   boundary:'DRY_RUN',kind:'SPAWN',attempt:0,elapsedMs:25,exitCode:null,stdoutBytes:0,
+   stderrBytes:Buffer.byteLength('SYNTHETIC_SECRET_MARKER')});
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
+test('orchestration rejects accessor-backed subprocess results without invoking accessors',async()=>{
+ let inspected=0;const connection=`postgresql://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`;
+ const hostile=Object.defineProperties({}, {
+  exitCode:{get(){inspected++;throw new Error('SYNTHETIC_SECRET_MARKER');}},
+  stdout:{value:'SYNTHETIC_SECRET_MARKER'},stderr:{value:'SYNTHETIC_SECRET_MARKER'},
+ });
+ let monotonic=0;let captured;await assert.rejects(()=>implementation.runB2ExplicitConnection({phase:'dry-run',
+  projectRef:ref,host:`db.${ref}.supabase.co`,token:'test-token',cwd:'C:/fixture',
+  manifest:{resources:{migrations:[]}},clock:()=>0,
+  monotonicClock:()=>{const value=monotonic;monotonic+=25;return value;},wait:async()=>{},
+  verifyContext:async()=>({cliVersion:'2.120.0',effectiveConfigVerified:true}),
+  request:async spec=>spec.method==='GET'?[{database_type:'PRIMARY',db_user:`postgres.${ref}`,
+   db_host:poolerHost,db_port:6543,db_name:'postgres',pool_mode:'transaction',connection_string:connection,
+   connectionString:connection}]:{role:'cli_login_postgres',password:'test-pass',ttl_seconds:300},
+  execute:async()=>hostile}),error=>{captured=error;return true;});
+ assert.equal(inspected,0);
+ assert.deepEqual(implementation.readB2ExplicitConnectionDiagnostic(captured),{phase:'B2_EXPLICIT_CONNECTION',
+  boundary:'READINESS',kind:'OUTPUT_INVALID',attempt:1,elapsedMs:25,exitCode:null,stdoutBytes:0,stderrBytes:0});
+ assert.doesNotMatch(String(captured.stack),/SYNTHETIC_SECRET_MARKER/);
+});
 test('HTTP rejects undocumented success status 200',async()=>{
  const adapter=implementation.createB2HttpAdapter({fetchImpl:async()=>new Response(JSON.stringify({role:'cli_login_postgres',password:'test-pass'}),{status:200})});
  await assert.rejects(()=>adapter(request()),{message:'B2_EXPLICIT_CONNECTION_FAILED'});
@@ -107,8 +185,33 @@ test('missing managed home fails before executable launch',async()=>{
  }finally{rmSync(root,{recursive:true,force:true});}
 });
 test('unexpected home write during executable run fails closed',async()=>{
- const {root,workspace}=workspaceFixture();try{const execute=implementation.createB2Executor({workspace,execFileImpl:(f,a,o,cb)=>{writeFileSync(join(workspace.homePath,'unexpected'),'bad');cb(null,'{}','');}});
- await assert.rejects(()=>execute(execution(workspace)),{message:'B2_EXPLICIT_CONNECTION_FAILED'});
+ const {root,workspace}=workspaceFixture();try{let monotonic=0;const execute=implementation.createB2Executor({workspace,
+  monotonicClock:()=>{const value=monotonic;monotonic+=25;return value;},
+  execFileImpl:(f,a,o,cb)=>{writeFileSync(join(workspace.homePath,'unexpected'),'bad');cb(null,'{}','');}});
+ let captured;await assert.rejects(()=>execute(execution(workspace)),value=>{captured=value;return true;});
+ assert.deepEqual(implementation.readB2ExplicitConnectionDiagnostic(captured),{phase:'B2_EXPLICIT_CONNECTION',
+  boundary:'HERMETIC_POSTCHECK',kind:'WORKSPACE_DRIFT',attempt:0,elapsedMs:25,exitCode:null,stdoutBytes:2,stderrBytes:0});
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
+test('connection orchestration aborts on the first persistent hermetic postcheck drift',async()=>{
+ const {root,workspace}=workspaceFixture();try{
+  const unexpected=join(workspace.homePath,'unexpected');
+  let spawns=0;
+  const adapter=implementation.createB2Executor({workspace,monotonicClock:(()=>{let value=0;return()=>{const result=value;value+=25;return result;};})(),
+   execFileImpl:(f,a,o,cb)=>{spawns++;writeFileSync(unexpected,'bad');cb(null,'[{"ok":true}]','');}});
+  const connection=`postgresql://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`;let monotonic=0;let captured;
+  await assert.rejects(()=>implementation.runB2HermeticConnection({workspace,phase:'dry-run',projectRef:ref,host:`db.${ref}.supabase.co`,
+   token:'test-token',manifest:{resources:{migrations:[]}},clock:()=>0,
+   monotonicClock:()=>{const value=monotonic;monotonic+=25;return value;},wait:async()=>{},
+   verifyContext:async()=>({cliVersion:'2.120.0',effectiveConfigVerified:true}),
+   request:async spec=>spec.method==='GET'?[{database_type:'PRIMARY',db_user:`postgres.${ref}`,db_host:poolerHost,
+    db_port:6543,db_name:'postgres',pool_mode:'transaction',connection_string:connection,connectionString:connection}]
+    :{role:'cli_login_postgres',password:'test-pass',ttl_seconds:300},
+   execute:adapter}),error=>{captured=error;return true;});
+  assert.deepEqual(implementation.readB2ExplicitConnectionDiagnostic(captured),{phase:'B2_EXPLICIT_CONNECTION',
+   boundary:'HERMETIC_POSTCHECK',kind:'WORKSPACE_DRIFT',attempt:1,elapsedMs:25,exitCode:null,
+   stdoutBytes:13,stderrBytes:0});
+  assert.equal(spawns,1);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
 

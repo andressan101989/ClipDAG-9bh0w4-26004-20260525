@@ -2,13 +2,15 @@ import { syntheticVaultEdgeParity } from './fixtures/nelyonB2SyntheticVaultEdgeP
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import fs, { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 
 import { buildPrivateRuntimeClosure } from '../scripts/nelyon-private-runtime-closure.mjs';
 import { publicAuthorityReceipt } from '../scripts/nelyon-release-authority-context.mjs';
+import { runB2ExplicitConnection, readB2ExplicitConnectionDiagnostic } from '../scripts/nelyon-b2-explicit-connection.mjs';
 
 
 import { runPrivateAuthorityCli } from '../scripts/nelyon-private-authority-cli.mjs';
@@ -200,9 +202,6 @@ function r2Fetch(authorityBytes, calls, status = 200) {
   };
 }
 
-import fs from 'node:fs';
-import { syncBuiltinESMExports } from 'node:module';
-
 const cliArguments = output => ['authority-proof', '--policy', 'policy.json', '--request', 'request.json',
   '--bundle', 'bundle', '--verification-output', output];
 const blockedStatus = { schemaVersion: 1, result: 'BLOCKED', releaseReady: false, code: 'PRIVATE_AUTHORITY_STAGE_BLOCKED' };
@@ -268,4 +267,38 @@ test('runtime dispatch never trusts diagnostic properties, getters, or proxy tra
     assert.equal(existsSync(output), false);
   }
   assert.equal(inspected, 0);
+});
+
+test('runtime and CLI bridge only a trusted closed B2 connection diagnostic', async () => {
+  const ref = 'aewwdlvbwpczqyvkwvvj';
+  const poolerHost = 'aws-0-us-east-1.pooler.supabase.com';
+  const connection = `postgresql://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`;
+  let monotonic = 0; let captured;
+  try {
+    await runB2ExplicitConnection({
+      phase: 'dry-run', projectRef: ref, host: `db.${ref}.supabase.co`, token: MARKER,
+      cwd: 'fixture-workdir', manifest: { resources: { migrations: [] } },
+      verifyContext: async () => ({ cliVersion: '2.120.0', effectiveConfigVerified: true }),
+      request: async specification => specification.method === 'GET'
+        ? [{ database_type: 'PRIMARY', db_user: `postgres.${ref}`, db_host: poolerHost, db_port: 6543,
+          db_name: 'postgres', pool_mode: 'transaction', connection_string: connection, connectionString: connection }]
+        : { role: 'cli_login_postgres', password: MARKER, ttl_seconds: 300 },
+      execute: async () => ({ exitCode: 7, stdout: '', stderr: MARKER }),
+      wait: async () => {}, clock: () => 0,
+      monotonicClock: () => { const value = monotonic; monotonic += 10; return value; },
+    });
+  } catch (error) { captured = error; }
+  const diagnostic = readB2ExplicitConnectionDiagnostic(captured);
+  assert.deepEqual(diagnostic, { phase: 'B2_EXPLICIT_CONNECTION', boundary: 'READINESS', kind: 'EXIT_NONZERO',
+    attempt: 9, elapsedMs: 10, exitCode: 7, stdoutBytes: 0, stderrBytes: Buffer.byteLength(MARKER) });
+  const fixture = authorityFixture(); const runtimeClosure = closure();
+  const root = mkdtempSync(join(tmpdir(), 'diagnostic-connection-'));
+  const output = join(root, 'verification.json'); const env = environment(fixture, runtimeClosure, root);
+  const runtime = createPrivateAuthorityRuntime({ bootstrapCapability: await bootstrap(env, runtimeClosure),
+    environment: env, now: () => AT, fetchImpl: r2Fetch(fixture.authorityBytes, []),
+    host: { ...hostFor(fixture, runtimeClosure), async dispatch() { throw captured; } } });
+  const result = await cliFor(runtime.execute, output);
+  assert.deepEqual(result.status, { ...blockedStatus, diagnostic });
+  assert.equal(result.stderr, 'DENY PRIVATE_AUTHORITY_STAGE_BLOCKED\n');
+  assert.equal(existsSync(output), false);
 });
