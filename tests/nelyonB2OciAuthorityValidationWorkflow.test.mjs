@@ -32,6 +32,7 @@ const expectedPaths = [
   'tests/nelyonB2PrivateRuntimeEndToEnd.test.mjs',
   'tests/nelyonB2R2AccessProbeWorkflow.test.mjs',
   'tests/nelyonB2SnapshotRecovery.test.mjs',
+  'tests/nelyonSnapshotDiagnostics.test.mjs',
   'tests/nelyonPrivateAuthorityCli.test.mjs',
   'tests/nelyonPrivateAuthorityProvider.test.mjs',
   'tests/nelyonPrivateAuthorityRuntime.test.mjs',
@@ -140,7 +141,7 @@ test('OCI index proof runs the canonical real-Docker catalog proof and negative 
   assert.deepEqual(issuance.env, transport.env);
   assert.equal(issuance.run, 'node --test tests/nelyonB2AuthorityIssuer.test.mjs');
   assert.equal(pooler.run,
-    'node --test --test-concurrency=1 tests/nelyonB2ConcreteAdapters.test.mjs tests/nelyonB2ExplicitConnection.test.mjs tests/nelyonB2HermeticWorkspace.test.mjs tests/nelyonB2SnapshotRecovery.test.mjs tests/nelyonB2PrivateRuntimeEndToEnd.test.mjs');
+    'node --test --test-concurrency=1 tests/nelyonB2ConcreteAdapters.test.mjs tests/nelyonB2ExplicitConnection.test.mjs tests/nelyonB2HermeticWorkspace.test.mjs tests/nelyonB2SnapshotRecovery.test.mjs tests/nelyonB2PrivateRuntimeEndToEnd.test.mjs tests/nelyonSnapshotDiagnostics.test.mjs');
 });
 test('image config proof runs the canonical real-Docker pg_cron proof and negative contracts', () => {
   const job = jobs['docker-image-config-pg-cron-proof'];

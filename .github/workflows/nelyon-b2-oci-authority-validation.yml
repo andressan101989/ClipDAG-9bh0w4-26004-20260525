@@ -33,6 +33,7 @@ on:
       - tests/nelyonB2PrivateRuntimeEndToEnd.test.mjs
       - tests/nelyonB2R2AccessProbeWorkflow.test.mjs
       - tests/nelyonB2SnapshotRecovery.test.mjs
+      - tests/nelyonSnapshotDiagnostics.test.mjs
       - tests/nelyonPrivateAuthorityCli.test.mjs
       - tests/nelyonPrivateAuthorityProvider.test.mjs
       - tests/nelyonPrivateAuthorityRuntime.test.mjs
@@ -84,7 +85,7 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Run protected pooler fallback regressions
         shell: bash
-        run: node --test --test-concurrency=1 tests/nelyonB2ConcreteAdapters.test.mjs tests/nelyonB2ExplicitConnection.test.mjs tests/nelyonB2HermeticWorkspace.test.mjs tests/nelyonB2SnapshotRecovery.test.mjs tests/nelyonB2PrivateRuntimeEndToEnd.test.mjs
+        run: node --test --test-concurrency=1 tests/nelyonB2ConcreteAdapters.test.mjs tests/nelyonB2ExplicitConnection.test.mjs tests/nelyonB2HermeticWorkspace.test.mjs tests/nelyonB2SnapshotRecovery.test.mjs tests/nelyonB2PrivateRuntimeEndToEnd.test.mjs tests/nelyonSnapshotDiagnostics.test.mjs
       - name: Run real Docker OCI index proof
         shell: bash
         env:

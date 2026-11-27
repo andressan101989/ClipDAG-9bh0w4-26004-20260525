@@ -29,7 +29,7 @@
       },
       {
         "path": "scripts/nelyon-b2-explicit-connection.mjs",
-        "sha256": "ec32440e2a8522eebb2bb99fca0054a0ce0de0edce848caf60ffbcf64a66fe4e"
+        "sha256": "00a76d980e76ba6f0a7548d2feab5a3781e3136535863cc3ce9a18eff7329a8f"
       },
       {
         "path": "scripts/nelyon-b2-function-deployment-proof.mjs",
@@ -61,7 +61,7 @@
       },
       {
         "path": "scripts/nelyon-private-authority-runtime.mjs",
-        "sha256": "264277d3e1c61fe4164c81c740a0a69c77cb93b368ebe98b9d05734dc3b8cb7a"
+        "sha256": "5c48440c6f4f1ac3bf0a8d7800704142d80370863f5f4149e001463d70fdc989"
       },
       {
         "path": "scripts/nelyon-private-authority.mjs",
@@ -112,12 +112,12 @@
       "wrangler": "4.135.0",
       "supabase_setup_action": "45a513f8c64c0bc8e0e3dfe572b5c95be85f6359"
     },
-    "closure_sha256": "48fc5ccd355d43d03d706a4d2179d3616a278fb0c637dda2cd52a8383e4f9717"
+    "closure_sha256": "94012302952d8897ea3a86fc623350f4827e43d1115f8c12f2d891a187c24684"
   },
   "proposed_members": [
     {
       "path": "scripts/nelyon-b2-explicit-connection.mjs",
-      "sha256": "ec32440e2a8522eebb2bb99fca0054a0ce0de0edce848caf60ffbcf64a66fe4e"
+      "sha256": "00a76d980e76ba6f0a7548d2feab5a3781e3136535863cc3ce9a18eff7329a8f"
     },
     {
       "path": "scripts/nelyon-b2-hermetic-workspace.mjs",
